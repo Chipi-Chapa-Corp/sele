@@ -175,6 +175,18 @@ const providerRuns = {
         throw new Error('OpenCode did not report a session id:\n' + output.slice(0, 2000))
     }
     return session
+  },
+  async 'opencode-v2'({ env, cwd, executable, marker, turns }) {
+    let session = null
+    for (let index = 0; index < turns; index++) {
+      const args = ['run', '--standalone', '--auto', '--format', 'json']
+      if (session) args.push('--session', session)
+      args.push(turnPrompt(marker, index))
+      const output = await run(executable, args, { env, cwd })
+      session ??= /"sessionID"\s*:\s*"([^"]+)"/.exec(output)?.[1]
+      if (!session) throw new Error('OpenCode v2 did not report a session id')
+    }
+    return session
   }
 }
 

@@ -8,7 +8,6 @@ import { SquarePen, Undo2 } from 'lucide-react'
 import type { AppProject, AppProjectIcon } from '../../../shared/app'
 import type {
   ProviderApprovalMode,
-  ProviderId,
   ProviderModelId,
   ProviderReasoningEffort,
   ProviderSandboxMode
@@ -16,7 +15,6 @@ import type {
 import { Button } from '../components/Button'
 import type { AppAction } from '../actions'
 import { appApi } from '../appApi'
-import { providerApi } from '../providerApi'
 import {
   type AppAppearancePositionPreference,
   type AppAppearanceControlStylePreference,
@@ -46,13 +44,6 @@ import {
   normalizeAppRecentsMessageLimit
 } from '../settings'
 import { setAppGitCommitModel } from '../gitCommitModels'
-import { normalizeContainerTarget } from '../containerSelection'
-import {
-  getProviderUpdatePreference,
-  providerLabels,
-  shouldSuggestProviderUpdate,
-  type ProviderUpdatePreference
-} from '../providerSettings'
 import {
   clearAppProjectSettingOverrideValue,
   getAppProjectSettingValue,
@@ -71,7 +62,6 @@ import {
 } from './appearanceControllerUtils'
 import {
   getChatCwdGroupKey,
-  getErrorMessage,
   mergeProjects,
   modelSupportsReasoningEffort,
   trimRecentChatCache
@@ -116,16 +106,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     sandboxModeManuallySelectedRef,
     approvalModeBeforeFullAccessRef,
     approvalMode,
-    setSandboxMode,
-    setProviderUpdatePreferences,
-    setProviderUpdateSuggestion,
-    setProviderUpdateError,
-    providerUpdateSuggestion,
-    providerUpdateState,
-    setProviderUpdateState,
-    newSessionContainer,
-    setProviderModelsRevision,
-    providerUpdatePreferences
+    setSandboxMode
   } = dependencies
 
   const updateAppSettings = (update: (settings: AppSettings) => AppSettings): void => {
@@ -738,93 +719,6 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
 
     setSandboxMode(nextSandboxMode)
   }
-  const updateProviderUpdatePreference = (
-    providerId: ProviderId,
-    update: (preference: ProviderUpdatePreference) => ProviderUpdatePreference
-  ): void => {
-    setProviderUpdatePreferences((currentPreferences) => ({
-      ...currentPreferences,
-      [providerId]: update(getProviderUpdatePreference(currentPreferences, providerId))
-    }))
-  }
-  const handleSkipProviderUpdate = (): void => {
-    setProviderUpdateSuggestion(null)
-    setProviderUpdateError(null)
-  }
-  const handleNeverSuggestProviderUpdate = (): void => {
-    const suggestion = providerUpdateSuggestion
-    if (!suggestion) return
-
-    updateProviderUpdatePreference(suggestion.providerId, (preference) => ({
-      ...preference,
-      neverSuggest: true
-    }))
-    setProviderUpdateSuggestion(null)
-    setProviderUpdateError(null)
-  }
-  const handleNeverSuggestProviderUpdateVersion = (): void => {
-    const suggestion = providerUpdateSuggestion
-    if (!suggestion) return
-
-    updateProviderUpdatePreference(suggestion.providerId, (preference) => ({
-      ...preference,
-      ignoredVersions: Array.from(
-        new Set([...preference.ignoredVersions, suggestion.latestVersion])
-      )
-    }))
-    setProviderUpdateSuggestion(null)
-    setProviderUpdateError(null)
-  }
-  const handleUpdateProvider = async (): Promise<void> => {
-    const suggestion = providerUpdateSuggestion
-    if (!suggestion || providerUpdateState === 'updating') return
-
-    setProviderUpdateState('updating')
-    setProviderUpdateError(null)
-
-    try {
-      const container = normalizeContainerTarget(newSessionContainer)
-      const impact = await providerApi.getProviderUpdateImpact(suggestion.providerId, {
-        container
-      })
-      const activeChatCount = impact.activeChatCount
-      if (activeChatCount > 0) {
-        const chatLabel = activeChatCount === 1 ? 'chat' : 'chats'
-        const pronoun = activeChatCount === 1 ? 'it' : 'them'
-        if (
-          !window.confirm(
-            `${providerLabels[suggestion.providerId]} has ${activeChatCount} active ${chatLabel}. Updating will stop ${pronoun}. Continue?`
-          )
-        ) {
-          return
-        }
-      }
-
-      const availability = await providerApi.updateProvider(suggestion.providerId, {
-        container,
-        stopActiveChats: activeChatCount > 0
-      })
-      setProviderModelsRevision((revision) => revision + 1)
-      setProviderUpdateSuggestion(
-        availability &&
-          shouldSuggestProviderUpdate(
-            providerUpdatePreferences,
-            suggestion.providerId,
-            availability
-          )
-          ? { ...availability, providerId: suggestion.providerId }
-          : null
-      )
-    } catch (error) {
-      console.error('[caught:useSettingsController:handleUpdateProvider]', error)
-      setProviderUpdateError(
-        getErrorMessage(error, `Unable to update ${providerLabels[suggestion.providerId]}.`)
-      )
-    } finally {
-      setProviderUpdateState('idle')
-    }
-  }
-  const providerUpdateInProgress = providerUpdateState === 'updating'
 
   return {
     getSettingsFieldClassName,
@@ -857,8 +751,6 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handleLastActionChange,
     handleMaxChatsRenderedChange,
     handleModelChange,
-    handleNeverSuggestProviderUpdate,
-    handleNeverSuggestProviderUpdateVersion,
     handlePerformancePreferenceChange,
     handleProjectSaved,
     handleReasoningEffortChange,
@@ -867,11 +759,8 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handleRecentlyOpenedFilesLimitChange,
     handleRecentsMessageLimitChange,
     handleSandboxModeChange,
-    handleSkipProviderUpdate,
     handleThemePreferenceChange,
-    handleUpdateProvider,
     isScopedSettingControlDisabled,
-    providerUpdateInProgress,
     rememberProject,
     renderProjectSettingAction
   }

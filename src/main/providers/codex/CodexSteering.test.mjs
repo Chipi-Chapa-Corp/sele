@@ -370,3 +370,59 @@ test('steering accepted by Codex is no longer offered for editing', () => {
     ]
   )
 })
+
+test('completion publishes cleared steering while retaining unsent and successor messages', () => {
+  const adapter = createAdapter(
+    [
+      'handleTurnNotification',
+      'removeSteeringMessageForTurn',
+      'updateSteeringMessages',
+      'hasWaitingSteeringMessageForTurn'
+    ],
+    { isCodexAuthenticationFailure: () => false }
+  )
+  const turn = { id: 'turn', status: 'inProgress', items: [] }
+  const published = []
+  let drains = 0
+  Object.assign(adapter, {
+    threads: new Map([['chat', { turns: [turn] }]]),
+    activeTurnIds: new Map([['chat', 'turn']]),
+    pendingApprovalsByThread: new Map(),
+    steeringMessagesByThread: new Map([
+      [
+        'chat',
+        [
+          { id: 'accepted', turnId: 'turn', status: 'pending' },
+          { id: 'held', turnId: 'turn', status: 'waiting' },
+          { id: 'successor', turnId: 'next', status: 'pending' }
+        ]
+      ]
+    ]),
+    rememberThreadContainer() {},
+    normalizeLiveTurn: (value) => value,
+    applyLiveItemStatus: (value) => value,
+    isManuallyStoppedTurn: () => false,
+    recordSubagentRunOutcome() {},
+    isRolledBackTurn: () => false,
+    getPendingTurnIdForLiveTurn: () => null,
+    upsertTurn(_chat, value) {
+      Object.assign(turn, value)
+    },
+    userQuestions: { clearServerTurn() {} },
+    getActiveTurnId: () => adapter.activeTurnIds.get('chat'),
+    setThreadStatus() {},
+    retainThreadTurnTail() {},
+    completionCoordinator: { complete: (_chat, operations) => operations.publish() },
+    emitChatUpdated: () =>
+      published.push(
+        Array.from(adapter.steeringMessagesByThread.get('chat'), (message) => message.id)
+      ),
+    scheduleQueueDrain: () => drains++
+  })
+  adapter.handleTurnNotification(
+    { method: 'turn/completed' },
+    { threadId: 'chat', turn: { ...turn, status: 'completed' } }
+  )
+  assert.deepEqual(published, [['held', 'successor']])
+  assert.equal(drains, 0, 'an unsent edit hold still prevents queue draining')
+})

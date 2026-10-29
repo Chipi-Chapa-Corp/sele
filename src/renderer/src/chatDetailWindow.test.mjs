@@ -22,7 +22,7 @@ const detail = (items, extra = {}) => ({
 })
 
 test('preserves optimistic turns for every provider until its user message arrives', () => {
-  for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
+  for (const providerId of ['codex', 'claude', 'copilot', 'opencode-v2']) {
     assert.equal(shouldPreserveOptimisticTurnUntilUserMessage(providerId), true)
   }
 
@@ -199,13 +199,21 @@ test('cursor navigation keeps two adjacent pages and their boundaries after payl
     buffer.items.map((item) => item.id),
     Array.from({ length: 20 }, (_, i) => `turn-${20 + i}`)
   )
-  current = { ...current, items: buffer.items.map((item) => ({ ...item, content: 'refreshed' })) }
+  current = {
+    ...current,
+    items: buffer.items.map((item) => ({ ...item, content: 'refreshed' })),
+    turnPagination: { kind: 'cursor', olderCursor: 'before-20', newerCursor: 'after-39' }
+  }
   buffer = extendChatCursorWindow(buffer, 'codex:chat', current, page(10), 'older')
   assert.equal(buffer.items.length, 20)
   assert.equal(buffer.items[10].content, 'refreshed')
   assert.equal(buffer.pages[0].turnPagination.olderCursor, 'before-10')
   assert.equal(buffer.pages[1].turnPagination.newerCursor, 'after-29')
-  current = { ...current, items: buffer.items }
+  current = {
+    ...current,
+    items: buffer.items,
+    turnPagination: { kind: 'cursor', olderCursor: 'before-10', newerCursor: 'after-29' }
+  }
   buffer = extendChatCursorWindow(buffer, 'codex:chat', current, page(30), 'newer')
   assert.deepEqual(
     buffer.items.map((item) => item.id),

@@ -1,4 +1,4 @@
-import { providerLabels } from '../providerSettings'
+import { useProviderLabels } from '../providerLabels'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LoaderCircle, Monitor, Server } from 'lucide-react'
 import type { AppContainerTarget } from '../../../shared/app'
@@ -19,6 +19,7 @@ type Props = {
 }
 
 export function ChatImportDialog({ preview, onClose, onImported }: Props): React.JSX.Element {
+  const providerLabels = useProviderLabels()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const cancelledRef = useRef(false)
   const sendingRef = useRef(false)

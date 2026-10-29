@@ -2,13 +2,15 @@ import { PendingMessageEdits } from '../PendingMessageEdits'
 import { PersistentPendingMessages } from '../PersistentPendingMessages'
 import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
-import { encodeOpenCodeHistory, importOpenCodeHistory } from './OpenCodeHistoryImport'
+import { encodeOpenCodeHistory } from './OpenCodeHistoryImport'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './OpenCodeHistory'
 import { OpenCodeHistoryPages } from './OpenCodeHistoryPages'
+import { getOpenCodeV2Client, readOpenCodeChatPreview } from './OpenCodeV2Client'
 import { getOpenCodeContextUsage } from './OpenCodeContextUsage'
 import {
   raceLinkedChatCancellation,
   requireLinkedChatSummary,
+  summarizeLinkedChatWithFallback,
   throwIfLinkedChatCancelled
 } from '../linkedChatContext'
 import { OpenCodeCredentialHealth, checkOpenCodeCredential } from './OpenCodeCredentialHealth'
@@ -105,8 +107,7 @@ import {
 } from './OpenCodeItemRenderers'
 import {
   extractOpenCodeApiKeys,
-  getOpenCodeAuthStore,
-  getOpenCodeGoRateLimits,
+  mapOpenCodeGoUsageToRateLimits,
   isLocalOpenCodeTarget,
   OpenCodeGoApiKeyMissingError,
   OpenCodeGoNoSubscriptionError
@@ -146,7 +147,7 @@ import {
 } from './OpenCodeEvents'
 import {
   createOpenCodeSubagentSummary,
-  getOpenCodeSubagentPromptSettings,
+  readOpenCodeSubagentPromptSettings,
   isOpenCodeChildState,
   isOpenCodeSubagentSession
 } from './OpenCodeSubagents'
@@ -407,12 +408,14 @@ const getPendingUserInput = (
 }
 
 export class OpenCodeProviderAdapter implements ProviderAdapter {
-  id = 'opencode' as const
+  constructor(readonly id = 'opencode-v2' as const) {
+    this.pendingMessageStore = new PersistentPendingMessages<QueuedOpenCodeMessage>(
+      id,
+      sqlitePendingMessageBackend
+    )
+  }
   private pendingMessageEdits = new PendingMessageEdits()
-  private pendingMessageStore = new PersistentPendingMessages<QueuedOpenCodeMessage>(
-    'opencode',
-    sqlitePendingMessageBackend
-  )
+  private pendingMessageStore: PersistentPendingMessages<QueuedOpenCodeMessage>
   private queueDrains = new Set<string>()
   private tokenUsageReporter = new TokenUsageReporter()
   onTokenUsage = this.tokenUsageReporter.subscribe
@@ -657,13 +660,19 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   getUpdateAvailability = async (
     options: ProviderSourceOptions = {}
   ): Promise<ProviderUpdateAvailability | null> =>
-    getOpenCodeUpdateAvailability({ container: options.container, env: process.env })
+    getOpenCodeUpdateAvailability({
+      container: options.container,
+      env: process.env
+    })
 
   updateProvider = async (
     options: ProviderSourceOptions = {}
   ): Promise<ProviderUpdateAvailability | null> => {
     await this.disposeClients()
-    return updateOpenCodeProvider({ container: options.container, env: process.env })
+    return updateOpenCodeProvider({
+      container: options.container,
+      env: process.env
+    })
   }
 
   getApprovalModes = async (): Promise<ProviderApprovalModeOption[]> => openCodeApprovalModes
@@ -716,7 +725,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderSkill[]> => {
     const [entry, disabledSkills] = await Promise.all([
       this.getClientEntry(options.container),
-      listDisabledProviderSkills('opencode', options.container)
+      listDisabledProviderSkills(this.id, options.container)
     ])
     const discovered = requireData(
       await entry.client.app.skills(cwd ? { directory: cwd } : {}, { throwOnError: true })
@@ -771,7 +780,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     if (changedSkills.length === 0) return skills
 
     const updateSkill = async (skill: ProviderSkill): Promise<void> => {
-      if (!enabled) await disableProviderSkill('opencode', skill, options.container)
+      if (!enabled) await disableProviderSkill(this.id, skill, options.container)
       else if (!(await restoreProviderSkill(skill.path, options.container))) {
         throw new Error('Skill was not disabled by Sele')
       }
@@ -803,11 +812,35 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
     const includeStatistics = Boolean(options.includeStatistics)
-    const authStore = getOpenCodeAuthStore(options.container)
-    // Keep the Go lookup's missing-key handling when the auth store cannot be read.
-    const goStore = authStore.catch(() => undefined)
+    const authStore = (async () => {
+      const client = (await this.getClientEntry(options.container)).client
+      const native = getOpenCodeV2Client(client)
+      if (!native) throw new Error('OpenCode 2 client is unavailable.')
+      const [credentials, providers] = await Promise.all([
+        native.credential.list(),
+        native.provider.list()
+      ])
+      return Object.fromEntries(
+        credentials
+          .filter((credential) => credential.active && credential.value.type === 'key')
+          .flatMap((credential) => {
+            const value = credential.value
+            if (value.type !== 'key') return []
+            return providers.data
+              .filter(
+                (provider) => (provider.integrationID ?? provider.id) === credential.integrationID
+              )
+              .map((provider) => [provider.id, { type: 'api', key: value.key }])
+          })
+      )
+    })()
     const [rateLimitsResult, statisticsResult, balancesResult] = await Promise.allSettled([
-      goStore.then((store) => getOpenCodeGoRateLimits(options.container, fetch, store)),
+      (async () => {
+        const native = getOpenCodeV2Client((await this.getClientEntry(options.container)).client)
+        if (!native) throw new Error('OpenCode 2 client is unavailable.')
+        const limits = await native.usage.limits()
+        return limits.data?.go ? mapOpenCodeGoUsageToRateLimits(limits.data.go) : []
+      })(),
       includeStatistics
         ? (async (): Promise<{ lifetimeTokens: string }> => {
             const client = (await this.getClientEntry(options.container)).client
@@ -939,50 +972,47 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     )
     const visibleSessions = sessions.filter((session) => !isOneShotSession(session))
-    const statusesByDirectory = new Map(
-      [...new Set(visibleSessions.map((session) => session.directory))].map((directory) => [
-        directory,
-        entry.client.session
-          .status({ directory }, { throwOnError: true })
-          .then(requireData)
-          .catch((error) => {
-            console.error('[caught:OpenCodeProviderAdapter:getChats:status]', error)
-            return null
-          })
-      ])
-    )
+    const statusesRead = entry.client.session
+      .status({}, { throwOnError: true })
+      .then(requireData)
+      .catch((error) => {
+        console.error('[caught:OpenCodeProviderAdapter:getChats:status]', error)
+        return null
+      })
+    const native = getOpenCodeV2Client(entry.client)
     const chats = await Promise.all(
       visibleSessions.map(async (session) => {
         const state = this.rememberSession(session, entry.container)
         const eventRevision = state.eventRevision
         // A sidebar row needs only a bounded preview. Recovering a default title
         // must never download a whole conversation (including its tool bodies).
-        let messages = state.messages
+        let messages = native
+          ? state.messages.filter((message) => message.info.role === 'user').slice(-1)
+          : state.messages
         let hasOlder = Boolean(state.historyPagination?.olderCursor)
         if (!state.messagesHydrated || state.messagesDirty) {
-          const result = await entry.client.session
-            .messages(
-              { sessionID: session.id, directory: session.directory, limit: 8 },
-              { throwOnError: true }
-            )
-            .catch((error) => {
-              console.error('[caught:OpenCodeProviderAdapter:getChats]', error)
-              return null
-            })
-          messages = result?.data ?? []
-          hasOlder = Boolean(result?.response.headers.get('x-next-cursor'))
+          const result = await readOpenCodeChatPreview(entry.client, session).catch((error) => {
+            console.error('[caught:OpenCodeProviderAdapter:getChats]', error)
+            return null
+          })
+          messages = result?.messages ?? []
+          hasOlder = result?.hasOlder ?? false
         }
         if (!hasOlder && isDefaultOpenCodeTitle(session.title) && !state.fallbackTitle) {
           const title = getOpenCodeDisplayTitle(session.title, messages)
           if (title !== session.title) state.fallbackTitle = title
         }
-        const statuses = await statusesByDirectory.get(session.directory)
+        const statuses = await statusesRead
         if (statuses && state.eventRevision === eventRevision) {
           const status = statuses[session.id]
           const limitMessage = getOpenCodeUsageLimitMessage('session.status', { status })
           if (limitMessage) this.failUsageLimitedTurn(state, entry.client, limitMessage)
           state.active =
             !state.usageLimitReached && (status?.type === 'busy' || status?.type === 'retry')
+          if (native && !state.active && !state.usageLimitReached && 'outcome' in session) {
+            state.failed = session.outcome === 'failed'
+            state.stopped = session.outcome === 'interrupted'
+          }
         }
         return this.createChat(session, messages.slice(-8), state)
       })
@@ -1024,7 +1054,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       const page = await this.historyPages.read(
         (await this.getClientEntry(state.container)).client,
         state.session!,
-        { cursor: null, direction: 'older', limit: window.limit }
+        { cursor: null, direction: 'older', limit: window.limit },
+        Boolean(state.session?.parentID)
       )
       return this.createChatDetailFromState({
         ...state,
@@ -1050,7 +1081,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       this.historyPages.isLatest(window.cursor, state.historyPagination)
     )
       return this.createChatDetailFromState(state)
-    const page = await this.historyPages.read(client, state.session!, window)
+    const page = await this.historyPages.read(
+      client,
+      state.session!,
+      window,
+      Boolean(state.session?.parentID)
+    )
     const historical = Boolean(page.pagination.newerCursor)
     return this.createChatDetailFromState({
       ...state,
@@ -1078,6 +1114,17 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options.container)
     if (state.historyPagination) {
+      const savedCursor = this.historyPages.findItemCursor(state.client!, state.id, itemId)
+      if (savedCursor)
+        return this.getChatCursorWindow(
+          chatId,
+          {
+            cursor: savedCursor,
+            direction: 'older',
+            limit
+          },
+          options
+        )
       let detail = this.createChatDetailFromState(state)
       while (!detail.items.some((item) => item.id === itemId || itemId.startsWith(`${item.id}:`))) {
         const cursor = detail.turnPagination?.olderCursor
@@ -1143,7 +1190,19 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
     this.rememberSession(session, entry.container)
     const state = await this.ensureState(subagentId, entry.container)
-    const detail = this.createChatDetailFromState(state, window)
+    const detail = window?.cursor
+      ? await this.getChatCursorWindow(
+          subagentId,
+          {
+            cursor: window.cursor,
+            direction: window.direction ?? 'older',
+            limit: window.limit
+          },
+          { container: entry.container }
+        )
+      : await this.getChatWindow(subagentId, window ?? { startIndex: null, limit: 10 }, {
+          container: entry.container
+        })
     const summary = createOpenCodeSubagentSummary(
       state.session!,
       chatId,
@@ -1154,7 +1213,25 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       status: state.failed ? 'failed' : state.stopped ? 'stopped' : summary.status,
       items: detail.items,
       itemsStartTurnIndex: detail.itemsStartTurnIndex,
-      turnCount: detail.turnCount
+      turnCount: detail.turnCount,
+      turnPagination: detail.turnPagination
+    }
+  }
+
+  getSubagentWindowForItem: NonNullable<ProviderAdapter['getSubagentWindowForItem']> = async (
+    chatId,
+    subagentId,
+    itemId,
+    options = {}
+  ) => {
+    const summary = await this.getSubagent(chatId, subagentId, options)
+    const detail = await this.getChatWindowForItem(subagentId, itemId, 1, options)
+    return {
+      ...summary,
+      items: detail.items,
+      itemsStartTurnIndex: detail.itemsStartTurnIndex,
+      turnCount: detail.turnCount,
+      turnPagination: detail.turnPagination
     }
   }
 
@@ -1207,7 +1284,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       {
         sessionID: session.id,
         directory: session.directory,
-        ...getOpenCodeSubagentPromptSettings(state.session ?? session, state.messages),
+        ...(await readOpenCodeSubagentPromptSettings(
+          entry.client,
+          state.session ?? session,
+          state.messages
+        )),
         parts: [{ type: 'text', text }]
       },
       { throwOnError: true }
@@ -1378,7 +1459,26 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const id = state.session.id
     await onChatCreated?.(id)
     const imported = encodeOpenCodeHistory(state.session, messages, model)
-    if (imported.length) await importOpenCodeHistory(state.session, imported, entry.container)
+    if (imported.length) {
+      const native = getOpenCodeV2Client(entry.client)
+      if (native) {
+        // Native bulk import only creates new sessions. Append without replacing tool history
+        // or starting generation; metadata preserves each imported exchange's original role.
+        const existing = new Set(state.messages.map((message) => message.info.id))
+        for (const record of imported) {
+          if (existing.has(record.info.id)) continue
+          const content = record.parts.map((part) => part.text).join('\n')
+          const role = record.info.role
+          await native.session.synthetic({
+            sessionID: id,
+            id: record.info.id,
+            text: role === 'assistant' ? `Imported assistant response:\n${content}` : content,
+            resume: false,
+            metadata: { seleImport: { role, content } }
+          })
+        }
+      } else throw new Error('OpenCode 2 client is unavailable.')
+    }
     state.messagesDirty = true
     state.historyPagination = undefined
     await this.refreshState(state, entry.client)
@@ -1656,20 +1756,37 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId, options?.container)
-    const messages = state.historyPagination?.olderCursor
-      ? await this.loadMessages((await this.getClientEntry(state.container)).client, state.session!)
-      : state.messages
-    const target = messages.find(
+    const client = (await this.getClientEntry(state.container)).client
+    const cached = state.messages.find(
       (entry) => entry.info.role === 'user' && entry.info.id === messageId
     )
-    if (!target) throw new Error('Message cannot be edited.')
-    await this.abortState(state)
-    const client = (await this.getClientEntry(state.container)).client
-    await client.session.revert(
-      { sessionID: chatId, directory: state.directory, messageID: target.info.id },
-      { throwOnError: true }
-    )
-    await this.sendPrompt(state, message, options)
+    const target =
+      cached ??
+      requireData(
+        await client.session.message(
+          { sessionID: chatId, directory: state.directory, messageID: messageId },
+          { throwOnError: true }
+        )
+      )
+    if (target?.info.role !== 'user') throw new Error('Message cannot be edited.')
+    const wasPaused = state.queuePaused
+    state.queuePaused = true
+    try {
+      await this.abortState(state)
+      await client.session.revert(
+        { sessionID: chatId, directory: state.directory, messageID: target.info.id },
+        { throwOnError: true }
+      )
+      const index = state.messages.findIndex((record) => record.info.id === target.info.id)
+      state.messages = index < 0 ? [] : state.messages.slice(0, index)
+      state.messagesDirty = true
+      state.historyPagination = { kind: 'cursor', olderCursor: null, newerCursor: null }
+      state.historyInvalidationRevision = (state.historyInvalidationRevision ?? 0) + 1
+      await this.sendPrompt(state, message, options)
+    } catch (error) {
+      state.queuePaused = wasPaused
+      throw error
+    }
     return this.createChatDetail(state, true)
   }
 
@@ -1773,6 +1890,36 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   summarizeChatInFork = async (
     chatId: string,
+    options: { summaryPrompt: string; signal: AbortSignal },
+    onForkCreated: (chatId: string) => Promise<void>
+  ): Promise<string> => {
+    throwIfLinkedChatCancelled(options.signal)
+    const source = await this.ensureState(chatId)
+    if (source.active) throw new Error('Wait for the current response before linking this chat.')
+    const latestUser = source.messages.findLast((message) => message.info.role === 'user')
+    const model = latestUser?.info.role === 'user' ? latestUser.info.model : null
+    return summarizeLinkedChatWithFallback(
+      this,
+      chatId,
+      {
+        ...options,
+        turnOptions: model
+          ? {
+              model: `${model.providerID}/${model.modelID}`,
+              approvalPolicy: 'never',
+              approvalsReviewer: 'user',
+              sandboxMode: 'read-only',
+              serviceTier: null
+            }
+          : undefined,
+        nativeSummary: () => this.summarizeChatNativelyInFork(chatId, options, onForkCreated)
+      },
+      onForkCreated
+    )
+  }
+
+  private summarizeChatNativelyInFork = async (
+    chatId: string,
     { signal }: { summaryPrompt: string; signal: AbortSignal },
     onForkCreated: (chatId: string) => Promise<void>
   ): Promise<string> => {
@@ -1801,13 +1948,14 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     try {
       throwIfLinkedChatCancelled(signal)
       // Native compaction writes a readable assistant summary record.
-      await raceLinkedChatCancellation(
+      const result = await raceLinkedChatCancellation(
         signal,
         client.session.summarize(
           { sessionID: fork.id, directory: fork.directory, auto: false },
           { throwOnError: true }
         )
       )
+      if (!requireData(result)) throw new Error('OpenCode could not summarize the linked chat.')
       for (;;) {
         const messages = await raceLinkedChatCancellation(
           signal,
@@ -2028,6 +2176,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       this.credentialHealth.record(getContainerTargetKey(entry.container), properties.info)
     // The keyless free tier only reports its limit when a request hits it.
     this.freeLimits.observe(getContainerTargetKey(entry.container), type, properties)
+    const tracked = this.states.get(sessionID)
+    if (
+      tracked &&
+      getContainerTargetKey(tracked.container) !== getContainerTargetKey(entry.container)
+    )
+      return
     if (sessionInfo && isOneShotSession(sessionInfo)) {
       this.completionCoordinator.cancel(sessionID)
       this.states.delete(sessionID)
@@ -2229,10 +2383,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private getOrCreateState = (
     sessionId: string,
     directory: string,
-    container: AppContainerTarget | null
+    container: AppContainerTarget | null,
+    detached = false
   ): OpenCodeChatState => {
     const existing = this.states.get(sessionId)
-    if (existing) return existing
+    if (existing && !detached) return existing
     const state: OpenCodeChatState = {
       browser: null,
       browserGeneration: 0,
@@ -2258,8 +2413,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       queuedMessages: [],
       queuePaused: false
     }
-    this.states.set(sessionId, state)
-    this.sessionContainers.set(sessionId, container)
+    if (!detached) {
+      this.states.set(sessionId, state)
+      this.sessionContainers.set(sessionId, container)
+    }
     return state
   }
 
@@ -2267,7 +2424,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     session: Session | GlobalSession,
     container: AppContainerTarget | null
   ): OpenCodeChatState => {
-    const state = this.getOrCreateState(session.id, session.directory, container)
+    const existing = this.states.get(session.id)
+    const detached = Boolean(
+      existing && getContainerTargetKey(existing.container) !== getContainerTargetKey(container)
+    )
+    const state = this.getOrCreateState(session.id, session.directory, container, detached)
     if (
       state.messagesHydrated &&
       state.hydratedUpdatedAt !== null &&
@@ -2275,8 +2436,6 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     )
       state.messagesDirty = true
     state.session = session
-    // Child timelines currently use numeric windows; retain their existing full path.
-    if (session.parentID) state.historyPagination = undefined
     if (
       state.directory !== session.directory ||
       getContainerTargetKey(state.container) !== getContainerTargetKey(container)
@@ -2285,7 +2444,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     }
     state.directory = session.directory
     state.container = container
-    this.sessionContainers.set(session.id, container)
+    if (!detached) this.sessionContainers.set(session.id, container)
     return state
   }
 
@@ -2346,12 +2505,21 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         : normalizeStoredContainer(container)
     const entry = await this.getClientEntry(storedContainer)
     let state = this.states.get(chatId)
+    if (state && getContainerTargetKey(state.container) !== getContainerTargetKey(entry.container))
+      state = undefined
     if (!state?.session) {
       const key = `${getContainerTargetKey(entry.container)}:${chatId}`
       let discovery = this.sessionDiscoveries.get(key)
       if (!discovery) {
         discovery = this.findSession(entry.client, chatId)
-          .then((session) => this.rememberSession(session, entry.container))
+          .then((session) => {
+            const next = this.rememberSession(session, entry.container)
+            const previous = this.states.get(chatId)
+            if (previous && previous !== next) this.closeBrowser(previous)
+            this.states.set(chatId, next)
+            this.sessionContainers.set(chatId, entry.container)
+            return next
+          })
           .finally(() => this.sessionDiscoveries.delete(key))
         this.sessionDiscoveries.set(key, discovery)
       }
@@ -2432,7 +2600,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
               cursor: null,
               direction: 'older',
               limit: 10
-            }
+            },
+            Boolean(state.session?.parentID)
           )
         : loadOpenCodeMessages(client, { id: state.id, directory: state.directory }).then(
             (messages) => ({ messages, pagination: undefined })
@@ -2516,7 +2685,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     state?: OpenCodeChatState
   ): ProviderChat => ({
     id: session.id,
-    providerId: 'opencode',
+    providerId: this.id,
     title:
       isDefaultOpenCodeTitle(session.title) && state?.fallbackTitle
         ? state.fallbackTitle
@@ -2637,7 +2806,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         createdAt: message.createdAt
       })
     )
-    return {
+    const detail: ProviderChatDetail = {
       id: session.id,
       revision: state.revision,
       createdAt: session.time.created,
@@ -2689,6 +2858,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       })(),
       ...(state.historyPagination ? { turnPagination: state.historyPagination } : {})
     }
+    if (state.historyPagination)
+      this.historyPages?.rememberItems(state.historyPagination, detail.items)
+    return detail
   }
 
   private sendPrompt = async (
@@ -2707,7 +2879,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const generation = state.browserGeneration
     if (!state.container && options?.sandboxMode !== 'read-only') {
       const browser = await entry.server.registerBrowser({
-        providerId: 'opencode',
+        providerId: this.id,
         sessionId: state.id,
         cwd: state.directory,
         containerKey: 'host'

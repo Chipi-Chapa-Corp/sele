@@ -19,14 +19,20 @@ export type ClaudeHistorySource = {
 /** Only range reads cross the remote transport; no cat of the complete transcript. */
 export const openClaudeHistorySource = async (
   sessionId: string,
-  run?: RunClaudeSessionCommand
+  run?: RunClaudeSessionCommand,
+  subagentId?: string
 ): Promise<ClaudeHistorySource> => {
   if (!/^[a-f0-9-]{36}$/i.test(sessionId)) throw new Error('Invalid Claude session ID')
+  if (subagentId !== undefined && !/^[a-zA-Z0-9_-]+$/.test(subagentId))
+    throw new Error('Invalid Claude subagent ID')
+  const relativePath = subagentId
+    ? `${sessionId}/subagents/agent-${subagentId}.jsonl`
+    : `${sessionId}.jsonl`
   if (run) {
     const output = await run(
       `
 root=\${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}/projects
-for path in "$root"/*/"$1.jsonl"; do
+for path in "$root"/*/"$1"; do
   [ -f "$path" ] || continue
   printf '%s\\n' "$path"
   stat -c '%d:%i %s %Y %y' "$path" 2>/dev/null || stat -f '%d:%i %z %m %Sm' -t '%Y-%m-%dT%H:%M:%S' "$path"
@@ -34,7 +40,7 @@ for path in "$root"/*/"$1.jsonl"; do
 done
 exit 4
 `,
-      [sessionId]
+      [relativePath]
     )
     const newline = output.indexOf('\n')
     const path = output.slice(0, newline)
@@ -113,7 +119,7 @@ dd if="$1" bs=65536 skip="$2" count="$3" 2>/dev/null | base64
   for (const project of await readdir(root)) {
     let file: Awaited<ReturnType<typeof open>>
     try {
-      file = await open(join(root, project, `${sessionId}.jsonl`), 'r')
+      file = await open(join(root, project, relativePath), 'r')
     } catch (error) {
       if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) continue
       throw error

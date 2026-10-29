@@ -145,7 +145,7 @@ type MessageBoxProps = {
     type?: 'message' | 'pending'
   } | null
   error?: string | null
-  /** Sent to providers without readable native compaction when a chat is linked. */
+  /** Used when native compaction fails or leaves no readable summary for a linked chat. */
   linkedChatSummaryPrompt?: string
   container?: AppContainerTarget | null
   model: ProviderModelId

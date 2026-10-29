@@ -84,7 +84,7 @@ export const generateOpenCodeChatTitle = async (
           {
             sessionID: session.id,
             directory,
-            agent: 'title',
+            agent: 'build',
             model: parseOpenCodeModelId(modelId),
             system:
               'Generate only a concise plain-text chat title, at most 100 characters. Do not answer the prompt or use tools.',

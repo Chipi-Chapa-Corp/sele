@@ -64,7 +64,7 @@ module.exports = async function transcripts(session) {
 
     await runner.check(name('appears in the sidebar'), async () => {
       chatId = await page.waitFor(
-        `window.__sele.chatRows().find(row => row.title.includes(${JSON.stringify(transcript.marker)}))?.id ?? null`,
+        `window.__sele.chatRows().find(row => row.id === ${JSON.stringify(transcript.session)} || row.title.includes(${JSON.stringify(transcript.marker)}))?.id ?? null`,
         { timeout: 30000, message: 'long chat is not listed' }
       )
     })
@@ -146,6 +146,45 @@ module.exports = async function transcripts(session) {
       await sele.waitIdle()
       assert.ok(await page.eval('window.__sele.atBottom()'), 'stays at the bottom after the reply')
     })
+
+    if (provider === 'opencode-v2')
+      await runner.check(
+        name('edits an older paginated message and retains the edited branch after reopening'),
+        async () => {
+          const { reached } = await wheelUntil(
+            sele,
+            -240,
+            `window.__sele.hasText(${JSON.stringify(first.trim())}) && window.__sele.scroller().scrollTop <= 1`
+          )
+          assert.ok(reached, 'the original prompt is reachable before editing')
+          await page.click(
+            `(() => { const row = [...document.querySelectorAll('.chat-detail__message-block--user')].find(element => element.textContent.includes(${JSON.stringify(first.trim())})); return row?.querySelector('[aria-label="Edit message"]') })()`
+          )
+          await page.waitFor(
+            `window.__sele.composer()?.value.includes(${JSON.stringify(first.trim())})`
+          )
+          const replacement = `${transcript.marker} edited original #text 1`
+          await page.fillComposer(replacement)
+          await page.press('Enter')
+          await sele.waitForReply(replacement)
+          await sele.waitIdle()
+          assert.equal(
+            await sele.q(
+              `window.__sele.messages().some(message => message.text.includes(${JSON.stringify(last.trim())}))`
+            ),
+            false
+          )
+          await sele.openNewChat(provider)
+          await sele.selectChat(chatId)
+          await sele.waitIdle()
+          assert.equal(
+            await sele.q(
+              `window.__sele.messages().some(message => message.text.includes(${JSON.stringify(replacement)}))`
+            ),
+            true
+          )
+        }
+      )
   }
 
   await runner.check('[transcripts] switching between long chats', async (context) => {

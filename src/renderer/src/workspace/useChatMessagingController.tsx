@@ -527,7 +527,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     initialGoal?: string
   ): Promise<boolean> => {
     if (
-      (configProviderId === 'opencode' && !selectedEffectiveModel) ||
+      (configProviderId === 'opencode-v2' && !selectedEffectiveModel) ||
       providerUpdateInProgress ||
       sendInFlightRef.current ||
       authenticationRequired ||

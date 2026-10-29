@@ -351,3 +351,55 @@ test('a failed interrupt leaves that child running and reports the error', async
   assert.ok(list.error)
   assert.equal(canceling.size, 0)
 })
+
+test('cursor-native child navigation forwards the opaque boundary and preserves it across polls', async () => {
+  let args
+  const older = { kind: 'cursor', olderCursor: 'before-old', newerCursor: 'back-to-tail' }
+  const state = setup(
+    {
+      getSubagent: async (...input) => {
+        args = input
+        return {
+          id: 'child',
+          items: [{ type: 'message', id: 'old', role: 'user', content: 'Old' }],
+          itemsStartTurnIndex: 0,
+          turnCount: 1,
+          turnPagination: older
+        }
+      }
+    },
+    [{ type: 'message', id: 'latest', role: 'user', content: 'Latest' }],
+    {
+      itemsStartTurnIndex: 0,
+      turnCount: 1,
+      turnPagination: { kind: 'cursor', olderCursor: 'opaque-old', newerCursor: null }
+    }
+  )
+  await state.controller.handleNavigateSubagentTurns('older')
+  assert.deepEqual(JSON.parse(JSON.stringify(args)), [
+    'codex',
+    'parent',
+    'child',
+    {
+      startIndex: null,
+      limit: 10,
+      cursor: 'opaque-old',
+      direction: 'older'
+    }
+  ])
+  assert.equal(state.view().followLatest, false)
+  const current = state.view().detail
+  const refreshed = refreshSubagentDetail(
+    current,
+    {
+      ...current,
+      items: [{ type: 'message', id: 'latest', role: 'user', content: 'Latest' }],
+      turnPagination: { kind: 'cursor', olderCursor: 'new-older', newerCursor: null }
+    },
+    50,
+    100,
+    false
+  )
+  assert.equal(refreshed.items[0].id, 'old')
+  assert.deepEqual(refreshed.turnPagination, older)
+})

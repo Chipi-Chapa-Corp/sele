@@ -1,4 +1,4 @@
-import type { GlobalSession, Session } from '@opencode-ai/sdk/v2'
+import type { GlobalSession, Session, OpencodeClient } from '@opencode-ai/sdk/v2'
 import type { ProviderSubagent } from '../../../shared/provider'
 import type { OpenCodeMessageWithParts } from './OpenCodeItemRenderers.ts'
 
@@ -80,4 +80,23 @@ export const getOpenCodeSubagentPromptSettings = (
       : {}),
     ...(lastUser?.tools ? { tools: lastUser.tools } : {})
   }
+}
+
+/** A retained tool-only page can recover the prompt's model/tools by its native parent ID. */
+export const readOpenCodeSubagentPromptSettings = async (
+  client: OpencodeClient,
+  session: Session | GlobalSession,
+  messages: OpenCodeMessageWithParts[]
+): Promise<ReturnType<typeof getOpenCodeSubagentPromptSettings>> => {
+  if (messages.some((message) => message.info.role === 'user'))
+    return getOpenCodeSubagentPromptSettings(session, messages)
+  const assistant = messages.findLast((message) => message.info.role === 'assistant')?.info
+  if (assistant?.role === 'assistant' && assistant.parentID) {
+    const parent = await client.session.message(
+      { sessionID: session.id, directory: session.directory, messageID: assistant.parentID },
+      { throwOnError: true }
+    )
+    return getOpenCodeSubagentPromptSettings(session, [parent.data])
+  }
+  return getOpenCodeSubagentPromptSettings(session, messages)
 }

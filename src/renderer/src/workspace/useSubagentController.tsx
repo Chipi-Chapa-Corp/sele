@@ -239,7 +239,9 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
         : direction === 'older'
           ? Math.max(0, start - pageSize)
           : Math.min(Math.max(0, (detail.turnCount ?? 0) - pageSize), start + pageSize)
-    if (nextStart === start) return
+    const pagination = detail.turnPagination
+    const cursor = direction === 'older' ? pagination?.olderCursor : pagination?.newerCursor
+    if (pagination ? direction !== 'latest' && !cursor : nextStart === start) return
     const subagentId = activeSubagentChatView.summary.id
     beginSubagentPageNavigation(subagentChatLoadRequestRef)
     subagentPageRequests.set(subagentChatLoadRequestRef, requestId)
@@ -250,8 +252,9 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
     )
     try {
       const page = await providerApi.getSubagent(selectedProviderId, selectedChatId, subagentId, {
-        startIndex: nextStart,
-        limit: pageSize
+        startIndex: pagination ? null : nextStart,
+        limit: pageSize,
+        ...(pagination && direction !== 'latest' ? { cursor: cursor!, direction } : {})
       })
       if (
         requestId !== subagentChatLoadRequestRef.current ||
@@ -264,7 +267,9 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
               ...view,
               summary: page,
               detail: page,
-              followLatest: nextStart === null || nextStart + pageSize >= (page.turnCount ?? 0),
+              followLatest: page.turnPagination
+                ? !page.turnPagination.newerCursor
+                : nextStart === null || nextStart + pageSize >= (page.turnCount ?? 0),
               pageLoading: true,
               loadState: 'ready',
               error: null

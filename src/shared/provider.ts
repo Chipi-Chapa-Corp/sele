@@ -8,7 +8,7 @@ import type { NetworkRetrySettings } from './networkRetry'
 import type { TokenCostSample, TokenUsage, TokenUsageSummary } from './tokenUsage'
 import type { AppContainerTarget } from './app'
 
-export const providerIds = ['codex', 'claude', 'copilot', 'opencode'] as const
+export const providerIds = ['codex', 'claude', 'copilot', 'opencode-v2'] as const
 export const providerReasoningEfforts = ['low', 'medium', 'high', 'xhigh'] as const
 
 export type ProviderId = (typeof providerIds)[number]
@@ -568,7 +568,7 @@ export const isProviderChatPurpose = (value: unknown): value is ProviderChatPurp
 export type ProviderLinkedChatContextOptions = {
   /** Renderer-chosen ID, used to cancel this preparation. */
   operationId: string
-  /** Sent to providers whose native compaction leaves no readable summary. */
+  /** Used when native compaction fails or leaves no readable summary. */
   summaryPrompt: string
 }
 
@@ -971,6 +971,7 @@ export type ProviderSubagent = {
 
 export type ProviderSubagentDetail = ProviderSubagent & {
   items: ProviderChatItem[]
+  turnPagination?: ProviderChatTurnPagination
   /** Coordinates of the materialized turn window; omitted by legacy adapter results. */
   itemsStartTurnIndex?: number
   turnCount?: number
@@ -1323,7 +1324,12 @@ export type ProviderApi = {
     providerId: ProviderId,
     chatId: string,
     subagentId: string,
-    window?: { startIndex: number | null; limit: number }
+    window?: {
+      startIndex: number | null
+      limit: number
+      cursor?: string
+      direction?: 'older' | 'newer'
+    }
   ) => Promise<ProviderSubagentDetail>
   cancelSubagent: (providerId: ProviderId, chatId: string, subagentId: string) => Promise<void>
   sendSubagentMessage: (

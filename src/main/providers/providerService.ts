@@ -271,8 +271,7 @@ export const getProviderConversationViews = async (
           knownConversationScopes.add(scope.key)
       }
     }
-    if (view && scope.current())
-      views.push(restoreConversationView(view, chat))
+    if (view && scope.current()) views.push(restoreConversationView(view, chat))
   }
   return views
 }
@@ -325,7 +324,8 @@ const claudeAdapter = new ClaudeProviderAdapter()
 claudeAccounts.setUsageCacheFile(join(app.getPath('userData'), 'claude-usage-cache.json'))
 const openCodeAdapter = new OpenCodeProviderAdapter()
 const connectionAdapter = (providerId: ProviderId): OpenCodeProviderAdapter => {
-  if (providerId !== 'opencode') throw new Error('Connections are not available for this provider.')
+  if (providerId !== 'opencode-v2')
+    throw new Error('Connections are not available for this provider.')
   return openCodeAdapter
 }
 
@@ -373,7 +373,7 @@ const nativeAdapters: Record<ProviderId, ProviderAdapter> = {
   codex: accountRuntimes.codex.adapter,
   claude: accountRuntimes.claude.adapter,
   copilot: withLiveChatPermissions(withProviderNetworkRetries(new CopilotProviderAdapter())),
-  opencode: withLiveChatPermissions(withProviderNetworkRetries(openCodeAdapter))
+  'opencode-v2': withLiveChatPermissions(withProviderNetworkRetries(openCodeAdapter))
 }
 
 export const importedConversations = new ImportedConversations(
@@ -393,7 +393,7 @@ const providerLabels: Record<ProviderId, string> = {
   codex: 'Codex',
   claude: 'Claude',
   copilot: 'Copilot',
-  opencode: 'OpenCode'
+  'opencode-v2': 'OpenCode'
 }
 
 const getUnavailableAccountConfiguration = (
@@ -948,7 +948,7 @@ export const providerApi: ProviderApi = {
       if (providerId === 'codex') return getCodexAccountsWithDisplayNames(options?.container)
       if (providerId === 'claude') return claudeAccounts.getWithDisplayNames(options)
       const configuration = getUnavailableAccountConfiguration(providerId)
-      if (providerId === 'opencode')
+      if (providerId === 'opencode-v2')
         return {
           ...configuration,
           accounts: [{ id: 'default', displayName: 'Default Account', active: true }]

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppContainerTarget } from '../../shared/app'
-import type { ProviderModel } from '../../shared/provider'
+import type { ProviderModel, ProviderId } from '../../shared/provider'
 import type { ProviderConnection } from '../../shared/providerConnections'
 import { providerApi } from './providerApi'
 import { getContainerTargetKey } from './containerSelection'
@@ -13,12 +13,14 @@ import {
 
 export function useOpenCodeProviders({
   enabled,
+  providerId = 'opencode-v2',
   container,
   models,
   model,
   revision
 }: {
   enabled: boolean
+  providerId?: ProviderId
   container: AppContainerTarget | null
   models: ProviderModel[]
   model: string
@@ -30,15 +32,15 @@ export function useOpenCodeProviders({
     connections: ProviderConnection[]
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const sourceKey = JSON.stringify(container)
-  const targetKey = getContainerTargetKey(container)
+  const sourceKey = JSON.stringify([providerId, container])
+  const targetKey = `${providerId}:${getContainerTargetKey(container)}`
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision reloads changed connections
   useEffect(() => {
     if (!enabled) return
     let active = true
     setError(null)
     void providerApi
-      .getConnections('opencode', { container: JSON.parse(sourceKey) })
+      .getConnections(providerId, { container: JSON.parse(sourceKey)[1] })
       .then((connections) => {
         if (active) setSnapshot({ sourceKey, connections })
       })
@@ -48,7 +50,7 @@ export function useOpenCodeProviders({
     return () => {
       active = false
     }
-  }, [enabled, sourceKey, revision])
+  }, [enabled, providerId, sourceKey, revision])
   const providers = useMemo(
     () =>
       enabled
@@ -59,7 +61,12 @@ export function useOpenCodeProviders({
         : [],
     [enabled, snapshot, sourceKey, models]
   )
-  const selectedId = selectOpenCodeProvider(providers, remembered[targetKey], model)
+  const selectedId = selectOpenCodeProvider(
+    providers,
+    remembered[targetKey] ??
+      (providerId === 'opencode-v2' ? remembered[getContainerTargetKey(container)] : undefined),
+    model
+  )
   const select = (id: string): void => {
     const next = { ...remembered, [targetKey]: id }
     writeOpenCodeProviderPreferences(next)

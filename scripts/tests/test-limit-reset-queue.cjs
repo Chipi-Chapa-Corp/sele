@@ -15,6 +15,7 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import { UsageIndicator } from './src/renderer/src/components/UsageIndicator'
+            import { ChatDetailItem } from './src/renderer/src/components/ChatDetailItem'
             import { LimitResetQueueMessages } from './src/renderer/src/components/LimitResetQueueMessages'
             import './src/renderer/src/assets/styles/tokens.css'
             import './src/renderer/src/assets/styles/base.css'
@@ -33,13 +34,34 @@ if (!process.versions.electron) {
                     window.dispatchEvent(new Event('sele-limit-reset-queue-changed'))
                   }}/>
               </div>
+              <div style={{display:'flex',flexDirection:'column',gap:'0.7rem'}}>
+              <ChatDetailItem item={{type:'pendingMessage',kind:'steering',id:'steering',content:'Adjust the approach',createdAt:1799999000000}} />
+              <ChatDetailItem item={{type:'pendingMessage',kind:'queued',id:'queued',content:'Continue with the next task',createdAt:1799999000000}} />
               <LimitResetQueueMessages key={window.newChat ? "draft" : "chat"} providerId="codex" target={window.newChat ? {draftKey:"new-draft"} : "chat"} />
+              </div>
             </main>))
             window.renderFixture()
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
         },
+        plugins: [
+          {
+            name: 'unused-editor-workers',
+            setup(build) {
+              build.onResolve({ filter: /\?worker$/ }, (args) => ({
+                path: args.path,
+                namespace: 'unused-worker'
+              }))
+              build.onLoad({ filter: /.*/, namespace: 'unused-worker' }, () => ({
+                contents:
+                  'export default class { constructor() { throw new Error("Editor workers are outside this message-rendering test") } }',
+                loader: 'js'
+              }))
+            }
+          }
+        ],
+        loader: { '.ttf': 'file' },
         bundle: true,
         platform: 'browser',
         jsx: 'automatic',
@@ -89,7 +111,7 @@ if (!process.versions.electron) {
     const win = new BrowserWindow({
       show: false,
       width: 800,
-      height: 500,
+      height: 700,
       webPreferences: { offscreen: true, backgroundThrottling: false }
     })
     let code = 0
@@ -187,9 +209,10 @@ if (!process.versions.electron) {
       await run('window.finishSave()')
       await settle()
       assert.equal(await run('document.querySelector("dialog")'), null)
-      await click('Show reset queue')
       assert.equal(
-        await run('document.querySelector(".limit-reset-queue p").textContent'),
+        await run(
+          'document.querySelector(".limit-reset-queue .chat-detail__message").textContent.trim()'
+        ),
         'Continue after reset'
       )
       assert.equal(
@@ -197,11 +220,29 @@ if (!process.versions.electron) {
         '2027-01-15T08:00:00.000Z'
       )
       assert.equal(
-        await run('document.querySelector(".chat-plan__toggle time").textContent'),
+        await run('document.querySelector(".limit-reset-queue time").textContent'),
         'in 3h 2m'
       )
       assert.equal(
-        await run('document.querySelector(".chat-plan__toggle time").title.includes("2027")'),
+        await run('document.querySelector(".limit-reset-queue time").title.includes("2027")'),
+        true
+      )
+      assert.deepEqual(
+        await run(
+          'Array.from(document.querySelectorAll(".chat-detail__pending-message-label"), e => e.textContent)'
+        ),
+        ['Steering', 'Queue', 'On reset in 3h 2m']
+      )
+      assert.equal(
+        await run('document.querySelector(".limit-reset-queue .chat-plan__toggle")'),
+        null
+      )
+      assert.equal(
+        await run(`(() => {
+        const bubbles = [...document.querySelectorAll('.chat-detail__message--user')]
+        const styles = bubbles.map(bubble => getComputedStyle(bubble))
+        return styles.every(style => style.borderStyle === 'dashed' && style.backgroundColor === styles[0].backgroundColor)
+      })()`),
         true
       )
       // A remount reads the persisted queue again.
@@ -217,7 +258,7 @@ if (!process.versions.electron) {
           (await win.webContents.capturePage()).toPNG()
         )
       }
-      await click('Remove reset prompt')
+      await click('Delete queued message')
       assert.equal(await run('document.querySelector(".limit-reset-queue")'), null)
       await run('window.newChat=true;window.delay=false;window.renderFixture()')
       await settle()
@@ -230,7 +271,9 @@ if (!process.versions.electron) {
       await save()
       assert.deepEqual(await run('window.lastQueuedTarget'), { draftKey: 'new-draft' })
       assert.equal(
-        await run('document.querySelector(".limit-reset-queue .chat-plan__current").textContent'),
+        await run(
+          'document.querySelector(".limit-reset-queue .chat-detail__message").textContent.trim()'
+        ),
         'Start a new chat after reset'
       )
       console.log(

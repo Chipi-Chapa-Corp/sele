@@ -1671,6 +1671,14 @@ export const registerProviderIpc = (): void => {
             ? providerSubagentTurnPageSize
             : requireChatTurnLimit(requested.limit)
       }
+      const cursor = requested.cursor
+      if (cursor !== undefined && (typeof cursor !== 'string' || !cursor))
+        throw new Error('Invalid subagent history cursor')
+      if (cursor !== undefined)
+        Object.assign(window, {
+          cursor,
+          direction: requested.direction === 'newer' ? 'newer' : 'older'
+        })
       const detail = await providerApi.getSubagent(
         requireProviderId(providerId),
         requireChatId(chatId),

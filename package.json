@@ -39,7 +39,7 @@
     "test:persistent-chat-cache": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/PersistentChatHistory.test.mjs src/renderer/src/chatLoadRecovery.test.mjs && node scripts/tests/test-persistent-chat-cache.cjs",
     "test:conversation-views": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/conversationViews.test.mjs src/main/providers/registerProviderIpc.test.mjs src/main/providers/ProviderUpdatePerformance.test.mjs src/main/providers/PersistentChatHistory.test.mjs && node scripts/tests/test-conversation-views.cjs",
     "test:persistent-chat-opening": "node scripts/tests/test-persistent-chat-opening.cjs",
-    "test:chat-state": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatOpening.test.mjs src/renderer/src/chatReadState.test.mjs src/renderer/src/renderCaches.test.mjs src/renderer/src/chatMountQueue.test.mjs src/renderer/src/markdownPlan.test.mjs src/renderer/src/networkRetrySettings.test.mjs src/renderer/src/chatModelPreferences.test.mjs src/renderer/src/chatConversationModel.test.mjs src/renderer/src/subagentLoading.test.mjs src/renderer/src/subagentTimeline.test.mjs src/renderer/src/chatDetailWindow.test.mjs src/renderer/src/chatLoadRecovery.test.mjs src/renderer/src/conversationViews.test.mjs src/renderer/src/chatViewportTransitions.test.mjs src/renderer/src/messageModelLabel.test.mjs src/renderer/src/chatMessageResources.test.mjs src/renderer/src/localMediaCache.test.mjs src/renderer/src/chatWriteAccess.test.mjs src/renderer/src/components/ChatConfigSectionHeader.test.mjs src/renderer/src/components/ChatListItem.test.mjs src/renderer/src/components/SymbolIcons.test.mjs src/shared/chatTurnOutcome.test.mjs src/renderer/src/chatTerminalActivity.test.mjs src/renderer/src/chatTerminalPolling.test.mjs src/main/providers/sidebarChatStatus.test.mjs src/main/providers/chatTerminalTasks.test.mjs src/renderer/src/modelCatalogLoad.test.mjs src/renderer/src/renderableText.test.mjs src/renderer/src/toolDisplayLabel.test.mjs src/renderer/src/workingStepDisclosure.test.mjs src/renderer/src/workingElapsedTime.test.mjs src/renderer/src/visualizationReference.test.mjs",
+    "test:chat-state": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatOpening.test.mjs src/renderer/src/chatReadState.test.mjs src/renderer/src/renderCaches.test.mjs src/renderer/src/chatMountQueue.test.mjs src/renderer/src/markdownPlan.test.mjs src/renderer/src/networkRetrySettings.test.mjs src/renderer/src/chatModelPreferences.test.mjs src/renderer/src/chatConversationModel.test.mjs src/renderer/src/subagentLoading.test.mjs src/renderer/src/subagentTimeline.test.mjs src/renderer/src/chatDetailWindow.test.mjs src/renderer/src/chatPageRecovery.test.mjs src/renderer/src/chatLoadRecovery.test.mjs src/renderer/src/conversationViews.test.mjs src/renderer/src/chatViewportTransitions.test.mjs src/renderer/src/messageModelLabel.test.mjs src/renderer/src/chatMessageResources.test.mjs src/renderer/src/localMediaCache.test.mjs src/renderer/src/chatWriteAccess.test.mjs src/renderer/src/components/ChatConfigSectionHeader.test.mjs src/renderer/src/components/ChatListItem.test.mjs src/renderer/src/components/SymbolIcons.test.mjs src/shared/chatTurnOutcome.test.mjs src/renderer/src/chatTerminalActivity.test.mjs src/renderer/src/chatTerminalPolling.test.mjs src/main/providers/sidebarChatStatus.test.mjs src/main/providers/chatTerminalTasks.test.mjs src/renderer/src/modelCatalogLoad.test.mjs src/renderer/src/renderableText.test.mjs src/renderer/src/toolDisplayLabel.test.mjs src/renderer/src/workingStepDisclosure.test.mjs src/renderer/src/workingElapsedTime.test.mjs src/renderer/src/visualizationReference.test.mjs",
     "test:opencode": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/opencode/*.test.mjs",
     "test:continue-on-limit-reset": "node scripts/tests/test-continue-on-limit-reset.cjs",
     "test:copilot": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/providers/copilot/*.test.mjs",
@@ -100,7 +100,7 @@
     "test:e2e": "node scripts/e2e/run-e2e.cjs",
     "test:performance-pipeline": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/main/database/readCache.test.mjs src/main/database/tokenUsageAccumulator.test.mjs src/main/providers/ProviderUpdatePerformance.test.mjs src/main/providers/transcriptProjection/recordChanges.test.mjs src/main/providers/codex/CodexRecordBatch.test.mjs src/renderer/src/markdownPlan.test.mjs",
     "test:performance-accounting": "node scripts/tests/test-performance-accounting.cjs",
-    "test:progressive-markdown": "node scripts/tests/test-progressive-markdown.cjs && node scripts/tests/test-markdown-dev-worker.cjs"
+    "test:progressive-markdown": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/markdownDiffRendering.test.mjs && node scripts/tests/test-progressive-markdown.cjs && node scripts/tests/test-markdown-dev-worker.cjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.263",
@@ -111,7 +111,7 @@
     "@lydell/node-pty": "^1.1.0",
     "@modelcontextprotocol/ext-apps": "^2.0.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@opencode-ai/sdk": "^1.18.29",
+    "@opencode/client": "^2.2.0",
     "@react-symbols/icons": "^1.4.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-webgl": "^0.19.0",
@@ -150,7 +150,8 @@
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "typescript": "^5.9.3",
-    "vite": "^7.2.6"
+    "vite": "^7.2.6",
+    "@opencode-ai/sdk": "^1.18.29"
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true,

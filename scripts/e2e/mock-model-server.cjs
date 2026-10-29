@@ -13,7 +13,7 @@ const fs = require('node:fs')
 
 const released = new Set()
 const shellToolNames = /^(shell|shell_command|exec_command|local_shell|bash|Bash|powershell)$/
-const agentToolNames = /^(Task|Agent|task|spawn_agent)$/
+const agentToolNames = /^(Task|Agent|task|spawn_agent|subagent)$/
 const waitToolNames = /^(wait_agent)$/
 
 function textOf(content) {

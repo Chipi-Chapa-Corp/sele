@@ -5,7 +5,7 @@ const providerLabels = {
   codex: 'Codex',
   claude: 'Claude',
   copilot: 'Copilot',
-  opencode: 'OpenCode'
+  'opencode-v2': 'OpenCode'
 }
 
 // In-page helper library, evaluated once per document.
@@ -252,9 +252,7 @@ class Sele {
       if (await this.page.eval(selected)) return
       const row = `window.__sele.chatRow(${target})?.querySelector('.chat-list-item__main')`
       if (await this.page.eval(`!!${row}`))
-        await this.page
-          .click(`(${row})`, { offsetX: 40 })
-          .catch(() => {})
+        await this.page.click(`(${row})`, { offsetX: 40 }).catch(() => {})
       await sleep(300)
     }
     await this.page.waitFor(selected, { timeout: 5000, message: 'chat did not open' })

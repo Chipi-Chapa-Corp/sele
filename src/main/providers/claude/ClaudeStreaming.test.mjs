@@ -76,7 +76,7 @@ test('a streamed tool call appears as soon as its block starts and fills in as i
   )
   assert.deepEqual(describe(render(partialMessages)), [
     { user: 'Build it' },
-    { working: [{ message: 'Now let me build it:' }, { tool: 'Bash', command: null }] }
+    { working: [{ message: 'Now let me build it:' }, { tool: 'Ran a command', command: null }] }
   ])
 
   applyClaudeStreamEvent(
@@ -92,7 +92,7 @@ test('a streamed tool call appears as soon as its block starts and fills in as i
     {
       working: [
         { message: 'Now let me build it:' },
-        { tool: 'npm run bui', command: 'npm run bui' }
+        { tool: 'Ran npm run bui', command: 'npm run bui' }
       ]
     }
   ])
@@ -110,7 +110,7 @@ test('a streamed tool call appears as soon as its block starts and fills in as i
     {
       working: [
         { message: 'Now let me build it:' },
-        { tool: 'npm run build', command: 'npm run build' }
+        { tool: 'Ran npm run build', command: 'npm run build' }
       ]
     }
   ])

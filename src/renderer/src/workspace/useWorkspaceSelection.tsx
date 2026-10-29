@@ -434,6 +434,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
                         ...detail,
                         items: currentView.detail.items,
                         itemsStartTurnIndex: currentView.detail.itemsStartTurnIndex,
+                        turnPagination: currentView.detail.turnPagination,
                         turnCount: Math.max(
                           currentView.detail.turnCount ?? 0,
                           detail.turnCount ?? 0

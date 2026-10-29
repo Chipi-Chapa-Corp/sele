@@ -54,7 +54,10 @@ if (!process.versions.electron) {
             import { getChatItems, CodexTranscriptProjection } from './src/main/providers/codex/CodexItemRenderers'
             import { buildChatConversationModel, getConversationTailWorkingStep } from './src/renderer/src/chatConversationModel'
             import { getWorkingStepProgressPolicy } from './src/renderer/src/workingStepDisclosure'
+            import { ConversationMessagesContent } from './src/renderer/src/workspace/components/ConversationMessagesContent'
             import './src/renderer/src/assets/styles/tokens.css'
+            import './src/renderer/src/workspace/styles/conversation-messages.css'
+            import './src/renderer/src/workspace/styles/conversation-messages-shell.css'
             window.testNow = 1700003665000
             Date.now = () => window.testNow
             const root = createRoot(document.getElementById('root'))
@@ -106,6 +109,40 @@ if (!process.versions.electron) {
                     hasNextWorkingStep={model.workingStepIdsWithNextWorkingStep.has(item.id)} />)}
                 </React.Fragment>)}
               </React.Fragment>))
+            }
+            const handoffRefs = {
+              contentRef: {current:null}, subagentContentRef: {current:null},
+              chatSearchContentRef: {current:null}, chatAutoScrollEnabledRef: {current:false}
+            }
+            window.renderSteeringHandoff = (stage = 'pending') => {
+              const echoed = ['echo', 'working', 'finished'].includes(stage)
+              const items = [
+                {type:'message', id:'handoff-user', role:'user', content:'Use cleaned HTML'},
+                {type:'working', id:'handoff-before', status:'worked', startedAt:1700000000000,
+                  completedAt:1700000092000, items:[{type:'message', content:'Checking the preview path'}]},
+                ...(echoed ? [
+                  {type:'message', id:'handoff-echo', role:'user', kind:'steering', label:'Steered with',
+                    content:'Should search change too?\\n\\nAnswer: Keep cached text', createdAt:1700000092000},
+                  ...(stage === 'echo' ? [] : [{type:'working', id:'handoff-after',
+                    status:stage === 'finished' ? 'worked' : 'working',
+                    items:[{type:'message', content:'Continuing with cached text search'}]}])
+                ] : [{type:'pendingMessage', id:'handoff-pending', kind:stage === 'queued' ? 'queued' : 'steering',
+                  content:'Should search change too?\\n\\nAnswer: Keep cached text', createdAt:1700000092000,
+                  editable:stage === 'local' || stage === 'paused' || stage === 'queued'}])
+              ]
+              const model = buildChatConversationModel(items)
+              flushSync(() => root.render(<ConversationMessagesContent key="steering-handoff"
+                {...handoffRefs} selectedChat={{id:'handoff',providerId:'codex'}} selectedChatKey="codex:handoff"
+                chatHasActiveTurn={!['finished','paused'].includes(stage)} chatKnown={true} chatLoadState="ready"
+                chatMediaStartIndex={0} chatMediaTotalCount={model.turns.length} visibleChatItems={items}
+                subagentVisibleChatItems={[]} subagentChatConversationModel={{turns:[]}}
+                selectedChatCommitMarkers={[]} selectedChatSubagents={[]} renderedChatTurns={model.turns}
+                effectiveChatTurnWindow={{startIndex:0}} scrollChatContentToBottom={() => {}}
+                renderChatTurn={(_, turn) => <div className="chat-detail__turn">{turn.items.map(item =>
+                  <ChatDetailItem key={item.id} item={item} onEditPendingMessage={() => {}}
+                    progressDisclosureTarget={model.steeredWorkingStepDisclosureTargets.get(item.id)}
+                    progressSettings={{expandProgressOnStart:true,collapseProgressOnFinish:true}} />
+                )}</div>} />))
             }
             window.renderThought = (stage = 'thinking', unloaded = false) => {
               const thought = {type:'message', id:'thought', kind:'reasoning', status:stage === 'thinking' ? 'inProgress' : 'completed',
@@ -262,6 +299,13 @@ if (!process.versions.electron) {
         [true, true, true],
         'internal steers do not collapse earlier progress'
       )
+      assert.deepEqual(
+        await run(
+          `[...document.querySelectorAll('.chat-detail__working-label')].map(e => e.textContent.trim())`
+        ),
+        ['Work so far', 'Work so far', 'Working'],
+        'completed steering segments do not imply that the active chain is finished'
+      )
       await renderSteering('completed')
       assert.deepEqual(
         await steeringOpenStates(),
@@ -312,6 +356,62 @@ if (!process.versions.electron) {
         await steeringOpenStates(),
         [true, true, true],
         'both disabled collapse settings preserve the whole chain'
+      )
+      await run('window.renderSteeringHandoff()')
+      await run('new Promise(resolve => setTimeout(resolve, 250))')
+      const handoffState = () =>
+        run(`({
+        waiting:document.querySelector('.chat-detail__pending-message-label')?.textContent,
+        activity:[...document.querySelectorAll('[aria-label="Agent working"]')].map(e => e.textContent.trim()),
+        edit:!!document.querySelector('[aria-label="Edit steering message"]'),
+        beforePending:!!document.querySelector('.chat-detail__tool-placeholder')?.nextElementSibling?.querySelector('.chat-detail__message-block--pending')
+      })`)
+      assert.deepEqual(
+        await handoffState(),
+        {
+          waiting: 'Steering',
+          activity: ['Working… · 59m 39s'],
+          edit: false,
+          beforePending: true
+        },
+        'a delayed echo leaves clear activity before the waiting answer'
+      )
+      if (process.env.SELE_STEERING_SCREENSHOT) {
+        await fs.writeFile(
+          process.env.SELE_STEERING_SCREENSHOT,
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
+      await run("window.renderSteeringHandoff('local')")
+      assert.equal((await handoffState()).waiting, 'Steering')
+      assert.equal((await handoffState()).edit, true)
+      await run("window.renderSteeringHandoff('paused')")
+      assert.deepEqual((await handoffState()).activity, [], 'restored paused steering stays idle')
+      await run("window.renderSteeringHandoff('queued')")
+      assert.equal((await handoffState()).waiting, 'Queue')
+      assert.deepEqual(
+        (await handoffState()).activity,
+        [],
+        'queue alone does not revive finished work'
+      )
+      await run("window.renderSteeringHandoff('echo')")
+      assert.equal((await handoffState()).waiting, 'Steered with')
+      assert.equal(
+        (await handoffState()).activity.length,
+        1,
+        'activity survives the echo before output'
+      )
+      await run("window.renderSteeringHandoff('working')")
+      assert.equal((await handoffState()).activity.length, 1, 'real activity replaces the fallback')
+      assert.equal(
+        await run(`document.querySelector('.chat-detail__working-label').textContent.trim()`),
+        'Work so far · 1m 32s'
+      )
+      await run("window.renderSteeringHandoff('finished')")
+      assert.deepEqual((await handoffState()).activity, [])
+      assert.equal(
+        await run(`document.querySelector('.chat-detail__working-label').textContent.trim()`),
+        'Worked · 1m 32s'
       )
       const settle = () => run('new Promise(resolve => setTimeout(resolve, 80))')
       const thoughtState = () =>

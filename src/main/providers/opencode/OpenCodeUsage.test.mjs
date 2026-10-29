@@ -241,3 +241,11 @@ test('completed assistant messages do not end a still-active tool loop', () => {
     'stopped'
   )
 })
+
+test('maps native v2 usage reset timestamps', () => {
+  const resetsAt = 1793220000000
+  assert.equal(
+    mapOpenCodeGoUsageToRateLimits({ rolling: { percent: 25, resetsAt } })[0].resetsAt,
+    resetsAt
+  )
+})

@@ -120,7 +120,7 @@ export type GitSyncControllerDependencies = {
   >
   gitBranchActionState: SendState
   setGitBranchActionState: React.Dispatch<React.SetStateAction<SendState>>
-  configProviderId: 'codex' | 'claude' | 'copilot' | 'opencode'
+  configProviderId: 'codex' | 'claude' | 'copilot' | 'opencode-v2'
   untrackedFilesHiddenForPerformance: boolean
   untrackedFilesAiDisabled: boolean
 }
@@ -133,7 +133,7 @@ export type SubagentControllerDependencies = {
   markSelectedChatSeen: () => void
   subagents: readonly ProviderSubagent[]
   activeSubagentChatView: SubagentChatView | null
-  selectedProviderId: 'codex' | 'claude' | 'copilot' | 'opencode' | undefined
+  selectedProviderId: 'codex' | 'claude' | 'copilot' | 'opencode-v2' | undefined
   selectedChatId: string | undefined
   selectedChatKey: string | null
   subagentChatLoadRequestRef: React.RefObject<number>
@@ -162,7 +162,7 @@ export type CommitControllerDependencies = {
   selectedChat: ProviderChat | null
   chatDetail: ProviderChatDetail | null
   changesCwd: string | null
-  newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode'
+  newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode-v2'
   changesProjectCwd: string | null
   projectCommitInProgress: boolean
   commitInFlightProjectKeysRef: React.RefObject<Set<string>>

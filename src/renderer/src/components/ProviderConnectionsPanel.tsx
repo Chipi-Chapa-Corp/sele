@@ -23,12 +23,18 @@ const describeStatus = (status: ProviderConnectionStatus): string =>
       : `Couldn't verify: ${status.message}`
 
 type Props = {
+  providerId?: 'opencode-v2'
   container: AppContainerTarget
   onChanged?: (providerId?: string) => void
   renderHeader?: (refreshButton: ReactNode) => ReactNode
 }
 
-export function ProviderConnectionsPanel({ container, onChanged, renderHeader }: Props): ReactNode {
+export function ProviderConnectionsPanel({
+  providerId = 'opencode-v2',
+  container,
+  onChanged,
+  renderHeader
+}: Props): ReactNode {
   const [providers, setProviders] = useState<ProviderConnection[]>([])
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
@@ -61,7 +67,7 @@ export function ProviderConnectionsPanel({ container, onChanged, renderHeader }:
   }, [])
   const reload = useCallback(
     async (check = false): Promise<ProviderConnection[]> => {
-      const result = await providerApi.getConnections('opencode', {
+      const result = await providerApi.getConnections(providerId, {
         container: JSON.parse(sourceKey),
         ...(check ? { forceRefresh: true } : {})
       })
@@ -93,13 +99,13 @@ export function ProviderConnectionsPanel({ container, onChanged, renderHeader }:
     // Show saved connections at once, then test any without a recent result in the background.
     void (async () => {
       try {
-        const result = await providerApi.getConnections('opencode', source)
+        const result = await providerApi.getConnections(providerId, source)
         if (!active) return
         setProviders(result)
         setLoading(false)
         if (!openCodeConnectionsNeedCheck(result)) return
         setChecking(true)
-        const checked = await providerApi.getConnections('opencode', {
+        const checked = await providerApi.getConnections(providerId, {
           ...source,
           forceRefresh: true
         })
@@ -124,7 +130,7 @@ export function ProviderConnectionsPanel({ container, onChanged, renderHeader }:
       pendingAttempt.current = null
       if (pending)
         void providerApi
-          .cancelConnection('opencode', pending.attemptId, source)
+          .cancelConnection(providerId, pending.attemptId, source)
           .catch((error) => console.error('[ProviderConnectionsPanel:cancel]', error))
     }
   }, [sourceKey])
@@ -165,7 +171,7 @@ export function ProviderConnectionsPanel({ container, onChanged, renderHeader }:
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async (): Promise<void> => {
       try {
-        const result = await providerApi.getConnectionAttempt('opencode', attempt.attemptId, {
+        const result = await providerApi.getConnectionAttempt(providerId, attempt.attemptId, {
           container: JSON.parse(sourceKey)
         })
         if (!active) return
@@ -221,9 +227,9 @@ export function ProviderConnectionsPanel({ container, onChanged, renderHeader }:
             )
           }
     try {
-      const result = await providerApi.connectProvider('opencode', input, options)
+      const result = await providerApi.connectProvider(providerId, input, options)
       if (!alive.current) {
-        if (result) await providerApi.cancelConnection('opencode', result.attemptId, options)
+        if (result) await providerApi.cancelConnection(providerId, result.attemptId, options)
         return
       }
       setKey('')
@@ -244,7 +250,7 @@ export function ProviderConnectionsPanel({ container, onChanged, renderHeader }:
     setBusy(true)
     setError(null)
     try {
-      await providerApi.cancelConnection('opencode', attempt.attemptId, options)
+      await providerApi.cancelConnection(providerId, attempt.attemptId, options)
       if (alive.current) {
         pendingAttempt.current = null
         setAttempt(null)
@@ -261,7 +267,7 @@ export function ProviderConnectionsPanel({ container, onChanged, renderHeader }:
     setBusy(true)
     setError(null)
     try {
-      await providerApi.completeConnection('opencode', attempt.attemptId, code.trim(), options)
+      await providerApi.completeConnection(providerId, attempt.attemptId, code.trim(), options)
       if (alive.current && pendingAttempt.current?.attemptId === attempt.attemptId)
         await finish(attemptProvider.current)
     } catch (error) {
@@ -275,7 +281,7 @@ export function ProviderConnectionsPanel({ container, onChanged, renderHeader }:
     setError(null)
     setNotice('')
     try {
-      await providerApi.deleteConnection('opencode', credentialId, options)
+      await providerApi.deleteConnection(providerId, credentialId, options)
       if (alive.current) {
         setNotice('Connection removed.')
         changed.current?.()

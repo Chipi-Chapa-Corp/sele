@@ -2,17 +2,16 @@ import { LimitResetQueueMessages } from '../../components/LimitResetQueueMessage
 import { useEffect, useState, type ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { getComposerDraftScopeKey } from '../../composerDraft'
-import { BellOff, Download, FolderPlus, PackagePlus, X } from 'lucide-react'
+import { FolderPlus, PackagePlus, X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { Dropdown } from '../../components/Dropdown'
 import { MessageBox } from '../../components/MessageBox'
-import { ProviderIcon } from '../../components/ProviderIcon'
 import { ApprovalRequestBox } from '../../components/ApprovalRequestBox'
 import { ElicitationRequestBox } from '../../components/ElicitationRequestBox'
 import { UserInputRequestBox } from '../../components/UserInputRequestBox'
 import { appChatManualDropdownValue } from '../../settings'
 import { getContainerTargetKey } from '../../containerSelection'
-import { providerLabels } from '../../providerSettings'
+import { ProviderUpdateBanners } from '../../components/ProviderUpdateBanners'
 import { RequestErrorBanner } from '../../components/RequestErrorBanner'
 import { OpenCodeConnectionError } from '../../components/OpenCodeConnectionError'
 import { newSessionNoProjectValue, newSessionProjectPlaceholderValue } from '../controllerTypes'
@@ -62,7 +61,6 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     effectiveReasoningEffort,
     effectiveSandboxMode,
     effectiveServiceTier,
-    getProviderUpdateSummary,
     handleChatPresetChange,
     handleActionsChange,
     handleApprovalModeChange,
@@ -118,10 +116,10 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     pendingUserInput,
     projectOptions,
     providerResourcesRevision,
-    providerUpdateError,
+    providerUpdateErrors,
     providerUpdateInProgress,
-    providerUpdateState,
-    providerUpdateSuggestion,
+    updatingProviderUpdateKey,
+    providerUpdateSuggestions,
     refreshAccountUsage,
     remoteContainerSuggestionsError,
     remoteContainerSuggestionsLoading,
@@ -242,65 +240,17 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             </div>
           </section>
         )}
-        {!selectedChat && newChatOpen && providerUpdateSuggestion && (
-          <section
-            className="chat-approval chat-provider-update"
-            aria-label={`${providerLabels[providerUpdateSuggestion.providerId]} update suggestion`}
-          >
-            <div className="chat-approval__main">
-              <span className="chat-approval__label chat-provider-update__label">
-                <ProviderIcon providerId={providerUpdateSuggestion.providerId} aria-hidden="true" />
-                <span>{providerLabels[providerUpdateSuggestion.providerId]} update available</span>
-              </span>
-              <span
-                className="chat-approval__summary"
-                title={getProviderUpdateSummary(providerUpdateSuggestion)}
-              >
-                {getProviderUpdateSummary(providerUpdateSuggestion)}
-              </span>
-              {providerUpdateError && (
-                <span className="chat-approval__error" role="status">
-                  {providerUpdateError}
-                </span>
-              )}
-            </div>
-            <div className="chat-approval__actions">
-              <Button
-                disabled={providerUpdateState === 'updating'}
-                callback={handleSkipProviderUpdate}
-                dropdownActions={[
-                  {
-                    id: 'never-suggest-version',
-                    label: 'Never suggest this version',
-                    title: `Never suggest ${providerUpdateSuggestion.latestVersion}`,
-                    disabled: providerUpdateState === 'updating',
-                    icon: <X aria-hidden="true" />,
-                    callback: handleNeverSuggestProviderUpdateVersion
-                  },
-                  {
-                    id: 'never-suggest',
-                    label: 'Never suggest',
-                    disabled: providerUpdateState === 'updating',
-                    icon: <BellOff aria-hidden="true" />,
-                    callback: handleNeverSuggestProviderUpdate
-                  }
-                ]}
-                dropdownLabel="Skip update options"
-                dropdownMenuAlign="end"
-                dropdownPlacement="top"
-                icon={<X aria-hidden="true" />}
-                label={<span>Skip</span>}
-                theme="secondary"
-              />
-              <Button
-                disabled={providerUpdateState === 'updating'}
-                callback={() => void handleUpdateProvider()}
-                icon={<Download aria-hidden="true" />}
-                label={<span>{providerUpdateState === 'updating' ? 'Updating' : 'Update'}</span>}
-                theme="primary"
-              />
-            </div>
-          </section>
+        {!selectedChat && newChatOpen && (
+          <ProviderUpdateBanners
+            providerUpdateSuggestions={providerUpdateSuggestions}
+            providerUpdateErrors={providerUpdateErrors}
+            updatingProviderUpdateKey={updatingProviderUpdateKey}
+            providerUpdateInProgress={providerUpdateInProgress}
+            handleSkipProviderUpdate={handleSkipProviderUpdate}
+            handleNeverSuggestProviderUpdate={handleNeverSuggestProviderUpdate}
+            handleNeverSuggestProviderUpdateVersion={handleNeverSuggestProviderUpdateVersion}
+            handleUpdateProvider={handleUpdateProvider}
+          />
         )}
         {!selectedChat && newChatOpen && worktreeCreationState !== 'idle' && (
           <section className="chat-approval chat-worktree-creation" aria-label="Worktree creation">
@@ -467,20 +417,19 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
       )}
       <div className="chat-panel__composer-input">
         <div className="chat-panel__composer-inner">
-          {(selectedChat || newChatOpen) && !activeSubagentChatView && (
+          {!selectedChat && newChatOpen && !activeSubagentChatView && (
             <LimitResetQueueMessages
-              key={JSON.stringify([
-                selectedChat?.providerId ?? newSessionProvider,
-                limitResetTarget
-              ])}
-              providerId={selectedChat?.providerId ?? newSessionProvider}
+              key={JSON.stringify([newSessionProvider, limitResetTarget])}
+              providerId={newSessionProvider}
               target={limitResetTarget}
             />
           )}
           <MessageBox
             active={activeSubagentChatView ? false : editingMessage ? false : chatHasActiveTurn}
             activePrimaryMode={
-              chatHasPendingSteeringMessage ? 'queue' : effectiveAppSettings.chat.defaultActiveAction
+              chatHasPendingSteeringMessage
+                ? 'queue'
+                : effectiveAppSettings.chat.defaultActiveAction
             }
             activeSteeringEnabled={!chatHasPendingSteeringMessage}
             actions={appSettings.actions}

@@ -132,6 +132,7 @@ export const refreshSubagentDetail = (
       ...incoming,
       items: current.items,
       itemsStartTurnIndex: current.itemsStartTurnIndex,
+      turnPagination: current.turnPagination,
       turnCount: Math.max(current.turnCount ?? 0, incoming.turnCount ?? 0)
     }
   }

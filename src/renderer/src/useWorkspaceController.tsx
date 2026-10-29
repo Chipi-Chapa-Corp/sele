@@ -211,16 +211,9 @@ import {
   readStoredContainerSelection,
   writeStoredContainerSelection
 } from './containerSelection'
-import {
-  getFallbackModels,
-  getProviderUpdatePreference,
-  mergeSettingsProviderSkills,
-  readStoredProviderUpdatePreferences,
-  shouldSuggestProviderUpdate,
-  writeStoredProviderUpdatePreferences,
-  type ProviderUpdatePreferences,
-  type ProviderUpdateSuggestion
-} from './providerSettings'
+import { getFallbackModels, mergeSettingsProviderSkills } from './providerSettings'
+import { useProviderUpdates } from './useProviderUpdates'
+import { getProviderLabels } from './providerLabels'
 import {
   isAppProjectSettingOverridden,
   setAppProjectSettingOverrideValue,
@@ -305,7 +298,6 @@ import {
   type RecentChatCacheEntry,
   type LoadState,
   type NewSessionLocation,
-  type ProviderUpdateState,
   type ScopedGitOperationError,
   type SendState,
   type SourceAvailabilityState,
@@ -320,8 +312,7 @@ import {
   applyWindowControlAppearancePreferences,
   getApprovalSummary,
   getGitRecoveryActionIcon,
-  getGitRecoveryRememberLabel,
-  getProviderUpdateSummary
+  getGitRecoveryRememberLabel
 } from './workspace/gitControllerUtils'
 import {
   approvalTypeLabels,
@@ -540,12 +531,6 @@ export const useWorkspaceController = () => {
     resolving: false,
     error: null
   })
-  const [providerUpdateSuggestion, setProviderUpdateSuggestion] =
-    useState<ProviderUpdateSuggestion | null>(null)
-  const [providerUpdateState, setProviderUpdateState] = useState<ProviderUpdateState>('idle')
-  const [providerUpdateError, setProviderUpdateError] = useState<string | null>(null)
-  const [providerUpdatePreferences, setProviderUpdatePreferences] =
-    useState<ProviderUpdatePreferences>(readStoredProviderUpdatePreferences)
   const [containerSuggestions, setContainerSuggestions] = useState<AppContainerSuggestion[]>([])
   const [remoteContainerSuggestions, setRemoteContainerSuggestions] = useState<
     AppContainerSuggestion[]
@@ -684,6 +669,10 @@ export const useWorkspaceController = () => {
         : [],
     [newSessionContainerKey, newSessionSourceAvailability]
   )
+  const providerRuntimeLabels = useMemo(
+    () => getProviderLabels(newSessionAvailableProviderIds),
+    [newSessionAvailableProviderIds]
+  )
   const newSessionProviderAvailable = newSessionAvailableProviderIds.includes(newSessionProvider)
   const newSessionSourceAvailabilityReady =
     newSessionSourceAvailability?.containerKey === newSessionContainerKey
@@ -700,7 +689,8 @@ export const useWorkspaceController = () => {
     configProviderHasSelectedChat ||
     (newSessionSourceAvailabilityReady && newSessionProviderAvailable && loadState !== 'loading')
   const openCodeProviders = useOpenCodeProviders({
-    enabled: configProviderId === 'opencode' && configProviderModelsReady,
+    providerId: configProviderId,
+    enabled: configProviderId === 'opencode-v2' && configProviderModelsReady,
     container: normalizeContainerTarget(configProviderContainer),
     models: displayedModelCatalogKey === configProviderModelCatalogKey ? allModels : [],
     model,
@@ -708,7 +698,7 @@ export const useWorkspaceController = () => {
   })
   const models = useMemo(
     () =>
-      configProviderId === 'opencode'
+      configProviderId === 'opencode-v2'
         ? displayedModelCatalogKey === configProviderModelCatalogKey
           ? filterOpenCodeModels(allModels, openCodeProviders.selectedId)
           : []
@@ -1592,10 +1582,6 @@ export const useWorkspaceController = () => {
   }, [])
 
   useEffect(() => {
-    writeStoredProviderUpdatePreferences(providerUpdatePreferences)
-  }, [providerUpdatePreferences])
-
-  useEffect(() => {
     if (!containerSelectionReady) return
 
     writeStoredContainerSelection(newSessionContainer)
@@ -1940,70 +1926,31 @@ export const useWorkspaceController = () => {
     }
   }, [newSessionAvailableProviderIds, newSessionProviderAvailable])
 
-  const hasSelectedChat = Boolean(selectedChat)
-  useEffect(() => {
-    const queueProviderUpdateClear = (): void => {
-      queueMicrotask(() => {
-        setProviderUpdateSuggestion(null)
-        setProviderUpdateError(null)
+  const {
+    providerUpdateSuggestions,
+    providerUpdateErrors,
+    updatingProviderUpdateKey,
+    providerUpdateInProgress,
+    handleSkipProviderUpdate,
+    handleNeverSuggestProviderUpdate,
+    handleNeverSuggestProviderUpdateVersion,
+    handleUpdateProvider
+  } = useProviderUpdates({
+    providerIds: newSessionAvailableProviderIds,
+    container: newSessionContainer,
+    onUpdated: async (_result, container) => {
+      setProviderModelsRevision((revision) => revision + 1)
+      const sourceKey = getContainerTargetKey(container)
+      if (sourceKey !== newSessionContainerKeyRef.current) return
+      const availability = await appApi.getSourceAvailability({ container })
+      if (sourceKey !== newSessionContainerKeyRef.current) return
+      setNewSessionSourceAvailability({
+        containerKey: sourceKey,
+        availability,
+        error: null
       })
     }
-
-    if (hasSelectedChat || !newChatOpen || !newSessionProviderAvailable) {
-      queueProviderUpdateClear()
-      return undefined
-    }
-
-    const providerId = newSessionProvider
-    const container = normalizeContainerTarget(newSessionContainer)
-    const preference = getProviderUpdatePreference(providerUpdatePreferences, providerId)
-    if (preference.neverSuggest) {
-      queueProviderUpdateClear()
-      return undefined
-    }
-
-    let active = true
-
-    queueMicrotask(() => {
-      if (!active) return
-
-      setProviderUpdateSuggestion((currentSuggestion) =>
-        currentSuggestion?.providerId === providerId ? currentSuggestion : null
-      )
-      setProviderUpdateError(null)
-    })
-
-    providerApi
-      .getUpdateAvailability(providerId, { container })
-      .then((availability) => {
-        if (!active) return
-
-        setProviderUpdateSuggestion(
-          availability &&
-            shouldSuggestProviderUpdate(providerUpdatePreferences, providerId, availability)
-            ? { ...availability, providerId }
-            : null
-        )
-      })
-      .catch((error: unknown) => {
-        console.error('Unable to check provider update availability.', error)
-        if (active) setProviderUpdateSuggestion(null)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [
-    newChatOpen,
-    newSessionContainer,
-    newSessionProvider,
-    newSessionProviderAvailable,
-    providerUpdatePreferences,
-    // Only whether a chat is open matters. Depending on the chat object reran
-    // this on every seen or metadata update, and its microtask reset rerendered
-    // the workspace; while a transition was pending that could repeat without end.
-    hasSelectedChat
-  ])
+  })
 
   useEffect(() => {
     let active = true
@@ -2621,9 +2568,9 @@ export const useWorkspaceController = () => {
     ]
   )
   const modelAccountKey =
-    configProviderId === 'opencode'
+    configProviderId === 'opencode-v2'
       ? getAccountModelPreferenceKey(
-          'opencode',
+          configProviderId,
           configProviderContainerKey,
           openCodeProviders.selectedId
         )
@@ -3965,10 +3912,10 @@ export const useWorkspaceController = () => {
   }, [newSessionRemoteRuntime, remoteContainerSuggestions])
   const newSessionProviderOptions = useMemo<DropdownOption<ProviderId>[]>(
     () =>
-      providerOptions.filter((option) =>
-        newSessionAvailableProviderIds.includes(option.value as ProviderId)
-      ),
-    [newSessionAvailableProviderIds]
+      providerOptions
+        .filter((option) => newSessionAvailableProviderIds.includes(option.value as ProviderId))
+        .map((option) => ({ ...option, label: providerRuntimeLabels[option.value as ProviderId] })),
+    [newSessionAvailableProviderIds, providerRuntimeLabels]
   )
   const newSessionProviderValueContent = !newSessionSourceAvailabilityReady
     ? 'Checking'
@@ -4043,7 +3990,7 @@ export const useWorkspaceController = () => {
     container: AppContainerTarget
   ): void => {
     // Keep OpenCode's current models visible until the refreshed catalog replaces them.
-    if (providerId !== 'opencode')
+    if (providerId !== 'opencode-v2')
       providerModelCatalogCacheRef.current.delete(
         `${providerId}:${getContainerTargetKey(container)}`
       )
@@ -4573,7 +4520,7 @@ export const useWorkspaceController = () => {
     modelAccountKey ? accountModelPreferencesRef.current[modelAccountKey] : undefined
   )
   const effectiveModel =
-    configProviderId === 'opencode' && !models.some((model) => model.id === resolvedModel)
+    configProviderId === 'opencode-v2' && !models.some((model) => model.id === resolvedModel)
       ? (models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? '')
       : resolvedModel
   const selectedEffectiveModel = models.find(
@@ -5065,8 +5012,6 @@ export const useWorkspaceController = () => {
     handleLastActionChange,
     handleMaxChatsRenderedChange,
     handleModelChange,
-    handleNeverSuggestProviderUpdate,
-    handleNeverSuggestProviderUpdateVersion,
     handlePerformancePreferenceChange,
     handleProjectSaved,
     handleReasoningEffortChange,
@@ -5075,11 +5020,8 @@ export const useWorkspaceController = () => {
     handleRecentlyOpenedFilesLimitChange,
     handleRecentsMessageLimitChange,
     handleSandboxModeChange,
-    handleSkipProviderUpdate,
     handleThemePreferenceChange,
-    handleUpdateProvider,
     isScopedSettingControlDisabled,
-    providerUpdateInProgress,
     rememberProject,
     renderProjectSettingAction
   } = useSettingsController({
@@ -5118,16 +5060,7 @@ export const useWorkspaceController = () => {
     sandboxModeManuallySelectedRef,
     approvalModeBeforeFullAccessRef,
     approvalMode,
-    setSandboxMode,
-    setProviderUpdatePreferences,
-    setProviderUpdateSuggestion,
-    setProviderUpdateError,
-    providerUpdateSuggestion,
-    providerUpdateState,
-    setProviderUpdateState,
-    newSessionContainer,
-    setProviderModelsRevision,
-    providerUpdatePreferences
+    setSandboxMode
   })
   const chatWriteAccess = getChatWriteAccessPresentation(chatDetail)
   const openCodeConnectionFailure = useOpenCodeConnectionHealth({
@@ -5429,7 +5362,7 @@ export const useWorkspaceController = () => {
     visibleChatItems,
     workingStepIdsWithNextWorkingStep
   } = useConversationViewModel({
-    modelUnavailable: configProviderId === 'opencode' && !effectiveModel,
+    modelUnavailable: configProviderId === 'opencode-v2' && !effectiveModel,
     authenticationRequired,
     selectedChat,
     newSessionProviderAvailable,
@@ -6326,6 +6259,7 @@ export const useWorkspaceController = () => {
   }
 
   return {
+    providerRuntimeLabels,
     className: `chat${chatPanelOpen ? ' chat--has-selection' : ' chat--no-selection'}`,
     openLinkedChat,
     dialogs: {
@@ -6422,7 +6356,7 @@ export const useWorkspaceController = () => {
             const providerModels = filterOpenCodeModels(allModels, id)
             const remembered =
               accountModelPreferencesRef.current[
-                getAccountModelPreferenceKey('opencode', configProviderContainerKey, id)
+                getAccountModelPreferenceKey(configProviderId, configProviderContainerKey, id)
               ]
             setModel(
               providerModels.find((model) => model.id === remembered)?.id ??
@@ -6434,7 +6368,7 @@ export const useWorkspaceController = () => {
           onChanged: (connectedProviderId?: string) => {
             if (connectedProviderId) openCodeProviders.select(connectedProviderId)
             handleProviderConnectionsChanged(
-              'opencode',
+              configProviderId,
               normalizeContainerTarget(configProviderContainer)
             )
           }
@@ -6587,7 +6521,6 @@ export const useWorkspaceController = () => {
       effectiveSandboxMode,
       effectiveServiceTier,
       getApprovalSummary,
-      getProviderUpdateSummary,
       handleActionsChange,
       handleApprovalModeChange,
       handleCancelEditMessage,
@@ -6630,7 +6563,7 @@ export const useWorkspaceController = () => {
           ? chatDetail?.id === selectedChat.id &&
             chatDetail.capabilities.setGoal &&
             !chatDetail.historyPreview
-          : newChatOpen && newSessionProviderAvailable && newSessionProvider !== 'opencode')
+          : newChatOpen && newSessionProviderAvailable && newSessionProvider !== 'opencode-v2')
           ? handleSaveGoalObjective
           : undefined,
       messageBoxQuoteRequest,
@@ -6653,10 +6586,10 @@ export const useWorkspaceController = () => {
       pendingUserInput,
       projectOptions,
       providerResourcesRevision,
-      providerUpdateError,
+      providerUpdateErrors,
       providerUpdateInProgress,
-      providerUpdateState,
-      providerUpdateSuggestion,
+      updatingProviderUpdateKey,
+      providerUpdateSuggestions,
       refreshAccountUsage,
       remoteContainerSuggestionsError,
       remoteContainerSuggestionsLoading,

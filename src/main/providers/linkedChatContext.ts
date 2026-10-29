@@ -1,4 +1,4 @@
-import type { ProviderChatDetail } from '../../shared/provider'
+import type { ProviderChatDetail, ProviderTurnOptions } from '../../shared/provider'
 import type { ProviderAdapter } from './ProviderAdapter'
 
 export class LinkedChatContextCancelledError extends Error {
@@ -20,10 +20,11 @@ export const raceLinkedChatCancellation = <T>(
   signal: AbortSignal,
   work: Promise<T>
 ): Promise<T> => {
-  throwIfLinkedChatCancelled(signal)
   return new Promise<T>((resolve, reject) => {
     const abort = (): void => reject(new LinkedChatContextCancelledError())
-    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
+    else signal.addEventListener('abort', abort, { once: true })
+    // Observe work even if it synchronously triggered cancellation before this call.
     work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
   })
 }
@@ -171,4 +172,72 @@ export const requireLinkedChatSummary = (summary: string | null | undefined): st
   const text = summary?.trim()
   if (!text) throw new Error('The provider did not return a summary for the linked chat.')
   return text
+}
+
+/** Retry failed native compression with the configured prompt in a fresh source fork. */
+export const summarizeLinkedChatWithFallback = async (
+  adapter: Pick<ProviderAdapter, 'continueChatInFork' | 'getChat' | 'stopChat' | 'onChatUpdated'>,
+  chatId: string,
+  {
+    summaryPrompt,
+    signal,
+    nativeSummary,
+    turnOptions
+  }: {
+    summaryPrompt: string
+    signal: AbortSignal
+    nativeSummary: () => Promise<string>
+    turnOptions?: ProviderTurnOptions
+  },
+  onForkCreated: (chatId: string) => Promise<void>
+): Promise<string> => {
+  throwIfLinkedChatCancelled(signal)
+  try {
+    return requireLinkedChatSummary(await nativeSummary())
+  } catch (error) {
+    if (isLinkedChatContextCancelled(error)) throw error
+    throwIfLinkedChatCancelled(signal)
+  }
+
+  const watcher = watchLinkedChatForkTurn(adapter.onChatUpdated, signal)
+  let forkId: string | null = null
+  try {
+    const initial = await raceLinkedChatCancellation(
+      signal,
+      adapter.continueChatInFork(chatId, summaryPrompt, turnOptions, async (id) => {
+        forkId = id
+        watcher.track(id)
+        await onForkCreated(id)
+        throwIfLinkedChatCancelled(signal)
+      })
+    )
+    await watcher.finished(initial)
+    const detail = await raceLinkedChatCancellation(signal, adapter.getChat(initial.id))
+    if (detail.status || detail.lastTurnOutcome) {
+      throw new Error('The provider failed while summarizing the linked chat.')
+    }
+    // Only the new summary turn counts; an earlier answer must never become the summary.
+    const promptIndex = detail.items.findLastIndex(
+      (item) => item.type === 'message' && item.role === 'user'
+    )
+    return requireLinkedChatSummary(
+      promptIndex < 0
+        ? null
+        : detail.items
+            .slice(promptIndex + 1)
+            .flatMap((item) =>
+              item.type === 'message' && item.role === 'assistant' ? [item.content] : []
+            )
+            .join('\n\n')
+    )
+  } catch (error) {
+    if (signal.aborted && forkId) {
+      void adapter.stopChat(forkId).catch((stopError: unknown) => {
+        console.error('[caught:summarizeLinkedChatWithFallback:stop]', stopError)
+      })
+    }
+    throw error
+  } finally {
+    watcher.dispose()
+  }
 }

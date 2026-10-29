@@ -1,11 +1,7 @@
-import { runTargetInput } from '../TargetInput'
 import type { Message, Session, GlobalSession } from '@opencode-ai/sdk/v2'
 import type { TranscriptMessage } from '../ChatTranscript'
 import { withMigrationNote } from '../ChatTranscript'
 import { historyMessageId } from '../NativeHistoryImport'
-import { quotePosixShellArg } from '../../targetShell'
-import { getOpenCodeExecutable } from './OpenCodeExecutable'
-import type { AppContainerTarget } from '../../../shared/app'
 
 export const encodeOpenCodeHistory = (
   session: Session | GlobalSession,
@@ -50,21 +46,4 @@ export const encodeOpenCodeHistory = (
       ]
     }
   })
-}
-
-/** Use the installed native importer in the same runtime/profile as the server. */
-export const importOpenCodeHistory = async (
-  info: Session | GlobalSession,
-  messages: ReturnType<typeof encodeOpenCodeHistory>,
-  container: AppContainerTarget | null
-): Promise<void> => {
-  const executable = container?.kind === 'container' ? 'opencode' : getOpenCodeExecutable()
-  await runTargetInput(
-    container,
-    `path=$(mktemp) || exit 1; trap 'rm -f "$path"' EXIT; cat > "$path" || exit 1; ${quotePosixShellArg(executable)} import "$path"`,
-    [],
-    JSON.stringify({ info, messages }),
-    process.env,
-    info.directory
-  )
 }

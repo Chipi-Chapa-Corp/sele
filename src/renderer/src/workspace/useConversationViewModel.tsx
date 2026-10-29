@@ -100,6 +100,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   } = dependencies
 
   const cursorWindowRef = useRef<ChatCursorWindow | null>(null)
+  const failedPageReadRef = useRef<{ key: string; at: number } | null>(null)
   const messageBoxProviderAvailable = selectedChat ? true : newSessionProviderAvailable
   const chatReadOnly = getChatWriteAccessPresentation(chatDetail).readOnly
   const messageBoxDisabled = selectedChat
@@ -440,6 +441,16 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       if (currentDetail?.historyPreview && direction !== 'latest') return
 
       const cursorPagination = currentDetail?.id === chat.id ? currentDetail.turnPagination : null
+      const pageReadKey = JSON.stringify([
+        currentWindow.chatKey,
+        direction,
+        cursorPagination ?? currentWindow
+      ])
+      if (
+        failedPageReadRef.current?.key === pageReadKey &&
+        Date.now() - failedPageReadRef.current.at < 1000
+      )
+        return
       if (
         direction === 'older' &&
         (cursorPagination ? !cursorPagination.olderCursor : currentWindow.startIndex === 0)
@@ -495,6 +506,8 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           pendingChatScrollAnchorRef.current = null
           chatViewportAnchorRef.current = null
           chatTurnWindowRef.current = nextWindow
+          cursorWindowRef.current = null
+          failedPageReadRef.current = null
           setChatTurnWindow(nextWindow)
           applyViewedChatDetail(chat.providerId, detail)
           return
@@ -504,24 +517,49 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           const cursor =
             direction === 'older' ? cursorPagination.olderCursor : cursorPagination.newerCursor
           if (!cursor) return
-          const page = await providerApi.getChatTurnCursorPage(
-            chat.providerId,
-            chat.id,
-            direction,
-            cursor,
-            chatTurnPageSize
-          )
+          let recovered = false
+          let page
+          try {
+            page = await providerApi.getChatTurnCursorPage(
+              chat.providerId,
+              chat.id,
+              direction,
+              cursor,
+              chatTurnPageSize
+            )
+          } catch (error) {
+            if (
+              !/history cursor expired/i.test(
+                error instanceof Error ? error.message : String(error)
+              )
+            )
+              throw error
+            const anchorId = contentRef.current
+              ? readChatScrollAnchor(contentRef.current, currentWindow.chatKey)?.turnId
+              : null
+            const itemId = anchorId ?? currentDetail?.items[0]?.id
+            if (!itemId || !canApplyPage()) throw error
+            page = await providerApi.getChatTurnPageForItem(
+              chat.providerId,
+              chat.id,
+              itemId,
+              chatTurnPageSize
+            )
+            recovered = true
+          }
           if (!canApplyPage()) return
 
           const detail = chatDetailRef.current
           if (!detail || detail.id !== chat.id) return
-          const buffer = extendChatCursorWindow(
-            cursorWindowRef.current,
-            currentWindow.chatKey,
-            detail,
-            page,
-            direction
-          )
+          const buffer = recovered
+            ? { chatKey: currentWindow.chatKey, items: page.items, pages: [page] }
+            : extendChatCursorWindow(
+                cursorWindowRef.current,
+                currentWindow.chatKey,
+                detail,
+                page,
+                direction
+              )
           const nextDetail = replaceChatDetailWithCursorPage(detail, {
             ...page,
             items: buffer.items,
@@ -547,6 +585,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           scrollToLatestTurnAfterRenderRef.current = false
           chatTurnWindowRef.current = nextWindow
           cursorWindowRef.current = buffer
+          failedPageReadRef.current = null
 
           flushSync(() => {
             chatDetailRef.current = nextDetail
@@ -603,6 +642,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, latestWindow.chatKey)
         }
       } catch (error) {
+        failedPageReadRef.current = { key: pageReadKey, at: Date.now() }
         // Leave the current page and its anchor intact; another scroll can retry.
         console.error('Unable to load conversation history page.', error)
       } finally {

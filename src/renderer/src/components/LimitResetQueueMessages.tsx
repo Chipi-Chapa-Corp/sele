@@ -1,5 +1,4 @@
-import { useEffect, useId, useState } from 'react'
-import { ChevronUp, Clock3, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import type {
   ProviderId,
   ProviderLimitResetMessage,
@@ -7,20 +6,19 @@ import type {
 } from '../../../shared/provider'
 import { providerApi } from '../providerApi'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
-import { Button } from './Button'
-import './ChatPlan.css'
+import { ChatDetailItem } from './ChatDetailItem'
 import './LimitResetQueueMessages.css'
 
 export function LimitResetQueueMessages({
   providerId,
-  target
+  target,
+  onMessagesChange
 }: {
   providerId: ProviderId
   target: ProviderLimitResetTarget
+  onMessagesChange?: (count: number) => void
 }) {
-  const drawerId = useId()
   const now = useSemanticDateNow()
-  const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ProviderLimitResetMessage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [removing, setRemoving] = useState<string | null>(null)
@@ -69,66 +67,50 @@ export function LimitResetQueueMessages({
     }
   }
 
+  useLayoutEffect(() => {
+    onMessagesChange?.(messages.length)
+  }, [messages.length, onMessagesChange])
+
   if (!messages.length) return null
-  const reset = formatSemanticLexicalDateDifference(
-    Math.min(...messages.map((entry) => entry.resetsAt)),
-    { now, compact: true }
-  )
   return (
-    <section className="chat-plan limit-reset-queue" aria-label="On Limit Reset queue">
-      <button
-        type="button"
-        className="chat-plan__toggle"
-        aria-expanded={open}
-        aria-controls={drawerId}
-        aria-label={open ? 'Hide reset queue' : 'Show reset queue'}
-        onClick={() => setOpen(!open)}
-      >
-        <span className="chat-plan__title">
-          <Clock3 className="chat-plan__chevron" aria-hidden="true" /> On Limit Reset
-        </span>
-        <span className="chat-plan__current">{messages[0].content}</span>
-        <span className="limit-reset-queue__metadata">
-          {reset && (
-            <time className="limit-reset-queue__date" dateTime={reset.dateTime} title={reset.title}>
-              {reset.label}
-            </time>
-          )}
-          <span className="chat-plan__progress">{messages.length}</span>
-        </span>
-        <ChevronUp className="chat-plan__chevron" aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="chat-plan__drawer" id={drawerId}>
-          <ul className="chat-plan__list">
-            {messages.map((entry) => (
-              <li className="limit-reset-queue__message" key={entry.id}>
-                <div>
-                  <p>{entry.content}</p>
-                  {entry.error && (
-                    <p className="chat-approval__error" role="status">
-                      Waiting to join the chat queue: {entry.error}
-                    </p>
-                  )}
-                </div>
-                <Button
-                  theme="secondary"
-                  size="small"
-                  aria-label="Remove reset prompt"
-                  title="Remove prompt"
-                  disabled={Boolean(removing)}
-                  icon={<X aria-hidden="true" />}
-                  callback={() => remove(entry.id)}
-                />
-              </li>
-            ))}
-          </ul>
-          {error && (
-            <p className="chat-approval__error" role="alert">
-              {error}
-            </p>
-          )}
-        </div>
+    <section className="limit-reset-queue" aria-label="On Limit Reset queue">
+      {messages.map((entry, index) => {
+        const reset = formatSemanticLexicalDateDifference(entry.resetsAt, { now, compact: true })
+        const showLabel = index === 0 || messages[index - 1].resetsAt !== entry.resetsAt
+        return (
+          <div className="limit-reset-queue__message" key={entry.id}>
+            <ChatDetailItem
+              item={{ type: 'pendingMessage', kind: 'queued', ...entry }}
+              pendingMessageLabel={
+                showLabel ? (
+                  <>
+                    On reset
+                    {reset && (
+                      <>
+                        {' '}
+                        <time dateTime={reset.dateTime} title={reset.title}>
+                          {reset.label}
+                        </time>
+                      </>
+                    )}
+                  </>
+                ) : null
+              }
+              pendingMessageDeleteDisabled={Boolean(removing)}
+              onDeletePendingMessage={() => void remove(entry.id)}
+            />
+            {entry.error && (
+              <p className="chat-approval__error" role="status">
+                Waiting to join the chat queue: {entry.error}
+              </p>
+            )}
+          </div>
+        )
+      })}
+      {error && (
+        <p className="chat-approval__error" role="alert">
+          {error}
+        </p>
       )}
     </section>
   )

@@ -110,6 +110,18 @@ the host, in Sele's current container, and in Distrobox or Toolbox sources. Sepa
 remote SSH, Docker, and Podman sources are not currently exposed because their loopback server
 is not safely reachable by Sele.
 
+Sele supports **OpenCode 2 only**, shown as **OpenCode**. OpenCode 1 installations are ignored.
+Install `@opencode/cli`, or set `SELE_OPENCODE_PATH` to an OpenCode 2 executable. Sele also
+finds its managed installation and v2 binaries shadowed by an older `opencode` on `PATH`.
+
+The new-chat composer stacks update suggestions for all installed providers in the selected
+environment. OpenCode updates track the v2 CLI package. Existing migrated v2 profiles and
+conversation history are retained; Sele exposes one OpenCode chat list. When preparing a
+profile for the first time, Sele backs up settings and saved credentials and seeds a separate
+database from existing OpenCode data. The original database is untouched. Existing
+`OPENCODE_DB` overrides are respected. Custom v1 plugins need v2 implementations; expired
+credentials or unsupported remote MCP OAuth credentials may require sign-in again.
+
 ## Development
 
 For the source-backed ChatGPT desktop and Codex app/CLI feature audit, see the

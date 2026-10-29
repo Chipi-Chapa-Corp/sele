@@ -11,6 +11,7 @@ import {
   renderOpenCodeChatItems,
   renderOpenCodeChatWindow
 } from './OpenCodeItemRenderers.ts'
+import { getOpenCodeV2Client, readOpenCodeChatPreview } from './OpenCodeV2Client.ts'
 import { loadOpenCodeMessages } from './OpenCodeHistory.ts'
 
 const source = ts.createSourceFile(
@@ -80,6 +81,8 @@ const fixture = (messages, { title = defaultTitle, status } = {}) => {
   }
   const context = vm.createContext({
     console,
+    getOpenCodeV2Client,
+    readOpenCodeChatPreview,
     getOpenCodeUsageLimitMessage,
     requireData: (result) => result.data,
     isOneShotSession: () => false,

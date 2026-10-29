@@ -16,6 +16,7 @@ if (!process.versions.electron) {
           import {createRoot} from 'react-dom/client'
           import './src/renderer/src/assets/main.css'
           import {getChatItems} from './src/main/providers/codex/CodexItemRenderers'
+          window.addEventListener('error',event=>console.error(event.error?.stack??event.message))
           const noop=()=>{}
           const now=Date.now()
           const chat={id:'root',providerId:'codex',title:'Subagent fixture',preview:'',createdAt:now,
@@ -62,6 +63,7 @@ if (!process.versions.electron) {
           const defaults={
             getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
             getChats:()=>({chats:[chat],nextCursor:null}),getChat:()=>detail,
+            getConversationViews:()=>[],getKnownChats:()=>({chats:[],nextCursor:null}),getLimitResetMessages:()=>[],
             markChatSeen:(_provider,_id,seenUpdatedAt)=>{chat.seenUpdatedAt=Math.max(chat.seenUpdatedAt,seenUpdatedAt);return {...chat}},
             getModels:()=>[{id:'fixture',label:'Fixture model',isDefault:true,supportedReasoningEfforts:[],defaultReasoningEffort:'medium'}],
             getAccounts:()=>({available:true,unavailableMessage:null,accounts:[]}),getUsage:()=>usage,
@@ -88,6 +90,14 @@ if (!process.versions.electron) {
                     [{type:'agentMessage',id:'done',phase:'final_answer',text:'Nested child finished.'}]:[])]}]),
                 itemsStartTurnIndex:0,turnCount:1}
               if(window.childReads===1)return {...summary,items:[],itemsStartTurnIndex:0,turnCount:1}
+              if(window.cursorMode){
+                const start=page?.cursor?Number(page.cursor.split('-')[1]):20
+                return {...summary,items:Array.from({length:10},(_,i)=>
+                  message('cursor-child-'+(start+i),'Cursor child message '+(start+i),'user')),
+                  itemsStartTurnIndex:0,turnCount:10,
+                  turnPagination:{kind:'cursor',olderCursor:start>0?'cursor-'+(start-10):null,
+                    newerCursor:start<20?'cursor-'+(start+10):null}}
+              }
               const start=window.historyMode?(page?.startIndex??20):0
               return {...summary,items:Array.from({length:window.historyMode?10:1},(_,i)=>
                 message('child-'+(start+i),'Live child message '+(start+i),'user')),
@@ -173,7 +183,48 @@ if (!process.versions.electron) {
           `new Promise((resolve,reject)=>{const until=performance.now()+10000;function check(){if(${condition})return resolve();if(performance.now()>until)return reject(new Error('Timed out: '+${JSON.stringify(condition)}));requestAnimationFrame(check)}check()})`
         )
       const settle = () =>
-        run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+        run(
+          'new Promise(resolve=>{let frames=4;const tick=()=>--frames?requestAnimationFrame(tick):resolve();requestAnimationFrame(tick)})'
+        )
+      const checkCursorNavigation = async () => {
+        await run(`window.cursorMode=true;window.historyMode=false;window.pageRequests=[];
+        document.querySelector('.chat-subagent-list .chat-list-item__main').click()`)
+        await ready(`document.querySelector('[data-chat-message-id="cursor-child-29"]')`)
+        await settle()
+        await run(`(() => {
+        const content=document.querySelector('#chat-search-content')
+        content.scrollTop=0
+        content.dispatchEvent(new WheelEvent('wheel',{deltaY:-500,bubbles:true}))
+      })()`)
+        await ready(`window.pageRequests.some(page=>page?.cursor==='cursor-10')`)
+        await ready(`document.querySelector('[data-chat-message-id="cursor-child-19"]')`)
+        const beforeCursorPoll = await run(`window.childReads`)
+        await ready(`window.childReads>${beforeCursorPoll}`)
+        assert.equal(
+          await run(`Boolean(document.querySelector('[data-chat-message-id="cursor-child-19"]'))`),
+          true,
+          'a latest-tail poll must retain the historical cursor page'
+        )
+        await fs.mkdir(path.join(__dirname, '../../test-results/provider-history-fixes'), {
+          recursive: true
+        })
+        await fs.writeFile(
+          path.join(__dirname, '../../test-results/provider-history-fixes/subagent-cursor.png'),
+          (await win.webContents.capturePage()).toPNG()
+        )
+        await settle()
+        await run(`(() => {
+        const content=document.querySelector('#chat-search-content')
+        content.scrollTop=content.scrollHeight
+        content.dispatchEvent(new WheelEvent('wheel',{deltaY:500,bubbles:true}))
+      })()`)
+        await ready(`window.pageRequests.some(page=>page?.cursor==='cursor-20')`)
+        await ready(`document.querySelector('[data-chat-message-id="cursor-child-29"]')`)
+        await run(
+          `window.cursorMode=false;document.querySelector('[aria-label="Back to parent chat"]').click()`
+        )
+        await ready(`document.querySelector('[data-chat-message-id="answer"]')`)
+      }
       await ready(`document.querySelector('[data-chat-id="root"] .chat-list-item__main')`)
       const sidebarListHeight = await run(
         `document.querySelector('[data-chat-id="root"]').closest('.chat-list').getBoundingClientRect().height`
@@ -239,6 +290,14 @@ if (!process.versions.electron) {
       await run(`document.querySelector('[aria-label="Back to parent chat"]').click()`)
       await ready(`document.querySelector('[data-chat-message-id="answer"]')`)
       assert.equal(await run(`document.querySelector('textarea').value`), 'My real latest draft')
+      if (process.env.SELE_SUBAGENT_CURSOR_ONLY === '1') {
+        await checkCursorNavigation()
+        assert.equal(errors.length, 0, errors.join('\n'))
+        console.log(
+          'Subagent cursor checks passed: older/newer navigation, poll retention, temporary profile.'
+        )
+        return
+      }
       // Clearing a sent draft must survive another subagent round trip too.
       await run(`window.setText('')`)
       await settle()
@@ -287,6 +346,7 @@ if (!process.versions.electron) {
       )
       await run(`document.querySelector('[aria-label="Back to parent chat"]').click()`)
       await ready(`document.querySelector('[data-chat-message-id="answer"]')`)
+      await checkCursorNavigation()
       await run(
         `window.sleepMode=true;document.querySelector('.chat-subagent-list .chat-list-item__main').click()`
       )

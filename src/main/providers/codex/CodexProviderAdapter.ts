@@ -7196,6 +7196,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.userQuestions.clearServerTurn(threadId, turn.id)
       if (!this.getActiveTurnId(threadId)) this.setThreadStatus(threadId, { type: 'idle' })
       this.retainThreadTurnTail(threadId)
+      // The terminal snapshot must not retain already-submitted steering. There may
+      // be no further notification to remove a stale pending card from the renderer.
+      this.removeSteeringMessageForTurn(threadId, turn.id)
     }
 
     if (notification.method === 'turn/completed') {
@@ -7213,7 +7216,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'turn/completed') {
-      this.removeSteeringMessageForTurn(threadId, turn.id)
       if (!wasManuallyStoppedTurn && !this.hasWaitingSteeringMessageForTurn(threadId, turn.id)) {
         this.scheduleQueueDrain(threadId)
       }

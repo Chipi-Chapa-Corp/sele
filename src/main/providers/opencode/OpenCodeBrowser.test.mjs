@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import test from 'node:test'
 import { build } from 'esbuild'
@@ -63,7 +63,7 @@ const fixture = () => {
   }
 }
 const scope = (sessionId = 'chat', cwd = '/project') => ({
-  providerId: 'opencode',
+  providerId: 'opencode-v2',
   sessionId,
   cwd,
   containerKey: 'host'
@@ -71,7 +71,10 @@ const scope = (sessionId = 'chat', cwd = '/project') => ({
 const context = (sessionID = 'chat', directory = '/project', ask = async () => {}) => ({
   sessionID,
   directory,
-  abort: new AbortController().signal,
+  signal: new AbortController().signal,
+  agent: 'build',
+  messageID: 'message',
+  id: 'tool',
   ask
 })
 
@@ -79,39 +82,46 @@ test('generated plugin routes trusted runtime sessions, asks permission, revokes
   const { service, clients } = fixture()
   const bridge = await createOpenCodeBrowserBridge(service)
   const browser = await bridge.register(scope())
-  const path = fileURLToPath(bridge.pluginUrl)
+  const path = join(bridge.pluginUrl, 'index.ts')
   try {
-    const hooks = await (await import(bridge.pluginUrl)).default()
-    const tool = hooks.tool.sele_browser_tabs_context
+    const definitions = new Map()
     const approvals = []
+    let callerDirectory = '/project'
+    let permission = async (x) => approvals.push(x)
+    const plugin = (await import(pathToFileURL(path).href)).default
+    await plugin.setup({
+      tool: {
+        transform: async (edit) =>
+          edit({ add: (definition) => definitions.set(definition.name, definition) })
+      },
+      permission: { assert: (input) => permission(input) },
+      session: { get: async () => ({ location: { directory: callerDirectory } }) }
+    })
+    const tool = definitions.get('sele_browser_tabs_context')
     const result = await tool.execute(
       { sessionID: 'sibling' },
       context('chat', '/project', async (x) => approvals.push(x))
     )
-    assert.match(result.output, /chat/)
-    assert.equal(approvals[0].permission, 'sele_browser_tabs_context')
+    assert.match(result.content.map((x) => x.text ?? '').join(''), /chat/)
+    assert.equal(approvals[0].action, 'sele_browser_tabs_context')
     assert.equal(clients.at(-1).calls, 1)
     await assert.rejects(tool.execute({}, context('sibling')), /unavailable/)
-    await assert.rejects(tool.execute({}, context('chat', '/other-project')), /unavailable/)
+    callerDirectory = '/other-project'
+    await assert.rejects(tool.execute({}, context('chat')), /unavailable/)
+    callerDirectory = '/project'
     await assert.rejects(tool.execute({}, context('one-shot')), /unavailable/)
-    await assert.rejects(
-      tool.execute(
-        {},
-        context('chat', '/project', async () => {
-          throw new Error('Permission denied')
-        })
-      ),
-      /Permission denied/
-    )
+    permission = async () => {
+      throw new Error('Permission denied')
+    }
+    await assert.rejects(tool.execute({}, context()), /Permission denied/)
+    permission = async (x) => approvals.push(x)
     assert.equal(clients.at(-1).calls, 1)
-    const definition = {}
-    await hooks['tool.definition']({ toolID: 'sele_browser_navigate' }, definition)
-    assert.deepEqual(definition.jsonSchema.required, ['url'])
+    assert.deepEqual(definitions.get('sele_browser_navigate').input.required, ['url'])
     browser.suspend()
     assert.equal(clients.at(-1).closed, true)
     await assert.rejects(tool.execute({}, context()), /unavailable/)
     browser.resume()
-    assert.match((await tool.execute({}, context())).output, /chat/)
+    assert.match(JSON.stringify((await tool.execute({}, context())).content), /chat/)
     await browser.close()
     await assert.rejects(tool.execute({}, context()), /unavailable/)
   } finally {

@@ -21,7 +21,9 @@ export const extendChatCursorWindow = (
 ): ChatCursorWindow => {
   // Streaming can replace item payloads without changing the page boundaries.
   const starts =
-    current?.chatKey === chatKey
+    current?.chatKey === chatKey &&
+    current.pages[0]?.turnPagination?.olderCursor === detail.turnPagination?.olderCursor &&
+    current.pages.at(-1)?.turnPagination?.newerCursor === detail.turnPagination?.newerCursor
       ? current.pages.map((part) => detail.items.findIndex((item) => item.id === part.items[0]?.id))
       : []
   const pages =

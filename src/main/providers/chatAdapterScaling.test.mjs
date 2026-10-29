@@ -6,6 +6,7 @@ import ts from 'typescript'
 import * as claude from './claude/ClaudeItemRenderers.ts'
 import * as copilot from './copilot/CopilotItemRenderers.ts'
 import * as opencode from './opencode/OpenCodeItemRenderers.ts'
+import { isDefaultOpenCodeTitle } from './opencode/OpenCodeChatTitle.ts'
 import * as codex from './codex/CodexItemRenderers.ts'
 import { getCodexTurnOutcome } from './codex/CodexTurnOutcome.ts'
 import { getCodexTurnSubagents } from './codex/CodexSubagents.ts'
@@ -19,13 +20,13 @@ const harness = (provider, name, globals, state) => {
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name.text === `${name}ProviderAdapter`)
   const selected = new Set(['detailRevision', 'getChat', 'getChatWindow', 'createChatDetail', 'createChatDetailFromState'])
   const code = ts.transpileModule(`class Harness { ${declaration.members.filter(member => selected.has(member.name?.getText(source))).map(member => member.getText(source)).join('\n')} }; globalThis.Harness = Harness`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-  const context = vm.createContext({ ...globals, getContainerTargetKey, getPendingApproval: () => null, getPendingUserInput: () => null, getContextUsage: () => null })
+  const context = vm.createContext({ ...globals, isDefaultOpenCodeTitle, getContainerTargetKey, getPendingApproval: () => null, getPendingUserInput: () => null, getContextUsage: () => null })
   vm.runInContext(code, context)
   const instance = new context.Harness()
   Object.assign(instance, {
     ensureState: async () => state, ensureCompleteState: async () => state, ensureSession: async () => state,
     loadEvents: async () => {}, getClientEntry: async () => ({ client: {} }), refreshState: async () => {},
-    getDrainingMessage: () => null, getPendingMessages: () => [],
+    getDrainingMessage: () => null, getPendingMessages: () => [], persistPendingMessages() {},
     getTitle: () => 'Saved title', getCwd: () => '/tmp', getChatStatus: () => null,
     getPendingApproval: () => null, getPendingUserInput: () => null, getContextUsage: () => null,
     transcriptProjections: new Map(), eventStores: new WeakMap(), authenticationFailures: new Set(), getThreadSubagents: () => []

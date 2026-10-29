@@ -1,4 +1,9 @@
-import type { ProviderChatItem, ProviderMessage, ProviderWorkingStep } from '../../shared/provider'
+import type {
+  ProviderChatItem,
+  ProviderMessage,
+  ProviderPendingMessage,
+  ProviderWorkingStep
+} from '../../shared/provider'
 import { startsProviderChatTurn, type ProviderChatTurn } from '../../shared/chatTurns.ts'
 import {
   getSteeredWorkingStepDisclosureTargets,
@@ -43,20 +48,29 @@ export const getConversationTailWorkingStep = (
   awaitingResponse = false
 ): ProviderWorkingStep | null => {
   let lastItem: ProviderChatItem | undefined
+  let pendingSteering: ProviderPendingMessage | undefined
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]
+    if (!lastItem && item.type === 'pendingMessage' && item.kind === 'steering')
+      pendingSteering ??= item
     if (!lastItem && item.type !== 'pendingMessage') lastItem = item
     if (item.type === 'working' && item.status === 'working') return item
   }
   // Confirmation can replace the optimistic user + working pair before the
   // provider emits its first working step. Keep the activity row's space so
   // bottom-aligned messages do not move down and then back up during the send.
-  if (awaitingResponse && lastItem?.type === 'message' && lastItem.role === 'user') {
+  // A steer can arrive while the previous activity block is already marked Worked.
+  // Keep activity visible until its echo and the next working segment arrive. Queued
+  // messages alone must not revive completed history or final-answer streaming.
+  const awaitingMessage =
+    pendingSteering ??
+    (lastItem?.type === 'message' && lastItem.role === 'user' ? lastItem : undefined)
+  if (awaitingResponse && awaitingMessage) {
     return {
       type: 'working',
-      id: `awaiting-response:${lastItem.id}`,
+      id: `awaiting-response:${awaitingMessage.id}`,
       status: 'working',
-      startedAt: lastItem.createdAt ?? undefined,
+      startedAt: awaitingMessage.createdAt ?? undefined,
       items: []
     }
   }

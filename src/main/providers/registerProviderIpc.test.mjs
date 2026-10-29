@@ -511,7 +511,7 @@ test('new chats preserve No Project across IPC for every provider', async () => 
     sandboxMode: 'workspace-write',
     noProject: true
   }
-  for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
+  for (const providerId of ['codex', 'claude', 'copilot', 'opencode-v2']) {
     await handler({}, providerId, 'Help me with my computer', options)
     assert.equal(calls.at(-1).providerId, providerId)
     assert.equal(calls.at(-1).options.noProject, true)
@@ -599,9 +599,9 @@ test('live permission IPC validates choices and forwards only permission fields'
     model: 'ignored',
     container: { kind: 'host' }
   }
-  await handler({}, 'opencode', 'chat', options)
+  await handler({}, 'opencode-v2', 'chat', options)
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), [
-    'opencode',
+    'opencode-v2',
     'chat',
     {
       approvalPolicy: 'never',
@@ -620,7 +620,7 @@ test('live permission IPC validates choices and forwards only permission fields'
     { ...options, additionalDirectories: ['relative'] },
     { ...options, additionalDirectories: ['/bad\0path'] }
   ]) {
-    assert.throws(() => handler({}, 'opencode', 'chat', value), /Invalid/)
+    assert.throws(() => handler({}, 'opencode-v2', 'chat', value), /Invalid/)
   }
   assert.equal(calls.length, 1)
 })
@@ -716,7 +716,7 @@ test('connection IPC validates secrets and forwards each operation to the select
     return []
   }
   const source = { container: { kind: 'container', tool: 'toolbox', name: 'fixture' } }
-  const invoke = (channel, ...args) => h.harness.handlers.get(channel)({}, 'opencode', ...args)
+  const invoke = (channel, ...args) => h.harness.handlers.get(channel)({}, 'opencode-v2', ...args)
   await invoke(channels.getConnections, source)
   await invoke(
     channels.connectProvider,
@@ -725,7 +725,7 @@ test('connection IPC validates secrets and forwards each operation to the select
   )
   assert.deepEqual(calls.at(-1), [
     'connect',
-    'opencode',
+    'opencode-v2',
     { integrationId: 'openai', method: 'key', key: 'fixture-key' },
     source
   ])
@@ -749,7 +749,7 @@ test('connection IPC validates secrets and forwards each operation to the select
     assert.deepEqual(calls.at(-1).at(-1), source)
   }
   await invoke(channels.completeConnection, 'attempt', ' code ', source)
-  assert.deepEqual(calls.at(-1), ['complete', 'opencode', 'attempt', 'code', source])
+  assert.deepEqual(calls.at(-1), ['complete', 'opencode-v2', 'attempt', 'code', source])
   for (const input of [
     null,
     {},
@@ -1016,4 +1016,43 @@ test('reset queue IPC accepts persistent new-chat draft targets and strips inter
     { draftKey: 'valid', worktree: 'yes' }
   ])
     assert.throws(() => add({}, 'codex', target, 'prompt', options), /Invalid/)
+})
+
+test('subagent IPC forwards cursor navigation and retains the provider paging metadata', async () => {
+  const h = setup()
+  let args
+  const pagination = { kind: 'cursor', olderCursor: 'older', newerCursor: 'newer' }
+  h.harness.getSubagent = async (...input) => {
+    args = input
+    return {
+      id: 'child',
+      items: [],
+      itemsStartTurnIndex: 0,
+      turnCount: 0,
+      turnPagination: pagination
+    }
+  }
+  const read = h.harness.handlers.get(channels.getSubagent)
+  const page = await read({}, 'claude', 'root', 'child', {
+    startIndex: null,
+    limit: 10,
+    cursor: 'opaque-child',
+    direction: 'older'
+  })
+  assert.deepEqual(JSON.parse(JSON.stringify(args)), [
+    'claude',
+    'root',
+    'child',
+    {
+      startIndex: null,
+      limit: 10,
+      cursor: 'opaque-child',
+      direction: 'older'
+    }
+  ])
+  assert.deepEqual(page.turnPagination, pagination)
+  await assert.rejects(
+    read({}, 'claude', 'root', 'child', { cursor: 3 }),
+    /Invalid subagent history cursor/
+  )
 })

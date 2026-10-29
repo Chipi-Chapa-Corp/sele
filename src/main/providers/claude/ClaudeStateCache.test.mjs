@@ -136,6 +136,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
     getPendingUserInput: () => null,
     sessionDiscovery: { dispose() {} },
     historyPages: { clear() {} },
+    subagentHistory: { clear() {} },
     readHistoryPage: async (id, container) => {
       loads.set(id, (loads.get(id) ?? 0) + 1)
       const store = container ? { container } : undefined

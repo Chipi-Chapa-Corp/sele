@@ -158,17 +158,17 @@ test('cold opening and scrolling use real SDK pages without loading unrelated hi
   const h = harness(),
     a = h.instance
   const latest = await a.getChatWindow('chat', { startIndex: null, limit: 10 })
-  assert.equal(latest.items[0].id, user(996).info.id)
+  assert.equal(latest.items[0].id, user(990).info.id)
   assert.equal(latest.turnPagination.kind, 'cursor')
-  assert.equal(h.requests.length, 1)
-  assert.ok(h.transport.bytes < 5000)
+  assert.equal(h.requests.length, 3)
+  assert.ok(h.transport.bytes < 12000)
   const tail = a.states.get('chat').messages
   const older = await a.getChatCursorWindow('chat', {
     cursor: latest.turnPagination.olderCursor,
     direction: 'older',
     limit: 10
   })
-  assert.equal(older.items[0].id, user(992).info.id)
+  assert.equal(older.items[0].id, user(980).info.id)
   const newer = await a.getChatCursorWindow('chat', {
     cursor: older.turnPagination.newerCursor,
     direction: 'newer',
@@ -262,17 +262,17 @@ test('live publications retain the whole tail and paging back to it includes str
   const update = a.createChatDetailFromState(state, { startIndex: null, limit: 10 })
   assert.equal(
     update.items[0].id,
-    user(996).info.id,
+    user(990).info.id,
     'a fixed viewport must not cut off the retained cursor anchor'
   )
-  assert.equal(getProviderChatTurns(update.items).length, 16)
+  assert.equal(getProviderChatTurns(update.items).length, 22)
   const newer = await a.getChatCursorWindow('chat', {
     cursor: older.turnPagination.newerCursor,
     direction: 'newer',
     limit: 10
   })
-  assert.equal(newer.items[0].id, user(996).info.id)
-  assert.equal(getProviderChatTurns(newer.items).length, 16)
+  assert.equal(newer.items[0].id, user(990).info.id)
+  assert.equal(getProviderChatTurns(newer.items).length, 22)
 })
 
 test('history cursors reject cross-session reuse and missing boundaries', async () => {
@@ -296,7 +296,7 @@ test('history cursors reject cross-session reuse and missing boundaries', async 
     /cursor expired/
   )
   t.history.splice(
-    t.history.findIndex((m) => m.info.id === answer(15).info.id),
+    t.history.findIndex((m) => m.info.id === answer(9).info.id),
     1
   )
   await assert.rejects(
@@ -396,7 +396,138 @@ test('returning from an older page after an external append preserves every inte
     direction: 'newer',
     limit: 10
   })
-  assert.equal(newer.items[0].id, user(996).info.id)
-  assert.equal(getProviderChatTurns(newer.items).length, 24)
+  assert.equal(newer.items[0].id, user(990).info.id)
+  assert.equal(getProviderChatTurns(newer.items).length, 30)
   assert.ok(newer.items.some((item) => item.id === 'answer1019'))
+})
+
+test('subagent opening bounds a single long tool run without reading back to its prompt', async () => {
+  const history = [user(0), ...Array.from({ length: 1000 }, (_, i) => answer(i))]
+  const h = harness(history),
+    a = h.instance
+  h.session.parentID = 'parent'
+  const detail = await a.getChatWindow('chat', { startIndex: null, limit: 10 })
+  assert.equal(h.requests.length, 1)
+  assert.equal(a.states.get('chat').messages.length, 8)
+  assert.ok(detail.turnPagination.olderCursor)
+  const older = await a.getChatCursorWindow('chat', {
+    cursor: detail.turnPagination.olderCursor,
+    direction: 'older',
+    limit: 10
+  })
+  assert.ok(older.turnPagination.newerCursor)
+  assert.ok(h.requests.length <= 2)
+  assert.ok(older.items.some((item) => item.id === 'answer991'))
+})
+
+test('expanding a child working section reuses its original page after the tail moves', async () => {
+  const history = [
+    user(0),
+    ...Array.from({ length: 1000 }, (_, i) => ({
+      ...answer(i),
+      parts: [{ id: `reasoning-${i}`, type: 'reasoning', text: `Work ${i}` }]
+    }))
+  ]
+  const h = harness(history),
+    a = h.instance
+  h.session.parentID = 'parent'
+  const page = await a.getChatWindow('chat', { startIndex: null, limit: 10 })
+  const working = page.items.find((item) => item.type === 'working')
+  assert.ok(working)
+  h.history.push({
+    ...answer(1000),
+    parts: [{ id: 'reasoning-1000', type: 'reasoning', text: 'New work' }]
+  })
+  h.session.time.updated++
+  await a.getChatWindow('chat', { startIndex: null, limit: 10 })
+  const expanded = await a.getChatWindowForItem('chat', working.id, 1)
+  assert.ok(expanded.items.some((item) => item.id === working.id))
+  assert.ok(h.requests.every((request) => request.limit <= 8))
+})
+
+test('opening includes earlier replies instead of only recent empty continuation attempts', async () => {
+  const history = records(1)
+  for (let i = 1; i <= 6; i++) history.push(user(i), { ...answer(i), parts: [] })
+  const h = harness(history)
+  const detail = await h.instance.getChatWindow('chat', { startIndex: null, limit: 10 })
+  assert.ok(
+    detail.items.some(
+      (item) => item.type === 'message' && item.role === 'assistant' && item.content === 'Answer 0'
+    )
+  )
+  assert.equal(getProviderChatTurns(detail.items).length, 7)
+})
+
+test('large tool results keep the initial payload bounded even below ten turns', async () => {
+  const history = records(100)
+  for (const message of history)
+    if (message.info.role === 'assistant')
+      message.parts = [
+        {
+          type: 'tool',
+          id: message.info.id + ':tool',
+          callID: message.info.id,
+          tool: 'bash',
+          state: {
+            status: 'completed',
+            input: {},
+            output: 'x'.repeat(100000),
+            title: 'Fixture',
+            metadata: {},
+            time: { start: 1, end: 2 }
+          }
+        }
+      ]
+  const h = harness(history)
+  const detail = await h.instance.getChatWindow('chat', { startIndex: null, limit: 10 })
+  assert.equal(h.requests.length, 1)
+  assert.ok(detail.turnPagination.olderCursor)
+})
+
+test('discovery in another environment does not replace the opened chat client or its history cursors', async () => {
+  const h = harness(),
+    a = h.instance
+  const other = transport(records(1000))
+  const container = { kind: 'container', tool: 'toolbox', name: 'other' }
+  a.getClientEntry = async (target) =>
+    target?.kind === 'container'
+      ? { client: other.client, container }
+      : { client: h.client, container: null }
+  const latest = await a.getChatWindow('chat', { startIndex: null, limit: 10 }, { container: null })
+  const opened = a.states.get('chat')
+  a.rememberSession({ ...other.session }, container)
+  assert.equal(
+    a.states.get('chat').container,
+    null,
+    'a sidebar scan must not move an open conversation to another database'
+  )
+  const older = await a.getChatCursorWindow(
+    'chat',
+    { cursor: latest.turnPagination.olderCursor, direction: 'older', limit: 10 },
+    { container: null }
+  )
+  assert.ok(older.items.length)
+  assert.equal(a.states.get('chat'), opened)
+})
+
+test('explicitly opening another environment binds the requested client before paging', async () => {
+  const h = harness(),
+    a = h.instance,
+    other = transport(records(1000))
+  const container = { kind: 'container', tool: 'toolbox', name: 'other' }
+  a.getClientEntry = async (target) =>
+    target?.kind === 'container'
+      ? { client: other.client, container }
+      : { client: h.client, container: null }
+  await a.getChatWindow('chat', { startIndex: null, limit: 10 }, { container: null })
+  const page = await a.getChatWindow('chat', { startIndex: null, limit: 10 }, { container })
+  assert.equal(a.states.get('chat').client, other.client)
+  const previous = a.states.get('chat')
+  a.rememberSession(h.session, null)
+  await a.getChatCursorWindow(
+    'chat',
+    { cursor: page.turnPagination.olderCursor, direction: 'older', limit: 10 },
+    { container }
+  )
+  assert.equal(a.states.get('chat'), previous)
 })

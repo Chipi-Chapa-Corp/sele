@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import type {
   ProviderConnection,
@@ -8,6 +7,29 @@ import type {
   ProviderConnectionStatus
 } from '../../../shared/providerConnections'
 import type { OpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
+import { getOpenCodeV2Client } from './OpenCodeV2Client.ts'
+import type { OpenCodeClient, FormField } from '@opencode/client'
+
+const v2Attempts = new WeakMap<OpencodeClient, Map<string, string>>()
+const v2Integration = async (native: OpenCodeClient, providerID: string): Promise<string> =>
+  (await native.provider.get({ providerID })).data.integrationID ?? providerID
+const promptsFromFields = (fields?: readonly FormField[]) =>
+  fields?.flatMap((field) =>
+    field.type === 'string'
+      ? [
+          {
+            key: field.key,
+            type: field.options ? ('select' as const) : ('text' as const),
+            message: field.title ?? field.description ?? field.key,
+            placeholder: field.placeholder,
+            options: field.options?.map((option) => ({
+              label: option.label ?? String(option.value),
+              value: String(option.value)
+            }))
+          }
+        ]
+      : []
+  )
 
 // SDK failures can contain request bodies. Keep keys, prompt inputs, and codes out of IPC/logs.
 const request = async <T>(action: string, run: () => Promise<T>): Promise<T> => {
@@ -18,213 +40,155 @@ const request = async <T>(action: string, run: () => Promise<T>): Promise<T> => 
   }
 }
 
-type Attempt = {
-  providerId: string
-  method: number
-  abort: AbortController
-  status: ProviderConnectionAttemptStatus['status']
-  timer: ReturnType<typeof setTimeout>
-}
-const attempts = new WeakMap<OpencodeClient, Map<string, Attempt>>()
-
 export const listOpenCodeConnections = async (
   client: OpencodeClient,
-  readCredentials: () => Promise<OpenCodeCredentialTypes>,
+  _readCredentials: () => Promise<OpenCodeCredentialTypes>,
   getStatus: (providerId: string) => ProviderConnectionStatus | undefined = () => undefined
 ): Promise<ProviderConnection[]> => {
-  const status = (id: string): { status?: ProviderConnectionStatus } => {
-    const value = getStatus(id)
-    return value ? { status: value } : {}
-  }
-  const [catalog, auth, credentials] = await Promise.all([
-    request('load connections', () => client.provider.list({}, { throwOnError: true })),
-    request('load connection methods', () => client.provider.auth({}, { throwOnError: true })),
-    readCredentials()
-  ])
-  const providers = catalog.data.all.map(
-    (provider): ProviderConnection => ({
-      id: provider.id,
-      name: provider.name,
-      methods: auth.data[provider.id]?.length
-        ? auth.data[provider.id].map((method, index) =>
-            method.type === 'oauth'
-              ? { type: 'oauth', id: String(index), label: method.label, prompts: method.prompts }
-              : { type: 'key', label: method.label, prompts: method.prompts }
+  const native = getOpenCodeV2Client(client)
+  if (native)
+    return request('load connections', async () => {
+      const [providers, integrations] = await Promise.all([
+        native.provider.list(),
+        native.integration.list()
+      ])
+      return providers.data
+        .map((provider): ProviderConnection => {
+          const integration = integrations.data.find(
+            (item) => item.id === (provider.integrationID ?? provider.id)
           )
-        : [{ type: 'key', label: 'API key' }],
-      connections: [
-        ...(credentials[provider.id]
-          ? [
-              {
-                type: 'credential' as const,
-                id: provider.id,
-                label: credentials[provider.id] === 'oauth' ? 'Signed in' : 'API key',
-                ...status(provider.id)
-              }
-            ]
-          : []),
-        ...(catalog.data.connected.includes(provider.id) && provider.source === 'env'
-          ? [
-              {
-                type: 'env' as const,
-                name: provider.env.join(', '),
-                ...status(provider.id)
-              }
-            ]
-          : [])
-      ]
-    })
-  )
-  for (const id of Object.keys(credentials)) {
-    if (!providers.some((provider) => provider.id === id))
-      providers.push({
-        id,
-        name: id,
-        methods: [{ type: 'key', label: 'API key' }],
-        connections: [
-          {
-            type: 'credential',
-            id,
-            label: credentials[id] === 'oauth' ? 'Signed in' : 'API key',
-            ...status(id)
+          return {
+            id: provider.id,
+            name: provider.name,
+            methods: integration?.methods.flatMap<ProviderConnection['methods'][number]>(
+              (method) =>
+                method.type === 'key'
+                  ? [
+                      {
+                        type: 'key' as const,
+                        label: method.label,
+                        prompts: promptsFromFields(method.form)
+                      }
+                    ]
+                  : method.type === 'oauth'
+                    ? [
+                        {
+                          type: 'oauth' as const,
+                          id: method.id,
+                          label: method.label,
+                          prompts: promptsFromFields(method.form)
+                        }
+                      ]
+                    : []
+            ) ?? [{ type: 'key', label: 'API key' }],
+            connections: (integration?.connections ?? []).map((connection) => ({
+              ...(connection.type === 'env'
+                ? { type: 'env' as const, name: connection.name }
+                : { type: 'credential' as const, id: connection.id, label: connection.label }),
+              ...(getStatus(provider.id) ? { status: getStatus(provider.id) } : {})
+            }))
           }
-        ]
-      })
-  }
-  return providers.sort((a, b) => a.name.localeCompare(b.name))
-}
-
-const getAttempt = (client: OpencodeClient, attemptId: string): Attempt => {
-  const attempt = attempts.get(client)?.get(attemptId)
-  if (!attempt) throw new Error('Authorization expired. Connect again to retry.')
-  return attempt
-}
-const callback = async (client: OpencodeClient, attempt: Attempt, code?: string): Promise<void> => {
-  try {
-    await request('complete authorization', () =>
-      client.provider.oauth.callback(
-        {
-          providerID: attempt.providerId,
-          method: attempt.method,
-          code
-        },
-        { throwOnError: true, signal: attempt.abort.signal }
-      )
-    )
-    if (!attempt.abort.signal.aborted) {
-      await request('refresh OpenCode connections', () =>
-        client.instance.dispose({}, { throwOnError: true })
-      )
-      attempt.status = 'complete'
-    }
-  } catch (error) {
-    if (!attempt.abort.signal.aborted) attempt.status = 'failed'
-    throw error
-  }
+        })
+        .sort((a, b) => a.name.localeCompare(b.name))
+    })
+  throw new Error('OpenCode 2 client is unavailable.')
 }
 
 export const connectOpenCode = async (
   client: OpencodeClient,
   input: ProviderConnectInput
 ): Promise<ProviderConnectionAttempt | null> => {
-  if (input.method === 'key') {
-    await request('save the API key', () =>
-      client.auth.set(
-        {
-          providerID: input.integrationId,
-          auth: {
-            type: 'api',
-            key: input.key!,
-            ...(input.inputs && Object.keys(input.inputs).length > 0
-              ? { metadata: input.inputs }
-              : {})
-          }
-        },
-        { throwOnError: true }
-      )
-    )
-    await request('refresh OpenCode connections', () =>
-      client.instance.dispose({}, { throwOnError: true })
-    )
-    return null
-  }
-  const method = Number(input.methodId)
-  if (!Number.isSafeInteger(method) || method < 0) throw new Error('Invalid connection method')
-  const { data } = await request('start authorization', () =>
-    client.provider.oauth.authorize(
-      {
-        providerID: input.integrationId,
-        method,
-        inputs: input.inputs
-      },
-      { throwOnError: true }
-    )
-  )
-  if (!data) throw new Error('Unable to start authorization.')
-  const attemptId = randomUUID()
-  let entries = attempts.get(client)
-  if (!entries) {
-    entries = new Map()
-    attempts.set(client, entries)
-  }
-  const attempt: Attempt = {
-    providerId: input.integrationId,
-    method,
-    abort: new AbortController(),
-    status: 'pending',
-    timer: setTimeout(() => {
-      if (attempt.status === 'pending') {
-        attempt.status = 'expired'
-        attempt.abort.abort()
+  const native = getOpenCodeV2Client(client)
+  if (native)
+    return request('connect the provider', async () => {
+      const integrationID = await v2Integration(native, input.integrationId)
+      if (input.method === 'key') {
+        await native.integration.connect.key({
+          integrationID,
+          key: input.key!,
+          answer: input.inputs
+        })
+        return null
       }
-      entries.delete(attemptId)
-    }, 10 * 60_000)
-  }
-  attempt.timer.unref()
-  entries.set(attemptId, attempt)
-  if (data.method === 'auto')
-    void callback(client, attempt).catch((error) =>
-      console.error('[OpenCodeConnections:authorize]', error)
-    )
-  return { attemptId, url: data.url, instructions: data.instructions, mode: data.method }
+      const result = (
+        await native.integration.oauth.connect({
+          integrationID,
+          methodID: input.methodId!,
+          answer: input.inputs
+        })
+      ).data
+      let attempts = v2Attempts.get(client)
+      if (!attempts) {
+        attempts = new Map()
+        v2Attempts.set(client, attempts)
+      }
+      attempts.set(result.attemptID, integrationID)
+      return {
+        attemptId: result.attemptID,
+        url: result.url,
+        instructions: result.instructions,
+        mode: result.mode
+      }
+    })
+  throw new Error('OpenCode 2 client is unavailable.')
 }
 
 export const getOpenCodeConnectionAttempt = async (
   client: OpencodeClient,
   attemptId: string
 ): Promise<ProviderConnectionAttemptStatus> => {
-  const attempt = attempts.get(client)?.get(attemptId)
-  if (!attempt) return { status: 'expired' }
-  const result = { status: attempt.status }
-  return result
+  const native = getOpenCodeV2Client(client)
+  if (native) {
+    const integrationID = v2Attempts.get(client)?.get(attemptId)
+    if (!integrationID) return { status: 'expired' }
+    const status = await request('check authorization', () =>
+      native.integration.oauth.status({ integrationID, attemptID: attemptId })
+    )
+    return status.data
+  }
+  return { status: 'expired' }
 }
 export const completeOpenCodeConnection = async (
   client: OpencodeClient,
   attemptId: string,
   code: string
 ): Promise<void> => {
-  const attempt = getAttempt(client, attemptId)
-  await callback(client, attempt, code)
+  const native = getOpenCodeV2Client(client)
+  if (native) {
+    const integrationID = v2Attempts.get(client)?.get(attemptId)
+    if (!integrationID) throw new Error('Authorization expired. Connect again to retry.')
+    await request('complete authorization', () =>
+      native.integration.oauth.complete({ integrationID, attemptID: attemptId, code })
+    )
+    return
+  }
+  throw new Error('OpenCode 2 client is unavailable.')
 }
 export const cancelOpenCodeConnection = async (
   client: OpencodeClient,
   attemptId: string
 ): Promise<void> => {
-  const entries = attempts.get(client)
-  const attempt = entries?.get(attemptId)
-  if (!attempt) return
-  attempt.abort.abort()
-  clearTimeout(attempt.timer)
-  entries?.delete(attemptId)
+  const native = getOpenCodeV2Client(client)
+  if (native) {
+    const integrationID = v2Attempts.get(client)?.get(attemptId)
+    if (integrationID)
+      await request('cancel authorization', () =>
+        native.integration.oauth.cancel({ integrationID, attemptID: attemptId })
+      )
+    v2Attempts.get(client)?.delete(attemptId)
+    return
+  }
 }
 export const deleteOpenCodeConnection = async (
   client: OpencodeClient,
   credentialId: string
 ): Promise<void> => {
-  await request('remove the connection', () =>
-    client.auth.remove({ providerID: credentialId }, { throwOnError: true })
-  )
-  await request('refresh OpenCode connections', () =>
-    client.instance.dispose({}, { throwOnError: true })
-  )
+  const native = getOpenCodeV2Client(client)
+  if (native) {
+    await request('remove the connection', () =>
+      native.credential.remove({ credentialID: credentialId })
+    )
+    return
+  }
+  throw new Error('OpenCode 2 client is unavailable.')
 }

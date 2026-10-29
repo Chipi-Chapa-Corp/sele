@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import type { BrowserAutomationScope } from '../../../shared/browser'
 import type { BrowserAutomationService } from '../../browser/BrowserAutomation'
@@ -24,7 +23,7 @@ export async function createOpenCodeBrowserBridge(service: BrowserAutomationServ
   close(): Promise<void>
 }> {
   const discovery = createBrowserTools(service, {
-    providerId: 'opencode',
+    providerId: 'opencode-v2',
     sessionId: 'discovery',
     cwd: '',
     containerKey: 'host'
@@ -128,8 +127,8 @@ export async function createOpenCodeBrowserBridge(service: BrowserAutomationServ
     await mkdir(cache, { recursive: true })
     directory = await mkdtemp(join(cache, 'opencode-browser-'))
     await writeFile(
-      join(directory, 'plugin.mjs'),
-      openCodeBrowserPluginSource(`http://${host}/call`, token, definitions),
+      join(directory, 'index.ts'),
+      openCodeV2BrowserPluginSource(`http://${host}/call`, token, definitions),
       { mode: 0o600 }
     )
   } catch (error) {
@@ -138,7 +137,7 @@ export async function createOpenCodeBrowserBridge(service: BrowserAutomationServ
     throw error
   }
   return {
-    pluginUrl: pathToFileURL(join(directory, 'plugin.mjs')).href,
+    pluginUrl: directory,
     register: async (scope) => {
       if (closed) throw new Error('OpenCode browser bridge closed')
       scope = { ...scope }
@@ -194,39 +193,42 @@ export async function createOpenCodeBrowserBridge(service: BrowserAutomationServ
 
 type Definition = { name: string; description: string; inputSchema: object }
 
-/** Dependency-free plugin: OpenCode 1.19 accepts JSON Schema args and the tool.definition
- * hook preserves optional properties. Validation remains in the shared MCP tool schemas.
- */
-export const openCodeBrowserPluginSource = (
+export const openCodeV2BrowserPluginSource = (
   url: string,
   token: string,
   definitions: Definition[]
 ): string => `
 const definitions = ${JSON.stringify(definitions)};
-export default async () => ({
-  tool: Object.fromEntries(definitions.map(def => [${JSON.stringify(openCodeBrowserToolPrefix)} + def.name, {
-    description: def.description + ${JSON.stringify(` ${browserToolInstructions}`)},
-    args: def.inputSchema.properties || {},
-    async execute(args, context) {
-      context.abort.throwIfAborted();
-      await context.ask({ permission: ${JSON.stringify(openCodeBrowserToolPrefix)} + def.name,
-        patterns: [def.name], always: [def.name], metadata: { description: def.description, arguments: args } });
-      context.abort.throwIfAborted();
-      const response = await fetch(${JSON.stringify(url)}, {
-        method: 'POST', signal: context.abort,
-        headers: { Authorization: ${JSON.stringify(`Bearer ${token}`)}, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionID: context.sessionID, directory: context.directory, name: def.name, args })
+export default {
+  id: 'sele.browser',
+  async setup(ctx) {
+    await ctx.tool.transform(editor => {
+      for (const def of definitions) editor.add({
+        name: ${JSON.stringify(openCodeBrowserToolPrefix)} + def.name,
+        description: def.description + ${JSON.stringify(` ${browserToolInstructions}`)},
+        input: def.inputSchema,
+        options: { codemode: false },
+        async execute(args, context) {
+          context.signal.throwIfAborted();
+          await ctx.permission.assert({ sessionID: context.sessionID, agent: context.agent,
+            action: ${JSON.stringify(openCodeBrowserToolPrefix)} + def.name,
+            resources: [def.name], save: [def.name],
+            source: { type: 'tool', messageID: context.messageID, id: context.id },
+            metadata: { description: def.description, arguments: args } });
+          const session = await ctx.session.get({ sessionID: context.sessionID });
+          const response = await fetch(${JSON.stringify(url)}, {
+            method: 'POST', signal: context.signal,
+            headers: { Authorization: ${JSON.stringify(`Bearer ${token}`)}, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionID: context.sessionID, directory: session.location.directory, name: def.name, args })
+          });
+          const result = await response.json();
+          if (!response.ok || result.isError) throw new Error(result.error || result.content?.filter(x => x.type === 'text').map(x => x.text).join('\\n') || 'Browser tool failed');
+          return { content: result.content.map(item => item.type === 'image'
+            ? { type: 'file', mime: item.mimeType, uri: 'data:' + item.mimeType + ';base64,' + item.data }
+            : { type: 'text', text: item.text || '' }) };
+        }
       });
-      const result = await response.json();
-      if (!response.ok || result.isError) throw new Error(result.error || result.content?.filter(x => x.type === 'text').map(x => x.text).join('\\n') || 'Browser tool failed');
-      return { title: 'Browser: ' + def.name,
-        output: result.content.filter(x => x.type === 'text').map(x => x.text).join('\\n'),
-        attachments: result.content.filter(x => x.type === 'image').map(x => ({ type: 'file', mime: x.mimeType, url: 'data:' + x.mimeType + ';base64,' + x.data })) };
-    }
-  }])),
-  'tool.definition': async ({ toolID }, output) => {
-    const def = definitions.find(def => ${JSON.stringify(openCodeBrowserToolPrefix)} + def.name === toolID);
-    if (def) output.jsonSchema = def.inputSchema;
+    });
   }
-});
+};
 `

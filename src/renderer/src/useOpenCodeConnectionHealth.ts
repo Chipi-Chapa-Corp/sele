@@ -34,16 +34,16 @@ export function useOpenCodeConnectionHealth({
   // Re-read cached health when opening a chat or changing models within the same target.
   // biome-ignore lint/correctness/useExhaustiveDependencies: model, chatKey and revision intentionally trigger fresh reads
   useEffect(() => {
-    if (providerId !== 'opencode' || !available) return
+    if (providerId !== 'opencode-v2' || !available) return
     let active = true
     const options = { container: JSON.parse(sourceKey) }
     void (async () => {
       try {
-        const providers = await providerApi.getConnections('opencode', options)
+        const providers = await providerApi.getConnections(providerId, options)
         if (!active) return
         setResult({ scope, providers })
         if (!openCodeConnectionsNeedCheck(providers)) return
-        const checked = await providerApi.getConnections('opencode', {
+        const checked = await providerApi.getConnections(providerId, {
           ...options,
           forceRefresh: true
         })
@@ -58,7 +58,7 @@ export function useOpenCodeConnectionHealth({
     }
   }, [providerId, available, sourceKey, scope, model, chatKey, revision])
 
-  return providerId === 'opencode' && available && result?.scope === scope
+  return providerId === 'opencode-v2' && available && result?.scope === scope
     ? getOpenCodeConnectionFailure(result.providers, model)
     : null
 }

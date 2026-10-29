@@ -795,7 +795,9 @@ export const renderCopilotChatItems = (
   return items
 }
 
-const classifyCopilotTurnRecord = (message: SessionEvent): 'start' | 'content' | 'ignore' => {
+export const classifyCopilotTurnRecord = (
+  message: SessionEvent
+): 'start' | 'content' | 'ignore' => {
   if (!isScopedEvent(message, null)) return 'ignore'
   if (message.type === 'user.message')
     return isCopilotSystemContextMessage(message) ? 'ignore' : 'start'

@@ -39,7 +39,7 @@ export function ProviderSettingsContent({
           aria-label="Provider sections"
           options={[
             { value: 'General', label: 'General', icon: <Settings2 aria-hidden="true" /> },
-            ...(providerId === 'opencode'
+            ...(providerId === 'opencode-v2'
               ? [{ value: 'Connections', label: 'Connections', icon: <Plug aria-hidden="true" /> }]
               : []),
             { value: 'Config', label: 'Config', icon: <SlidersHorizontal aria-hidden="true" /> },
@@ -51,9 +51,10 @@ export function ProviderSettingsContent({
       </div>
       {tab === 'General' ? (
         children[0]
-      ) : tab === 'Connections' && providerId === 'opencode' ? (
+      ) : tab === 'Connections' && providerId === 'opencode-v2' ? (
         <ProviderConnectionsPanel
-          key={JSON.stringify(container)}
+          key={`${providerId}:${JSON.stringify(container)}`}
+          providerId={providerId}
           container={container}
           onChanged={onConnectionsChanged}
         />

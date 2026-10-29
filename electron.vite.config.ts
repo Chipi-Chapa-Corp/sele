@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 
 const config = defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@opencode-ai/sdk'] })]
+    plugins: [externalizeDepsPlugin({ exclude: ['@opencode/client'] })]
   },
   preload: {
     plugins: [externalizeDepsPlugin()]

@@ -22,7 +22,7 @@ export const shouldPreserveOptimisticTurnUntilUserMessage = (providerId: Provide
   providerId === 'codex' ||
   providerId === 'claude' ||
   providerId === 'copilot' ||
-  providerId === 'opencode'
+  providerId === 'opencode-v2'
 
 export const hasProviderUserMessageAfterOptimisticTurn = (
   currentItems: ProviderChatItem[],

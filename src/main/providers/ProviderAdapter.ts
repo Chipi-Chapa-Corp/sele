@@ -37,6 +37,9 @@ export type ProviderChatUpdateMetadata = {
 }
 
 export type ProviderChatTurnWindow = {
+  /** Opaque continuation for subagent viewers whose history has no exact total. */
+  cursor?: string
+  direction?: 'older' | 'newer'
   /** Null selects the latest `limit` turns. */
   startIndex: number | null
   limit: number
@@ -243,7 +246,8 @@ export type ProviderAdapter = {
   compactChat: (chatId: string) => Promise<ProviderChatDetail>
   /**
    * Fork the complete chat into a hidden copy and summarize that copy for another chat.
-   * Providers with readable native compaction compact the fork; others send `summaryPrompt`.
+   * Providers with readable native compaction try it first, falling back to `summaryPrompt`
+   * in a fresh fork on failure. Others send `summaryPrompt` directly.
    * The source chat is never changed. Rejects with LinkedChatContextCancelledError on abort.
    */
   summarizeChatInFork: (

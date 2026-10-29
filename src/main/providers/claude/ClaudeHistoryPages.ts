@@ -15,6 +15,7 @@ type Boundary = {
   newer: string | null
   older?: string | null
   limit: number
+  itemIds?: string[]
 }
 type Snapshot = {
   sessionId: string
@@ -62,11 +63,38 @@ export class ClaudeHistoryPages {
     this.latest.clear()
   }
 
+  rememberItems(pagination: ProviderChatTurnPagination, items: readonly { id: string }[]): void {
+    const neighbor = pagination.olderCursor ?? pagination.newerCursor
+    if (!neighbor?.startsWith(prefix)) return
+    const [snapshotId, pageId] = neighbor.slice(prefix.length).split('/')
+    const snapshot = this.snapshots.get(snapshotId)
+    const page = snapshot?.pages.get(pageId)
+    const id = pagination.olderCursor ? page?.newer : page?.older
+    const current = id ? snapshot?.pages.get(id) : undefined
+    if (current) current.itemIds = items.map((item) => item.id)
+  }
+
+  findItemCursor(sessionId: string, scope: string, itemId: string): string | null {
+    for (const [snapshotId, snapshot] of [...this.snapshots].reverse()) {
+      if (snapshot.sessionId !== sessionId || snapshot.scope !== scope) continue
+      for (const [id, page] of snapshot.pages) {
+        if (
+          page.itemIds?.some(
+            (candidate) => itemId === candidate || itemId.startsWith(`${candidate}:`)
+          )
+        )
+          return `${prefix}${snapshotId}/${id}`
+      }
+    }
+    return null
+  }
+
   async read(
     sessionId: string,
     scope: string,
     window: ProviderChatTurnCursorWindow,
-    openSource: () => Promise<ClaudeHistorySource>
+    openSource: () => Promise<ClaudeHistorySource>,
+    includeSidechain = false
   ): Promise<ClaudeHistoryPage> {
     const generation = this.generation
     const source = await openSource()
@@ -133,7 +161,12 @@ export class ClaudeHistoryPages {
         }
         boundary = snapshot.latest
       }
-      const { messages, rows, first } = await this.readBoundary(source, sessionId, boundary)
+      const { messages, rows, first } = await this.readBoundary(
+        source,
+        sessionId,
+        boundary,
+        includeSidechain
+      )
       if (boundary.older === undefined) {
         const parent =
           first?.entry.type === 'system' && first.entry.subtype === 'compact_boundary'
@@ -217,7 +250,12 @@ export class ClaudeHistoryPages {
     }
   }
 
-  private async readBoundary(source: ClaudeHistorySource, sessionId: string, boundary: Boundary) {
+  private async readBoundary(
+    source: ClaudeHistorySource,
+    sessionId: string,
+    boundary: Boundary,
+    includeSidechain: boolean
+  ) {
     const batches: Row[][] = []
     let nextRestoreBytes = 0
     let rows: Row[] = []
@@ -270,13 +308,23 @@ export class ClaudeHistoryPages {
       messages = await restoreClaudeHistory(
         sessionId,
         rows.map((row) => row.entry),
-        boundary.leaf
+        boundary.leaf,
+        includeSidechain
       )
       starts = []
       messages.forEach((message, index) => {
         const kind = classifyClaudeTurnRecord(message)
         if (kind === 'start' || (kind === 'content' && starts.length === 0)) starts.push(index)
       })
+      // Child viewers replace cursor pages, so a tool run can continue on an older
+      // page without reading back to its original delegation prompt.
+      if (
+        includeSidechain &&
+        messages.some(
+          (message) => message.type === 'assistant' || classifyClaudeTurnRecord(message) === 'start'
+        )
+      )
+        break
       const first = starts[Math.max(0, starts.length - boundary.limit)]
       if (
         first !== undefined &&
@@ -285,7 +333,7 @@ export class ClaudeHistoryPages {
       )
         break
     }
-    const start = starts[Math.max(0, starts.length - boundary.limit)] ?? 0
+    const start = includeSidechain ? 0 : (starts[Math.max(0, starts.length - boundary.limit)] ?? 0)
     const selected = messages.slice(start)
     const first = rows.findLast((row) => row.entry.uuid === selected[0]?.uuid)
     return { messages: selected, rows, first }

@@ -320,6 +320,90 @@ if (!process.versions.electron) {
           await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG())
         }
       }
+      const diff =
+        'diff --git a/Containerfile b/Dockerfile\nsimilarity index 100%\nrename from Containerfile\nrename to Dockerfile\ndiff --git a/auth.ts b/auth.ts\n--- a/auth.ts\n+++ b/auth.ts\n@@ -1 +1 @@\n-const before = "<old>";\n+const after = "<new>";\n'
+      for (const [key, fence, suffix] of [
+        ['diff', 'diff', ''],
+        ['diff-unlabelled', '', ''],
+        ['diff-worker', 'patch', '\n\n' + content]
+      ]) {
+        const message = '```' + fence + '\n' + diff + '```\n' + suffix
+        await run(`window.render(${JSON.stringify(message)},${JSON.stringify(key)})`)
+        await waitFor(`document.querySelectorAll('.markdown-diff .diff-code-insert').length===1`)
+        assert.equal(
+          await run(`document.querySelector('.markdown-diff__path').textContent`),
+          'Containerfile → Dockerfile'
+        )
+        assert.equal(
+          await run(`document.querySelector('.markdown-diff .diff-code-insert').textContent`),
+          'const after = "<new>";'
+        )
+        assert.equal(
+          await run(
+            `getComputedStyle(document.querySelector('.markdown-diff .diff-code-insert')).backgroundColor !== 'rgba(0, 0, 0, 0)'`
+          ),
+          true
+        )
+        if (key === 'diff') {
+          const screenshot = path.resolve(__dirname, '../../test-results/markdown-diff.png')
+          await fs.mkdir(path.dirname(screenshot), { recursive: true })
+          await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG())
+        }
+      }
+      const wideDiff =
+        diff
+          .replace('const after = "<new>";', 'const after = "' + 'long value '.repeat(40) + '";')
+          .replace('@@ -1 +1 @@', '@@ -1 +1,41 @@') + '+short line\n'.repeat(40)
+      for (const [key, suffix] of [
+        ['wide-diff', ''],
+        ['wide-diff-worker', '\n\n' + content]
+      ]) {
+        const message = '```diff\n' + wideDiff + '```\n' + suffix
+        await run(`window.render(${JSON.stringify(message)},${JSON.stringify(key)})`)
+        await waitFor(
+          `document.querySelectorAll('.markdown-diff .diff-code-insert').length===41 && document.querySelectorAll('.markdown-diff__path').length===2`
+        )
+        for (const width of [900, 420]) {
+          const layout = await run(`(() => {
+            document.querySelector('.chat-detail__message').style.width = '${width}px';
+            const block = document.querySelector('.markdown-diff');
+            const section = block.querySelectorAll('section')[1];
+            const header = section.querySelector('.markdown-diff__path');
+            const scroll = section.querySelector('.markdown-diff__scroll');
+            const table = scroll.querySelector('table');
+            const before = header.getBoundingClientRect().left;
+            scroll.scrollLeft = 200;
+            return {
+              scrolls: scroll.scrollWidth > scroll.clientWidth && scroll.scrollLeft === 200,
+              boundedHeight: scroll.scrollHeight > scroll.clientHeight,
+              headerFixed: header.getBoundingClientRect().left === before,
+              blockBounded: block.scrollWidth <= block.clientWidth + 1,
+              viewportBounded: scroll.clientWidth <= ${width},
+              tableCoversCode: table.getBoundingClientRect().right >= scroll.querySelector('.diff-code-insert').getBoundingClientRect().right - 1,
+              otherFileFixed: block.querySelector('.markdown-diff__scroll').scrollLeft === 0
+            };
+          })()`)
+          assert.deepEqual(layout, {
+            scrolls: true,
+            boundedHeight: true,
+            headerFixed: true,
+            blockBounded: true,
+            viewportBounded: true,
+            tableCoversCode: true,
+            otherFileFixed: true
+          })
+        }
+        if (key === 'wide-diff') {
+          await run(
+            'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+          )
+          const screenshot = path.resolve(
+            __dirname,
+            '../../test-results/markdown-diff-horizontal-scroll.png'
+          )
+          await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG())
+        }
+      }
       assert.deepEqual(errors, [])
       console.log(
         JSON.stringify({

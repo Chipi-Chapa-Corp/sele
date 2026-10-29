@@ -106,7 +106,7 @@ export type ConversationViewModelDependencies = {
   recentlyOpenedFilesByWorkspace: RecentlyOpenedFilesByWorkspace
   recentlyOpenedFilesWorkspaceKey: string
   changesPaneView: ChangesPaneView
-  selectedProviderId: 'codex' | 'claude' | 'copilot' | 'opencode' | undefined
+  selectedProviderId: 'codex' | 'claude' | 'copilot' | 'opencode-v2' | undefined
   setRecentChatReferencePage: React.Dispatch<
     React.SetStateAction<{
       chatKey: string

@@ -1,3 +1,4 @@
+import { useProviderLabels } from '../providerLabels'
 import { isNoProjectChat, isNoProjectCwd } from '../../../shared/noProject'
 import {
   Bookmark,
@@ -86,13 +87,6 @@ const statusLabels = {
 } as const
 const finishedUnseenLabel = 'Finished since last viewed'
 
-const providerLabels = {
-  codex: 'Codex',
-  claude: 'Claude',
-  copilot: 'Copilot',
-  opencode: 'OpenCode'
-} as const
-
 const workingStatuses = new Set<NonNullable<ProviderChat['status']>>(['active'])
 const minuteMs = 60_000
 const hourMs = 60 * minuteMs
@@ -149,6 +143,7 @@ export const ChatListItem = memo(function ChatListItem({
   onTogglePinned,
   approvalDecisionInFlight = null
 }: ChatListItemProps) {
+  const providerLabels = useProviderLabels()
   const terminalActivity = useChatTerminalStatus(`${chat.providerId}:${chat.id}`)
   const bookmarkedChatKeys = useBookmarkedChatKeys()
   const bookmarkKey = getChatBookmarkKey(chat.providerId, chat.id)

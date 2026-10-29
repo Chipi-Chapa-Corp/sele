@@ -1,3 +1,4 @@
+import { CopilotHistoryPages } from './CopilotHistoryPages'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import {
   PersistentPendingMessages,
@@ -7,6 +8,7 @@ import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
 import {
   raceLinkedChatCancellation,
   requireLinkedChatSummary,
+  summarizeLinkedChatWithFallback,
   throwIfLinkedChatCancelled
 } from '../linkedChatContext'
 import type { McpAppConnection } from '../../../shared/mcpApps'
@@ -77,7 +79,8 @@ import { providerOneShotGenerationCanceledMessage } from '../../../shared/provid
 import type {
   ProviderAdapter,
   ProviderChatUpdateMetadata,
-  ProviderChatTurnWindow
+  ProviderChatTurnWindow,
+  ProviderChatTurnCursorWindow
 } from '../ProviderAdapter'
 import {
   ProviderConversationCompletionCoordinator,
@@ -90,6 +93,7 @@ import {
   restoreProviderSkill
 } from '../providerResources'
 import { getCopilotExecutable } from './CopilotExecutable'
+import { getCopilotUpdateAvailability, updateCopilotProvider } from './CopilotProviderUpdate'
 import {
   isCopilotSystemContextMessage,
   getCopilotTurnOutcome,
@@ -163,6 +167,7 @@ type CopilotSessionState = {
   browserCwd: string | null
   metadata: CopilotSessionMetadata | null
   events: SessionEvent[]
+  historyPagination?: ProviderChatDetail['turnPagination']
   title: string | null
   active: boolean
   stopped: boolean
@@ -735,6 +740,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     CopilotSessionState,
     Map<string, CopilotSubagentFollowUp[]>
   >()
+  private historyPages = new CopilotHistoryPages()
   private sessionLoads = new WeakMap<CopilotSessionState, Promise<CopilotSessionState>>()
   private metadataChecks = new WeakMap<CopilotSessionState, Promise<void>>()
   private chatUpdatedListeners = new Set<
@@ -782,9 +788,29 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
   }
 
-  getUpdateAvailability = async (): Promise<ProviderUpdateAvailability | null> => null
+  getUpdateAvailability = async (
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderUpdateAvailability | null> =>
+    getCopilotUpdateAvailability({ container: options.container, env: process.env })
 
-  updateProvider = async (): Promise<ProviderUpdateAvailability | null> => null
+  updateProvider = async (
+    options: ProviderSourceOptions = {}
+  ): Promise<ProviderUpdateAvailability | null> => {
+    const key = getContainerTargetKey(options.container)
+    await this.clientEntryPromises.get(key)
+    const entry = this.clientEntries.get(key)
+    this.states.forEach((state) => {
+      if (getContainerTargetKey(state.container) !== key) return
+      this.persistPendingMessages(state)
+      this.closeBrowserIntegration(state)
+      state.session = null
+      state.client = null
+    })
+    if (entry) await entry.client.stop()
+    this.clientEntries.delete(key)
+    this.clientEntryPromises.delete(key)
+    return updateCopilotProvider({ container: options.container, env: process.env })
+  }
 
   getApprovalModes = async (): Promise<ProviderApprovalModeOption[]> => copilotApprovalModes
 
@@ -1144,26 +1170,20 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   private getSidebarTurnSummary = async (client: CopilotClient, sessionId: string) => {
     if (this.clientsWithoutPersistedEvents.has(client)) return undefined
-    let cursor: string | undefined
-    let updatedAt = 0
-    const seenCursors = new Set<string>()
     try {
-      while (true) {
-        const page = await client.rpc.sessions.readPersistedEvents({
-          sessionId,
-          cursor,
-          direction: 'backward',
-          max: 64
-        })
-        updatedAt = Math.max(
-          updatedAt,
-          ...page.events.map((event) => toMilliseconds(event.timestamp))
-        )
-        const outcome = getCopilotTurnOutcome(page.events)
-        if (outcome !== undefined || !page.hasMore) return { outcome: outcome ?? null, updatedAt }
-        if (seenCursors.has(page.cursor)) throw new Error('Repeated Copilot journal cursor')
-        seenCursors.add(page.cursor)
-        cursor = page.cursor
+      // A status dot must not walk a long tool run looking for its initial prompt.
+      // If the bounded tail has no outcome marker, retain the existing metadata.
+      const page = await client.rpc.sessions.readPersistedEvents({
+        sessionId,
+        direction: 'backward',
+        max: 64
+      })
+      if (page.cursorStatus !== 'ok') throw new Error('Copilot sidebar history cursor expired.')
+      const outcome = getCopilotTurnOutcome(page.events)
+      if (outcome === undefined && page.hasMore) return undefined
+      return {
+        outcome: outcome ?? null,
+        updatedAt: Math.max(0, ...page.events.map((event) => toMilliseconds(event.timestamp)))
       }
     } catch (error) {
       // Older Copilot CLIs (used through a host or container bridge) lack the journal API.
@@ -1191,7 +1211,56 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
+    if (window.startIndex != null && state.historyPagination) {
+      const events = await this.historyPages.complete(state.session!)
+      return this.createChatDetail({ ...state, events, historyPagination: undefined }, window)
+    }
+    if (state.historyPagination && window.limit !== 10) {
+      const page = await this.historyPages.read(state.session!, {
+        cursor: null,
+        direction: 'older',
+        limit: window.limit
+      })
+      return this.createChatDetail({
+        ...state,
+        events: page.events,
+        historyPagination: page.pagination
+      })
+    }
     return this.createChatDetail(state, window)
+  }
+
+  getChatCursorWindow = async (
+    chatId: string,
+    window: ProviderChatTurnCursorWindow,
+    options: { container?: AppContainerTarget | null } = {}
+  ): Promise<ProviderChatDetail> => {
+    if (!window.cursor)
+      return this.getChatWindow(chatId, { startIndex: null, limit: window.limit }, options)
+    const state = await this.ensureSession(chatId, undefined, options.container)
+    if (
+      state.historyPagination &&
+      this.historyPages.isLatest(window.cursor, state.historyPagination)
+    )
+      return this.createChatDetail(state)
+    const page = await this.historyPages.read(state.session!, window)
+    const historical = Boolean(page.pagination.newerCursor)
+    return this.createChatDetail({
+      ...state,
+      events: page.events,
+      historyPagination: page.pagination,
+      ...(historical
+        ? {
+            active: false,
+            stopped: false,
+            failed: false,
+            pendingMessages: [],
+            pendingPermissions: [],
+            pendingUserInputs: [],
+            plan: null
+          }
+        : {})
+    })
   }
 
   getChatWindowForItem = async (
@@ -1201,6 +1270,30 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
+    if (state.historyPagination) {
+      const savedCursor = this.historyPages.findItemCursor(state.session!, itemId)
+      if (savedCursor)
+        return this.getChatCursorWindow(
+          chatId,
+          {
+            cursor: savedCursor,
+            direction: 'older',
+            limit
+          },
+          options
+        )
+      let detail = this.createChatDetail(state)
+      while (!detail.items.some((item) => item.id === itemId || itemId.startsWith(`${item.id}:`))) {
+        const cursor = detail.turnPagination?.olderCursor
+        if (!cursor) throw new Error('Chat item not found')
+        detail = await this.getChatCursorWindow(
+          chatId,
+          { cursor, direction: 'older', limit },
+          options
+        )
+      }
+      return detail
+    }
     this.eventStores.get(state)?.seal()
     const window = findCopilotItemTurnWindow(state.events, itemId, limit)
     if (window) return this.createChatDetail(state, window)
@@ -1230,7 +1323,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         console.error('[caught:CopilotProviderAdapter:getSubagents]', error)
         return []
       })
-    return createCopilotSubagentSummaries(state.events, tasks)
+    const metadata = state.historyPagination
+      ? await this.historyPages.subagents(state.session!)
+      : state.events
+    return createCopilotSubagentSummaries(metadata, tasks)
   }
 
   getSubagent = async (
@@ -1247,21 +1343,44 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         console.error('[caught:CopilotProviderAdapter:getSubagent]', error)
         return []
       })
-    const summary = createCopilotSubagentSummaries(state.events, tasks).find(
+    const metadata = state.historyPagination
+      ? await this.historyPages.subagents(state.session!)
+      : state.events
+    const summary = createCopilotSubagentSummaries(metadata, tasks).find(
       (candidate) => candidate.id === subagentId
     )
     if (!summary) throw new Error('Copilot subagent was not found.')
-
+    if (state.historyPagination) {
+      const page = await this.historyPages.read(
+        state.session!,
+        {
+          cursor: window?.cursor ?? null,
+          direction: window?.direction ?? 'older',
+          limit: window?.limit ?? 10
+        },
+        subagentId
+      )
+      const historical = Boolean(page.pagination.newerCursor)
+      const events = historical
+        ? page.events
+        : mergeCopilotSubagentFollowUps(
+            page.events,
+            this.subagentFollowUps.get(state)?.get(subagentId) ?? []
+          )
+      const rendered = renderCopilotSubagentWindow(
+        { ...summary, status: historical ? 'completed' : summary.status },
+        events,
+        { startIndex: 0, limit: Number.MAX_SAFE_INTEGER }
+      )
+      this.historyPages.rememberItems(page.pagination, rendered.items)
+      return { ...summary, ...rendered, turnPagination: page.pagination }
+    }
     this.eventStores.get(state)?.seal()
     const events = mergeCopilotSubagentFollowUps(
       state.events,
       this.subagentFollowUps.get(state)?.get(subagentId) ?? []
     )
-    if (window)
-      return {
-        ...summary,
-        ...renderCopilotSubagentWindow(summary, events, window)
-      }
+    if (window) return { ...summary, ...renderCopilotSubagentWindow(summary, events, window) }
     return {
       ...summary,
       items: createCopilotSubagentTranscriptItems(
@@ -1274,6 +1393,35 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         })
       )
     }
+  }
+
+  getSubagentWindowForItem: NonNullable<ProviderAdapter['getSubagentWindowForItem']> = async (
+    chatId,
+    subagentId,
+    itemId,
+    options = {}
+  ) => {
+    let detail = await this.getSubagent(chatId, subagentId, options)
+    const state = await this.ensureSession(chatId, undefined, options.container)
+    const savedCursor = this.historyPages.findItemCursor(state.session!, itemId, subagentId)
+    if (savedCursor)
+      return this.getSubagent(chatId, subagentId, options, {
+        startIndex: null,
+        cursor: savedCursor,
+        direction: 'older',
+        limit: 10
+      })
+    while (!detail.items.some((item) => item.id === itemId || itemId.startsWith(`${item.id}:`))) {
+      const cursor = detail.turnPagination?.olderCursor
+      if (!cursor) throw new Error('Subagent item not found')
+      detail = await this.getSubagent(chatId, subagentId, options, {
+        startIndex: null,
+        cursor,
+        direction: 'older',
+        limit: 10
+      })
+    }
+    return detail
   }
 
   cancelSubagent = async (
@@ -1627,16 +1775,16 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const source = await this.ensureSession(chatId)
     if (source.active) throw new Error('Cannot fork a chat with an active response.')
-    await this.loadEvents(source)
+    const sourceEvents = await this.historyPages.complete(source.session!)
 
-    const targetIndex = source.events.findIndex(
+    const targetIndex = sourceEvents.findIndex(
       (event) =>
         event.type === 'assistant.message' &&
         (event.id === messageId || event.data.messageId === messageId)
     )
     if (targetIndex < 0) throw new Error('Message cannot be forked.')
 
-    const nextUserMessage = source.events
+    const nextUserMessage = sourceEvents
       .slice(targetIndex + 1)
       .find(
         (event) =>
@@ -1873,10 +2021,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
    */
   private restorePendingMessages = (
     state: CopilotSessionState,
-    stored: PersistedPendingMessage<CopilotPendingMessage>[]
+    stored: PersistedPendingMessage<CopilotPendingMessage>[],
+    persistedInputs: SessionEvent[] = state.events
   ): void => {
     if (!stored.length) return
-    const userMessages = state.events.filter(
+    const userMessages = persistedInputs.filter(
       (event): event is Extract<SessionEvent, { type: 'user.message' }> =>
         event.type === 'user.message' && !event.agentId
     )
@@ -2074,9 +2223,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     const state = await this.ensureSession(chatId, options)
     this.completionCoordinator.cancel(chatId)
-    await this.loadEvents(state)
+    const editEvents = await this.historyPages.complete(state.session!)
 
-    const target = state.events.find(
+    const target = editEvents.find(
       (event): event is Extract<SessionEvent, { type: 'user.message' }> =>
         event.type === 'user.message' && !event.agentId && event.id === messageId
     )
@@ -2184,6 +2333,26 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   summarizeChatInFork = async (
+    chatId: string,
+    options: { summaryPrompt: string; signal: AbortSignal },
+    onForkCreated: (chatId: string) => Promise<void>
+  ): Promise<string> => {
+    throwIfLinkedChatCancelled(options.signal)
+    const source = await this.ensureSession(chatId)
+    if (source.active) throw new Error('Wait for the current response before linking this chat.')
+    return summarizeLinkedChatWithFallback(
+      this,
+      chatId,
+      {
+        ...options,
+        turnOptions: source.options,
+        nativeSummary: () => this.summarizeChatNativelyInFork(chatId, options, onForkCreated)
+      },
+      onForkCreated
+    )
+  }
+
+  private summarizeChatNativelyInFork = async (
     chatId: string,
     { signal }: { summaryPrompt: string; signal: AbortSignal },
     onForkCreated: (chatId: string) => Promise<void>
@@ -2392,6 +2561,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       browserCwd: null,
       metadata: null,
       events: [],
+      historyPagination: { kind: 'cursor', olderCursor: null, newerCursor: null },
       title: null,
       active: false,
       stopped: false,
@@ -2598,7 +2768,16 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       await this.addAdditionalDirectories(session, options)
       await this.loadSessionTitle(state)
       await this.loadEvents(state)
-      this.restorePendingMessages(state, await this.pendingMessageStore.restore(sessionId))
+      const stored = await this.pendingMessageStore.restore(sessionId)
+      // Queue deduplication needs submitted input IDs/text, never the intervening tool bodies.
+      const submitted = stored.filter((message) => message.submitted)
+      const inputs = submitted.length
+        ? await this.historyPages.inputsSince(
+            session,
+            Math.min(...submitted.map((message) => message.createdAt)) - restoredMessageClockSkewMs
+          )
+        : undefined
+      this.restorePendingMessages(state, stored, inputs)
       await this.refreshPendingMessages(state)
       await this.refreshPlan(state)
       await this.refreshGoal(state)
@@ -2701,7 +2880,12 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (!state.session) return
     this.eventStores.get(state)?.seal()
     const before = state.events
-    const events = await state.session.getEvents()
+    const history = await this.historyPages.read(state.session, {
+      cursor: null,
+      direction: 'older',
+      limit: 10
+    })
+    const events = history.events
     if (options.isCurrent && !options.isCurrent()) return
     const liveChanges =
       state.events === before
@@ -2710,6 +2894,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
             const previousObjects = new Set(before)
             return state.events.filter((event) => !previousObjects.has(event))
           })()
+    state.historyPagination = history.pagination
     state.events = reconcileProviderRecords(state.events, events, {
       authoritative: true,
       getId: (event) => event.id,
@@ -3273,7 +3458,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): ProviderChatDetail => {
     this.eventStores.get(state)?.seal()
     state.revision += 1
-    return {
+    const detail: ProviderChatDetail = {
       id: state.id,
       revision: state.revision,
       createdAt: state.metadata ? toMilliseconds(state.metadata.startTime) : state.createdAt,
@@ -3292,13 +3477,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
             : state.active
               ? 'active'
               : null,
-      lastTurnOutcome: state.active
-        ? null
-        : state.failed
-          ? 'failed'
-          : state.stopped
-            ? 'stopped'
-            : (getCopilotTurnOutcome(state.events) ?? null),
+      lastTurnOutcome: state.historyPagination?.newerCursor
+        ? undefined
+        : state.active
+          ? null
+          : state.failed
+            ? 'failed'
+            : state.stopped
+              ? 'stopped'
+              : (getCopilotTurnOutcome(state.events) ?? null),
       pinned: false,
       sidebarOrder: null,
       done: false,
@@ -3324,11 +3511,18 @@ export class CopilotProviderAdapter implements ProviderAdapter {
           ),
           plan: state.plan
         }
-        return window
-          ? renderCopilotChatWindow(state.events, settings, window)
+        const selected = state.historyPagination
+          ? { startIndex: 0, limit: Number.MAX_SAFE_INTEGER }
+          : window
+        return selected
+          ? renderCopilotChatWindow(state.events, settings, selected)
           : { items: renderCopilotChatItems(state.events, settings) }
-      })()
+      })(),
+      ...(state.historyPagination ? { turnPagination: state.historyPagination } : {})
     }
+    if (state.historyPagination)
+      this.historyPages?.rememberItems(state.historyPagination, detail.items)
+    return detail
   }
 
   private createChatFromMetadata = (

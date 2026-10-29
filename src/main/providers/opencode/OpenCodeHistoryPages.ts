@@ -10,6 +10,20 @@ import {
 // History responses contain tool bodies. Small native pages keep a cold open from
 // decoding many unrelated megabytes just to fill a nominal ten-turn viewport.
 const messagePageSize = 8
+const openingPayloadBudget = 256_000
+const payloadSize = (messages: readonly OpenCodeMessageWithParts[]): number =>
+  messages.reduce(
+    (total, message) =>
+      total +
+      message.parts.reduce((size, part) => {
+        if (part.type === 'text' || part.type === 'reasoning') return size + part.text.length
+        if (part.type === 'file') return size + part.url.length
+        if (part.type === 'tool' && part.state.status === 'completed')
+          return size + part.state.output.length
+        return size
+      }, 0),
+    0
+  )
 const prefix = 'sele:opencode-history:'
 type Boundary = {
   sessionId: string
@@ -21,6 +35,7 @@ type Boundary = {
   newer: string | null
   limit: number
   older?: string | null
+  itemIds?: string[]
 }
 export type OpenCodeHistoryPage = {
   messages: OpenCodeMessageWithParts[]
@@ -39,10 +54,31 @@ export class OpenCodeHistoryPages {
     )
   }
 
+  rememberItems(pagination: ProviderChatTurnPagination, items: readonly { id: string }[]): void {
+    const token =
+      (pagination.olderCursor ? this.boundaries.get(pagination.olderCursor)?.newer : null) ??
+      (pagination.newerCursor ? this.boundaries.get(pagination.newerCursor)?.older : null)
+    const page = token ? this.boundaries.get(token) : undefined
+    if (page) page.itemIds = items.map((item) => item.id)
+  }
+
+  findItemCursor(client: OpencodeClient, sessionId: string, itemId: string): string | null {
+    for (const [token, boundary] of [...this.boundaries].reverse()) {
+      if (
+        boundary.client === client &&
+        boundary.sessionId === sessionId &&
+        boundary.itemIds?.some((id) => itemId === id || itemId.startsWith(`${id}:`))
+      )
+        return token
+    }
+    return null
+  }
+
   async read(
     client: OpencodeClient,
     session: { id: string; directory: string },
-    window: ProviderChatTurnCursorWindow
+    window: ProviderChatTurnCursorWindow,
+    partialTurns = false
   ): Promise<OpenCodeHistoryPage> {
     const token = window.cursor ?? `${prefix}${randomUUID()}`
     const boundary = window.cursor
@@ -88,12 +124,22 @@ export class OpenCodeHistoryPages {
       )
       first = boundary.startId
         ? messages.findIndex((record) => record.info.id === boundary.startId)
-        : (starts[Math.max(0, starts.length - limit)] ?? 0)
+        : partialTurns
+          ? 0
+          : (starts[Math.max(0, starts.length - limit)] ?? 0)
       if (boundary.startId && first < 0 && !hasMore)
         throw new Error('OpenCode history changed. Reopen the conversation.')
-      // Stop as soon as a response contains a complete turn start. A cursor page
-      // may contain fewer than the requested maximum number of turns.
-      if (boundary.startId ? first >= 0 : starts.length || !hasMore) break
+      // Fill the requested conversation window. Stop early for heavy tool turns,
+      // but do not let a few empty replies replace all preceding conversation context.
+      if (
+        boundary.startId
+          ? first >= 0
+          : (partialTurns && messages.length) ||
+            starts.length >= limit ||
+            !hasMore ||
+            (starts.length > 0 && payloadSize(messages.slice(first)) >= openingPayloadBudget)
+      )
+        break
       const result = await client.session.messages(
         {
           sessionID: session.id,

@@ -133,6 +133,8 @@ import { ContinueOnLimitResetButton } from './ContinueOnLimitResetButton'
 import { TableLightbox } from './TableLightbox'
 import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
+import 'react-diff-view/style/index.css'
+import './UnifiedDiff.css'
 
 const workingItemPageSize = 50
 const workingToolPageSize = 50
@@ -152,6 +154,8 @@ type ChatDetailItemProps = {
   hasNextWorkingStep?: boolean
   item: ProviderChatItem
   messagePinned?: boolean
+  pendingMessageLabel?: ReactNode
+  pendingMessageDeleteDisabled?: boolean
   resolvedModelIdsById?: ReadonlyMap<ProviderModelId, ProviderModelId>
   modelLabelsById?: ReadonlyMap<ProviderModelId, string>
   onDeletePendingMessage?: (message: ProviderPendingMessage) => void
@@ -262,6 +266,8 @@ const areChatDetailItemPropsEqual = (
   first.followingWorkingStepStatus === second.followingWorkingStepStatus &&
   first.hasNextWorkingStep === second.hasNextWorkingStep &&
   first.messagePinned === second.messagePinned &&
+  first.pendingMessageLabel === second.pendingMessageLabel &&
+  first.pendingMessageDeleteDisabled === second.pendingMessageDeleteDisabled &&
   hasSameMessageModelLabel(first, second) &&
   first.onDeletePendingMessage === second.onDeletePendingMessage &&
   first.onEditPendingMessage === second.onEditPendingMessage &&
@@ -1737,7 +1743,9 @@ const ToolSequence: React.FC<{
 }
 
 const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
-  const [placeholder] = useState(getRandomPlaceholderOption)
+  const [placeholder] = useState(() =>
+    item.items.length === 0 ? 'Working…' : getRandomPlaceholderOption()
+  )
   const [animation] = useState(getRandomWorkingMarkAnimation)
   const labelRef = useRef<HTMLSpanElement>(null)
   const reduced = useReducedMotionPreference()
@@ -1761,7 +1769,11 @@ const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ ite
   }, [placeholder, reduced])
 
   return (
-    <div className="chat-detail__tool-read chat-detail__tool-read--active chat-detail__tool-placeholder">
+    <div
+      className="chat-detail__tool-read chat-detail__tool-read--active chat-detail__tool-placeholder"
+      role="status"
+      aria-label="Agent working"
+    >
       <span className="chat-detail__tool-icon">
         <WorkingMark animation={animation} />
       </span>
@@ -1992,7 +2004,9 @@ const WorkingStep: React.FC<{
         : item.status === 'failed'
           ? 'Failed'
           : item.status === 'worked'
-            ? 'Worked'
+            ? progressDisclosureTarget?.status === 'working'
+              ? 'Work so far'
+              : 'Worked'
             : 'Working'
   const failureText =
     item.status === 'failed'
@@ -2396,7 +2410,7 @@ const WorkingStep: React.FC<{
 }
 
 const getPendingMessageLabel = (message: ProviderPendingMessage): string =>
-  message.kind === 'steering' ? 'Steering with' : 'Queue'
+  message.kind === 'steering' ? 'Steering' : 'Queue'
 
 const getPendingMessageActionLabel = (message: ProviderPendingMessage): string =>
   message.kind === 'steering' ? 'steering' : 'queued'
@@ -2415,6 +2429,8 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   hasNextWorkingStep = false,
   item,
   messagePinned = false,
+  pendingMessageLabel,
+  pendingMessageDeleteDisabled = false,
   modelLabelsById,
   resolvedModelIdsById,
   onDeletePendingMessage,
@@ -2487,11 +2503,13 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
     const pending = item.type === 'pendingMessage'
     const role = pending ? 'user' : item.role
     const messageLabel =
-      pending && item.kind === 'queued' && isQueuedPendingMessage(previousItem)
-        ? null
-        : pending
-          ? getPendingMessageLabel(item)
-          : (item.label ?? null)
+      pending && pendingMessageLabel !== undefined
+        ? pendingMessageLabel
+        : pending && item.kind === 'queued' && isQueuedPendingMessage(previousItem)
+          ? null
+          : pending
+            ? getPendingMessageLabel(item)
+            : (item.label ?? null)
     const pendingActionLabel = pending ? getPendingMessageActionLabel(item) : 'pending'
     const canEdit =
       !pending &&
@@ -2577,6 +2595,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
           <Button
             theme="secondary"
             size="small"
+            disabled={pendingMessageDeleteDisabled}
             aria-label={`Delete ${pendingActionLabel} message`}
             title={`Delete ${pendingActionLabel} message`}
             callback={() => onDeletePendingMessage?.(item)}

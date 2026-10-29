@@ -62,6 +62,7 @@ const copilotHarness = (state, client) => {
     {
       toMilliseconds: (value) => (value instanceof Date ? value.getTime() : Number(value)),
       normalizeReasoningEffort: () => null,
+      getCopilotCustomProviderSessionOptions: () => ({}),
       findCopilotItemTurnWindow: () => ({ startIndex: 20, limit: 10 })
     }
   )
@@ -69,6 +70,12 @@ const copilotHarness = (state, client) => {
     sessionLoads: new WeakMap(),
     metadataChecks: new WeakMap(),
     eventStores: new WeakMap(),
+    historyPages: {
+      read: async (session) => ({ events: await session.getEvents(), pagination: undefined })
+    },
+    pendingMessageStore: { restore: async () => [] },
+    restorePendingMessages() {},
+    refreshGoal: async () => {},
     createState: () => state,
     getSessionContainer: () => null,
     ensureClient: async () => client,

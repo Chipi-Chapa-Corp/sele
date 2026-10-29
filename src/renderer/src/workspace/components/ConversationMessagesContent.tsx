@@ -20,6 +20,7 @@ import { ChatWorkingPlaceholder } from '../../components/ChatDetailItem'
 import { getConversationTailWorkingStep } from '../../chatConversationModel'
 import { ChatMediaGallery } from '../../components/ChatMediaGallery'
 import { DeferredChatTurn } from '../../components/DeferredChatTurn'
+import { LimitResetQueueMessages } from '../../components/LimitResetQueueMessages'
 
 type ConversationMessagesContentProps = WorkspaceController['conversationMessages']
 
@@ -96,6 +97,7 @@ export function ConversationMessagesContent(
     visibleChatItems
   } = props
 
+  const [resetMessageCount, setResetMessageCount] = useState(0)
   const attachedContent = useRef<HTMLDivElement | null>(null)
   const showingSubagent = Boolean(activeSubagentChatView)
   const attachContent = useCallback(
@@ -123,10 +125,33 @@ export function ConversationMessagesContent(
     },
     [contentRef, subagentContentRef, chatSearchContentRef, showingSubagent]
   )
-  const subagentScroll = useRef({ id: '', start: 0, top: 0 })
+  const subagentScroll = useRef({ id: '', start: '', top: 0 })
   const subagentWindowId = activeSubagentChatView?.summary.id ?? ''
-  const subagentWindowStart = activeSubagentChatView?.detail?.itemsStartTurnIndex ?? 0
+  const subagentWindowStart = activeSubagentChatView?.detail?.turnPagination
+    ? JSON.stringify(activeSubagentChatView.detail.turnPagination)
+    : String(activeSubagentChatView?.detail?.itemsStartTurnIndex ?? 0)
   const subagentWindowReady = Boolean(activeSubagentChatView?.detail)
+  const subagentPositioning = useRef(true)
+  const subagentUserScroll = useRef(false)
+  useLayoutEffect(() => {
+    // Opening, restoring a nested viewport, and replacing a cursor page can all
+    // dispatch native scroll events. Learn the settled position before paging.
+    subagentPositioning.current = true
+    subagentUserScroll.current = false
+    let frame = window.requestAnimationFrame(() => {
+      frame = window.requestAnimationFrame(() => {
+        const element = subagentContentRef.current
+        if (element)
+          subagentScroll.current = {
+            id: subagentWindowId,
+            start: subagentWindowStart,
+            top: element.scrollTop
+          }
+        subagentPositioning.current = false
+      })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [subagentWindowId, subagentWindowStart, subagentWindowReady, subagentContentRef])
   const subagentHasDeferredContent = subagentChatConversationModel.turns.some(
     (turn) =>
       turn.items.length > 12 ||
@@ -201,8 +226,17 @@ export function ConversationMessagesContent(
     if (!view?.detail || view.pageLoading) return
     const start = view.detail.itemsStartTurnIndex ?? 0
     const end = start + subagentChatConversationModel.turns.length
-    const hasPage = direction === 'older' ? start > 0 : end < (view.detail.turnCount ?? end)
+    const hasPage = view.detail.turnPagination
+      ? Boolean(
+          direction === 'older'
+            ? view.detail.turnPagination.olderCursor
+            : view.detail.turnPagination.newerCursor
+        )
+      : direction === 'older'
+        ? start > 0
+        : end < (view.detail.turnCount ?? end)
     if (hasPage && isNearChatPageBoundary(element, direction, 160)) {
+      subagentUserScroll.current = false
       void handleNavigateSubagentTurns(direction)
     }
   }
@@ -210,11 +244,15 @@ export function ConversationMessagesContent(
     const view = activeSubagentChatView
     if (!view?.detail) return
     const previous = subagentScroll.current
-    const start = view.detail.itemsStartTurnIndex ?? 0
+    const start = view.detail.turnPagination
+      ? JSON.stringify(view.detail.turnPagination)
+      : String(view.detail.itemsStartTurnIndex ?? 0)
     subagentScroll.current = { id: view.summary.id, start, top: element.scrollTop }
     // Opening a child or positioning a newly loaded page is not user navigation.
     if (
       view.pageLoading ||
+      subagentPositioning.current ||
+      !subagentUserScroll.current ||
       previous.id !== view.summary.id ||
       previous.start !== start ||
       previous.top === element.scrollTop
@@ -227,6 +265,13 @@ export function ConversationMessagesContent(
     const element = contentRef.current
     if (element && chatAutoScrollEnabledRef.current) scrollChatContentToBottom(element)
   }, [contentRef, chatAutoScrollEnabledRef, scrollChatContentToBottom])
+  const handleResetMessagesChange = useCallback(
+    (count: number) => {
+      setResetMessageCount(count)
+      handleTurnMount()
+    },
+    [handleTurnMount]
+  )
   const chatMediaTurns = useMemo(() => getProviderChatTurns(mediaItems), [mediaItems])
   const mediaOptions = useMemo(
     () => ({
@@ -381,13 +426,41 @@ export function ConversationMessagesContent(
           onWheel={
             activeSubagentChatView
               ? (event) => {
-                  if (event.deltaY !== 0)
+                  if (event.deltaY !== 0) {
+                    subagentUserScroll.current = true
                     loadSubagentPageNearBoundary(
                       event.currentTarget,
                       event.deltaY < 0 ? 'older' : 'newer'
                     )
+                  }
                 }
               : handleNativeChatContentWheel
+          }
+          onPointerDownCapture={
+            activeSubagentChatView
+              ? (event) => {
+                  if (event.target === event.currentTarget) subagentUserScroll.current = true
+                }
+              : undefined
+          }
+          onTouchMoveCapture={
+            activeSubagentChatView
+              ? () => {
+                  subagentUserScroll.current = true
+                }
+              : undefined
+          }
+          onKeyDownCapture={
+            activeSubagentChatView
+              ? (event) => {
+                  if (
+                    ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(
+                      event.key
+                    )
+                  )
+                    subagentUserScroll.current = true
+                }
+              : undefined
           }
           // Child paging also reassigns the shared viewport during controller
           // layout effects. Reattach on its commits, as in the uncached view.
@@ -398,6 +471,14 @@ export function ConversationMessagesContent(
             <div className="chat-detail__messages-inner">
               {/* Transient activity belongs after history but before queued/steering turns. */}
               {renderedConversation}
+              {!activeSubagentChatView && (
+                <LimitResetQueueMessages
+                  key={selectedChatKey}
+                  providerId={selectedChat.providerId}
+                  target={selectedChat.id}
+                  onMessagesChange={handleResetMessagesChange}
+                />
+              )}
             </div>
             <div className="chat-detail__messages-footer" />
           </div>
@@ -434,6 +515,7 @@ export function ConversationMessagesContent(
           sendState !== 'sending' &&
           !chatHasActiveTurn &&
           visibleChatItems.length === 0 &&
+          resetMessageCount === 0 &&
           selectedChatCommitMarkers.length === 0 &&
           selectedChatSubagents.length === 0 && (
             <p className="chat__status chat-detail__messages-status">No messages found.</p>

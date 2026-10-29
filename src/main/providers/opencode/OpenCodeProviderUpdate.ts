@@ -3,7 +3,13 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
 import type { ProviderUpdateAvailability } from '../../../shared/provider'
 import { getHostCommand } from '../../hostProcess'
-import { getOpenCodeExecutable, getOpenCodeExecutableError } from './OpenCodeExecutable'
+import {
+  resolveOpenCodeInstallation,
+  clearOpenCodeInstallationCache
+} from './OpenCodeInstallations'
+import { getOpenCodeExecutableError } from './OpenCodeExecutable'
+import { installOpenCode } from './OpenCodeInstall'
+import { managedOpenCodeV2Executable } from './OpenCodeInstallations'
 
 type OpenCodeProviderUpdateOptions = {
   container?: AppContainerTarget | null
@@ -16,7 +22,7 @@ type ParsedVersion = {
   patch: number
 }
 
-const openCodePackageVersionUrl = 'https://registry.npmjs.org/opencode-ai/latest'
+const openCodePackageVersionUrl = 'https://registry.npmjs.org/@opencode%2Fcli/latest'
 const commandMaxBuffer = 2 * 1024 * 1024
 const versionCheckTimeoutMs = 20_000
 const updateTimeoutMs = 10 * 60_000
@@ -48,7 +54,7 @@ const runOpenCode = async (
   timeout: number,
   options: OpenCodeProviderUpdateOptions
 ): Promise<string> => {
-  const executable = options.container?.kind === 'container' ? 'opencode' : getOpenCodeExecutable()
+  const { executable } = await resolveOpenCodeInstallation(options.container)
   const command = await getHostCommand(executable, args, {
     container: options.container,
     env: options.env
@@ -120,6 +126,10 @@ export const getOpenCodeUpdateAvailability = async (
 export const updateOpenCodeProvider = async (
   options: OpenCodeProviderUpdateOptions = {}
 ): Promise<ProviderUpdateAvailability | null> => {
-  await runOpenCode(['upgrade'], updateTimeoutMs, options)
+  const installation = await resolveOpenCodeInstallation(options.container)
+  if (installation.major === 2 && installation.executable === managedOpenCodeV2Executable())
+    await installOpenCode(options.container, true)
+  else await runOpenCode(['upgrade'], updateTimeoutMs, options)
+  clearOpenCodeInstallationCache()
   return getOpenCodeUpdateAvailability(options)
 }

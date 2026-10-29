@@ -170,6 +170,45 @@ test('active confirmation keeps a placeholder until the provider working step ar
   }
 })
 
+test('active steering keeps activity visible across a finished block and delayed echo', () => {
+  const user = message('user', 'user', 'Inspect the email')
+  const worked = { type: 'working', id: 'worked', status: 'worked', items: [] }
+  const steer = {
+    type: 'pendingMessage',
+    id: 'answer',
+    kind: 'steering',
+    content: 'Question\n\nAnswer: Use cached text',
+    createdAt: 2000,
+    editable: false
+  }
+  const queued = { ...steer, id: 'later', kind: 'queued', editable: true }
+  const pendingItems = [user, worked, steer, queued]
+  const placeholder = getConversationTailWorkingStep(pendingItems, true)
+  assert.equal(placeholder.status, 'working')
+  assert.equal(placeholder.startedAt, steer.createdAt)
+  assert.equal(getConversationTailWorkingStep(pendingItems), null, 'paused steering stays idle')
+  assert.equal(getConversationTailWorkingStep([user, worked, queued], true), null)
+
+  // The echo can precede any following assistant output. Both stages retain activity.
+  const echo = { ...message('echo', 'user', steer.content), kind: 'steering', createdAt: 2100 }
+  assert.equal(getConversationTailWorkingStep([user, worked, echo], true).status, 'working')
+  const working = { ...worked, id: 'continuing', status: 'working' }
+  assert.equal(getConversationTailWorkingStep([user, worked, echo, working], true), working)
+  assert.equal(
+    getConversationTailWorkingStep([user, worked, echo, { ...working, status: 'worked' }], true),
+    null,
+    'the completed handoff does not leave a phantom activity row'
+  )
+  assert.equal(
+    getConversationTailWorkingStep(
+      [user, worked, steer, message('done', 'assistant', 'Done')],
+      true
+    ),
+    null,
+    'a historical pending item cannot revive activity after a later answer'
+  )
+})
+
 test('incremental steering targets track final work and preserve previous snapshots', () => {
   const earlier = { type: 'working', id: 'earlier', status: 'worked', items: [] }
   const final = { type: 'working', id: 'final', status: 'working', items: [] }

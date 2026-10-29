@@ -165,19 +165,31 @@ const renderedDiffCache = createBoundedTextCache<RenderedDiffFile[]>(24, 4_000_0
   return size
 })
 
-export const getRenderedDiffFiles = (fileDiff: ProviderFileDiff): RenderedDiffFile[] => {
+export const getRenderedDiffFiles = (
+  fileDiff: ProviderFileDiff,
+  { includeMetadataOnly = false }: { includeMetadataOnly?: boolean } = {}
+): RenderedDiffFile[] => {
   const language = getLanguage(fileDiff.path)
 
   try {
     // IPC sends fresh objects. Cache only the rendering inputs; review state and
     // editor models remain owned by each mounted view.
-    return renderedDiffCache.get(`${language}:${fileDiff.kind}:${fileDiff.diff}`, () => {
-      const unifiedDiff = toUnifiedDiff(fileDiff)
-      if (!unifiedDiff) return []
-      return parseDiff(unifiedDiff)
-        .filter((file) => file.hunks.length > 0)
-        .map((file) => ({ file, tokens: getTokens(file.hunks, language) }))
-    })
+    return renderedDiffCache.get(
+      `${includeMetadataOnly}:${fileDiff.path ? language : 'inferred'}:${fileDiff.kind}:${fileDiff.diff}`,
+      () => {
+        const unifiedDiff = toUnifiedDiff(fileDiff)
+        if (!unifiedDiff) return []
+        return parseDiff(unifiedDiff)
+          .filter((file) => includeMetadataOnly || file.hunks.length > 0)
+          .map((file) => ({
+            file,
+            tokens: getTokens(
+              file.hunks,
+              language ?? (!fileDiff.path ? getLanguage(file.newPath) : null)
+            )
+          }))
+      }
+    )
   } catch (error) {
     console.error('[caught:unifiedDiffRendering:getRenderedFiles]', error)
     return []

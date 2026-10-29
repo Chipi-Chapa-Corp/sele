@@ -34,7 +34,8 @@ export const loadClaudeHistory = async (
 export const restoreClaudeHistory = async (
   sessionId: string,
   entries: SessionStoreEntry[] | SessionStore,
-  leafUuid?: string | null
+  leafUuid?: string | null,
+  includeSidechain = false
 ): Promise<ClaudeTranscriptMessage[]> => {
   const anchorUuid = `sele-history-page:${sessionId}`
   const originals = new Map<string, SessionStoreEntry>()
@@ -60,8 +61,9 @@ export const restoreClaudeHistory = async (
                 } as SessionStoreEntry
               ]
         return source
-          .filter((entry) => !entry.isSidechain && !entry.teamName)
+          .filter((entry) => includeSidechain || (!entry.isSidechain && !entry.teamName))
           .map((entry) => {
+            if (includeSidechain) entry = { ...entry, isSidechain: false }
             if (typeof entry.uuid === 'string') originals.set(entry.uuid, entry)
             if (entry.type !== 'system' || entry.subtype !== 'compact_boundary') return entry
             return {
@@ -87,7 +89,7 @@ export const restoreClaudeHistory = async (
         type: message.type,
         uuid: message.uuid,
         session_id: message.session_id,
-        parent_tool_use_id: message.parent_tool_use_id,
+        parent_tool_use_id: includeSidechain ? null : message.parent_tool_use_id,
         // SDK SessionMessage omits top-level system payloads and internal user flags.
         message: original?.type === 'system' ? original : message.message,
         ...(typeof original?.error === 'string' ? { error: original.error } : {}),

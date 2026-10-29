@@ -6,6 +6,7 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import { getCodexTurnOutcome } from './codex/CodexTurnOutcome.ts'
 import * as opencode from './opencode/OpenCodeItemRenderers.ts'
+import * as opencodeV2 from './opencode/OpenCodeV2Client.ts'
 import { isDefaultOpenCodeTitle } from './opencode/OpenCodeChatTitle.ts'
 import { getOpenCodeUsageLimitMessage } from './opencode/OpenCodeUsageLimit.ts'
 import * as claude from './claude/ClaudeItemRenderers.ts'
@@ -182,6 +183,7 @@ test('OpenCode native errors survive cold listing, reopening and another list re
       ['getChats', 'createChat', 'getChatStatus', 'createChatDetailFromState'],
       {
         ...opencode,
+        ...opencodeV2,
         isDefaultOpenCodeTitle,
         getOpenCodeUsageLimitMessage,
         requireData: (value) => value.data,
@@ -210,7 +212,10 @@ test('OpenCode native errors survive cold listing, reopening and another list re
         container: null,
         client: {
           experimental: { session: { list: async () => ({ data: [session] }) } },
-          session: { status: async () => ({ data: {} }) }
+          session: {
+            status: async () => ({ data: {} }),
+            messages: async () => ({ data: messages, response: new Response() })
+          }
         }
       }),
       rememberSession: () => state,
@@ -391,7 +396,7 @@ const coldFixture = (provider, outcome) => {
           readPersistedEvents: async (params) => {
             assert.equal(params.direction, 'backward')
             assert.equal(params.max, 64)
-            return { events, hasMore: false, cursor: 'end' }
+            return { events, hasMore: false, cursor: 'end', cursorStatus: 'ok' }
           }
         }
       }
@@ -432,6 +437,7 @@ const coldFixture = (provider, outcome) => {
         {
           ...bindings,
           ...opencode,
+          ...opencodeV2,
           isDefaultOpenCodeTitle,
           getOpenCodeUsageLimitMessage,
           requireData: (value) => value.data,
@@ -446,7 +452,10 @@ const coldFixture = (provider, outcome) => {
         container: null,
         client: {
           experimental: { session: { list: async () => ({ data: [session] }) } },
-          session: { status: async () => ({ data: {} }) }
+          session: {
+            status: async () => ({ data: {} }),
+            messages: async () => ({ data: messages, response: new Response() })
+          }
         }
       }),
       rememberSession: () => state,

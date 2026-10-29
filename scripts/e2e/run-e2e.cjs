@@ -98,14 +98,17 @@ async function main() {
       app = null
       session.page = null
       session.sele = null
+      runner.attach(null, null)
     },
     /** Start (or restart) Sele with the same profile, like a user reopening the app. */
     async launch() {
       if (app) await app.close()
+      const mainLog = new MainLog(appLog)
+      mainLog.offset = fs.existsSync(appLog) ? fs.statSync(appLog).size : 0
       app = await harness.launchApp({ outDir, env, logFile: appLog })
       session.page = new Page(app.cdp, { artifacts })
       session.sele = new Sele(session.page)
-      runner.attach(session.page, runner.mainLog ?? new MainLog(appLog))
+      runner.attach(session.page, mainLog)
       await session.sele.waitReady()
       return session
     }
@@ -134,7 +137,12 @@ async function main() {
         `[...document.querySelectorAll('[role="option"]')].filter(window.__sele.visible).map(option => window.__sele.text(option))`
       )
       await session.page.press('Escape')
-      const labels = { codex: 'Codex', claude: 'Claude', copilot: 'Copilot', opencode: 'OpenCode' }
+      const labels = {
+        codex: 'Codex',
+        claude: 'Claude',
+        copilot: 'Copilot',
+        'opencode-v2': 'OpenCode'
+      }
       for (const provider of providers)
         if (!offered.some((label) => label.startsWith(labels[provider])))
           context.fail(`${labels[provider]} is not offered`)

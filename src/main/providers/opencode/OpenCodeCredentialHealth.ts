@@ -114,8 +114,9 @@ export const checkOpenCodeCredential = async ({
         {
           sessionID: session.id,
           directory,
-          // The title agent has a short prompt and no tools, which keeps the check cheap.
-          agent: 'title',
+          // V2's title agent is internal. Use the public agent with the session's
+          // deny-all permissions and a one-word instruction instead.
+          agent: 'build',
           model: { providerID: providerId, modelID: modelId },
           system: 'Reply with the single word OK.',
           parts: [{ type: 'text', text: 'OK?' }]
@@ -136,7 +137,7 @@ export const checkOpenCodeCredential = async ({
       (error.data.statusCode === 429 || error.data.isRetryable === true)
     return transient
       ? { state: 'unverified', message, checkedAt }
-      : { state: 'failed', message, checkedAt }
+      : { state: isOpenCodeCredentialError(error) ? 'failed' : 'unverified', message, checkedAt }
   } catch {
     return {
       state: 'unverified',

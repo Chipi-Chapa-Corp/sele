@@ -5,7 +5,7 @@ import { useSidebarOpenCodeProvider, type OpenCodeProviderPicker } from './Sideb
 import { Dropdown } from '../../components/Dropdown'
 import { ProviderIcon } from '../../components/ProviderIcon'
 import { providerApi } from '../../providerApi'
-import { providerLabels } from '../../providerSettings'
+import { useProviderLabels } from '../../providerLabels'
 import { useFeedbackMotion } from '../../motion/useFeedbackMotion'
 import { Plus, Trash2 } from 'lucide-react'
 import { AccountDialog, type AccountAuthorizationSession } from '../../components/AccountDialog'
@@ -37,10 +37,12 @@ export function SidebarProviderAccount({
   onCreate,
   onDelete
 }: SidebarProviderAccountProps): ReactElement | null {
-  const isOpenCode = providerId === 'opencode' && Boolean(openCode)
+  const providerLabels = useProviderLabels()
+  const isOpenCode = providerId === 'opencode-v2' && Boolean(openCode)
   const openCodeControl = useSidebarOpenCodeProvider(
     isOpenCode ? openCode : undefined,
     container,
+    'opencode-v2',
     available
   )
   const [configurations, setConfigurations] = useState<
@@ -93,7 +95,7 @@ export function SidebarProviderAccount({
     login?: string | null
     displayName?: string | null
   }): string =>
-    providerId === 'opencode'
+    providerId === 'opencode-v2'
       ? 'Default Account'
       : candidate.displayName || candidate.login || 'Default Account'
   const label = !available

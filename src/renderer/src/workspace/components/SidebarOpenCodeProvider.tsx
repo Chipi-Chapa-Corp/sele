@@ -32,6 +32,7 @@ type OpenCodeProviderProps = OpenCodeProviderPicker & {
 export function useSidebarOpenCodeProvider(
   picker: OpenCodeProviderPicker | undefined,
   container: AppContainerTarget | null,
+  providerId: 'opencode-v2',
   available: boolean
 ) {
   const {
@@ -45,7 +46,7 @@ export function useSidebarOpenCodeProvider(
     onManage,
     onClose
   } = picker ?? {}
-  const sourceKey = JSON.stringify([Boolean(picker), container])
+  const sourceKey = JSON.stringify([Boolean(picker), providerId, container])
   const [deletingSource, setDeletingSource] = useState<string | null>(null)
   const deleting = deletingSource === sourceKey
   const [failure, setFailure] = useState<{ sourceKey: string; message: string } | null>(null)
@@ -66,7 +67,7 @@ export function useSidebarOpenCodeProvider(
     try {
       for (const connection of provider.connections)
         if (connection.type === 'credential')
-          await providerApi.deleteConnection('opencode', connection.id, { container })
+          await providerApi.deleteConnection(providerId, connection.id, { container })
       onChanged?.()
     } catch (error) {
       setFailure({
@@ -138,6 +139,7 @@ export function useSidebarOpenCodeProvider(
                 }}
               >
                 <ProviderConnectionsPanel
+                  providerId={providerId}
                   key={sourceKey}
                   container={container ?? { kind: 'host' }}
                   onChanged={onChanged}
@@ -172,7 +174,12 @@ export function SidebarOpenCodeProvider({
   available,
   ...picker
 }: OpenCodeProviderProps): ReactElement {
-  const { label, dropdownProps, content } = useSidebarOpenCodeProvider(picker, container, available)
+  const { label, dropdownProps, content } = useSidebarOpenCodeProvider(
+    picker,
+    container,
+    'opencode-v2',
+    available
+  )
   return (
     <div aria-label="Current OpenCode provider">
       <Dropdown
@@ -183,7 +190,7 @@ export function SidebarOpenCodeProvider({
         valueContent={
           <>
             <span className="ui-dropdown__value-icon" aria-hidden="true">
-              <ProviderIcon providerId="opencode" />
+              <ProviderIcon providerId="opencode-v2" />
             </span>
             <span className="ui-dropdown__value-label">{label ?? 'Providers'}</span>
           </>

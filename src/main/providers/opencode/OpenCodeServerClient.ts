@@ -2,12 +2,16 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import type { AppContainerTarget } from '../../../shared/app'
 import { getCurrentContainerHostBridge, isCurrentContainerTarget } from '../../currentContainer'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { quotePosixShellArg } from '../../targetShell'
-import { getOpenCodeExecutable, getOpenCodeExecutableError } from './OpenCodeExecutable'
+import { getOpenCodeExecutableError } from './OpenCodeExecutable'
+import { resolveOpenCodeInstallation } from './OpenCodeInstallations'
+import { createOpenCodeV2Client } from './OpenCodeV2Client'
+export { getOpenCodeV2Client } from './OpenCodeV2Client'
+import { ensureOpenCodeV2Profile } from './OpenCodeV2Profile'
 import { getBrowserAutomationService } from '../../browser/BrowserAutomation'
 import { createOpenCodeBrowserBridge } from './OpenCodeBrowserBridge'
 import type { BrowserAutomationScope } from '../../../shared/browser'
@@ -107,7 +111,17 @@ export class OpenCodeServerClient {
       getCurrentContainerHostBridge()
     ])
     checkCurrent()
-    let serverEnv = process.env
+    const installation = await resolveOpenCodeInstallation(this.container)
+    checkCurrent()
+    // Host/container launchers capture target environment overrides while preparing
+    // the command. Adding credentials only to spawn's outer environment is too late.
+    const password = randomBytes(24).toString('base64url')
+    let serverEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      OPENCODE_DB: await ensureOpenCodeV2Profile(this.container),
+      OPENCODE_SERVER_PASSWORD: password,
+      OPENCODE_SERVER_USERNAME: 'opencode'
+    }
     const browserService = getBrowserAutomationService()
     if (!this.container && browserService) {
       try {
@@ -117,10 +131,10 @@ export class OpenCodeServerClient {
         checkCurrent()
         this.browser = ownedBrowser
         serverEnv = {
-          ...process.env,
+          ...serverEnv,
           OPENCODE_CONFIG_CONTENT: JSON.stringify({
             ...content,
-            plugin: [...(content.plugin ?? []), ownedBrowser.pluginUrl]
+            plugins: [...(content.plugins ?? []), ownedBrowser.pluginUrl]
           })
         }
       } catch (error) {
@@ -130,7 +144,7 @@ export class OpenCodeServerClient {
         checkCurrent()
       }
     }
-    const executable = this.container?.kind === 'container' ? 'opencode' : getOpenCodeExecutable()
+    const executable = installation.executable
     const serverArgs = ['serve', '--hostname', '127.0.0.1', '--port', String(port)]
     const usesCommandWrapper =
       Boolean(this.container) || Boolean(hostBridge) || isRunningInFlatpak()
@@ -151,7 +165,6 @@ export class OpenCodeServerClient {
       throw getOpenCodeExecutableError(error)
     })
     checkCurrent()
-    const password = randomBytes(24).toString('base64url')
     const child = spawn(hostCommand.file, hostCommand.args, {
       cwd: hostCommand.cwd,
       env: {
@@ -193,7 +206,7 @@ export class OpenCodeServerClient {
           ownedTargetPid = targetPid
           if (this.process === child) this.targetPid = targetPid
         }
-        const match = /opencode server listening on (https?:\/\/[^\s]+)/.exec(output)
+        const match = /(?:opencode )?server listening on (https?:\/\/[^\s]+)/.exec(output)
         if (match?.[1]) settle(undefined, match[1])
       }
 
@@ -235,10 +248,9 @@ export class OpenCodeServerClient {
     })
 
     const authorization = Buffer.from(`opencode:${password}`).toString('base64')
-    const client = createOpencodeClient({
+    const client = createOpenCodeV2Client({
       baseUrl: url,
-      headers: { authorization: `Basic ${authorization}` },
-      throwOnError: true
+      headers: { authorization: `Basic ${authorization}` }
     })
     try {
       await client.global.health({ throwOnError: true })

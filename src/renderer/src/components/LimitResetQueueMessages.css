@@ -1,34 +1,15 @@
 .limit-reset-queue {
+  display: flex;
   width: 100%;
-  margin: 0 0 0.4rem;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.7rem;
 }
 
 .limit-reset-queue__message {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.55rem;
-  padding: 0.5rem 0.45rem;
-}
-
-.limit-reset-queue__message > div {
   min-width: 0;
 }
 
-.limit-reset-queue__message p {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.limit-reset-queue__date {
-  color: var(--quiet);
-  white-space: nowrap;
-}
-
-.limit-reset-queue__metadata {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
+.limit-reset-queue .chat-approval__error {
+  text-align: right;
 }

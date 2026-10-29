@@ -133,7 +133,7 @@ import { browserIpcChannels } from '../shared/browser'
 import { getCodexExecutable } from './providers/codex/CodexExecutable'
 import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
 import { getCopilotExecutable } from './providers/copilot/CopilotExecutable'
-import { getOpenCodeExecutable } from './providers/opencode/OpenCodeExecutable'
+import { getOpenCodeInstallations } from './providers/opencode/OpenCodeInstallations'
 import { supportsOpenCodeServerContainer } from './providers/opencode/OpenCodeServerClient'
 
 export const getAppWindowState = (window: BrowserWindow): AppWindowState => ({
@@ -165,7 +165,7 @@ const sourceAvailabilityProviderIds = [
   'codex',
   'claude',
   'copilot',
-  'opencode'
+  'opencode-v2'
 ] as const satisfies readonly ProviderId[]
 const sourceAvailabilityCommands = ['git', ...sourceAvailabilityProviderIds] as const
 
@@ -1044,15 +1044,10 @@ const isProviderAvailableInSource = async (
     )
   }
 
-  if (providerId === 'opencode') {
+  if (providerId === 'opencode-v2') {
     if (!(await supportsOpenCodeServerContainer(container))) return false
-    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
-      return isCommandAvailableInSource('opencode', container)
-    }
-
-    return runAvailabilityCommand(getOpenCodeExecutable(), ['--version'], null).then(
-      ({ success }) => success
-    )
+    const installations = await getOpenCodeInstallations(container)
+    return installations.some((item) => item.major === 2)
   }
 
   return false
@@ -1071,14 +1066,18 @@ const getSourceAvailability = async (
     const { stdout } = await runAvailabilityCommand('sh', ['-lc', script], container)
     const availableCommands = new Set(stdout.split('\n').filter(Boolean))
     const openCodeServerSupported = await supportsOpenCodeServerContainer(container)
+    const openCodeInstallations = openCodeServerSupported
+      ? await getOpenCodeInstallations(container)
+      : []
 
     return {
       gitAvailable: availableCommands.has('git'),
       providers: sourceAvailabilityProviderIds.map((providerId) => ({
         providerId,
         available:
-          availableCommands.has(providerId) &&
-          (providerId !== 'opencode' || openCodeServerSupported)
+          providerId === 'opencode-v2'
+            ? openCodeInstallations.some((item) => item.major === 2)
+            : availableCommands.has(providerId)
       }))
     }
   }

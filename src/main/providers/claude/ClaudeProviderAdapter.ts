@@ -19,7 +19,6 @@ import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import {
   getSessionInfo,
-  getSubagentMessages,
   listSubagents,
   query,
   renameSession,
@@ -97,9 +96,11 @@ import { getClaudeLinkedChatSummary } from './ClaudeLinkedChatSummary'
 import {
   raceLinkedChatCancellation,
   requireLinkedChatSummary,
+  summarizeLinkedChatWithFallback,
   throwIfLinkedChatCancelled,
   watchLinkedChatForkTurn
 } from '../linkedChatContext'
+import { ClaudeSubagentHistory } from './ClaudeSubagentHistory'
 import { ClaudeHistoryPages, type ClaudeHistoryPage } from './ClaudeHistoryPages'
 import {
   PersistentPendingMessages,
@@ -142,11 +143,7 @@ import {
   clearClaudeStreamMessages,
   retainClaudeStreamTiming
 } from './ClaudeStreaming'
-import {
-  collectClaudeSubagentSpawns,
-  createClaudeSubagentSummary,
-  readLocalClaudeSubagentMetadata
-} from './ClaudeSubagents'
+import { collectClaudeSubagentSpawns, readLocalClaudeSubagentMetadata } from './ClaudeSubagents'
 import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import { mapClaudeRateLimits } from './ClaudeUsage'
 import { getClaudeUserQuestions } from './ClaudeUserQuestions'
@@ -669,6 +666,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private detailRevision = 0
   private stateLoads = new Map<string, Promise<ClaudeSessionState>>()
   private historyPages = new ClaudeHistoryPages()
+  private subagentHistory = new ClaudeSubagentHistory()
   private stateGeneration = 0
   private disposed = false
   private pinnedStates = new Map<ClaudeSessionState, number>()
@@ -1201,32 +1199,33 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       ...(state.cwd ? { dir: state.cwd } : {}),
       ...(sessionStore ? { sessionStore } : {})
     })
-    const transcripts = await Promise.all(
-      agentIds.map(
-        async (agentId) =>
-          [
-            agentId,
-            await getSubagentMessages(chatId, agentId, {
-              ...(state.cwd ? { dir: state.cwd } : {}),
-              ...(sessionStore ? { sessionStore } : {})
-            })
-          ] as const
-      )
-    )
-    const spawns = collectClaudeSubagentSpawns([
-      state.messages,
-      ...transcripts.map(([, messages]) => messages)
-    ])
+    const spawns = collectClaudeSubagentSpawns([state.messages])
     const metadata = await this.loadSubagentMetadata(chatId, sessionStore)
-    const subagents = transcripts.map(([agentId, messages]): ProviderSubagent => {
-      const summary = createClaudeSubagentSummary(agentId, messages, spawns, metadata.get(agentId))
-      return {
-        ...summary,
-        status:
-          state.subagentTaskStatuses.get(agentId) ??
-          (state.backgroundTaskIds.has(agentId) ? 'running' : 'completed')
-      }
-    })
+    const subagents: ProviderSubagent[] = []
+    for (let offset = 0; offset < agentIds.length; offset += 8) {
+      subagents.push(
+        ...(await Promise.all(
+          agentIds.slice(offset, offset + 8).map(async (agentId) => {
+            const summary = await this.subagentHistory.summary(
+              chatId,
+              agentId,
+              getContainerTargetKey(state.container),
+              () => this.openSubagentHistorySource(state, agentId),
+              spawns,
+              metadata.get(agentId)
+            )
+            return {
+              ...summary,
+              status:
+                state.subagentTaskStatuses.get(agentId) ??
+                (state.backgroundTaskIds.has(agentId)
+                  ? ('running' as const)
+                  : ('completed' as const))
+            }
+          })
+        ))
+      )
+    }
     return subagents.sort(
       (first, second) =>
         (first.createdAt ?? Number.MAX_SAFE_INTEGER) - (second.createdAt ?? Number.MAX_SAFE_INTEGER)
@@ -1263,51 +1262,98 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const agentIds = await listSubagents(chatId, listOptions)
     if (!agentIds.includes(subagentId)) throw new Error('Claude subagent was not found.')
 
-    const messages = await getSubagentMessages(chatId, subagentId, listOptions)
     const metadata = (await this.loadSubagentMetadata(chatId, sessionStore)).get(subagentId)
-    // A nested subagent's delegation call is in its parent subagent's transcript.
-    const parentAgentId =
-      createClaudeSubagentSummary(subagentId, messages, new Map(), metadata).parentId ?? undefined
-    const parentMessages =
-      parentAgentId && agentIds.includes(parentAgentId)
-        ? await getSubagentMessages(chatId, parentAgentId, listOptions)
-        : []
-    const summary = {
-      ...createClaudeSubagentSummary(
-        subagentId,
-        messages,
-        collectClaudeSubagentSpawns([state.messages, parentMessages, messages]),
-        metadata
-      ),
-      status:
-        state.subagentTaskStatuses.get(subagentId) ??
-        (state.backgroundTaskIds.has(subagentId) ? ('running' as const) : ('completed' as const))
-    }
-    const transcript = messages.map((message) => ({
-      ...toTranscriptMessage(message),
-      parent_tool_use_id: null
-    }))
-    const rendered = window
-      ? renderClaudeChatWindow(
-          transcript,
-          {
-            active: summary.status === 'running' || summary.status === 'pending',
-            stopped: summary.status === 'stopped',
-            failed: summary.status === 'failed'
-          },
-          window
-        )
-      : null
-    return {
+    const scope = getContainerTargetKey(state.container)
+    const summary = await this.subagentHistory.summary(
+      chatId,
+      subagentId,
+      scope,
+      () => this.openSubagentHistorySource(state, subagentId),
+      collectClaudeSubagentSpawns([state.messages]),
+      metadata
+    )
+    const page = await this.subagentHistory.read(
+      chatId,
+      subagentId,
+      scope,
+      {
+        cursor: window?.cursor ?? null,
+        direction: window?.direction ?? 'older',
+        limit: window?.limit ?? 10
+      },
+      () => this.openSubagentHistorySource(state, subagentId)
+    )
+    const status =
+      state.subagentTaskStatuses.get(subagentId) ??
+      (state.backgroundTaskIds.has(subagentId) ? 'running' : 'completed')
+    const historical = Boolean(page.pagination.newerCursor)
+    const detail: ProviderSubagentDetail = {
       ...summary,
-      ...(rendered ?? {
-        items: renderClaudeChatItems(transcript, {
-          active: summary.status === 'running' || summary.status === 'pending',
-          stopped: summary.status === 'stopped',
-          failed: summary.status === 'failed'
-        })
+      status,
+      ...renderClaudeChatWindow(
+        page.messages,
+        {
+          active: !historical && (status === 'running' || status === 'pending'),
+          stopped: !historical && status === 'stopped',
+          failed: !historical && status === 'failed'
+        },
+        { startIndex: 0, limit: Number.MAX_SAFE_INTEGER }
+      ),
+      turnPagination: page.pagination
+    }
+    this.subagentHistory.rememberItems(page.pagination, detail.items)
+    return detail
+  }
+
+  getSubagentWindowForItem: NonNullable<ProviderAdapter['getSubagentWindowForItem']> = async (
+    chatId,
+    subagentId,
+    itemId,
+    options = {}
+  ) => {
+    let detail = await this.getSubagent(chatId, subagentId, options)
+    const state = await this.ensureState(chatId, undefined, options.container)
+    const savedCursor = this.subagentHistory.findItemCursor(
+      chatId,
+      subagentId,
+      getContainerTargetKey(state.container),
+      itemId
+    )
+    if (savedCursor)
+      return this.getSubagent(chatId, subagentId, options, {
+        startIndex: null,
+        cursor: savedCursor,
+        direction: 'older',
+        limit: 10
+      })
+    while (!detail.items.some((item) => item.id === itemId || itemId.startsWith(`${item.id}:`))) {
+      const cursor = detail.turnPagination?.olderCursor
+      if (!cursor) throw new Error('Subagent item not found')
+      detail = await this.getSubagent(chatId, subagentId, options, {
+        startIndex: null,
+        cursor,
+        direction: 'older',
+        limit: 10
       })
     }
+    return detail
+  }
+
+  private openSubagentHistorySource = async (state: ClaudeSessionState, agentId: string) => {
+    const remote = await getRemoteClaudeContainer(state.container)
+    return openClaudeHistorySource(
+      state.id,
+      remote
+        ? async (script, args = []) =>
+            runHostCommand(
+              await getHostCommand('sh', ['-lc', script, 'sele-claude-subagent-history', ...args], {
+                container: remote,
+                env: process.env
+              })
+            )
+        : undefined,
+      agentId
+    )
   }
 
   cancelSubagent = async (
@@ -1918,6 +1964,26 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   summarizeChatInFork = async (
     chatId: string,
+    options: { summaryPrompt: string; signal: AbortSignal },
+    onForkCreated: (chatId: string) => Promise<void>
+  ): Promise<string> => {
+    throwIfLinkedChatCancelled(options.signal)
+    const source = await this.ensureState(chatId)
+    if (source.active) throw new Error('Wait for the current response before linking this chat.')
+    return summarizeLinkedChatWithFallback(
+      this,
+      chatId,
+      {
+        ...options,
+        turnOptions: source.options,
+        nativeSummary: () => this.summarizeChatNativelyInFork(chatId, options, onForkCreated)
+      },
+      onForkCreated
+    )
+  }
+
+  private summarizeChatNativelyInFork = async (
+    chatId: string,
     { signal }: { summaryPrompt: string; signal: AbortSignal },
     onForkCreated: (chatId: string) => Promise<void>
   ): Promise<string> => {
@@ -1998,6 +2064,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.stateGeneration += 1
     this.sessionDiscovery.dispose()
     this.historyPages.clear()
+    this.subagentHistory.clear()
     claudeAccounts.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
     this.updateTimers.clear()

@@ -6,7 +6,7 @@ const net = require('node:net')
 const { spawn, execFileSync } = require('node:child_process')
 
 const root = path.resolve(__dirname, '../..')
-const providers = ['codex', 'claude', 'copilot', 'opencode']
+const providers = ['codex', 'claude', 'copilot', 'opencode-v2']
 
 function which(command) {
   try {
@@ -80,7 +80,10 @@ function prepareEnvironment(directory, modelPort) {
   const executables = {}
   for (const provider of providers) {
     // Every installed provider stays available, as for a real user.
-    const found = which(provider)
+    const found =
+      provider === 'opencode-v2'
+        ? process.env.SELE_E2E_OPENCODE_V2 || which('opencode-v2') || which('opencode2')
+        : which(provider)
     if (found) executables[provider] = found
   }
 
@@ -120,6 +123,7 @@ function prepareEnvironment(directory, modelPort) {
       $schema: 'https://opencode.ai/config.json',
       model: 'mock/mock-model',
       small_model: 'mock/mock-model',
+      compaction: { auto: false },
       autoupdate: false,
       share: 'disabled',
       permission: { edit: 'allow', bash: 'allow', webfetch: 'allow' },
@@ -163,11 +167,12 @@ function prepareEnvironment(directory, modelPort) {
     XDG_DATA_HOME: dirs.data,
     XDG_CACHE_HOME: dirs.cache,
     XDG_STATE_HOME: dirs.state,
+    OPENCODE_DB: path.join(dirs.data, 'opencode-e2e.db'),
     SELE_DATABASE_PATH: path.join(directory, 'sele.sqlite'),
     SELE_DISABLE_CODEX_RESOURCE_ISOLATION: '1',
     ...(executables.codex ? { SELE_CODEX_PATH: executables.codex } : {}),
     ...(executables.claude ? { SELE_CLAUDE_PATH: executables.claude } : {}),
-    ...(executables.opencode ? { SELE_OPENCODE_PATH: executables.opencode } : {}),
+    ...(executables['opencode-v2'] ? { SELE_OPENCODE_V2_PATH: executables['opencode-v2'] } : {}),
     CODEX_HOME: dirs.codex,
     MOCK_API_KEY: 'mock',
     CLAUDE_CONFIG_DIR: dirs.claude,

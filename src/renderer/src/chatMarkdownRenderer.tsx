@@ -5,6 +5,7 @@ import { Globe2, Image as ImageIcon, Maximize2 } from 'lucide-react'
 import { getVideoMimeType } from '../../shared/video'
 import { getBrowserFaviconUrl } from '../../shared/browser'
 import { renderMarkdownCodeBlock } from './codeHighlighting'
+import { renderMarkdownDiffBlock } from './markdownDiffRendering'
 import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from './markdownFileLink'
 
 const escapeHtml = (value: string): string =>
@@ -60,7 +61,14 @@ export const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Rende
           : escapeHtml(part)
       )
       .join('')
-  renderer.code = ({ lang, text }) => renderMarkdownCodeBlock(text, lang)
+  renderer.code = ({ lang, text }) => {
+    const language = lang?.trim().split(/\s+/, 1)[0]?.toLowerCase()
+    if (!language || language === 'diff' || language === 'patch') {
+      const diff = renderMarkdownDiffBlock(text)
+      if (diff) return diff
+    }
+    return renderMarkdownCodeBlock(text, lang)
+  }
   renderer.link = function (token: Tokens.Link): string {
     const fileTarget = getMarkdownFileTarget(token.href)
     if (fileTarget && getVideoMimeType(fileTarget.path)) {

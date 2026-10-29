@@ -6,6 +6,7 @@ import type {
   ProviderUpdateAvailability
 } from '../../shared/provider'
 import {
+  isProviderId,
   fallbackClaudeModels,
   fallbackCopilotModels,
   fallbackOpenCodeModels,
@@ -22,7 +23,28 @@ export type ProviderUpdatePreference = {
   ignoredVersions: string[]
 }
 
-export type ProviderUpdatePreferences = Partial<Record<ProviderId, ProviderUpdatePreference>>
+export type ProviderUpdatePreferenceKey = ProviderId
+export type ProviderUpdatePreferences = Partial<
+  Record<ProviderUpdatePreferenceKey, ProviderUpdatePreference>
+>
+
+export const getProviderUpdatePreferenceKey = (
+  suggestion: ProviderUpdateSuggestion
+): ProviderUpdatePreferenceKey => suggestion.providerId
+
+export const getProviderUpdateKey = (suggestion: ProviderUpdateSuggestion): string =>
+  `${getProviderUpdatePreferenceKey(suggestion)}:${suggestion.latestVersion}`
+
+export const expandProviderUpdateSuggestions = (
+  providerId: ProviderId,
+  availability: ProviderUpdateAvailability | null
+): ProviderUpdateSuggestion[] => {
+  return isProviderId(providerId) &&
+    availability &&
+    availability.currentVersion !== availability.latestVersion
+    ? [{ ...availability, providerId }]
+    : []
+}
 
 const providerUpdatePreferenceStorageKey = 'sele:provider-update-preferences:v1'
 
@@ -30,7 +52,7 @@ export const providerLabels = {
   codex: 'Codex',
   claude: 'Claude',
   copilot: 'Copilot',
-  opencode: 'OpenCode'
+  'opencode-v2': 'OpenCode'
 } satisfies Record<ProviderId, string>
 
 const getFirstSentence = (value: string): string => {
@@ -77,13 +99,13 @@ export const getFallbackModels = (providerId: ProviderId): ProviderModel[] =>
     ? fallbackCopilotModels
     : providerId === 'claude'
       ? fallbackClaudeModels
-      : providerId === 'opencode'
+      : providerId === 'opencode-v2'
         ? fallbackOpenCodeModels
         : fallbackProviderModels
 
 export const getProviderUpdatePreference = (
   preferences: ProviderUpdatePreferences,
-  providerId: ProviderId
+  providerId: ProviderUpdatePreferenceKey
 ): ProviderUpdatePreference => ({
   neverSuggest: Boolean(preferences[providerId]?.neverSuggest),
   ignoredVersions: preferences[providerId]?.ignoredVersions ?? []
@@ -91,7 +113,7 @@ export const getProviderUpdatePreference = (
 
 export const shouldSuggestProviderUpdate = (
   preferences: ProviderUpdatePreferences,
-  providerId: ProviderId,
+  providerId: ProviderUpdatePreferenceKey,
   availability: ProviderUpdateAvailability
 ): boolean => {
   const preference = getProviderUpdatePreference(preferences, providerId)
@@ -120,7 +142,7 @@ export const readStoredProviderUpdatePreferences = (): ProviderUpdatePreferences
     if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
 
     const preferences: ProviderUpdatePreferences = {}
-    for (const providerId of Object.keys(providerLabels) as ProviderId[]) {
+    for (const providerId of Object.keys(providerLabels) as ProviderUpdatePreferenceKey[]) {
       const preference = parsedValue[providerId]
       if (isProviderUpdatePreference(preference)) preferences[providerId] = preference
     }

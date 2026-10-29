@@ -114,17 +114,22 @@ const scenarios = [
   {
     name: 'completed and interrupted messages remain editable with settled activity',
     async run(t, { sele, page, provider }) {
-      if (provider !== 'codex') return
+      if (provider !== 'codex' && provider !== 'opencode-v2') return
       const chatId = await sele.startChat(provider, t.token('A'))
       await t.waitReply('A')
       await t.settle()
-      await page.waitFor(
-        `window.__sele.chatRows().some(row => row.id === ${JSON.stringify(chatId)} && row.title && !row.title.includes('Untitled chat'))`,
-        {
-          message: 'Generated Codex title did not reach the sidebar'
-        }
-      )
+      if (provider === 'codex')
+        await page.waitFor(
+          `window.__sele.chatRows().some(row => row.id === ${JSON.stringify(chatId)} && row.title && !row.title.includes('Untitled chat'))`,
+          {
+            message: 'Generated Codex title did not reach the sidebar'
+          }
+        )
       const edit = async (from, to) => {
+        await page.waitFor(
+          `(() => { const message = [...document.querySelectorAll('.chat-detail__message-block--user')].find(element => element.textContent.includes(${JSON.stringify(t.token(from))})); return Boolean(message?.querySelector('[aria-label="Edit message"]')) })()`,
+          { message: `Edit controls did not settle for ${from}` }
+        )
         await page.click(
           `(() => { const message = [...document.querySelectorAll('.chat-detail__message-block--user')].find(element => element.textContent.includes(${JSON.stringify(t.token(from))})); return message?.querySelector('[aria-label="Edit message"]') })()`
         )
@@ -153,6 +158,43 @@ const scenarios = [
         ),
         true
       )
+    }
+  },
+  {
+    name: 'stopping OpenCode stays stopped and editable after reopening',
+    async run(t, { sele, page, provider }) {
+      if (provider !== 'opencode-v2') return
+      await t.startHeld()
+      const chatId = await page.eval('window.__sele.selectedChatId()')
+      await page.click(`(window.__sele.byLabel('Stop response'))`)
+      t.release()
+      await sele.waitIdle()
+      await sele.openNewChat(provider)
+      await sele.selectChat(chatId)
+      await sele.waitIdle()
+      await page.waitFor(
+        `(() => { const row = [...document.querySelectorAll('.chat-detail__message-block--user')].find(element => element.textContent.includes(${JSON.stringify(t.token('H'))})); return Boolean(row?.querySelector('[aria-label="Edit message"]')) })()`
+      )
+      assert.equal(await sele.q(`window.__sele.hasText('Step interrupted')`), false)
+      assert.equal(await sele.q(`window.__sele.hasText('Stopped')`), true)
+    }
+  },
+  {
+    name: 'editing a running OpenCode response replaces its prompt after interruption',
+    async run(t, { sele, page, provider }) {
+      if (provider !== 'opencode-v2') return
+      await t.startHeld()
+      await page.click(
+        `(() => { const row = [...document.querySelectorAll('.chat-detail__message-block--user')].find(element => element.textContent.includes(${JSON.stringify(t.token('H'))})); return row?.querySelector('[aria-label="Edit message"]') })()`
+      )
+      await page.waitFor(
+        `window.__sele.composer()?.value.includes(${JSON.stringify(t.token('H'))})`
+      )
+      await page.fillComposer(t.token('E'))
+      await page.press('Enter')
+      await t.waitReply('E')
+      await t.settle()
+      assert.deepEqual(await t.transcriptNames(), ['E'])
     }
   },
   {

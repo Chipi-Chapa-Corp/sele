@@ -62,7 +62,7 @@ export type WorkspaceSelectionDependencies = {
   extractedChatPlan: ChatPlanData | null
   effectiveAppSettings: AppSettings
   setExtractedChatPlan: React.Dispatch<React.SetStateAction<ChatPlanData | null>>
-  newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode'
+  newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode-v2'
   newSessionProviderAvailable: boolean
   newSessionSourceAvailabilityReady: boolean
   newSessionCwd: string | null

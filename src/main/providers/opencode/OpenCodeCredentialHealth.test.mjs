@@ -208,7 +208,7 @@ test('a check sends one tool-less prompt with the cheapest model and removes its
   assert.deepEqual(create.permission, [{ permission: '*', pattern: '*', action: 'deny' }])
   assert.deepEqual(create.metadata, { sele: { purpose: 'oneShot' } })
   const prompt = calls.find(([name]) => name === 'prompt')[1]
-  assert.equal(prompt.agent, 'title')
+  assert.equal(prompt.agent, 'build')
   assert.deepEqual(prompt.model, { providerID: 'anthropic', modelID: 'haiku' })
   assert.deepEqual(calls.at(-1), ['delete', 'ses_check'])
 })

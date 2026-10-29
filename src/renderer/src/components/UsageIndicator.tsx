@@ -384,7 +384,7 @@ export function UsageIndicator({
     accountUsage?.balances ?? (accountUsageState === 'loading' ? previousBalances.current : [])
   const balanceGroups = groupAccountBalances(balances, modelProviderId)
   // Without a separate Usage tab (OpenCode), the popover shows the selected chat's cost.
-  const chatCostSupported = providerId === 'opencode' && Boolean(chatId)
+  const chatCostSupported = providerId === 'opencode-v2' && Boolean(chatId)
   const chatCostKey = JSON.stringify([providerId, chatId ?? null, container ?? null])
   const [chatCost, setChatCost] = useState<{ key: string; usd: number } | null>(null)
   const chatCostUSD = chatCostSupported && chatCost?.key === chatCostKey ? chatCost.usd : null
@@ -543,7 +543,7 @@ export function UsageIndicator({
   }, [onUsageRefresh, rateLimitRefreshBaseline, rateLimitUsageFingerprint, sourceKey])
 
   const accountUsageErrors = accountUsage?.errors ?? []
-  const tokenUsageSupported = providerId !== 'opencode'
+  const tokenUsageSupported = providerId !== 'opencode-v2'
   const statisticsSupported = providerId === 'codex'
   const statisticsReported = Boolean(
     statisticsSupported &&

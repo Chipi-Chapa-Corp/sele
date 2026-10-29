@@ -44,8 +44,6 @@ import { type ChatTurnWindow } from '../chatTurnWindow'
 
 import { type ChatScrollAnchor } from '../chatLayout'
 
-import { type ProviderUpdatePreference, type ProviderUpdateSuggestion } from '../providerSettings'
-
 import { type ContinuedStoppedWorkingStepsByChat } from '../chatCommitStorage'
 
 import {
@@ -55,7 +53,6 @@ import {
   type EditingMessage,
   type RecentChatCacheEntry,
   type NewSessionLocation,
-  type ProviderUpdateState,
   type SendState,
   type SubagentChatView,
   type UserInputResolutionState,
@@ -164,7 +161,7 @@ export type ChatMessagingControllerDependencies = {
   effectiveReasoningEffort: string
   effectiveServiceTier: string | null
   effectiveAppSettings: AppSettings
-  configProviderId: 'codex' | 'claude' | 'copilot' | 'opencode'
+  configProviderId: 'codex' | 'claude' | 'copilot' | 'opencode-v2'
   configProviderContainerKey: string
   worktreeCreationCanceledRef: React.RefObject<boolean>
   setWorktreeCreationState: React.Dispatch<React.SetStateAction<WorktreeCreationState>>
@@ -190,7 +187,7 @@ export type ChatMessagingControllerDependencies = {
     options?: ApplyChatDetailOptions
   ) => void
   handleSendFailure: (error: unknown, fallback: string) => void
-  newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode'
+  newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode-v2'
   newSessionLocation: NewSessionLocation
   defaultCwd: string | null
   rememberProject: (cwd: string | null | undefined) => Promise<void>
@@ -210,7 +207,7 @@ export type ChatMessagingControllerDependencies = {
   chatDetailRef: React.RefObject<ProviderChatDetail | null>
   loadedWorkingStepIdsRef: React.RefObject<string[]>
   setChatDetail: React.Dispatch<React.SetStateAction<ProviderChatDetail | null>>
-  selectedProviderId: 'codex' | 'claude' | 'copilot' | 'opencode' | undefined
+  selectedProviderId: 'codex' | 'claude' | 'copilot' | 'opencode-v2' | undefined
   approvalResolution: ApprovalResolutionState
   setApprovalResolution: React.Dispatch<React.SetStateAction<ApprovalResolutionState>>
   applyChatDetail: (
@@ -285,7 +282,7 @@ export type SettingsControllerDependencies = {
     updatedAt: number,
     force?: boolean
   ) => void
-  newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode'
+  newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode-v2'
   newSessionContainerKey: string
   setProjects: React.Dispatch<React.SetStateAction<AppProject[]>>
   setDeletedProjectCwds: React.Dispatch<React.SetStateAction<Set<string>>>
@@ -306,19 +303,4 @@ export type SettingsControllerDependencies = {
   approvalModeBeforeFullAccessRef: React.RefObject<ProviderApprovalMode | null>
   approvalMode: ProviderApprovalMode
   setSandboxMode: React.Dispatch<React.SetStateAction<ProviderSandboxMode>>
-  setProviderUpdatePreferences: React.Dispatch<
-    React.SetStateAction<
-      Partial<Record<'codex' | 'claude' | 'copilot' | 'opencode', ProviderUpdatePreference>>
-    >
-  >
-  setProviderUpdateSuggestion: React.Dispatch<React.SetStateAction<ProviderUpdateSuggestion | null>>
-  setProviderUpdateError: React.Dispatch<React.SetStateAction<string | null>>
-  providerUpdateSuggestion: ProviderUpdateSuggestion | null
-  providerUpdateState: ProviderUpdateState
-  setProviderUpdateState: React.Dispatch<React.SetStateAction<ProviderUpdateState>>
-  newSessionContainer: AppContainerTarget
-  setProviderModelsRevision: React.Dispatch<React.SetStateAction<number>>
-  providerUpdatePreferences: Partial<
-    Record<'codex' | 'claude' | 'copilot' | 'opencode', ProviderUpdatePreference>
-  >
 }

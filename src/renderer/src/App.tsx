@@ -1,4 +1,5 @@
 import './App.css'
+import { ProviderLabelsContext } from './providerLabels'
 import { memo } from 'react'
 import { useWorkspaceController } from './useWorkspaceController'
 import { AppDialogs } from './workspace/components/AppDialogs'
@@ -52,33 +53,35 @@ export const App: React.FC = () => {
   const changesFooter = useStableProps(workspace.changesFooter)
 
   return (
-    <LinkedChatOpenerContext.Provider value={workspace.openLinkedChat}>
-      <main className={workspace.className}>
-        <AppDialogs {...workspace.dialogs} />
-        <WorkspaceShell
-          {...workspace.layout}
-          chatSidebar={<MemoChatSidebar {...chatSidebar} />}
-          conversation={
-            <ConversationPanel
-              {...workspace.conversationPanel}
-              header={<MemoConversationHeader {...conversationHeader} />}
-              search={<MemoConversationSearch {...conversationSearch} />}
-              messages={<MemoConversationMessages {...conversationMessages} />}
-              quoteAction={<MemoConversationQuoteAction {...conversationQuote} />}
-              emptyState={<ConversationEmptyState {...workspace.conversationEmptyState} />}
-              plan={<MemoConversationPlan {...conversationPlan} />}
-              composer={<MemoConversationComposer {...conversationComposer} />}
-            />
-          }
-          changesSidebar={
-            <ChangesSidebar
-              header={<MemoChangesHeader {...changesHeader} />}
-              content={<MemoChangesContent {...changesContent} />}
-              footer={<MemoChangesFooter {...changesFooter} />}
-            />
-          }
-        />
-      </main>
-    </LinkedChatOpenerContext.Provider>
+    <ProviderLabelsContext.Provider value={workspace.providerRuntimeLabels}>
+      <LinkedChatOpenerContext.Provider value={workspace.openLinkedChat}>
+        <main className={workspace.className}>
+          <AppDialogs {...workspace.dialogs} />
+          <WorkspaceShell
+            {...workspace.layout}
+            chatSidebar={<MemoChatSidebar {...chatSidebar} />}
+            conversation={
+              <ConversationPanel
+                {...workspace.conversationPanel}
+                header={<MemoConversationHeader {...conversationHeader} />}
+                search={<MemoConversationSearch {...conversationSearch} />}
+                messages={<MemoConversationMessages {...conversationMessages} />}
+                quoteAction={<MemoConversationQuoteAction {...conversationQuote} />}
+                emptyState={<ConversationEmptyState {...workspace.conversationEmptyState} />}
+                plan={<MemoConversationPlan {...conversationPlan} />}
+                composer={<MemoConversationComposer {...conversationComposer} />}
+              />
+            }
+            changesSidebar={
+              <ChangesSidebar
+                header={<MemoChangesHeader {...changesHeader} />}
+                content={<MemoChangesContent {...changesContent} />}
+                footer={<MemoChangesFooter {...changesFooter} />}
+              />
+            }
+          />
+        </main>
+      </LinkedChatOpenerContext.Provider>
+    </ProviderLabelsContext.Provider>
   )
 }

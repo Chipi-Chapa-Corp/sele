@@ -109,10 +109,10 @@ export const getApprovalSummary = (
     : 'Command requires approval'
 }
 
-export const getProviderUpdateSummary = (suggestion: ProviderUpdateSuggestion): string =>
-  `Update ${providerLabels[suggestion.providerId]} from ${suggestion.currentVersion} to ${
-    suggestion.latestVersion
-  }`
+export const getProviderUpdateSummary = (
+  suggestion: ProviderUpdateSuggestion,
+  label = providerLabels[suggestion.providerId]
+): string => `Update ${label} from ${suggestion.currentVersion} to ${suggestion.latestVersion}`
 
 export const isAppActionShortcutTargetBlocked = (target: EventTarget | null): boolean => {
   if (!(target instanceof Element)) return false
