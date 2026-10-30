@@ -201,8 +201,8 @@ if (!process.versions.electron) {
                           '  window.fixtureRowRenders.push(chat.id);\n  const chatTitle ='
                         )
                       : contents.replace(
-                          '  const present =',
-                          '  window.fixtureMotionRenders++;\n  const present ='
+                          '  const elementRef = useRef<HTMLDivElement>(null)',
+                          '  window.fixtureMotionRenders++;\n  const elementRef = useRef<HTMLDivElement>(null)'
                         )
                   return { contents, loader: 'tsx', resolveDir: path.dirname(args.path) }
                 }
@@ -266,8 +266,8 @@ if (!process.versions.electron) {
           getChats:provider=>({chats:fixtureChats.filter(chat=>chat.providerId===provider).map(chat=>({...chat,container:{...chat.container}})),nextCursor:null}),
           getChat:(_provider,id)=>{const view=structuredClone(detail(id));
             fixtureLastDetails.set(id,view);return view},
-          markChatDone:(_provider,id,done=true)=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done,doneAt:done?Date.now():null});return {...chat}},
-          markChatsDone:ids=>ids.map(id=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done:true,doneAt:Date.now()});return {...chat}}),
+          markChatDone:(_provider,id,done=true)=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done,doneAt:done?Date.now():null,sidebarOrder:null});return {...chat}},
+          markChatsDone:ids=>{const doneAt=Date.now();return ids.map(id=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done:true,doneAt,sidebarOrder:null});return {...chat}})},
           markChatSeen:(_provider,id,seenUpdatedAt)=>({...fixtureChats.find(chat=>chat.id===id),seenUpdatedAt}),
           getModels:()=>Array.from({length:${modelCount}},(_,i)=>({id:i?'fixture-'+i:'fixture',get label(){window.fixtureModelLabelReads=(window.fixtureModelLabelReads??0)+1;return 'Fixture model '+i},description:'Fixture',isDefault:i===0,supportedReasoningEfforts:[],defaultReasoningEffort:'medium'})),
           getAccounts:()=>({available:true,unavailableMessage:null,accounts:[]}),getUsage:()=>usage,
@@ -741,6 +741,19 @@ if (!process.versions.electron) {
           }
         })
       const { profile } = await win.webContents.debugger.sendCommand('Profiler.stop')
+      if (process.env.SELE_BENCHMARK_PROFILE) {
+        await fs.mkdir(path.dirname(process.env.SELE_BENCHMARK_PROFILE), { recursive: true })
+        await fs.writeFile(process.env.SELE_BENCHMARK_PROFILE, JSON.stringify(profile))
+        await fs.copyFile(
+          path.join(directory, 'fixture.js'),
+          process.env.SELE_BENCHMARK_PROFILE + '.fixture.js'
+        )
+        if (process.env.SELE_BENCHMARK_TRACE)
+          await fs.writeFile(
+            process.env.SELE_BENCHMARK_PROFILE + '.trace.json',
+            JSON.stringify(trace)
+          )
+      }
       const nodes = new Map(profile.nodes.map((n) => [n.id, n]))
       const parents = new Map(
         profile.nodes.flatMap((node) => (node.children ?? []).map((id) => [id, node.id]))

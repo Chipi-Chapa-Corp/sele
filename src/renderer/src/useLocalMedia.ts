@@ -32,7 +32,9 @@ export function useLocalMedia(
     }
     if (lease.url) publish({ key, url: lease.url })
     else {
-      publish(null)
+      // Activity can reconnect after an idle lease expired. The mounted image
+      // still has decoded pixels; keep them while reacquiring the same resource.
+      if (published.current?.key !== key) publish(null)
       void lease.ready.then(
         (url) => {
           if (active) publish({ key, url })

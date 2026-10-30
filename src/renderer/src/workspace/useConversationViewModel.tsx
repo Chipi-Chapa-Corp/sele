@@ -319,12 +319,28 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     if (!selectedChatKey) return null
     return getLatestChatTurnWindow(selectedChatKey, totalChatTurnCount, chatTurnPageSize)
   }, [selectedChatKey, totalChatTurnCount])
-  const effectiveChatTurnWindow = defaultChatTurnWindow
-    ? getLoadedChatTurnWindow(
-        chatDetail,
-        getEffectiveChatTurnWindow(chatTurnWindow, defaultChatTurnWindow, chatAtConversationBottom)
-      )
-    : null
+  const effectiveChatTurnWindow = useMemo(
+    () =>
+      defaultChatTurnWindow
+        ? getLoadedChatTurnWindow(
+            chatDetail,
+            getEffectiveChatTurnWindow(
+              chatTurnWindow,
+              defaultChatTurnWindow,
+              chatAtConversationBottom
+            )
+          )
+        : null,
+    [
+      defaultChatTurnWindow,
+      chatDetail?.items,
+      chatDetail?.itemsStartTurnIndex,
+      chatDetail?.turnCount,
+      chatDetail?.turnPagination,
+      chatTurnWindow,
+      chatAtConversationBottom
+    ]
+  )
   const renderedChatTurns = useMemo(
     () =>
       effectiveChatTurnWindow

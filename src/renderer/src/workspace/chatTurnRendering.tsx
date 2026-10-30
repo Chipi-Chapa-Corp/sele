@@ -5,6 +5,7 @@ import type { FollowingWorkingStep } from '../chatConversationModel'
 import type { ChatCommitMarker } from '../components/AppStatusStates'
 import { ChatDetailItem } from '../components/ChatDetailItem'
 import { DeferredChatTurn } from '../components/DeferredChatTurn'
+import { getChatItemRenderKey } from '../chatItemIdentity'
 import type { SubagentCompletion } from '../subagentTimeline'
 import {
   getWorkingStepProgressPolicy,
@@ -138,7 +139,7 @@ export const renderRootChatTurn = (
       className="chat-detail__turn"
       data-chat-turn-id={turn.id}
       data-chat-turn-index={turnIndex}
-      key={turn.id}
+      key={getChatItemRenderKey(turn.items[0])}
     >
       {turn.items.map((item) => {
         const itemIndex = itemIndexesById.get(item.id) ?? -1
@@ -149,7 +150,7 @@ export const renderRootChatTurn = (
 
         return (
           <DeferredChatTurn
-            key={item.id}
+            key={getChatItemRenderKey(item)}
             priority={itemIndex}
             eager={isEagerItem(turn, item, deferItems)}
             onMount={inputs.scheduleChatAutoScroll}

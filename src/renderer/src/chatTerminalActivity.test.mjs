@@ -3,6 +3,24 @@ import test from 'node:test'
 import { createChatTerminalActivity } from './chatTerminalActivity.ts'
 import { createPanelTerminalTask } from './panelTerminalTask.ts'
 
+test('terminal updates address one chat and empty task sources return to the shared idle snapshot', () => {
+  const store = createChatTerminalActivity()
+  const idle = store.getSnapshot('never-active')
+  let unrelated = 0,
+    target = 0,
+    all = 0
+  for (let i = 0; i < 5000; i++) store.subscribeKey(`chat-${i}`, () => unrelated++)
+  store.subscribeKey('target', () => target++)
+  store.subscribe(() => all++)
+  store.report('target', 'panel', ['running'])
+  store.report('target', 'panel', ['running'])
+  store.report('target', 'panel', [], false)
+  assert.equal(store.getSnapshot('target'), idle)
+  assert.equal(target, 2)
+  assert.equal(all, 2)
+  assert.equal(unrelated, 0)
+})
+
 for (const provider of ['codex', 'claude', 'copilot', 'opencode']) {
   test(`${provider}: panel and agent tasks share one idle indicator and completion marker`, () => {
     const store = createChatTerminalActivity()

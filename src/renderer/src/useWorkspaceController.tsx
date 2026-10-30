@@ -2,6 +2,7 @@ import { useChatTerminalActivity } from './useChatTerminalActivity'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../shared/noProject'
 import { chatTerminalActivity } from './chatTerminalActivity'
 import { conversationViews } from './conversationViews'
+import { reuseChatSnapshotItems } from './chatSnapshotItems'
 import { asChatPreview, chatPreviewSourceKey } from '../../shared/chatPreview'
 import type { LinkedChatReference } from './linkedChats'
 import { getVisibleSubagentRows, getWorkingSubagentIds } from './subagentUi'
@@ -2706,13 +2707,15 @@ export const useWorkspaceController = () => {
           startTransition(() => setChatLoadState('ready'))
         return
       }
-      const appliedDetail =
+      const appliedDetail = reuseChatSnapshotItems(
+        currentDetail,
         shouldPreserveOptimisticTurnUntilUserMessage(providerId) &&
         isActiveChatStatus(detail.status) &&
         currentDetail?.id === detail.id &&
         (options.select || selectedChatKeyRef.current === detailKey)
           ? preserveOptimisticChatDetail(currentDetail, detail)
           : detail
+      )
       if (options.select || selectedChatKeyRef.current === detailKey) {
         chatDetailRef.current = appliedDetail
         selectedChatUpdatedAtRef.current = options.select
@@ -5140,6 +5143,7 @@ export const useWorkspaceController = () => {
     applyChatMetadata,
     removeRecentChatCacheEntry,
     selectedChat,
+    selectedChatKeyRef,
     chatDetail,
     showNewChatView,
     newSessionContainer,

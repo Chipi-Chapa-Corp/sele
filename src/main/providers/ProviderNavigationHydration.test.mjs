@@ -7,6 +7,7 @@ import { reconcileProviderRecords } from './ProviderConversationEngine.ts'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './opencode/OpenCodeHistory.ts'
 import { reconcileOpenCodeMessageSnapshot } from './opencode/OpenCodeEvents.ts'
 import { getOpenCodeUsageLimitMessage } from './opencode/OpenCodeUsageLimit.ts'
+import { getOpenCodeV2Client, readOpenCodeChatPreview } from './opencode/OpenCodeV2Client.ts'
 
 const adapterHarness = (provider, name, methods, globals = {}) => {
   const source = ts.createSourceFile(
@@ -199,6 +200,8 @@ const openCodeHarness = (state, client) => {
       forEachOpenCodeHistoryMessage,
       loadOpenCodeMessages,
       getOpenCodeUsageLimitMessage,
+      getOpenCodeV2Client,
+      readOpenCodeChatPreview,
       reconcileOpenCodeMessageSnapshot,
       isOneShotSession: () => false,
       isDefaultOpenCodeTitle: () => false,

@@ -58,6 +58,7 @@ const reset = (provider = 'legacy') => {
     chatInitialLayoutKeyRef: ref(`${provider}:chat`),
     chatDetailRef: ref(state),
     cursorWindowRef: ref(null),
+    failedPageReadRef: ref(null),
     chatTurnWindowRef: ref({
       chatKey: `${provider}:chat`,
       startIndex: cursor ? 0 : 20,

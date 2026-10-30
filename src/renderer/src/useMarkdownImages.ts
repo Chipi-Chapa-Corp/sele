@@ -25,7 +25,8 @@ export function useMarkdownImages(
   useLayoutEffect(
     () => () => {
       retained.current.forEach((entry) => entry.dispose())
-      retained.current = []
+      // Activity disconnects effects, but keeps this DOM. Keep its node index
+      // too; reconnecting must reacquire resources without replacing decoded images.
     },
     []
   )
@@ -51,7 +52,8 @@ export function useMarkdownImages(
     const nodes = root.querySelectorAll<HTMLElement>(
       '.chat-detail__markdown-image[data-local-image-path], img'
     )
-    for (const node of nodes) {
+    for (const candidate of nodes) {
+      let node = candidate
       // Local images belong to their retained button, not a second entry.
       if (node.tagName === 'IMG' && node.closest('.chat-detail__markdown-image')) continue
       const path = node.dataset.localImagePath
@@ -67,8 +69,11 @@ export function useMarkdownImages(
       const existing = available.get(key)?.shift()
       if (existing) {
         if (existing.node !== node) node.replaceWith(existing.node)
-        next.push(existing)
-        continue
+        if (existing.active) {
+          next.push(existing)
+          continue
+        }
+        node = existing.node
       }
 
       let releaseMedia: (() => void) | undefined
@@ -98,6 +103,8 @@ export function useMarkdownImages(
       releaseMedia = media.release
       const showMedia = (objectUrl: string): void => {
         if (!entry.active) return
+        const displayed = node.querySelector(video ? 'video' : 'img')
+        if (displayed?.getAttribute('src') === objectUrl) return
         if (video) {
           const videoElement = document.createElement('video')
           videoElement.src = objectUrl
@@ -114,7 +121,18 @@ export function useMarkdownImages(
           const imageElement = document.createElement('img')
           imageElement.src = objectUrl
           imageElement.alt = name
-          node.replaceChildren(imageElement)
+          if (displayed) {
+            // An idle lease may expire while the retained view is hidden. Keep
+            // its old pixels until the replacement has decoded, then swap once.
+            void imageElement
+              .decode()
+              .then(() => {
+                if (entry.active) node.replaceChildren(imageElement)
+              })
+              .catch((error: unknown) => {
+                if (entry.active) console.warn('Unable to decode replacement image.', error)
+              })
+          } else node.replaceChildren(imageElement)
         }
       }
       // Cached media must replace the placeholder before the first paint.

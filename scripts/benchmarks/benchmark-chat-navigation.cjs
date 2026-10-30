@@ -137,6 +137,7 @@ if (!process.versions.electron) {
         external: ['electron'],
         outfile: path.join(directory, 'storage.cjs'),
         plugins: [
+          require('../tests/helpers/node-workers.cjs')(directory),
           {
             name: 'fixture-native-module',
             setup(build) {

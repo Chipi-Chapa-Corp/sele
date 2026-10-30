@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
-import { getDatabase, getSqliteConnection } from './database/sqlite'
-import { openPreferences } from './database/preferences'
+import { getDatabase } from './database/sqlite'
+import { getPreferenceStorage } from './database/preferenceStorage'
 import {
   preferencesChannel,
   type PreferenceRequest,
@@ -9,7 +9,7 @@ import {
 
 export const registerPreferences = async (): Promise<void> => {
   await getDatabase()
-  const preferences = openPreferences(getSqliteConnection())
+  const preferences = await getPreferenceStorage()
   let failed = false
   const fail = (error: unknown): PreferenceResult => {
     failed = true
@@ -18,29 +18,18 @@ export const registerPreferences = async (): Promise<void> => {
   }
   const trusted = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean =>
     event.sender.getType() === 'window' && event.senderFrame === event.sender.mainFrame
-  const revisions = new WeakMap<Electron.WebContents, Map<string, number>>()
-  const write = (
-    event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
-    request: Extract<PreferenceRequest, { action: 'write' }>
-  ): PreferenceResult => {
-    if (
-      typeof request.sourceId !== 'string' ||
-      request.sourceId.length > 64 ||
-      !Number.isSafeInteger(request.revision) ||
-      request.revision < 1
-    )
-      throw new Error('Invalid preference write.')
-    let sources = revisions.get(event.sender)
-    if (!sources) {
-      sources = new Map()
-      revisions.set(event.sender, sources)
+  const senders = new WeakSet<Electron.WebContents>()
+  const senderId = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): number => {
+    if (!senders.has(event.sender)) {
+      senders.add(event.sender)
+      const id = event.sender.id
+      event.sender.once('destroyed', () => {
+        void preferences.request({ kind: 'forget', senderId: id }).catch((error: unknown) => {
+          console.warn('Unable to release closed-window preference revisions.', error)
+        })
+      })
     }
-    // Sync unload IPC may overtake an older asynchronous save. Never let that
-    // late batch overwrite the newer, already committed document snapshot.
-    if (request.revision <= (sources.get(request.sourceId) ?? 0)) return { ok: true, value: null }
-    preferences.setMany(request.values)
-    sources.set(request.sourceId, request.revision)
-    return { ok: true, value: null }
+    return event.sender.id
   }
 
   ipcMain.handle(
@@ -50,11 +39,11 @@ export const registerPreferences = async (): Promise<void> => {
         if (!trusted(event)) throw new Error('Untrusted preferences request.')
         if (failed)
           throw new Error('Preferences are unavailable. Restart after resolving the storage error.')
-        if (request.action === 'load') return { ok: true, value: preferences.load() }
-        if (request.action === 'write') return write(event, request)
-        if (request.action !== 'migrate') throw new Error('Invalid preferences initialization.')
-        const values = preferences.migrate(request.values)
-        return { ok: true, value: values }
+        return await preferences.request<PreferenceResult>({
+          kind: 'preferences',
+          request,
+          senderId: senderId(event)
+        })
       } catch (error) {
         return fail(error)
       }
@@ -66,7 +55,8 @@ export const registerPreferences = async (): Promise<void> => {
       if (failed)
         throw new Error('Preferences are unavailable. Restart after resolving the storage error.')
       if (request.action !== 'write') throw new Error('Invalid preferences operation.')
-      event.returnValue = write(event, request)
+      preferences.commitPreferences({ kind: 'preferences', request, senderId: senderId(event) })
+      event.returnValue = { ok: true, value: null }
     } catch (error) {
       event.returnValue = fail(error)
     }

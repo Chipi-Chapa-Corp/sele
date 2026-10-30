@@ -14,12 +14,33 @@ const { spawnSync } = require('node:child_process')
           import Database from 'better-sqlite3'
           import * as chat from './src/main/database/chat'
           import { getChatTurnOutcomes, setChatTurnOutcome } from './src/main/database/chatTurnOutcome'
-          import { getDatabase, disposeDatabase } from './src/main/database/sqlite'
+          import { getDatabase, getSqliteConnection, disposeDatabase } from './src/main/database/sqlite'
+          import { openPreferences } from './src/main/database/preferences'
           const run = async () => {
             // Upgrade an existing installation without assigning invented completion times.
             const legacy = new Database(process.env.SELE_DATABASE_PATH)
             legacy.exec("CREATE TABLE chat (id TEXT PRIMARY KEY, pinned INTEGER NOT NULL DEFAULT 0, done INTEGER NOT NULL DEFAULT 0); INSERT INTO chat (id, done) VALUES ('legacy', 1)")
             legacy.close()
+            const openings = Array.from({ length: 20 }, () => getDatabase())
+            assert.ok(openings.every(opening => opening === openings[0]), 'startup shares one schema initialization')
+            await Promise.all(openings)
+            const connection = getSqliteConnection()
+            assert.equal(connection.pragma('journal_mode', { simple: true }), 'wal')
+            assert.equal(connection.pragma('synchronous', { simple: true }), 2, 'FULL durability')
+            const preferences = openPreferences(connection)
+            preferences.migrate({ 'sele:test': 'saved' })
+            const changes = () => connection.pragma('data_version', { simple: true })
+            const beforeDuplicatePreferences = connection.prepare('SELECT total_changes() AS count').get().count
+            preferences.setMany({ 'sele:test': 'saved', 'sele:missing': null })
+            assert.equal(connection.prepare('SELECT total_changes() AS count').get().count, beforeDuplicatePreferences, 'unchanged preferences perform no writes')
+            assert.throws(() => preferences.setMany({ 'sele:test': 'saved', invalid: 'bad' }))
+            // A reader on another connection cannot hold up a UI metadata write.
+            const reader = new Database(process.env.SELE_DATABASE_PATH)
+            reader.exec('BEGIN')
+            reader.prepare('SELECT * FROM chat').all()
+            await chat.setChatSeen('wal-reader', 10)
+            reader.exec('ROLLBACK')
+            reader.close()
             assert.equal((await chat.getChatMetadata('legacy')).doneAt, null)
             assert.equal((await chat.getChatMetadata('missing')).doneAt, null)
             let now = 1000
@@ -32,6 +53,11 @@ const { spawnSync } = require('node:child_process')
             assert.ok(batch.every(item => item.done && item.doneAt === 2000))
             await chat.setChatPinned('first', true)
             await chat.setChatSeen('first', 5000)
+            const beforeDuplicateSeen = changes()
+            await chat.setChatSeen('first', 5000)
+            await chat.setChatSeen('first', 4000)
+            assert.equal(changes(), beforeDuplicateSeen, 'duplicate and older markers perform no writes')
+            assert.equal((await chat.getChatMetadata('first')).seenUpdatedAt, 5000)
             assert.equal((await chat.getChatMetadata('first')).doneAt, 1000)
             await setChatTurnOutcome('codex', 'first', 'stopped')
             await setChatTurnOutcome('claude', 'first', 'failed')
@@ -73,6 +99,7 @@ const { spawnSync } = require('node:child_process')
       format: 'cjs',
       outfile: entry,
       plugins: [
+          require('./helpers/node-workers.cjs')(directory),
         {
           name: 'isolated-database',
           setup(build) {

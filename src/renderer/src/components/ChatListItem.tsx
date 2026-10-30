@@ -48,7 +48,7 @@ import { Dropdown } from './Dropdown'
 import { providerApi } from '../providerApi'
 import { useChatTerminalStatus } from '../useChatTerminalActivity'
 import { chatTerminalActivity } from '../chatTerminalActivity'
-import { getChatBookmarkKey, setChatBookmarked, useBookmarkedChatKeys } from '../chatBookmarks'
+import { getChatBookmarkKey, setChatBookmarked, useChatBookmarked } from '../chatBookmarks'
 
 type ChatListItemProps = {
   chat: ProviderChat
@@ -145,9 +145,8 @@ export const ChatListItem = memo(function ChatListItem({
 }: ChatListItemProps) {
   const providerLabels = useProviderLabels()
   const terminalActivity = useChatTerminalStatus(`${chat.providerId}:${chat.id}`)
-  const bookmarkedChatKeys = useBookmarkedChatKeys()
   const bookmarkKey = getChatBookmarkKey(chat.providerId, chat.id)
-  const bookmarked = bookmarkedChatKeys.has(bookmarkKey)
+  const bookmarked = useChatBookmarked(bookmarkKey)
   const [exporting, setExporting] = useState(false)
   const [exportResult, setExportResult] = useState<string | null>(null)
   const exportChat = async (): Promise<void> => {

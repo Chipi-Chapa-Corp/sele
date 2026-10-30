@@ -153,7 +153,12 @@ export function useProviderUpdates({
         stopActiveChats: activeChatCount > 0
       })
       await onUpdatedRef.current(result, container)
-      if (!result || result.currentVersion === result.latestVersion) skip(suggestion)
+      if (result && result.currentVersion !== result.latestVersion) {
+        throw new Error(
+          `${providerLabels[suggestion.providerId]} update did not complete: version ${result.currentVersion} is still installed; ${result.latestVersion} is available.`
+        )
+      }
+      skip(suggestion)
     } catch (error) {
       console.error('Unable to update provider.', error)
       setErrors((current) => ({

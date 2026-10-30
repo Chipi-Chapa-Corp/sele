@@ -227,6 +227,7 @@ export type ChatListControllerDependencies = {
   applyChatMetadata: (metadataList: ProviderChatMetadata[]) => void
   removeRecentChatCacheEntry: (providerId: ProviderId, chatId: string) => void
   selectedChat: ProviderChat | null
+  selectedChatKeyRef: React.RefObject<string | null>
   chatDetail: ProviderChatDetail | null
   showNewChatView: (projectCwd?: string | null, container?: AppContainerTarget | null) => void
   newSessionContainer: AppContainerTarget

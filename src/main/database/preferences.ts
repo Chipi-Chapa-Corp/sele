@@ -30,9 +30,10 @@ export const openPreferences = (db: Database.Database) => {
   const set = (key: string, value: string | null): void => {
     validateKey(key)
     if (read('') === null) throw new Error('Preferences have not been migrated.')
+    if (value !== null && typeof value !== 'string') throw new Error('Invalid preference value.')
+    if (read(key) === value) return
     if (value === null) remove.run(key)
     else {
-      if (typeof value !== 'string') throw new Error('Invalid preference value.')
       put.run(key, value)
     }
   }

@@ -13,6 +13,7 @@ import {
   restoreChatScrollAnchor
 } from '../../chatLayout'
 import { getProviderChatTurns } from '../../../../shared/chatTurns'
+import { getChatItemRenderKey } from '../../chatItemIdentity'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { ArrowLeft, ChevronDown, CircleAlert, LoaderCircle } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -339,7 +340,7 @@ export function ConversationMessagesContent(
   )
   const renderedConversation = displayedTurns.map((turn, index) => (
     <DeferredChatTurn
-      key={`${selectedChatKey}:${activeSubagentChatView?.summary.id ?? ''}:${turn.id}`}
+      key={`${selectedChatKey}:${activeSubagentChatView?.summary.id ?? ''}:${getChatItemRenderKey(turn.items[0])}`}
       priority={index}
       onMount={!activeSubagentChatView && deferHistory ? handleTurnMount : undefined}
       eager={

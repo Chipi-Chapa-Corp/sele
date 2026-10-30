@@ -1,4 +1,5 @@
-import type { ProviderChat } from '../../../shared/provider'
+import { startTransition, useRef } from 'react'
+import type { ProviderChat, ProviderChatMetadata } from '../../../shared/provider'
 import { type ChatListGroupData } from '../components/ChatListGroup'
 import { appApi } from '../appApi'
 import {
@@ -14,12 +15,7 @@ import {
 } from '../composerDraftStorage'
 import { getComposerDraftScopeKey } from '../composerDraft'
 import { getContainerTargetKey } from '../containerSelection'
-import {
-  getChatGroupKey,
-  getChatKey,
-  getChatProjectCwd,
-  mergeProjects
-} from './chatControllerUtils'
+import { getChatKey, getChatProjectCwd, mergeProjects } from './chatControllerUtils'
 import type { ChatListControllerDependencies } from './featureControllerDependencies'
 
 // Return shape is inferred from the controller declarations below.
@@ -28,6 +24,7 @@ export function useChatListController(dependencies: ChatListControllerDependenci
     applyChatMetadata,
     removeRecentChatCacheEntry,
     selectedChat,
+    selectedChatKeyRef,
     chatDetail,
     showNewChatView,
     newSessionContainer,
@@ -61,27 +58,85 @@ export function useChatListController(dependencies: ChatListControllerDependenci
     )
   }
 
-  const handleMarkChatDone = async (chat: ProviderChat, done = true): Promise<void> => {
-    try {
-      const metadata = await providerApi.markChatDone(chat.providerId, chat.id, done)
-      if (metadata.done) {
-        updateStoredComposerDrafts((state) => releaseChatDrafts(state, chat))
-      }
-      applyChatMetadata([metadata])
-      if (metadata.done) removeRecentChatCacheEntry(chat.providerId, chat.id)
-
-      if (done && selectedChat?.providerId === chat.providerId && selectedChat.id === chat.id) {
+  const doneMutations = useRef({ next: 0, pending: new Map<string, number>() })
+  const changeChatDone = async (
+    targets: ProviderChat[],
+    done: boolean,
+    persist: () => Promise<ProviderChatMetadata[]>
+  ): Promise<void> => {
+    const state = doneMutations.current
+    const mutation = ++state.next
+    const originals = new Map(targets.map((chat) => [getChatKey(chat), chat]))
+    for (const key of originals.keys()) state.pending.set(key, mutation)
+    const doneAt = done ? Date.now() : null
+    // Repartitioning a large project builds many sidebar rows. Keep this work
+    // interruptible while committing the selection and prepared view together.
+    startTransition(() => {
+      setChats((chats) =>
+        chats.map((chat) =>
+          originals.has(getChatKey(chat)) ? { ...chat, done, doneAt, sidebarOrder: null } : chat
+        )
+      )
+      // Completion is local UI intent. Disk acknowledgement must not hold the
+      // composer hostage or close a different chat selected while the save waits.
+      if (
+        done &&
+        selectedChat &&
+        selectedChatKeyRef.current === getChatKey(selectedChat) &&
+        originals.has(getChatKey(selectedChat))
+      ) {
         const currentChat = chatDetail?.id === selectedChat.id ? chatDetail : selectedChat
         showNewChatView(
           currentChat.imported ? undefined : getChatProjectCwd(currentChat),
           currentChat.container ?? newSessionContainer
         )
       }
+    })
+    const isCurrent = (chat: ProviderChat): boolean =>
+      state.pending.get(getChatKey(chat)) === mutation
+    try {
+      const metadata = await persist()
+      const currentTargets = targets.filter(isCurrent)
+      const currentIds = new Set(currentTargets.map((chat) => chat.id))
+      const applied = metadata.filter((entry) => currentIds.has(entry.id))
+      const doneIds = new Set(applied.filter((entry) => entry.done).map((entry) => entry.id))
+      if (doneIds.size) {
+        updateStoredComposerDrafts((drafts) =>
+          currentTargets.filter((chat) => doneIds.has(chat.id)).reduce(releaseChatDrafts, drafts)
+        )
+        currentTargets
+          .filter((chat) => doneIds.has(chat.id))
+          .forEach((chat) => removeRecentChatCacheEntry(chat.providerId, chat.id))
+      }
+      if (applied.length) startTransition(() => applyChatMetadata(applied))
     } catch (error) {
-      console.error('[caught:useChatListController:handleMarkChatDone]', error)
-      // Leave the chat as-is if local metadata cannot be updated.
+      console.error('Unable to save chat completion.', error)
+      // Roll back only completion fields, retaining intervening stream/title/read
+      // updates. A newer completion or undo owns its own result and rollback.
+      const rollbackKeys = new Set(targets.filter(isCurrent).map(getChatKey))
+      startTransition(() => {
+        setChats((chats) =>
+          chats.map((chat) => {
+            const original = originals.get(getChatKey(chat))
+            return original && rollbackKeys.has(getChatKey(chat))
+              ? {
+                  ...chat,
+                  done: original.done,
+                  doneAt: original.doneAt,
+                  sidebarOrder: original.sidebarOrder
+                }
+              : chat
+          })
+        )
+      })
+    } finally {
+      for (const chat of targets) if (isCurrent(chat)) state.pending.delete(getChatKey(chat))
     }
   }
+  const handleMarkChatDone = (chat: ProviderChat, done = true): Promise<void> =>
+    changeChatDone([chat], done, async () => [
+      await providerApi.markChatDone(chat.providerId, chat.id, done)
+    ])
   const handleRenameChat = async (chat: ProviderChat, title: string): Promise<void> => {
     const detail = await providerApi.setChatTitle(chat.providerId, chat.id, title)
     applyChatDetail(chat.providerId, detail)
@@ -286,32 +341,10 @@ export function useChatListController(dependencies: ChatListControllerDependenci
   }
   const handleMarkCwdChatsDone = async (group: ChatListGroupData): Promise<void> => {
     if (group.kind !== 'cwd') return
-
-    try {
-      // Mark exactly the chats shown in the group. Re-listing every provider here would
-      // ignore the selected container and fail entirely when any one provider is unavailable.
-      const metadata = await providerApi.markChatsDone(
-        Array.from(new Set(group.chats.map((chat) => chat.id)))
-      )
-      const doneIds = new Set(metadata.filter((chat) => chat.done).map((chat) => chat.id))
-      updateStoredComposerDrafts((state) =>
-        group.chats.filter((chat) => doneIds.has(chat.id)).reduce(releaseChatDrafts, state)
-      )
-      applyChatMetadata(metadata)
-      group.chats.forEach((chat) => removeRecentChatCacheEntry(chat.providerId, chat.id))
-
-      if (
-        selectedChat &&
-        !selectedChat.done &&
-        getChatGroupKey(selectedChat) === group.key
-      ) {
-        const currentChat = chatDetail?.id === selectedChat.id ? chatDetail : selectedChat
-        showNewChatView(group.cwd, currentChat.container ?? newSessionContainer)
-      }
-    } catch (error) {
-      console.error('[caught:useChatListController:handleMarkCwdChatsDone]', error)
-      // Leave the group as-is if local metadata cannot be updated.
-    }
+    // Persist exactly the displayed chats in one request, regardless of provider availability.
+    await changeChatDone(group.chats, true, () =>
+      providerApi.markChatsDone(Array.from(new Set(group.chats.map((chat) => chat.id))))
+    )
   }
 
   return {

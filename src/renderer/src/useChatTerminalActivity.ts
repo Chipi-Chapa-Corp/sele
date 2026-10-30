@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import type { ProviderChat } from '../../shared/provider'
 import { chatTerminalActivity } from './chatTerminalActivity'
 import { createChatTerminalPoller } from './chatTerminalPolling'
@@ -7,12 +7,14 @@ import { providerApi } from './providerApi'
 
 const storageKey = 'sele:terminal-chat-unread:v1'
 
-export const useChatTerminalStatus = (key: string) =>
-  useSyncExternalStore(
-    chatTerminalActivity.subscribe,
-    () => chatTerminalActivity.getSnapshot(key),
-    () => chatTerminalActivity.getSnapshot(key)
+export const useChatTerminalStatus = (key: string) => {
+  const subscribe = useCallback(
+    (listener: () => void) => chatTerminalActivity.subscribeKey(key, listener),
+    [key]
   )
+  const snapshot = useCallback(() => chatTerminalActivity.getSnapshot(key), [key])
+  return useSyncExternalStore(subscribe, snapshot, snapshot)
+}
 
 export const useChatTerminalActivity = (
   chats: ProviderChat[],

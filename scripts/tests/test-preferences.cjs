@@ -166,7 +166,7 @@ if (process.versions.electron) {
         'first',
         'reopen',
         ...(process.platform === 'linux' ? ['terminal', 'terminal-close'] : []),
-        'dev',
+        ...(process.argv.includes('--built-only') ? [] : ['dev']),
         'corrupt'
       ]) {
         fs.rmSync(path.join(directory, 'profile', 'Local Storage'), {
@@ -237,7 +237,7 @@ if (process.versions.electron) {
             `
             ],
             {
-              env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', SELE_DATABASE_PATH: databasePath },
+              env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', SELE_DATABASE_PATH: databasePath + '.preferences.sqlite' },
               encoding: 'utf8'
             }
           )

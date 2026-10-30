@@ -98,6 +98,7 @@ const { spawnSync } = require('node:child_process')
       format: 'cjs',
       outfile: entry,
       plugins: [
+          require('./helpers/node-workers.cjs')(directory),
         {
           name: 'isolated-native-cache',
           setup(build) {

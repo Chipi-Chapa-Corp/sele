@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import type { AppContainerTarget } from '../../../shared/app'
-import type { MarkdownPlanNode } from '../markdownPlan'
+import { createMarkdownPlan, type MarkdownPlanNode } from '../markdownPlan'
 import { requestMarkdownPlan } from '../chatMarkdownClient'
 import { useMarkdownImages } from '../useMarkdownImages'
 import { hydrateMermaidDiagrams } from '../mermaidRendering'
@@ -14,7 +14,11 @@ export const progressiveMarkdownThreshold = 4_096
 
 // HTML fragments inside tables need their native parse context. Sanitizing a bare <tr> or
 // <tbody> as body HTML would strip the table structure before React could mount it.
-const sanitizedFragment = (html: string, parent: string): DocumentFragment => {
+const sanitizedFragment = (
+  html: string,
+  parent: string,
+  alreadySanitized = false
+): DocumentFragment => {
   const contexts: Record<string, string[]> = {
     table: ['table'],
     thead: ['table', 'thead'],
@@ -31,7 +35,13 @@ const sanitizedFragment = (html: string, parent: string): DocumentFragment => {
       .reverse()
       .map((tag) => `</${tag}>`)
       .join('')
-  const fragment = DOMPurify.sanitize(markup, { ADD_ATTR: ['target'], RETURN_DOM_FRAGMENT: true })
+  const fragment = alreadySanitized
+    ? (() => {
+        const template = document.createElement('template')
+        template.innerHTML = markup
+        return template.content
+      })()
+    : DOMPurify.sanitize(markup, { ADD_ATTR: ['target'], RETURN_DOM_FRAGMENT: true })
   let source: ParentNode = fragment
   for (const tag of context) source = source.querySelector(tag) ?? source
   if (source === fragment) return fragment
@@ -47,6 +57,8 @@ type PartProps = {
   container?: AppContainerTarget | null
   cwd?: string | null
   onCommit: () => void
+  eager: boolean
+  sanitized: boolean
 }
 
 const MarkdownLeaf = memo(function MarkdownLeaf({
@@ -54,9 +66,13 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
   parent,
   container,
   cwd,
-  onCommit
+  onCommit,
+  sanitized
 }: Omit<PartProps, 'node' | 'priority'> & { html: string }) {
-  const fragment = useMemo(() => sanitizedFragment(html, parent), [html, parent])
+  const fragment = useMemo(
+    () => sanitizedFragment(html, parent, sanitized),
+    [html, parent, sanitized]
+  )
   const committedFragment = useRef<DocumentFragment | null>(null)
   useLayoutEffect(() => {
     // Revealing an Activity reconnects effects without inserting any new DOM.
@@ -69,23 +85,25 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
 })
 
 const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
-  const { node, parent, priority, container, cwd, onCommit } = props
+  const { node, parent, priority, container, cwd, onCommit, eager, sanitized } = props
   const shell = useMemo(
     () =>
       'tag' in node
-        ? sanitizedFragment(`${node.opening}</${node.tag}>`, parent).firstElementChild
+        ? sanitizedFragment(`${node.opening}</${node.tag}>`, parent, sanitized).firstElementChild
         : null,
-    [node, parent]
+    [node, parent, sanitized]
   )
   if ('html' in node)
     return (
-      <DeferredChatTurn eager={false} priority={priority}>
+      <DeferredChatTurn eager={eager} priority={priority}>
         <MarkdownLeaf
           html={node.html}
           parent={parent}
           container={container}
           cwd={cwd}
           onCommit={onCommit}
+          eager={eager}
+          sanitized={sanitized}
         />
       </DeferredChatTurn>
     )
@@ -101,14 +119,19 @@ const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
           container={container}
           cwd={cwd}
           onCommit={onCommit}
+          eager={eager}
+          sanitized={sanitized}
         />
       ))}
     </MarkdownElement>
   )
 })
 
+const noop = (): void => {}
+
 export function ProgressiveMarkdownContent({
   content,
+  html,
   interactiveFileLinks,
   footnotePrefix,
   streaming,
@@ -117,6 +140,9 @@ export function ProgressiveMarkdownContent({
   errorMarkup
 }: {
   content: string
+  // Small messages are already sanitized by the synchronous renderer. Both
+  // paths use the same block tree, preserving DOM when a stream outgrows it.
+  html?: string
   interactiveFileLinks: boolean
   footnotePrefix: string
   streaming: boolean
@@ -124,7 +150,16 @@ export function ProgressiveMarkdownContent({
   cwd?: string | null
   errorMarkup: string
 }) {
-  const [plan, setPlan] = useState<MarkdownPlanNode[] | null>(null)
+  const [workerPlan, setPlan] = useState<MarkdownPlanNode[] | null>(null)
+  const synchronousPlan = useMemo(
+    () => (html === undefined ? null : createMarkdownPlan(html)),
+    [html]
+  )
+  const committedPlan = useRef<MarkdownPlanNode[] | null>(null)
+  const plan = synchronousPlan ?? workerPlan ?? committedPlan.current
+  useLayoutEffect(() => {
+    committedPlan.current = plan
+  }, [plan])
   const [failed, setFailed] = useState(false)
   const [revision, setRevision] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
@@ -135,6 +170,7 @@ export function ProgressiveMarkdownContent({
   )
   const resolvedInput = useRef<typeof input | null>(null)
   useEffect(() => {
+    if (html !== undefined) return
     // Keep a completed plan across Activity hide/reveal. A pending request is
     // still cancelled on hide and retried, and changed source gets a new plan.
     if (resolvedInput.current === input) return
@@ -157,12 +193,12 @@ export function ProgressiveMarkdownContent({
       current = false
       request.cancel()
     }
-  }, [input])
-  useMarkdownImages(ref, String(revision), container, cwd, errorMarkup)
+  }, [input, html])
+  useMarkdownImages(ref, html ?? String(revision), container, cwd, errorMarkup)
   // biome-ignore lint/correctness/useExhaustiveDependencies: leaf commits change the DOM without changing the source message.
   useEffect(() => {
     if (!streaming && ref.current) hydrateMermaidDiagrams(ref.current)
-  }, [streaming, revision])
+  }, [streaming, revision, html])
   return (
     <div
       ref={ref}
@@ -179,21 +215,25 @@ export function ProgressiveMarkdownContent({
             priority={index}
             container={container}
             cwd={cwd}
-            onCommit={onCommit}
+            onCommit={html === undefined ? onCommit : noop}
+            eager={html !== undefined}
+            sanitized={html !== undefined}
           />
         ))
       ) : null}
       {/* The message is already available. Keep a bounded, readable viewport
           until the first formatted part commits instead of inserting another loader. */}
-      {!failed && (!plan || revision === 0) && (
-        <div
-          className="chat-detail__message-text"
-          style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
-        >
-          {content.length > 8_192 ? '…\n' : ''}
-          {content.slice(-8_192)}
-        </div>
-      )}
+      {!failed &&
+        (!plan?.length ||
+          (!committedPlan.current?.length && html === undefined && revision === 0)) && (
+          <div
+            className="chat-detail__message-text"
+            style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+          >
+            {content.length > 8_192 ? '…\n' : ''}
+            {content.slice(-8_192)}
+          </div>
+        )}
     </div>
   )
 }

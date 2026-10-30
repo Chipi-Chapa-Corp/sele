@@ -253,8 +253,12 @@ if (!process.versions.electron) {
           )
         }
         assert.equal(
-          await js("getComputedStyle(document.querySelector('.image-lightbox__frame')).resize"),
-          'both'
+          await js(`(() => {
+            const bounds = document.querySelector('.image-lightbox__frame').getBoundingClientRect()
+            return bounds.width <= innerWidth && bounds.height <= innerHeight
+          })()`),
+          true,
+          'the preview fits the viewport'
         )
         assert.equal(
           await js(`(() => {

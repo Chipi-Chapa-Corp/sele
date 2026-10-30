@@ -9,25 +9,6 @@ if (!process.versions.electron) {
     try {
       const esbuild = require('esbuild')
       await esbuild.build({
-        entryPoints: ['src/main/providers/sqliteUsage.worker.ts'],
-        bundle: true,
-        platform: 'node',
-        format: 'cjs',
-        external: ['electron'],
-        plugins: [
-          {
-            name: 'native-sqlite-worker',
-            setup(build) {
-              build.onResolve({ filter: /^better-sqlite3$/ }, () => ({
-                path: require.resolve('better-sqlite3'),
-                external: true
-              }))
-            }
-          }
-        ],
-        outfile: path.join(directory, 'usage-worker.cjs')
-      })
-      await esbuild.build({
         stdin: {
           contents: `export * from './src/main/database/tokenUsage'; export * from './src/main/providers/modelPricing/ModelsDevPricing'; export * from './src/main/providers/modelPricing/TokenPricing'; export { disposeDatabase, getDatabase } from './src/main/database/sqlite'; export * from './src/main/providers/copilot/CopilotHistoricalUsage'; export { readSqliteUsage } from './src/main/providers/sqliteUsage.worker'; export { SqliteUsageReader } from './src/main/providers/SqliteUsageReader';`,
           resolveDir: path.resolve(__dirname, '../..'),
@@ -38,17 +19,10 @@ if (!process.versions.electron) {
         format: 'cjs',
         external: ['electron'],
         plugins: [
+          require('./helpers/node-workers.cjs')(directory),
           {
             name: 'native-sqlite',
             setup(build) {
-              build.onResolve({ filter: /\?nodeWorker$/ }, () => ({
-                path: 'usage-worker',
-                namespace: 'test-worker'
-              }))
-              build.onLoad({ filter: /.*/, namespace: 'test-worker' }, () => ({
-                contents: `import {Worker} from 'node:worker_threads'; export default (options) => new Worker(${JSON.stringify(path.join(directory, 'usage-worker.cjs'))}, options);`,
-                loader: 'js'
-              }))
               build.onResolve({ filter: /^better-sqlite3$/ }, () => ({
                 path: require.resolve('better-sqlite3'),
                 external: true
@@ -1122,20 +1096,14 @@ if (!process.versions.electron) {
         await settle()
         await clickTab('Usage')
         assert.deepEqual(await run('window.requests.at(-1)'), ['claude', 'other'])
-        const requestCount = await run('window.requests.length')
-        await run('window.renderUsage("opencode","ignored")')
+        await run('window.renderUsage("opencode-v2","ignored")')
         await settle()
-        assert.equal(
-          await run(
-            `document.querySelector('[aria-label="Usage unavailable for OpenCode"]').disabled`
-          ),
-          true
-        )
+        assert.equal(await run('document.querySelectorAll(".message-box__usage-tabs").length'), 0)
         assert.equal(await run('document.querySelectorAll(".token-usage__card").length'), 0)
-        assert.equal(
-          await run('window.requests.length'),
-          requestCount,
-          'disabled OpenCode Usage never loads consumption'
+        assert.deepEqual(
+          await run('window.requests.at(-1)'),
+          ['opencode-v2', 'ignored'],
+          'OpenCode loads the selected chat cost without a separate usage page'
         )
         await run('window.renderUsage("claude","other")')
         await settle()

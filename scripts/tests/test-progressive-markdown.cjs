@@ -70,14 +70,24 @@ if (!process.versions.electron) {
           {
             name: 'fixture-workers',
             setup(build) {
-              build.onLoad({ filter: /ProgressiveMarkdownContent\.tsx$/ }, async (args) => ({
-                contents: (await fs.readFile(args.path, 'utf8')).replace(
-                  'const onCommit = useCallback(() => setRevision((value) => value + 1), [])',
-                  'const onCommit = useCallback(() => {window.leafCommits=(window.leafCommits??0)+1;setRevision((value) => value + 1)}, [])'
-                ),
-                loader: 'tsx',
-                resolveDir: path.dirname(args.path)
-              }))
+              build.onLoad(
+                { filter: /(?:ChatDetailItem|ProgressiveMarkdownContent)\.tsx$/ },
+                async (args) => ({
+                  contents: (process.argv.includes('--baseline-threshold')
+                    ? require('node:child_process').execFileSync(
+                        'git',
+                        ['show', 'HEAD:' + path.relative(root, args.path)],
+                        { encoding: 'utf8' }
+                      )
+                    : await fs.readFile(args.path, 'utf8')
+                  ).replace(
+                    'const onCommit = useCallback(() => setRevision((value) => value + 1), [])',
+                    'const onCommit = useCallback(() => {window.leafCommits=(window.leafCommits??0)+1;setRevision((value) => value + 1)}, [])'
+                  ),
+                  loader: 'tsx',
+                  resolveDir: path.dirname(args.path)
+                })
+              )
               build.onResolve({ filter: /\?worker$/ }, (args) => ({
                 path: args.path,
                 namespace: 'worker'
@@ -138,6 +148,35 @@ if (!process.versions.electron) {
         run(
           `new Promise((resolve,reject)=>{const end=performance.now()+15000;function check(){if(${expression})return requestAnimationFrame(()=>requestAnimationFrame(resolve));if(performance.now()>end)return reject(new Error('Timed out: '+${JSON.stringify(expression)}));setTimeout(check,20)}check()})`
         )
+      // Crossing the worker threshold must preserve the readable, formatted
+      // prefix while parsing and deferred leaves catch up. Previously this
+      // replaced the entire Markdown tree with temporary plain text.
+      const prefix =
+        '### Stable prefix\n\nA **formatted** message.\n\n![Pixel](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=)\n\n'
+      await run(`render(${JSON.stringify(prefix)},'threshold',true)`)
+      await waitFor(`document.querySelector('h3') && document.querySelector('img')?.complete`)
+      await run(`window.prefixHeading=document.querySelector('h3');window.prefixImage=document.querySelector('img');
+        window.prefixText=document.querySelector('p').firstChild;
+        const thresholdRange=document.createRange();thresholdRange.setStart(prefixText,0);thresholdRange.setEnd(prefixText,1);
+        getSelection().removeAllRanges();getSelection().addRange(thresholdRange);
+        window.thresholdDetached=false;
+        window.thresholdObserver=new MutationObserver(()=>{if(!prefixHeading.isConnected || !prefixImage.isConnected)thresholdDetached=true});
+        thresholdObserver.observe(document.getElementById('root'),{childList:true,subtree:true});
+        render(${JSON.stringify(prefix + 'Long streamed paragraph. '.repeat(500) + '\nTHRESHOLD-END')},'threshold',true)`)
+      await waitFor(`document.body.textContent.includes('THRESHOLD-END')`)
+      assert.equal(
+        await run(
+          `!thresholdDetached && prefixHeading===document.querySelector('h3') && prefixImage===document.querySelector('img')`
+        ),
+        true,
+        'worker takeover preserves formatted prefix and decoded image throughout'
+      )
+      assert.equal(
+        await run('getSelection().anchorNode===prefixText && getSelection().toString()==="A"'),
+        true,
+        'worker takeover preserves text selection'
+      )
+      await run('thresholdObserver.disconnect();getSelection().removeAllRanges()')
       const paragraph = (index) =>
         `### Finding ${index}\n\nParagraph ${index} with **strong text** and [source](/fixture/source.ts:10).\n\n\x60\x60\x60ts\nconst result${index} = {value: "large", ready: true};\n\x60\x60\x60\n\n`
       const content =

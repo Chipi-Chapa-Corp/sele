@@ -1,4 +1,5 @@
 import type { ProviderChatDetail } from '../../shared/provider'
+import { reconcileChatItemRenderKeys } from './chatItemIdentity.ts'
 
 // IPC copies every object, including unchanged history. Recover identity before
 // publishing a refresh so memoized history does not render as if it were edited.
@@ -47,6 +48,7 @@ export const reuseChatSnapshotItems = (
 ): ProviderChatDetail => {
   if (!current || current.id !== snapshot.id || current.items === snapshot.items) return snapshot
   const previous = new Map(current.items.map((item) => [item.id, item]))
+  reconcileChatItemRenderKeys(current.items, snapshot.items, previous)
   // A pathological raw object must not move unbounded comparison work onto a switch.
   const budget = { left: 20_000 }
   let reused = false

@@ -211,6 +211,8 @@ const ingestionFixture = () => {
       }
     },
     adapters: { fixture: { dispose() {} } },
+    limitResetQueue: { async close() {} },
+    flushPersistentPendingMessages: async () => {},
     pendingConversationViews: new Map(),
     conversationViewSequences: new Map(),
     conversationViewWrites: new Set(),

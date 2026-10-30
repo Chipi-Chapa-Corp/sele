@@ -25,6 +25,7 @@ if (!process.versions.electron) {
         format: 'cjs',
         external: ['electron'],
         plugins: [
+          require('./helpers/node-workers.cjs')(directory),
           {
             name: 'native-sqlite',
             setup(build) {
@@ -64,13 +65,8 @@ if (!process.versions.electron) {
     const api = require(path.join(process.argv[2], 'accounting.cjs'))
     try {
       await api.getDatabase()
-      const connection = api.getSqliteConnection()
-      const prepare = connection.prepare
       let queries = []
-      connection.prepare = function (sql) {
-        queries.push(sql)
-        return prepare.call(this, sql)
-      }
+      const stopObserving = api.observeDatabaseQueries((sql) => queries.push(sql))
       const usage = (input, cached = 0, output = 1) => ({
         inputTokens: input,
         cachedInputTokens: cached,
@@ -182,7 +178,9 @@ if (!process.versions.electron) {
         recordId: 'pending-price',
         models: [{ modelId: 'held', pricingProvider: 'openai', usage: usage(10) }]
       })
-      await new Promise((resolve) => setImmediate(resolve))
+      const pricingDeadline = Date.now() + 5000
+      while (!releasePricing && Date.now() < pricingDeadline)
+        await new Promise((resolve) => setTimeout(resolve, 5))
       assert.equal(typeof releasePricing, 'function')
       assert.equal(
         (await api.getLiveChatTokenUsage('codex', 'host', 'root')).total.inputTokens,
@@ -198,13 +196,7 @@ if (!process.versions.electron) {
       )
       await api.getChatMetadata('metadata')
       await api.getMessageReviews('metadata')
-      const freshConnection = api.getSqliteConnection()
-      const freshPrepare = freshConnection.prepare
       queries = []
-      freshConnection.prepare = function (sql) {
-        queries.push(sql)
-        return freshPrepare.call(this, sql)
-      }
       for (let i = 0; i < 50; i++) {
         await api.getChatMetadata('metadata')
         await api.getMessageReviews('metadata')
@@ -229,6 +221,7 @@ if (!process.versions.electron) {
       assert.equal((await api.getMessageReviews('other')).length, 1)
       await api.deleteMessageReview('review')
       assert.equal((await api.getMessageReviews('other')).length, 0)
+      stopObserving()
       console.log(
         'Accounting cache checks passed: 50 warm reads without SQL; incremental root/subagent totals; provisional replacement; pricing and metadata invalidation; cold-reopen equivalence.'
       )

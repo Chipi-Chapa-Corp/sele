@@ -30,6 +30,7 @@ if (!process.versions.electron) {
         external: ['electron'],
         outfile: path.join(directory, 'backend.cjs'),
         plugins: [
+          require('./helpers/node-workers.cjs')(directory),
           {
             name: 'native-sqlite',
             setup(build) {
@@ -52,7 +53,6 @@ if (!process.versions.electron) {
           contents: `
           import React from 'react'
           import {createRoot} from 'react-dom/client'
-          import {flushSync} from 'react-dom'
           import './src/renderer/src/assets/main.css'
           const noop=()=>{};
           const chats=['first','second','unknown','empty'].map(id=>({id,providerId:'codex',createdAt:1,updatedAt:999,
@@ -60,13 +60,19 @@ if (!process.versions.electron) {
             branchName:null,worktreeBaseBranchName:null,container:null,status:null,pinned:false,sidebarOrder:null,
             done:false,seenUpdatedAt:2,purpose:null,lastTurnOutcome:null,pendingApproval:null}));
           window.pending={};window.sends=0;window.discovery=0;
-          window.openChat=id=>{const start=performance.now();flushSync(()=>document.querySelector('[data-chat-id="'+id+'"] .chat-list-item__main').click());
-            return {ms:performance.now()-start,text:document.getElementById('chat-search-content')?.textContent,loader:Boolean(document.querySelector('[aria-label="Loading messages"]'))};};
-          window.openChatBeforePaint=id=>new Promise(resolve=>{const start=performance.now();
+          // A navigation transition may retain the old screen for a frame.
+          // Inspect the first paint selecting the destination, with its provider held.
+          window.openChatBeforePaint=id=>new Promise((resolve,reject)=>{const start=performance.now();
             document.querySelector('[data-chat-id="'+id+'"] .chat-list-item__main').click();
-            requestAnimationFrame(()=>resolve({ms:performance.now()-start,
-              text:document.getElementById('chat-search-content')?.textContent,
-              loader:Boolean(document.querySelector('[aria-label="Loading messages"]'))}));});
+            requestAnimationFrame(function sample(){
+              if(document.querySelector('.chat-list-item--selected')?.dataset.chatId===id)
+                return resolve({ms:performance.now()-start,
+                  text:document.getElementById('chat-search-content')?.textContent,
+                  loader:Boolean(document.querySelector('[aria-label="Loading messages"]'))});
+              if(performance.now()-start>8000)return reject(new Error('Selection did not paint: '+id));
+              requestAnimationFrame(sample);
+            });});
+          window.openChat=window.openChatBeforePaint;
           window.setDraft=()=>{const textarea=document.querySelector('.chat-panel__composer textarea');
             Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(textarea,'Draft while refreshing');
             textarea.dispatchEvent(new Event('input',{bubbles:true}));};
@@ -90,7 +96,7 @@ if (!process.versions.electron) {
             getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
             getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
             getSkills:()=>[],getApps:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
-            getChatTerminalTasks:()=>[],getUpdateAvailability:()=>null
+            getChatTerminalTasks:()=>[],getLimitResetMessages:()=>[],getUpdateAvailability:()=>null
           };
           const api=new Proxy({}, {get:(_target,name)=>name.startsWith('on')?()=>noop:(...args)=>Promise.resolve(defaults[name]?.(...args)??null)});
           Object.assign(window,{appApi:api,providerApi:api,terminalApi:api,browserApi:api});
@@ -226,7 +232,10 @@ if (!process.versions.electron) {
       })
       const errors = []
       win.webContents.on('console-message', (event) => {
-        if (event.level === 'error') errors.push(event.message)
+        if (event.level === 'error') {
+          errors.push(event.message)
+          console.error(event.message)
+        }
       })
       await win.loadFile(path.join(directory, 'index.html'))
       const run = (source) => win.webContents.executeJavaScript(source)
@@ -246,10 +255,11 @@ if (!process.versions.electron) {
         'publishing known views never opens a writable provider chat'
       )
       const firstOpen = await run(`openChat('first')`)
+
       assert.match(
         firstOpen.text,
         /Saved answer first/,
-        'messages commit in the selection task with provider replies withheld'
+        'prepared messages paint on selection with provider replies withheld'
       )
       assert.equal(firstOpen.loader, false, 'no intermediate loading view')
       await ready(
@@ -301,7 +311,7 @@ if (!process.versions.electron) {
       assert.match(
         secondOpen.text,
         /Saved answer second/,
-        'normal clicks display prepared messages before the next paint'
+        'normal clicks display prepared messages in the first selected paint'
       )
       assert.equal(secondOpen.loader, false)
       await ready(
@@ -356,7 +366,7 @@ if (!process.versions.electron) {
         []
       )
       console.log(
-        'PASS durable known-chat opening: selection commit ' +
+        'PASS durable known-chat opening: selection before paint ' +
           previewMs.toFixed(1) +
           ' ms, normal second click visible before next paint (' +
           secondOpen.ms.toFixed(1) +

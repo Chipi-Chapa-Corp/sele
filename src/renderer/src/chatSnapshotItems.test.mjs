@@ -1,9 +1,51 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { reuseChatSnapshotItems } from './chatSnapshotItems.ts'
+import { getChatItemRenderKey } from './chatItemIdentity.ts'
 
 const message = (id, content) => ({ id, type: 'message', role: 'assistant', content })
 const detail = (items, extra = {}) => ({ id: 'chat', items, ...extra })
+
+test('confirmation preserves render identity while provider IDs and edits remain authoritative', () => {
+  const pending = { ...message('optimistic:1:user', 'Send this'), role: 'user' }
+  const echo = { ...pending, id: 'native-user', editTargetId: 'native-turn' }
+  const confirmed = reuseChatSnapshotItems(detail([pending]), detail([echo]))
+  assert.equal(confirmed.items[0], echo)
+  assert.equal(confirmed.items[0].id, 'native-user')
+  assert.equal(getChatItemRenderKey(echo), pending.id)
+  const refreshed = { ...echo, content: 'Edited after confirmation' }
+  reuseChatSnapshotItems(confirmed, detail([refreshed]))
+  assert.equal(getChatItemRenderKey(refreshed), pending.id)
+})
+
+test('identical historical text, different attachments and other chats cannot claim a pending row', () => {
+  const user = (id, content) => ({ ...message(id, content), role: 'user' })
+  const pending = user('optimistic:2:user', 'Again')
+  const anchor = user('anchor', 'Earlier')
+  const historical = user('historical', 'Again')
+  const echo = user('confirmed', 'Again')
+  reuseChatSnapshotItems(detail([anchor, pending]), detail([historical, anchor, echo]))
+  assert.equal(getChatItemRenderKey(historical), historical.id)
+  assert.equal(getChatItemRenderKey(echo), pending.id)
+  const other = user('other-user', 'Again')
+  reuseChatSnapshotItems(detail([pending]), { id: 'other', items: [other] })
+  assert.equal(getChatItemRenderKey(other), other.id)
+  const attachment = user('attachment-user', 'Again')
+  attachment.attachments = [{ kind: 'image', path: '/different.png' }]
+  reuseChatSnapshotItems(detail([pending]), detail([attachment]))
+  assert.equal(getChatItemRenderKey(attachment), attachment.id)
+})
+
+test('repeated prompts reconcile once each in submission order', () => {
+  const user = (id) => ({ ...message(id, 'Same prompt'), role: 'user' })
+  const first = user('optimistic:3:user')
+  const second = user('optimistic:4:user')
+  const a = user('a'),
+    b = user('b')
+  reuseChatSnapshotItems(detail([first, second]), detail([a, b]))
+  assert.equal(getChatItemRenderKey(a), first.id)
+  assert.equal(getChatItemRenderKey(b), second.id)
+})
 
 test('IPC refreshes retain unchanged items without retaining stale metadata', () => {
   const old = detail([message('a', 'First'), message('b', 'Second')], { revision: 1 })

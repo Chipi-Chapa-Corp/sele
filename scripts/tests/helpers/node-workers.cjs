@@ -15,6 +15,17 @@ module.exports = (directory) => ({
         bundle: true,
         platform: 'node',
         format: 'cjs',
+        plugins: [
+          {
+            name: 'worker-native-sqlite',
+            setup(build) {
+              build.onResolve({ filter: /^better-sqlite3$/ }, () => ({
+                path: require.resolve('better-sqlite3'),
+                external: true
+              }))
+            }
+          }
+        ],
         outfile
       })
       return {

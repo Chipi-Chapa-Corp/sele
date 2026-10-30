@@ -24,7 +24,7 @@ if (!process.versions.electron) {
               getItem:key=>({ok:true,value:stored.get(key)??null}),
               setItem:(key,value)=>{stored.set(key,value);return {ok:true,value:null}}
             }
-            window.calls=[]; window.failUpdate=false; window.failCheck=false
+            window.calls=[]; window.failUpdate=false; window.failCheck=false; window.noopUpdate=false
             const versions={codex:['0.1.0','0.2.0'],claude:['2.1.0','2.2.0'],opencode:['1.19.5','2.2.0'],'opencode-v2':['2.1.0','2.2.0']}
             window.providerApi={
               getUpdateAvailability:async(id,options)=>{
@@ -37,6 +37,7 @@ if (!process.versions.electron) {
               updateProvider:async(id,options)=>{
                 window.calls.push({method:'update',id,options})
                 if(window.failUpdate)throw Error('Fixture installation failure')
+                if(window.noopUpdate)return {currentVersion:versions[id][0],latestVersion:versions[id][1]}
                 await new Promise(resolve=>window.finishUpdate=resolve)
                 versions[id][0]=versions[id][1];return null
               }
@@ -173,7 +174,24 @@ if (!process.versions.electron) {
       await ready('document.querySelector(".chat-approval__error")')
       assert.equal(await count(), 1, 'failed updates remain retryable')
       await run(
-        'window.failUpdate=false;void window.updates.handleUpdateProvider(window.updates.providerUpdateSuggestions.find(x=>x.providerId==="claude"))'
+        'window.failUpdate=false;window.noopUpdate=true;document.querySelector(".chat-provider-update .ui-button--primary").click()'
+      )
+      await ready(
+        'document.querySelector(".chat-approval__error")?.textContent.includes("2.1.0 is still installed; 2.2.0 is available")'
+      )
+      assert.equal(await count(), 1, 'no-op updates show an error and remain retryable')
+      assert.equal(
+        await run('document.querySelector(".chat-provider-update .ui-button--primary").disabled'),
+        false
+      )
+      await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      await fs.writeFile(
+        path.join(report, 'incomplete-update.png'),
+        (await win.webContents.capturePage()).toPNG()
+      )
+      await run(
+        'window.noopUpdate=false;document.querySelector(".chat-provider-update .ui-button--primary").click()'
       )
       await ready('window.finishUpdate&&window.updates.providerUpdateInProgress')
       assert.equal(
@@ -196,7 +214,7 @@ if (!process.versions.electron) {
         'skips are scoped to the source'
       )
       console.log(
-        'PASS: v2-only OpenCode, all-provider checks, stacked banners, independent dismissals, update failure/retry, source scoping'
+        'PASS: v2-only OpenCode, all-provider checks, stacked banners, independent dismissals, update failure/no-op/retry, source scoping'
       )
     } catch (error) {
       console.error(error)

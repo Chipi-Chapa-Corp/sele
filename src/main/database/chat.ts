@@ -259,9 +259,14 @@ export const setChatSeen = async (
     .insertInto('chat')
     .values({ id: chatId, pinned: 0, done: 0, seen_updated_at: nextSeenUpdatedAt })
     .onConflict((conflict) =>
-      conflict.column('id').doUpdateSet({
-        seen_updated_at: sql<number>`max(coalesce(seen_updated_at, 0), ${nextSeenUpdatedAt})`
-      })
+      conflict
+        .column('id')
+        .doUpdateSet({
+          seen_updated_at: sql<number>`max(coalesce(seen_updated_at, 0), ${nextSeenUpdatedAt})`
+        })
+        .where((eb) =>
+          eb.or([eb('seen_updated_at', '<', nextSeenUpdatedAt), eb('seen_updated_at', 'is', null)])
+        )
     )
     .execute()
 

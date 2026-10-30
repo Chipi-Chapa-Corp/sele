@@ -66,7 +66,7 @@ if (!process.versions.electron) {
               getDefaultCwd:()=>'/fixture',getWindowState:()=>({isMaximized:false}),getAppUpdate:()=>null,
               getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
               getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
-              getSkills:()=>[],getApps:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
+              getSkills:()=>[],getApps:()=>[],getLimitResetMessages:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
               getUpdateAvailability:()=>null
             }
             const api=new Proxy({}, {get:(_target,name)=>name==='onChatUpdated' ? listener=>{window.chatListener=listener;return noop} : name.startsWith('on') ? ()=>noop :

@@ -1,8 +1,9 @@
-import { mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { app } from 'electron'
 import Database from 'better-sqlite3'
-import { Kysely, SqliteDialect, sql, type ColumnType } from 'kysely'
+import { Kysely, sql, type ColumnType } from 'kysely'
+import { WorkerSqliteDialect } from './sqliteWorkerDriver'
+import { getDatabasePath } from './storagePaths'
+import { closePreferenceStorage } from './preferenceStorage'
+export { observeDatabaseQueries } from './sqliteWorkerDriver'
 import type { ProviderChatCwdKind, ProviderChatPurpose, ProviderId } from '../../shared/provider'
 
 type SqliteBooleanColumn = ColumnType<number, number | boolean | undefined, number | boolean>
@@ -176,10 +177,7 @@ export type LocalDatabase = {
 
 let database: Kysely<LocalDatabase> | null = null
 let connection: Database.Database | null = null
-let schemaReady = false
-
-const getDatabasePath = (): string =>
-  process.env.SELE_DATABASE_PATH ?? join(app.getPath('userData'), 'sele.sqlite')
+let initialization: Promise<Kysely<LocalDatabase>> | null = null
 
 const ensureColumn = async (
   db: Kysely<LocalDatabase>,
@@ -194,7 +192,6 @@ const ensureColumn = async (
 }
 
 const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
-  if (schemaReady) return
   await db.schema
     .createTable('conversation_view')
     .ifNotExists()
@@ -563,37 +560,54 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .column('id')
     .where(sql<boolean>`priced_at is null and models_json is not null`)
     .execute()
-
-  schemaReady = true
 }
 
-export const getDatabase = async (): Promise<Kysely<LocalDatabase>> => {
-  if (!database) {
+export const getDatabase = (): Promise<Kysely<LocalDatabase>> => {
+  // All startup callers share migrations. An async function with only a final
+  // boolean guard otherwise runs the entire schema concurrently for each caller.
+  if (initialization) return initialization
+  initialization = (async () => {
     const path = getDatabasePath()
-    mkdirSync(dirname(path), { recursive: true })
-
-    connection = new Database(path)
     database = new Kysely<LocalDatabase>({
-      dialect: new SqliteDialect({
-        database: connection
-      })
+      dialect: new WorkerSqliteDialect(path)
     })
-  }
-
-  await ensureSchema(database)
-  return database
+    try {
+      await ensureSchema(database)
+      return database
+    } catch (error) {
+      await database.destroy()
+      database = null
+      connection = null
+      throw error
+    }
+  })().catch((error: unknown) => {
+    if (connection?.open) connection.close()
+    database = null
+    connection = null
+    initialization = null
+    throw error
+  })
+  return initialization
 }
 
 export const getSqliteConnection = (): Database.Database => {
-  if (!connection) throw new Error('Database is not initialized.')
+  // Explicit diagnostics/fixtures only. Production queries and preferences use
+  // workers; opening a native connection must never be part of UI navigation.
+  if (!database) throw new Error('Database is not initialized.')
+  if (!connection) {
+    connection = new Database(getDatabasePath(), { fileMustExist: true })
+    connection.pragma('synchronous = FULL')
+  }
   return connection
 }
 
 export const disposeDatabase = async (): Promise<void> => {
-  const db = database
+  const db = initialization ? await initialization : database
+  const diagnosticConnection = connection
+  initialization = null
   database = null
   connection = null
-  schemaReady = false
 
-  if (db) await db.destroy()
+  diagnosticConnection?.close()
+  await Promise.all([db?.destroy(), closePreferenceStorage()])
 }

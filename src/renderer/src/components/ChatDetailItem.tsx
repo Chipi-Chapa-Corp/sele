@@ -1,7 +1,6 @@
 import { getInputLanguage, getOutputLanguage, getToolValueLanguage } from '../toolValueLanguage'
 import { McpApp, McpAppScope } from './McpApp'
 import type { McpAppScope as McpAppScopeValue } from '../../../shared/mcpApps'
-import { useMarkdownImages } from '../useMarkdownImages'
 import { WorkingElapsedTime } from './WorkingElapsedTime'
 import { useReducedMotionPreference } from '../motion/useReducedMotionPreference'
 import { useWorkingToolMotion } from '../motion/useWorkingToolMotion'
@@ -12,7 +11,6 @@ import { getToolDisplayLabel, getToolSequenceDisplayLabel } from '../toolDisplay
 import { Marked } from 'marked'
 import markedFootnote from 'marked-footnote'
 import { createBoundedTextCache } from '../boundedTextCache'
-import { MarkdownContent } from './MarkdownContent'
 import {
   ProgressiveMarkdownContent,
   progressiveMarkdownThreshold
@@ -28,6 +26,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useId,
   useMemo,
   useRef,
@@ -109,7 +108,6 @@ import type {
 import { getChatMessagePresentation, type ChatMessageResource } from '../chatMessageResources'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
 import { useLocalMedia } from '../useLocalMedia'
-import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { getRateLimitResetMessage } from '../rateLimitReset'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
 import { defaultAppChatProgressSettings, type AppChatProgressSettings } from '../settings'
@@ -707,8 +705,17 @@ const GeneratedImageThumbnail: React.FC<{
   const { open: openGallery } = useChatMedia()
   const loaded = useLocalMedia(path ? { path } : null)
   const [open, setOpen] = useState(false)
-  const imageUrl = path ? loaded?.url : (initialDataUrl ?? null)
-  const failed = path ? Boolean(loaded?.error) : !initialDataUrl
+  // A selected attachment already has decoded preview pixels. Keep displaying
+  // them while its durable file loads, including when confirmation drops dataUrl.
+  const preview = useRef({ path, url: initialDataUrl })
+  useLayoutEffect(() => {
+    if (loaded?.url) preview.current = { path, url: undefined }
+    else if (preview.current.path !== path) preview.current = { path, url: initialDataUrl }
+    else if (initialDataUrl) preview.current.url = initialDataUrl
+  }, [path, initialDataUrl, loaded?.url])
+  const imageUrl =
+    loaded?.url ?? initialDataUrl ?? (preview.current.path === path ? preview.current.url : null)
+  const failed = !imageUrl && (path ? Boolean(loaded?.error) : !initialDataUrl)
 
   if (failed) {
     return (
@@ -1340,23 +1347,7 @@ const MarkdownMessageComponent: React.FC<{
     visualizationMarkdown,
     streaming
   ])
-  useMarkdownImages(
-    containerRef,
-    renderedMarkdown,
-    localImageContainer,
-    localImageCwd,
-    brokenImageIconMarkup,
-    !progressive
-  )
   useStreamReveal(containerRef, renderedMarkdown, streaming)
-  useEffect(() => {
-    if (streaming || progressive) return undefined
-
-    const markdownContainer = containerRef.current
-    if (!markdownContainer) return undefined
-    hydrateMermaidDiagrams(markdownContainer)
-    return undefined
-  })
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>): void => {
       if (!(event.target instanceof Element)) return
@@ -1467,26 +1458,18 @@ const MarkdownMessageComponent: React.FC<{
   return (
     <>
       <div className={className} ref={containerRef} onClick={handleClick}>
-        {progressive ? (
-          <ProgressiveMarkdownContent
-            content={
-              preserveLineBreaks ? withPromptMarkdownLineBreaks(visibleContent) : visibleContent
-            }
-            interactiveFileLinks={interactiveFileLinks}
-            footnotePrefix={footnotePrefix}
-            streaming={streaming}
-            container={localImageContainer}
-            cwd={localImageCwd}
-            errorMarkup={brokenImageIconMarkup}
-          />
-        ) : (
-          <MarkdownContent
-            html={renderedMarkdown}
-            settled={!streaming}
-            container={localImageContainer}
-            cwd={localImageCwd}
-          />
-        )}
+        <ProgressiveMarkdownContent
+          html={progressive ? undefined : renderedMarkdown}
+          content={
+            preserveLineBreaks ? withPromptMarkdownLineBreaks(visibleContent) : visibleContent
+          }
+          interactiveFileLinks={interactiveFileLinks}
+          footnotePrefix={footnotePrefix}
+          streaming={streaming}
+          container={localImageContainer}
+          cwd={localImageCwd}
+          errorMarkup={brokenImageIconMarkup}
+        />
         {selectionQuoteHost && <div className="chat-detail__message-quote-host" />}
       </div>
       {localImagePreview && (

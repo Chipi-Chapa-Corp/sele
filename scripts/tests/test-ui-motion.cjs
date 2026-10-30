@@ -14,6 +14,8 @@ if (!process.versions.electron) {
             import { flushSync } from 'react-dom'
             import { AnimatePresence, MotionConfig } from 'motion/react'
             import { ChatList } from './src/renderer/src/components/ChatList'
+            import { setChatBookmarked } from './src/renderer/src/chatBookmarks'
+            import { chatTerminalActivity } from './src/renderer/src/chatTerminalActivity'
             import { Dropdown } from './src/renderer/src/components/Dropdown'
             import { SegmentedControl } from './src/renderer/src/components/SegmentedControl'
             import { CwdNotesButton } from './src/renderer/src/components/CwdNotesButton'
@@ -26,6 +28,7 @@ if (!process.versions.electron) {
             import './src/renderer/src/App.css'
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/components/MessageBox.css'
+            window.fixtureRowRenders=[];window.setBookmark=setChatBookmarked;window.terminalActivity=chatTerminalActivity;
             const noop = () => {}
             const stored = new Map()
             window.preferencesApi = {
@@ -121,6 +124,14 @@ if (!process.versions.electron) {
           {
             name: 'unused-editor-workers',
             setup(build) {
+              build.onLoad({ filter: /ChatListItem\.tsx$/ }, async (args) => ({
+                contents: (await fs.readFile(args.path, 'utf8')).replace(
+                  '  const chatTitle =',
+                  '  window.fixtureRowRenders.push(chat.id);\n  const chatTitle ='
+                ),
+                loader: 'tsx',
+                resolveDir: path.dirname(args.path)
+              }))
               build.onResolve({ filter: /\?worker$/ }, (args) => ({
                 path: args.path,
                 namespace: 'unused-worker'
@@ -214,6 +225,20 @@ if (!process.versions.electron) {
         'Use @ for files and $ for skills',
         'clearing a draft must not replay the hint'
       )
+      // Row subscriptions must stay local through the real React integration,
+      // not just through the standalone event bus.
+      await run(`window.fixtureRowRenders=[];window.setBookmark('codex:b',true)`)
+      await frames()
+      assert.deepEqual(await run('[...new Set(window.fixtureRowRenders)]'), ['b'])
+      await run(
+        `window.fixtureRowRenders=[];window.terminalActivity.report('codex:c','fixture',['task'])`
+      )
+      await frames()
+      assert.deepEqual(await run('[...new Set(window.fixtureRowRenders)]'), ['c'])
+      await run(
+        `window.setBookmark('codex:b',false);window.terminalActivity.report('codex:c','fixture',[],false)`
+      )
+      await frames()
       // Exit positioning stays local: no stylesheet injection, no held gap, and a
       // rapid undo restores the same row instead of leaving absolute styles behind.
       const exitGeometry = await run(`(() => {
@@ -246,7 +271,15 @@ if (!process.versions.electron) {
         'exiting rows never mutate document stylesheets'
       )
       await wait(40)
-      await run(`window.renderFixture({ids:['a','b','c']})`)
+      const undoContinuity = await run(`(() => {
+        const before=Number(getComputedStyle(window.exitingRow).opacity);
+        window.renderFixture({ids:['a','b','c']});
+        return {before,after:Number(getComputedStyle(window.exitingRow).opacity)};
+      })()`)
+      assert.ok(
+        undoContinuity.before > 0.1 && undoContinuity.after > 0.1,
+        'rapid undo never restarts the row from transparent'
+      )
       assert.equal(
         await run(
           `document.querySelector('[data-chat-id="a"]').parentElement === window.exitingRow`

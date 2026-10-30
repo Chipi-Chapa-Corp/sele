@@ -1,5 +1,6 @@
-import { useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import { preferences as preferenceStorage } from './preferences'
+import { createKeyedSubscriptions } from './keyedSubscriptions'
 
 export const chatBookmarksStorageKey = 'sele:bookmarked-chats:v1'
 
@@ -22,7 +23,7 @@ export const writeHideBookmarkedChats = (hide: boolean): void => {
   }
 }
 
-const listeners = new Set<() => void>()
+const subscriptions = createKeyedSubscriptions<string>()
 let bookmarkedChatKeys: ReadonlySet<string> = new Set()
 let initialized = false
 
@@ -62,16 +63,9 @@ const initialize = (): void => {
   bookmarkedChatKeys = readStoredChatBookmarks()
 }
 
-const notify = (): void => {
-  listeners.forEach((listener) => listener())
-}
-
 const subscribe = (listener: () => void): (() => void) => {
   initialize()
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
+  return subscriptions.subscribe(listener)
 }
 
 const getSnapshot = (): ReadonlySet<string> => {
@@ -87,8 +81,17 @@ export const setChatBookmarked = (key: string, bookmarked: boolean): void => {
   else next.delete(key)
   bookmarkedChatKeys = next
   writeStoredChatBookmarks(next)
-  notify()
+  subscriptions.notify(key)
 }
 
 export const useBookmarkedChatKeys = (): ReadonlySet<string> =>
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+export const useChatBookmarked = (key: string): boolean => {
+  const subscribeKey = useCallback(
+    (listener: () => void) => subscriptions.subscribeKey(key, listener),
+    [key]
+  )
+  const snapshot = useCallback(() => getSnapshot().has(key), [key])
+  return useSyncExternalStore(subscribeKey, snapshot, snapshot)
+}

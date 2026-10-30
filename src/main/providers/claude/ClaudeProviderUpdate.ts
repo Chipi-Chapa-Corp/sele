@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { stripVTControlCharacters } from 'node:util'
 import type { AppContainerTarget } from '../../../shared/app'
 import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
 import type { ProviderUpdateAvailability } from '../../../shared/provider'
@@ -47,12 +48,18 @@ const runCommand = async (
         timeout
       },
       (error, stdout, stderr) => {
+        const output = {
+          stdout: stripVTControlCharacters(stdout).trim(),
+          stderr: stripVTControlCharacters(stderr).trim()
+        }
         if (error) {
-          reject(new Error(stderr.trim() || stdout.trim() || error.message))
+          reject(
+            new Error([output.stdout, output.stderr].filter(Boolean).join('\n') || error.message)
+          )
           return
         }
 
-        resolve({ stdout: stdout.trim(), stderr: stderr.trim() })
+        resolve(output)
       }
     )
     child.stdin?.end()
@@ -121,8 +128,15 @@ export const getClaudeUpdateAvailability = async (
 export const updateClaudeProvider = async (
   options: ClaudeProviderUpdateOptions = {}
 ): Promise<ProviderUpdateAvailability | null> => {
-  await runCommand(['update'], updateTimeoutMs, options).catch((error: unknown) => {
+  const output = await runCommand(['update'], updateTimeoutMs, options).catch((error: unknown) => {
     throw getClaudeExecutableError(error)
   })
-  return getClaudeUpdateAvailability(options)
+  const remaining = await getClaudeUpdateAvailability(options)
+  if (remaining) {
+    const details = [output.stdout, output.stderr].filter(Boolean).join('\n')
+    throw new Error(
+      `Claude Code update did not complete: version ${remaining.currentVersion} is still installed; ${remaining.latestVersion} is available.${details ? `\n${details}` : '\nRun claude doctor in the selected environment to check the installation.'}`
+    )
+  }
+  return null
 }

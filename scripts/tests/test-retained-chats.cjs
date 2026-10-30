@@ -23,7 +23,6 @@ if (!process.versions.electron) {
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/App.css'
             const noop=()=>{};
-            window.appApi={}; window.providerApi={};
             window.created=[];window.effects=new Set();window.actions=[];window.bottomAlignments=0;
             const root=createRoot(document.getElementById('root'));
             const probeHost=document.createElement('div');document.body.append(probeHost);
@@ -103,7 +102,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<link rel="stylesheet" href="fixture.css"><div class="chat-panel" id="root" style="height:700px"></div><script src="fixture.js"></script>'
+        '<link rel="stylesheet" href="fixture.css"><div class="chat-panel" id="root" style="height:700px"></div><script>window.appApi={};window.providerApi={};</script><script src="fixture.js"></script>'
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
