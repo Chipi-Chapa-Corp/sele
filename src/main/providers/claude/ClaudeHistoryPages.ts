@@ -198,6 +198,10 @@ export class ClaudeHistoryPages {
         }
       }
       const raw = [...header, ...rows.map((row) => row.entry)]
+      // The SDK freezes the session cwd on first sight. Later records can carry
+      // another working directory; using those would move an opened chat into
+      // a different sidebar project than the SDK's session listing.
+      const origin = raw.find((entry) => typeof entry.cwd === 'string')
       const latest = raw.findLast((entry) => typeof entry.cwd === 'string')
       const title = raw.findLast((entry) => entry.type === 'custom-title')
       const firstPrompt = raw.find((entry) => entry.type === 'user' && entry.parentUuid == null)
@@ -235,7 +239,7 @@ export class ClaudeHistoryPages {
             typeof firstPrompt?.timestamp === 'string'
               ? Date.parse(firstPrompt.timestamp)
               : undefined,
-          cwd: typeof latest?.cwd === 'string' ? latest.cwd : undefined,
+          cwd: typeof origin?.cwd === 'string' ? origin.cwd : undefined,
           gitBranch: typeof latest?.gitBranch === 'string' ? latest.gitBranch : undefined,
           lastModified: snapshot.modified
         },

@@ -3753,6 +3753,7 @@ export const useWorkspaceController = () => {
         inlineActions: [
           {
             id: 'delete-project',
+            closeOnSelect: false,
             ariaLabel: `Remove project ${project.project ? getProjectDisplayName(project.project) : getFolderName(project.cwd)}`,
             title: 'Remove project',
             icon: <Trash2 aria-hidden="true" />,

@@ -178,6 +178,13 @@ if (!process.versions.electron) {
         '!!document.querySelector("button[aria-label=\\"Remove project Saved project\\"]")'
       )
     }
+    const assertOpen = async () => {
+      assert.equal(
+        await run('document.querySelector("button[aria-label=Project]").getAttribute("aria-expanded")'),
+        'true'
+      )
+      assert.equal(await run('!!document.querySelector("[role=listbox]")'), true)
+    }
     try {
       await window.loadFile(path.join(process.argv[2], 'fixture.html'))
       await waitFor('!!window.fixture')
@@ -198,31 +205,43 @@ if (!process.versions.electron) {
         await run('window.confirmations[0]'),
         /Saved project.*files and chats will be kept/
       )
-      await open()
+      await assertOpen()
       await run(
         'window.approve=true;window.fail=true;document.querySelector("button[aria-label=\\"Remove project Saved project\\"]").click()'
       )
       await waitFor('window.fixture.sendError === "Fixture failure"')
       assert.equal(await run('window.fixture.values.includes("/saved")'), true)
       assert.equal(await run('window.fixture.current'), '/saved')
-      await open()
+      await assertOpen()
+      await run(`
+        const input = document.querySelector('input[type=search]')
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '/')
+        input.dispatchEvent(new Event('input', {bubbles: true}))
+      `)
+      await waitFor('document.querySelectorAll("[role=option]").length === 3')
       await run(
-        'window.fail=false;document.querySelector("button[aria-label=\\"Remove project Saved project\\"]").click()'
+        'window.fail=false;document.querySelector("button[aria-label=\\"Remove project Saved project\\"]").focus();document.querySelector("button[aria-label=\\"Remove project Saved project\\"]").click()'
       )
       await waitFor('!window.fixture.values.includes("/saved")')
       assert.equal(await run('window.fixture.sendError'), null)
       assert.notEqual(await run('window.fixture.current'), '/saved')
       assert.equal(await run('window.fixture.values.includes("/history")'), true)
-      await run('document.querySelector("button[aria-label=Project]").click()')
+      await assertOpen()
+      assert.equal(await run('document.querySelector("input[type=search]").value'), '/')
+      assert.equal(await run('document.activeElement === document.querySelector("input[type=search]")'), true)
       await waitFor('!!document.querySelector("button[aria-label=\\"Remove project history\\"]")')
       await run('document.querySelector("button[aria-label=\\"Remove project history\\"]").click()')
       await waitFor('!window.fixture.values.includes("/history")')
+      await assertOpen()
       await run('window.reorder()')
       assert.equal(await run('window.fixture.values.includes("/saved")'), false)
       await run('window.restore()')
       await waitFor('window.fixture.values.includes("/saved")')
+      await run('Array.from(document.querySelectorAll("[role=option]")).find(option=>option.textContent.includes("Saved again")).click()')
+      await waitFor('document.querySelector("button[aria-label=Project]").getAttribute("aria-expanded") === "false"')
+      assert.equal(await run('window.fixture.current'), '/saved')
       console.log(
-        'Project selector UI checks passed: trash action, confirmation, cancel, failure, selected and inferred removal, and restore.'
+        'Project selector UI checks passed: confirmation, cancel, failure, removal keeps menu and search open, restore, and selection closes menu.'
       )
     } catch (error) {
       console.error(error)

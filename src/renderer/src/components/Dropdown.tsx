@@ -33,6 +33,7 @@ export type DropdownOptionInlineAction = {
   id: string
   ariaLabel: string
   callback: () => Promise<void> | void
+  closeOnSelect?: boolean
   disabled?: boolean
   icon: ReactNode
   title?: string
@@ -445,10 +446,16 @@ export const Dropdown = <TValue extends string>({
   const selectOptionInlineAction = (action: DropdownOptionInlineAction): void => {
     if (action.disabled) return
 
-    setOpen(false)
-    setSearchQuery('')
-    setMenuStyle(null)
-    buttonRef.current?.focus({ preventScroll: true })
+    if (action.closeOnSelect === false) {
+      // Move focus before the action can remove or disable its own button.
+      const focusTarget = searchInputRef.current ?? buttonRef.current
+      focusTarget?.focus({ preventScroll: true })
+    } else {
+      setOpen(false)
+      setSearchQuery('')
+      setMenuStyle(null)
+      buttonRef.current?.focus({ preventScroll: true })
+    }
     void action.callback()
   }
 

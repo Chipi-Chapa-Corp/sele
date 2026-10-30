@@ -77,6 +77,23 @@ const fixture = (entries) => {
 }
 const items = (page) => renderClaudeChatItems(page.messages, { active: false, stopped: false })
 
+test('project cwd stays at the session origin across history pages and later directory changes', async () => {
+  const entries = turns(1000, 'x'.repeat(4096))
+  for (const entry of entries.slice(1960)) entry.cwd = '/other-project'
+  const f = fixture(entries)
+  const latest = await f.read()
+  assert.equal(latest.metadata.cwd, '/fixture')
+  const older = await f.read(latest.pagination.olderCursor)
+  assert.equal(older.metadata.cwd, '/fixture')
+  const newer = await f.read(older.pagination.newerCursor, 'newer')
+  assert.equal(newer.metadata.cwd, '/fixture')
+  f.append([
+    record('user', 'next', 'a999', 'Continue', { cwd: '/third-project' }),
+    record('assistant', 'next-answer', 'next', 'Done', { cwd: '/third-project' })
+  ])
+  assert.equal((await f.read()).metadata.cwd, '/fixture')
+})
+
 test('latest pages recover goal attachments without extra history reads or moving turn cursors', async () => {
   const entries = turns(1000, 'x'.repeat(4096))
   const goal = (met) => ({

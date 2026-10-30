@@ -207,6 +207,26 @@ test('uncached opening, subagent listing and scrolling use bounded disk reads th
     )
   }))
 
+test('opening and refreshing keep the SDK project folder when later messages use another cwd', async () =>
+  fixture(async ({ id, path, all }) => {
+    for (const entry of all.slice(1980)) entry.cwd = '/other-project'
+    await writeFile(path, all.map((entry) => JSON.stringify(entry)).join('\n') + '\n')
+    const metadata = await getSessionInfo(id)
+    assert.equal(metadata.cwd, '/fixture')
+    const { instance: a } = harness()
+    a.sessionMetadata.set(id, metadata)
+    const detail = await a.getChatWindow(id, { startIndex: null, limit: 10 })
+    assert.equal(detail.cwd, metadata.cwd, 'opening must agree with sidebar discovery')
+    await appendFile(
+      path,
+      records(id, 1000, 1)
+        .map((entry) => JSON.stringify({ ...entry, cwd: '/third-project' }))
+        .join('\n') + '\n'
+    )
+    await a.refreshIdleHistory(a.states.get(id))
+    assert.equal(a.createChatDetail(a.states.get(id)).cwd, metadata.cwd)
+  }))
+
 test('first open uses page and catalog metadata without waiting for an SDK metadata lookup', async () =>
   fixture(async ({ id, path }) => {
     const h = harness(),
