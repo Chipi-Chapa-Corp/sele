@@ -555,6 +555,12 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   max-width: 100%;
 }
 
+.chat-detail__message-markdown :where(img, video),
+.chat-detail__working-message :where(img, video) {
+  max-width: 100%;
+  height: auto;
+}
+
 .chat-detail__message-markdown > :first-child,
 .chat-detail__working-message > :first-child {
   margin-top: 0;
