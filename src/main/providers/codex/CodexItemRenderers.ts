@@ -5,6 +5,7 @@ import type { CodexGoalPrompt } from './CodexGoalPrompts.ts'
 import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
 import { getBrowserToolLabel } from '../BrowserToolPresentation.ts'
 import { getAppToolPresentation } from '../AppToolPresentation.ts'
+import { getTimeToolPresentation } from '../TimeToolPresentation.ts'
 import type {
   ProviderChatItem,
   ProviderFileDiff,
@@ -1348,6 +1349,11 @@ const getMappedToolPresentation = (item: CodexThreadItem): ToolPresentation | nu
   const browserLabel = getBrowserToolLabel(names, input)
   if (browserLabel) return { activity: 'other', icon: 'browser', label: browserLabel }
 
+  const time = getTimeToolPresentation(
+    names.filter((name) => name !== item.tool || (!item.server && !item.namespace))
+  )
+  if (time) return time
+
   if (
     item.server === 'openaiDeveloperDocs' ||
     item.namespace === 'openaiDeveloperDocs' ||
@@ -1624,7 +1630,7 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
         'sleep',
         null,
         [],
-        null,
+        'time',
         true
       )
     }
@@ -1668,7 +1674,7 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
             item.tool === 'wait' ? 'wait' : getToolId(item),
             null,
             [],
-            'subagent',
+            item.tool === 'wait' ? 'time' : 'subagent',
             true
           )
         : null

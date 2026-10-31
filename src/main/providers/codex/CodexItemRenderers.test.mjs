@@ -1098,7 +1098,7 @@ test('renders Codex subagent spawn and wait as compact rows without the delegate
     tools.map(({ compact, icon, label }) => ({ compact, icon, label })),
     [
       { compact: true, icon: 'subagent', label: 'Started subagent' },
-      { compact: true, icon: 'subagent', label: 'Waited for subagent' }
+      { compact: true, icon: 'time', label: 'Waited for subagent' }
     ]
   )
 })
@@ -1151,6 +1151,7 @@ test('native sleep-only child turns show their wait while running and retain it 
   assert.equal(working.items[0].label, 'Waited 30s')
   assert.equal(working.items[0].status, 'running')
   assert.equal(working.items[0].compact, true)
+  assert.equal(working.items[0].icon, 'time')
 
   const completed = {
     ...turn,
@@ -1164,7 +1165,33 @@ test('native sleep-only child turns show their wait while running and retain it 
   const finished = getChatItems([completed], 100, {}, projection)
   assert.deepEqual(finished, getChatItems([completed], 100))
   assert.equal(finished.find((item) => item.type === 'working').items[0].label, 'Waited 30s')
+  assert.equal(finished.find((item) => item.type === 'working').items[0].icon, 'time')
   assert.equal(finished.at(-1).content, 'Nested child finished.')
+})
+
+test('wait and sleep calls use time icons while unrelated MCP tools keep their scope', () => {
+  for (const status of ['inProgress', 'completed']) {
+    for (const call of [
+      { type: 'customToolCall', customToolName: 'clock.sleep', customToolInput: '{}' },
+      { type: 'dynamicToolCall', namespace: 'clock', tool: 'sleep' },
+      { type: 'dynamicToolCall', namespace: 'functions', tool: 'wait' },
+      { type: 'customToolCall', customToolName: 'collaboration.wait_agent', customToolInput: '{}' },
+      { type: 'commandExecution', command: 'await tools.clock__sleep({duration_ms: 10})' }
+    ]) {
+      const items = getChatItems([{ id: 'turn', status, items: [{ id: 'call', status, ...call }] }])
+      const tool = items.find((item) => item.type === 'working').items[0]
+      assert.equal(tool.icon, 'time', JSON.stringify(call))
+      assert.equal(tool.status, status === 'inProgress' ? 'running' : 'finished')
+    }
+    const items = getChatItems([
+      {
+        id: 'turn',
+        status,
+        items: [{ id: 'call', type: 'mcpToolCall', server: 'custom', tool: 'wait', status }]
+      }
+    ])
+    assert.equal(items.find((item) => item.type === 'working').items[0].icon, null)
+  }
 })
 
 test('unrecognized native tools get a generic row in live and completed transcripts', async () => {

@@ -806,6 +806,7 @@ export type ProviderToolIcon =
   | 'plan'
   | 'question'
   | 'subagent'
+  | 'time'
   | 'browser'
 
 export type ProviderToolImage = {

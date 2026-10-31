@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 import type { ProviderToolActivity, ProviderToolIcon } from '../../shared/provider'
 import { getAppToolPresentation } from './AppToolPresentation.ts'
 import { getBrowserToolLabel } from './BrowserToolPresentation.ts'
+import { getTimeToolPresentation } from './TimeToolPresentation.ts'
 
 type NativeProvider = 'claude' | 'opencode' | 'copilot'
 type Operation =
@@ -11,6 +12,7 @@ type Operation =
   | 'delete'
   | 'search'
   | 'shell'
+  | 'script'
   | 'output'
   | 'stop'
   | 'git'
@@ -71,6 +73,7 @@ const nativeTools: Record<NativeProvider, Map<string, Operation>> = {
     ['websearch', 'websearch'],
     ['bash', 'shell'],
     ['shell', 'shell'],
+    ['execute', 'script'],
     ['webfetch', 'webfetch'],
     ['todoread', 'plan'],
     ['todowrite', 'plan'],
@@ -181,6 +184,8 @@ export const getProviderToolPresentation = (
       ...app,
       hidePayload: app.compact || app.activity === 'read' || app.activity === 'search'
     }
+  const time = getTimeToolPresentation(names)
+  if (time) return { ...time, hidePayload: time.compact }
   // MCP metadata is authoritative even when a connector calls its tool "read" or "bash".
   if (options.serverName || /^mcp__/.test(name)) return null
   const operation = nativeTools[provider].get(name.toLowerCase())
@@ -197,6 +202,12 @@ export const getProviderToolPresentation = (
     'directory'
   )
   const file = path ? basename(path.replace(/\\/g, '/')) : null
+  if (operation === 'script')
+    return {
+      activity: 'script',
+      label: 'Ran script',
+      command: argument(input, 'code', 'script', 'command', 'cmd')
+    }
   if (operation === 'shell') {
     const command = argument(input, 'command', 'cmd', 'script')
     const activity = command?.match(/^(git|npm|npx)(?:\s|$)/)?.[1] as

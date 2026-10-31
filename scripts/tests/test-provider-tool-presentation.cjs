@@ -19,9 +19,10 @@ if (!process.versions.electron) {
             import { renderCopilotChatItems } from './src/main/providers/copilot/CopilotItemRenderers'
             export const fixtures = {}
             for (const provider of ['claude', 'opencode', 'copilot']) {
-              for (const operation of ['fetch_file', 'create_issue', 'native-read']) {
+              for (const operation of ['fetch_file', 'create_issue', 'native-read', ...(provider === 'opencode' ? ['execute'] : [])]) {
                 for (const finished of [false, true]) {
                   const input = { path: '/repo/file.ts', file_path: '/repo/file.ts', command: 'private-protocol-input' }
+                  if (operation === 'execute') input.code = 'text("script result")'
                   const options = { active: !finished, stopped: false }
                   let items
                   if (provider === 'claude') {
@@ -29,7 +30,7 @@ if (!process.versions.electron) {
                     if (finished) source.push({ type: 'user', uuid: 'result', message: { content: [{ type: 'tool_result', tool_use_id: 'call', content: 'private-protocol-output' }] } })
                     items = renderClaudeChatItems(source, options)
                   } else if (provider === 'opencode') {
-                    items = renderOpenCodeChatItems([{ info: { id: 'call', role: 'assistant', time: { created: 1000 } }, parts: [{ type: 'tool', id: 'call', callID: 'call', tool: operation === 'native-read' ? 'read' : 'github_' + operation, state: { status: finished ? 'completed' : 'running', input, output: 'private-protocol-output', metadata: {}, time: { start: 1000, end: 2000 } } }] }], options)
+                    items = renderOpenCodeChatItems([{ info: { id: 'call', role: 'assistant', time: { created: 1000 } }, parts: [{ type: 'tool', id: 'call', callID: 'call', tool: operation === 'native-read' ? 'read' : operation === 'execute' ? 'execute' : 'github_' + operation, state: { status: finished ? 'completed' : 'running', input, output: operation === 'execute' ? 'script result' : 'private-protocol-output', metadata: {}, time: { start: 1000, end: 2000 } } }] }], options)
                   } else {
                     const source = [{ type: 'tool.execution_start', id: 'call', data: { toolCallId: 'call', toolName: operation === 'native-read' ? 'read_file' : operation, mcpServerName: operation === 'native-read' ? undefined : 'github', arguments: input } }]
                     if (finished) source.push({ type: 'tool.execution_complete', id: 'result', data: { toolCallId: 'call', success: true, result: { content: 'private-protocol-output' } } })
@@ -123,7 +124,12 @@ if (!process.versions.electron) {
         await new Promise(resolve => setTimeout(resolve, 30))
         const progress = document.querySelector('details.chat-detail__working')
         if (!progress.open) { progress.querySelector('summary').click(); await new Promise(resolve => setTimeout(resolve, 30)) }
-        states.push({ key, label: document.querySelector('.chat-detail__tool-read')?.textContent,
+        if (key.includes(':execute:')) {
+          const details = document.querySelector('.chat-detail__tool-group')
+          if (!details.open) { details.querySelector('summary').click(); await new Promise(resolve => setTimeout(resolve, 30)) }
+        }
+        states.push({ key, label: document.querySelector('.chat-detail__tool-read, .chat-detail__tool-label')?.textContent,
+          scriptIcon: !!document.querySelector('.lucide-file-code-corner'),
           disclosures: document.querySelectorAll('.chat-detail__tool-group').length,
           text: document.body.textContent })
       }
@@ -133,17 +139,26 @@ if (!process.versions.electron) {
         const [, operation, completed] = state.key.split(':')
         const finished = completed === 'true'
         const expected =
-          operation === 'create_issue'
+          operation === 'execute'
             ? finished
-              ? 'Created issue in GitHub'
-              : 'Creating issue in GitHub'
-            : (finished ? 'Read ' : 'Reading ') +
-              (operation === 'native-read' ? 'file.ts' : 'file from GitHub')
+              ? 'Ran script'
+              : 'Running script'
+            : operation === 'create_issue'
+              ? finished
+                ? 'Created issue in GitHub'
+                : 'Creating issue in GitHub'
+              : (finished ? 'Read ' : 'Reading ') +
+                (operation === 'native-read' ? 'file.ts' : 'file from GitHub')
         assert.equal(state.label, expected, JSON.stringify(state))
-        assert.equal(state.disclosures, 0)
+        assert.equal(state.disclosures, operation === 'execute' ? 1 : 0)
+        if (operation === 'execute') {
+          assert.equal(state.scriptIcon, true, JSON.stringify(state))
+          assert.match(state.text, /text\("script result"\)/)
+          if (finished) assert.match(state.text, /script result.*script result/s)
+        }
         assert.doesNotMatch(state.text, /private-protocol|mcp__|github_/)
       }
-      assert.equal(states.length, 18)
+      assert.equal(states.length, 20)
       console.log('Claude, OpenCode and Copilot tool presentation passed in Electron.')
       app.quit()
     })

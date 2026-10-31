@@ -205,6 +205,24 @@ if (!process.versions.electron) {
           })
         }
       }
+      const timeIconStates = []
+      for (const status of ['inProgress', 'completed']) {
+        for (const call of [
+          {type: 'sleep', durationMs: 1000},
+          {type: 'collabAgentToolCall', tool: 'wait'}
+        ]) {
+          renderCodexItems([{id: 'time-turn', status, items: [{id: 'time-call', status, ...call}]}]); await settle()
+          const progress = document.querySelector('details.chat-detail__working')
+          if (!progress.open) { progress.querySelector('summary').click(); await settle() }
+          const row = document.querySelector('.chat-detail__tool-read')
+          timeIconStates.push({
+            label: row?.textContent,
+            expected: (status === 'inProgress' ? 'Waiting' : 'Waited') + (call.type === 'sleep' ? ' 1s' : ' for subagent'),
+            clock: !!row?.querySelector(status === 'inProgress' ? '.chat-detail__animated-icon svg' : '.lucide-clock'),
+            generic: !!row?.querySelector('.lucide-wrench, .lucide-bot')
+          })
+        }
+      }
       renderCodexItems([{
         id: 'unknown-app-turn', status: 'completed', items: [{
           id: 'unknown-app-call', type: 'mcpToolCall', server: 'codex_apps', tool: 'github.frobnicate_widget',
@@ -252,7 +270,7 @@ if (!process.versions.electron) {
       document.querySelector('.chat-detail__working-load').click(); await settle()
       failedProgress = document.querySelector('details.chat-detail__working')
       const lazyFailedActivityOpened = failureLoads === 1 && failedProgress?.open && !!failedProgress.querySelector('.chat-detail__tool-group')
-      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails, tailRetained, promotedToolOpen, restoredToolOpen, innerCloseKeptSequenceOpen, nextTurnRetained, historySkippedRender, appReadStates, appActionStates, appFallback, emptyTerminalStates, failedWithoutActivity, failedInitiallyClosed, failedActivityOpened, failedActivityClosed, lazyFailedActivityOpened }
+      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails, tailRetained, promotedToolOpen, restoredToolOpen, innerCloseKeptSequenceOpen, nextTurnRetained, historySkippedRender, appReadStates, appActionStates, timeIconStates, appFallback, emptyTerminalStates, failedWithoutActivity, failedInitiallyClosed, failedActivityOpened, failedActivityClosed, lazyFailedActivityOpened }
     })()`)
       const [empty, single, grouped, waiting, following, , emptyAgain] = result.snapshots
       assert.equal(empty.wrapper, true)
@@ -281,6 +299,11 @@ if (!process.versions.electron) {
         assert.equal(state.appIcon, true)
         assert.equal(state.disclosures, 0)
         assert.doesNotMatch(state.body, /codex_apps|private-app-input|private-app-output/)
+      }
+      for (const state of result.timeIconStates) {
+        assert.equal(state.label, state.expected)
+        assert.equal(state.clock, true)
+        assert.equal(state.generic, false)
       }
       assert.match(result.appFallback, /Used GitHub: frobnicate widget/)
       assert.match(result.appFallback, /unknown-app-input/)

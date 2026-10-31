@@ -38,6 +38,7 @@ import {
   BoxIcon as AnimatedBoxIcon,
   BookTextIcon as AnimatedBookTextIcon,
   CircleHelpIcon as AnimatedCircleHelpIcon,
+  ClockIcon as AnimatedClockIcon,
   DeleteIcon as AnimatedDeleteIcon,
   EyeIcon as AnimatedEyeIcon,
   EarthIcon as AnimatedEarthIcon,
@@ -62,6 +63,7 @@ import {
   Check,
   ChevronRight,
   CircleQuestionMark,
+  Clock,
   Copy,
   CornerDownRight,
   Eye,
@@ -378,6 +380,7 @@ const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
   plan: AnimatedListIcon,
   question: AnimatedCircleHelpIcon,
   subagent: AnimatedBotIcon,
+  time: AnimatedClockIcon,
   browser: AnimatedEarthIcon
 }
 
@@ -555,6 +558,7 @@ const ToolTypeIcon: React.FC<{
   if (icon === 'plan') return <ListChecks aria-hidden="true" />
   if (icon === 'question') return <CircleQuestionMark aria-hidden="true" />
   if (icon === 'subagent') return <Bot aria-hidden="true" />
+  if (icon === 'time') return <Clock aria-hidden="true" />
 
   if (activity === 'read') return <FileText aria-hidden="true" />
   if (activity === 'search') return <Search aria-hidden="true" />

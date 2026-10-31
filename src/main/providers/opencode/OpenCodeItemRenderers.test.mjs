@@ -3,6 +3,68 @@ import test from 'node:test'
 import { renderOpenCodeChatItems } from './OpenCodeItemRenderers.ts'
 import { unloadWorkingItemPayload } from '../workingStepLazy.ts'
 
+test('OpenCode execute exposes script code and output through the script presentation', () => {
+  for (const status of ['running', 'completed', 'error']) {
+    const code = 'const result = await tools.read({ path: "file.ts" });\ntext(result)'
+    const items = renderOpenCodeChatItems(
+      [
+        {
+          info: { id: 'assistant', role: 'assistant', time: { created: 1000 } },
+          parts: [
+            {
+              type: 'tool',
+              id: 'execute',
+              callID: 'call',
+              tool: 'execute',
+              state: {
+                status,
+                input: { code },
+                output: 'script result',
+                error: 'script failed',
+                metadata: {},
+                time: { start: 1000, end: 2000 }
+              }
+            }
+          ]
+        }
+      ],
+      { active: status === 'running', stopped: false }
+    )
+    const tool = items.find((item) => item.type === 'working').items[0]
+    assert.equal(tool.activity, 'script')
+    assert.equal(tool.label, 'Ran script')
+    assert.equal(tool.command, code)
+    assert.equal(
+      tool.stdout,
+      status === 'running' ? null : status === 'error' ? 'script failed' : 'script result'
+    )
+    assert.equal(tool.status, status === 'running' ? 'running' : 'finished')
+  }
+})
+
+test('OpenCode wait and sleep tools use time icons', () => {
+  for (const name of ['wait', 'sleep', 'clock_sleep', 'mcp__clock__sleep', 'functions.wait']) {
+    const items = renderOpenCodeChatItems(
+      [
+        {
+          info: { id: 'assistant', role: 'assistant', time: { created: 1000 } },
+          parts: [
+            {
+              type: 'tool',
+              id: 'wait',
+              callID: 'call',
+              tool: name,
+              state: { status: 'running', input: {}, metadata: {}, time: { start: 1000 } }
+            }
+          ]
+        }
+      ],
+      { active: true, stopped: false }
+    )
+    assert.equal(items.find((item) => item.type === 'working').items[0].icon, 'time', name)
+  }
+})
+
 test('OpenCode app calls use shared actions in live and completed tool states', () => {
   for (const [name, label] of [
     ['github_fetch_file', 'Read file from GitHub'],
