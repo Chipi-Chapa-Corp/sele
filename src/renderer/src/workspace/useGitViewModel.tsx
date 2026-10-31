@@ -138,7 +138,6 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     (selectedChat ? !chatDetail || chatLoadState !== 'ready' || chatIsBusy : false)
   const hasDirectCommitChanges = changedFiles.length > 0 || untrackedFilesHiddenForPerformance
   const commitBaseDisabled =
-    providerUpdateInProgress ||
     !hasDirectCommitChanges ||
     changesLoadState !== 'ready' ||
     commitMessageGenerationInProgress ||
@@ -177,17 +176,13 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
       : 'Commit message'
     : 'AI instructions'
   const syncDisabled =
-    providerUpdateInProgress ||
     !changesCwd ||
     gitAvailableForCurrentSource === false ||
     syncInProgress ||
     commitMessageGenerationInProgress ||
     projectCommitInProgress
   const gitCommitModeDisabled =
-    providerUpdateInProgress ||
-    commitMessageGenerationInProgress ||
-    projectCommitInProgress ||
-    currentProjectSyncInProgress
+    commitMessageGenerationInProgress || projectCommitInProgress || currentProjectSyncInProgress
   const gitCommitModeToggle = useMemo(
     () => (
       <SegmentedControl<GitCommitMode>
@@ -202,7 +197,6 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     [gitCommitMode, gitCommitModeDisabled]
   )
   const branchSwitchDisabled =
-    providerUpdateInProgress ||
     !changesCwd ||
     gitAvailableForCurrentSource === false ||
     gitBranchActionState === 'sending' ||

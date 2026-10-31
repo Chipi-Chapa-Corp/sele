@@ -61,13 +61,14 @@ const transport = (history) => {
       assert.ok(end >= 0, 'only server-issued opaque cursors may be sent')
       const start = Math.max(0, end - limit)
       const body = JSON.stringify(history.slice(start, end))
+      const nextCursor = start ? `opaque:${history[start].info.id}` : null
       bytes += Buffer.byteLength(body)
       requests.push({ before, limit, start, end })
       await hooks.beforeResponse?.()
       return new Response(body, {
         headers: {
           'content-type': 'application/json',
-          ...(start ? { 'x-next-cursor': `opaque:${history[start].info.id}` } : {})
+          ...(nextCursor ? { 'x-next-cursor': nextCursor } : {})
         }
       })
     }
@@ -273,6 +274,78 @@ test('live publications retain the whole tail and paging back to it includes str
   })
   assert.equal(newer.items[0].id, user(990).info.id)
   assert.equal(getProviderChatTurns(newer.items).length, 22)
+})
+
+test('refreshing a growing live tail preserves its cursor anchor and adjacent history', async () => {
+  const h = harness(),
+    a = h.instance
+  const latest = await a.getChatWindow('chat', { startIndex: null, limit: 10 })
+  const state = a.states.get('chat')
+  const older = await a.getChatCursorWindow('chat', {
+    cursor: latest.turnPagination.olderCursor,
+    direction: 'older',
+    limit: 10
+  })
+  h.history.push(user(1000), answer(1000))
+  h.session.time.updated++
+  const refreshed = await a.getChatWindow('chat', { startIndex: null, limit: 10 })
+  assert.equal(refreshed.items[0].id, user(990).info.id)
+  assert.deepEqual(refreshed.turnPagination, latest.turnPagination)
+  const newer = await a.getChatCursorWindow('chat', {
+    cursor: older.turnPagination.newerCursor,
+    direction: 'newer',
+    limit: 10
+  })
+  assert.deepEqual(newer.items, refreshed.items)
+  assert.equal(state.messages[0].info.id, user(990).info.id)
+})
+
+test('a short initial page keeps its start when live appends exceed the opening limit', async () => {
+  const h = harness(records(2))
+  await h.instance.getChatWindow('chat', { startIndex: null, limit: 10 })
+  for (let i = 2; i < 14; i++) h.history.push(user(i), answer(i))
+  h.session.time.updated++
+  const refreshed = await h.instance.getChatWindow('chat', { startIndex: null, limit: 10 })
+  assert.equal(refreshed.items[0].id, user(0).info.id)
+  assert.equal(getProviderChatTurns(refreshed.items).length, 14)
+  assert.equal(refreshed.turnPagination.olderCursor, null)
+})
+
+test('a replacement client starts fresh rather than reusing a cursor owned by the old client', async () => {
+  const h = harness()
+  await h.instance.getChatWindow('chat', { startIndex: null, limit: 10 })
+  const next = transport(h.history)
+  h.instance.getClientEntry = async () => ({ client: next.client, container: null })
+  const refreshed = await h.instance.getChatWindow('chat', { startIndex: null, limit: 10 })
+  assert.equal(refreshed.items[0].id, user(990).info.id)
+  assert.ok(next.requests.length > 0)
+})
+
+test('an in-flight refresh cannot restore history cursors invalidated by an edit', async () => {
+  const h = harness(),
+    a = h.instance
+  await a.getChatWindow('chat', { startIndex: null, limit: 10 })
+  const state = a.states.get('chat')
+  state.messagesDirty = true
+  let responses = 0
+  const resetPagination = { kind: 'cursor', olderCursor: null, newerCursor: null }
+  h.hooks.beforeResponse = () => {
+    if (++responses !== 3) return
+    delete h.hooks.beforeResponse
+    // Revert to a message outside the live tail while the old page is returning.
+    h.history.splice(20)
+    h.history.push(user(1000), answer(1000))
+    h.session.time.updated++
+    state.messages = []
+    state.historyPagination = resetPagination
+    state.historyInvalidationRevision = (state.historyInvalidationRevision ?? 0) + 1
+    state.eventRevision++
+  }
+  await a.getChatWindow('chat', { startIndex: null, limit: 10 })
+  assert.equal(state.historyPagination, resetPagination)
+  const edited = await a.getChatWindow('chat', { startIndex: null, limit: 10 })
+  assert.ok(edited.items.some((item) => item.id === 'answer1000'))
+  assert.ok(!edited.items.some((item) => item.id === 'answer999'))
 })
 
 test('history cursors reject cross-session reuse and missing boundaries', async () => {

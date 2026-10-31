@@ -110,7 +110,6 @@ export type ChatInteractionControllerDependencies = {
   resolvingApprovalId: string | null
   chatDetail: ProviderChatDetail | null
   sendState: SendState
-  providerUpdateInProgress: boolean
   forkInFlightRef: React.RefObject<boolean>
   setSendState: React.Dispatch<React.SetStateAction<SendState>>
   setSendError: React.Dispatch<React.SetStateAction<string | null>>

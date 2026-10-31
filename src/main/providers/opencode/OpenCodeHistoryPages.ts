@@ -45,6 +45,12 @@ export type OpenCodeHistoryPage = {
 /** Retain navigation boundaries, never historical message/tool bodies. */
 export class OpenCodeHistoryPages {
   private boundaries = new Map<string, Boundary>()
+  private pageTokens = new WeakMap<ProviderChatTurnPagination, string>()
+
+  latestCursor(pagination: ProviderChatTurnPagination): string | null {
+    const token = this.pageTokens.get(pagination)
+    return token && this.boundaries.get(token)?.newer === null ? token : null
+  }
 
   isLatest(cursor: string, pagination: ProviderChatTurnPagination): boolean {
     return Boolean(
@@ -178,9 +184,15 @@ export class OpenCodeHistoryPages {
     this.boundaries.set(token, boundary)
     // Old navigation tokens can be recreated by reopening; bound metadata too.
     while (this.boundaries.size > 2000) this.boundaries.delete(this.boundaries.keys().next().value!)
+    const pagination: ProviderChatTurnPagination = {
+      kind: 'cursor',
+      olderCursor: boundary.older,
+      newerCursor: boundary.newer
+    }
+    this.pageTokens.set(pagination, token)
     return {
       messages: messages.slice(first),
-      pagination: { kind: 'cursor', olderCursor: boundary.older, newerCursor: boundary.newer }
+      pagination
     }
   }
 }

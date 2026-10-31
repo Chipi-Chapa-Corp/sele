@@ -338,7 +338,6 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
     message = commitInputValue
   ): Promise<boolean> => {
     const commitMessage = message.trim()
-    if (providerUpdateInProgress) return false
     if (!changesCwd) return false
     const commitProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
     if (
@@ -452,7 +451,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
   const handleCancelAiCommit = async (activity: ScopedCommitActivity): Promise<void> => {
     const activityKey = getProviderChatKey(activity.providerId, activity.chatId)
     const activityProjectKey = getChatCwdGroupKey(activity.projectCwd)
-    if (providerUpdateInProgress || cancelingAiCommitKeys.has(activityKey)) return
+    if (cancelingAiCommitKeys.has(activityKey)) return
 
     setCancelingAiCommitKeys((currentKeys) => new Set(currentKeys).add(activityKey))
     setCommitErrorsByProjectKey((currentErrors) => {

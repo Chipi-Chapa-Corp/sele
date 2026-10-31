@@ -48,7 +48,6 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
     previousChatScrollTopRef,
     markSelectedChatSeen,
     scopedCommitActivitiesByMarkerId,
-    providerUpdateInProgress,
     cancelingAiCommitKeys,
     openingAiCommitChatIds,
     handleCancelAiCommit,
@@ -458,10 +457,7 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
       return (
         <ChatCommitMarkerItem
           marker={marker}
-          canceling={
-            providerUpdateInProgress ||
-            Boolean(activityKey && cancelingAiCommitKeys.has(activityKey))
-          }
+          canceling={Boolean(activityKey && cancelingAiCommitKeys.has(activityKey))}
           key={marker.id}
           opening={Boolean(marker.commitChatId && openingAiCommitChatIds.has(marker.commitChatId))}
           onCancel={activity ? () => cancelAiCommit(activity) : undefined}
@@ -474,7 +470,6 @@ export function useSubagentController(dependencies: SubagentControllerDependenci
       cancelingAiCommitKeys,
       openAiCommitChat,
       openingAiCommitChatIds,
-      providerUpdateInProgress,
       scopedCommitActivitiesByMarkerId
     ]
   )

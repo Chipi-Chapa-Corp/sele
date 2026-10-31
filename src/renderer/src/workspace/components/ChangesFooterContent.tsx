@@ -40,7 +40,6 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
     navigationKey,
     primarySyncAction,
     projectCommitInProgress,
-    providerUpdateInProgress,
     pushAfterCommit,
     renderGitAiResolutionButton,
     setCommitErrorsByProjectKey,
@@ -79,11 +78,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
               type="text"
               value={commitInput}
               placeholder={commitInputLabel}
-              disabled={
-                providerUpdateInProgress ||
-                commitMessageGenerationInProgress ||
-                projectCommitInProgress
-              }
+              disabled={commitMessageGenerationInProgress || projectCommitInProgress}
               onChange={(event) => {
                 setCommitErrorsByProjectKey((currentErrors) => {
                   if (!currentErrors[currentProjectKey]) return currentErrors

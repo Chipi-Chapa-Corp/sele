@@ -246,11 +246,7 @@ export const ChatListGroup = memo(function ChatListGroup({
               type="button"
               aria-label={`Project: ${groupLabel}`}
               title={
-                noProject
-                  ? 'Chats'
-                  : group.kind === 'imported'
-                    ? 'Imported chats'
-                    : 'Choose project image'
+                noProject ? 'Chats' : group.kind === 'imported' ? 'Imported chats' : 'Edit project'
               }
               disabled={noProject || group.kind === 'imported'}
               onClick={() => onSelectProjectIcon?.(group)}

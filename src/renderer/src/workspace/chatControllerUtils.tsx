@@ -418,9 +418,8 @@ const retainLoadedChatItemPayload = (
 }
 
 /**
- * Applies a complete provider snapshot. The resulting transcript has exactly the snapshot's
- * order and cardinality; stable IDs are used only to retain lazily-loaded payloads, never to
- * splice transcript structure.
+ * Applies authoritative provider structure within its loaded range. Cursor tail snapshots
+ * can overlap a larger loaded viewport; retain only the prefix before that range.
  */
 const resolveChatDetailSnapshot = (
   snapshot: ProviderChatDetail,
@@ -440,7 +439,7 @@ const resolveChatDetailSnapshot = (
 
   const viewingOlderCursorPage = Boolean(
     currentDetail.turnPagination?.kind === 'cursor' &&
-      (currentDetail.turnPagination.newerCursor || options.preserveCurrentTurnWindow) &&
+      currentDetail.turnPagination.newerCursor &&
       snapshot.turnPagination?.kind === 'cursor' &&
       !snapshot.turnPagination.newerCursor
   )
@@ -470,7 +469,7 @@ const resolveChatDetailSnapshot = (
   }
 
   const currentItemsById = new Map(currentDetail.items.map((item) => [item.id, item]))
-  const items = snapshot.items.map((item) =>
+  let items = snapshot.items.map((item) =>
     retainLoadedChatItemPayload(item, currentItemsById.get(item.id))
   )
 
@@ -487,7 +486,31 @@ const resolveChatDetailSnapshot = (
     }
   }
 
-  const nextDetail = { ...snapshot, container: stableContainer, items }
+  let turnPagination = snapshot.turnPagination
+  let turnCount = snapshot.turnCount
+  if (
+    currentDetail.turnPagination &&
+    !currentDetail.turnPagination.newerCursor &&
+    snapshot.turnPagination?.olderCursor &&
+    !snapshot.turnPagination.newerCursor
+  ) {
+    const incomingFirstTurn = getProviderChatTurns(items)[0]
+    const prefixEnd = incomingFirstTurn
+      ? currentDetail.items.findIndex((item) => item.id === incomingFirstTurn.id)
+      : -1
+    if (prefixEnd > 0) {
+      // Keep already loaded history above the live page, but replace its entire
+      // suffix so edits/reverts remove old replies and new turns always arrive.
+      items = [...currentDetail.items.slice(0, prefixEnd), ...items]
+      turnPagination = {
+        ...snapshot.turnPagination,
+        olderCursor: currentDetail.turnPagination.olderCursor
+      }
+      turnCount = getProviderChatTurns(items).length
+    }
+  }
+
+  const nextDetail = { ...snapshot, container: stableContainer, items, turnPagination, turnCount }
   return options.preserveCurrentTurnWindow && !currentDetail.turnPagination
     ? refreshRetainedChatDetailTurnWindow(currentDetail, nextDetail)
     : nextDetail

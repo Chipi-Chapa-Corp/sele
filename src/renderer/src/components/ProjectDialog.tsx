@@ -24,6 +24,7 @@ import './ProjectDialog.css'
 
 type ProjectDialogProps = {
   defaultPath?: string | null
+  projectCwd?: string | null
   projects: AppProject[]
   onClose: () => void
   onSaved: (project: AppProject, image: AppProjectIcon | null) => void
@@ -36,17 +37,25 @@ const getProjectForCwd = (projects: AppProject[], cwd: string): AppProject | nul
 
 export const ProjectDialog = ({
   defaultPath = null,
+  projectCwd = null,
   projects,
   onClose,
   onSaved
 }: ProjectDialogProps): ReactElement => {
+  const [initialProject] = useState(() =>
+    projectCwd ? getProjectForCwd(projects, projectCwd) : null
+  )
   const nameInputRef = useRef<HTMLInputElement>(null)
   const iconExplicitlySelectedRef = useRef(false)
   const mainFolderSequenceRef = useRef(0)
-  const [name, setName] = useState('')
-  const [cwd, setCwd] = useState('')
-  const [additionalCwds, setAdditionalCwds] = useState<string[]>([])
-  const [icon, setIcon] = useState<AppProjectIconKind>('folder')
+  const [name, setName] = useState(
+    initialProject?.name.trim() || (projectCwd ? getDefaultProjectName(projectCwd) : '')
+  )
+  const [cwd, setCwd] = useState(projectCwd ?? '')
+  const [additionalCwds, setAdditionalCwds] = useState<string[]>(
+    initialProject?.additionalCwds ?? []
+  )
+  const [icon, setIcon] = useState<AppProjectIconKind>(initialProject?.icon ?? 'folder')
   const [projectImage, setProjectImage] = useState<AppProjectIcon | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,6 +64,30 @@ export const ProjectDialog = ({
     const frame = window.requestAnimationFrame(() => nameInputRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
   }, [])
+
+  useEffect(() => {
+    if (!projectCwd) return
+    let cancelled = false
+    const sequence = ++mainFolderSequenceRef.current
+    void appApi
+      .getProjectIcon({ cwd: projectCwd })
+      .then((image) => {
+        if (
+          cancelled ||
+          sequence !== mainFolderSequenceRef.current ||
+          iconExplicitlySelectedRef.current
+        )
+          return
+        setProjectImage(image)
+        setIcon(initialProject?.icon ?? (image ? 'image' : 'folder'))
+      })
+      .catch((error: unknown) => {
+        console.error('[caught:ProjectDialog:loadProjectIcon]', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectCwd, initialProject])
 
   const updateFromMainFolder = async (folder: string): Promise<void> => {
     const sequence = ++mainFolderSequenceRef.current
@@ -206,7 +239,7 @@ export const ProjectDialog = ({
           className="project-dialog"
           role="dialog"
           aria-modal="true"
-          aria-label="Add project"
+          aria-label={projectCwd ? 'Edit project' : 'Add project'}
           onSubmit={handleSubmit}
           onKeyDown={(event) => {
             if (event.key !== 'Escape' || saving) return
@@ -254,7 +287,7 @@ export const ProjectDialog = ({
                         alt=""
                       />
                     ) : (
-                      renderProjectGlyph(icon as AppProjectGlyph)
+                      renderProjectGlyph(icon === 'image' ? 'folder' : icon)
                     )
                   }
                   onChange={handleIconChange}
@@ -338,7 +371,7 @@ export const ProjectDialog = ({
             <Button theme="secondary" label="Cancel" disabled={saving} callback={onClose} />
             <Button
               theme="primary"
-              label={saving ? 'Saving' : 'Add project'}
+              label={saving ? 'Saving' : projectCwd ? 'Save project' : 'Add project'}
               disabled={saving}
               callback={() => void handleSave()}
               icon={<Check aria-hidden="true" />}

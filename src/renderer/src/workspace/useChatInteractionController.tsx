@@ -237,7 +237,6 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     resolvingApprovalId,
     chatDetail,
     sendState,
-    providerUpdateInProgress,
     forkInFlightRef,
     setSendState,
     setSendError,
@@ -493,7 +492,6 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         chatDetail?.historyPreview ||
         !selectedChat ||
         chatHasActiveTurn ||
-        providerUpdateInProgress ||
         forkInFlightRef.current
       ) {
         return
@@ -523,7 +521,6 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       chatHasActiveTurn,
       chatDetail?.historyPreview,
       handleSendFailure,
-      providerUpdateInProgress,
       selectedChat
     ]
   )

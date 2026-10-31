@@ -722,6 +722,7 @@ export const useWorkspaceController = () => {
   const [deletingProject, setDeletingProject] = useState(false)
   const deletingProjectRef = useRef(false)
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
+  const [editingProjectCwd, setEditingProjectCwd] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [chatSearchOpen, setChatSearchOpen] = useState(false)
@@ -1931,7 +1932,8 @@ export const useWorkspaceController = () => {
     providerUpdateSuggestions,
     providerUpdateErrors,
     updatingProviderUpdateKey,
-    providerUpdateInProgress,
+    providerUpdateInProgress: anyProviderUpdateInProgress,
+    isProviderUpdating,
     handleSkipProviderUpdate,
     handleNeverSuggestProviderUpdate,
     handleNeverSuggestProviderUpdateVersion,
@@ -1952,6 +1954,8 @@ export const useWorkspaceController = () => {
       })
     }
   })
+  // Chat operations depend only on the provider and runtime they will use.
+  const providerUpdateInProgress = isProviderUpdating(configProviderId, configProviderContainer)
 
   useEffect(() => {
     let active = true
@@ -3918,8 +3922,12 @@ export const useWorkspaceController = () => {
     () =>
       providerOptions
         .filter((option) => newSessionAvailableProviderIds.includes(option.value as ProviderId))
-        .map((option) => ({ ...option, label: providerRuntimeLabels[option.value as ProviderId] })),
-    [newSessionAvailableProviderIds, providerRuntimeLabels]
+        .map((option) => ({
+          ...option,
+          label: providerRuntimeLabels[option.value as ProviderId],
+          disabled: isProviderUpdating(option.value as ProviderId, newSessionContainer)
+        })),
+    [newSessionAvailableProviderIds, providerRuntimeLabels, isProviderUpdating, newSessionContainer]
   )
   const newSessionProviderValueContent = !newSessionSourceAvailabilityReady
     ? 'Checking'
@@ -4736,37 +4744,9 @@ export const useWorkspaceController = () => {
   }
 
   const handleSelectProjectIcon = async (group: ChatListGroupData): Promise<void> => {
-    if (group.kind !== 'cwd') return
-
-    let icon: AppProjectIcon | null = null
-    try {
-      icon = await appApi.selectProjectIcon({ cwd: group.cwd })
-    } catch (error) {
-      console.error('Unable to select a project icon.', error)
-      return
-    }
-    if (!icon) return
-
-    setProjectIconsByGroup((currentIcons) => ({
-      ...currentIcons,
-      [group.key]: icon
-    }))
-
-    if (group.cwd) {
-      void appApi
-        .addProject({ cwd: group.cwd, icon: 'image' })
-        .then((project) => {
-          setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
-          setDeletedProjectCwds((current) => {
-            const next = new Set(current)
-            next.delete(project.cwd)
-            return next
-          })
-        })
-        .catch((error: unknown) => {
-          console.error('Unable to save the selected project icon.', error)
-        })
-    }
+    if (group.kind !== 'cwd' || !group.cwd) return
+    setEditingProjectCwd(group.cwd)
+    setProjectDialogOpen(true)
   }
 
   const handleSelectChat = (chat: ProviderChat): void =>
@@ -5324,7 +5304,6 @@ export const useWorkspaceController = () => {
     resolvingApprovalId,
     chatDetail,
     sendState,
-    providerUpdateInProgress,
     forkInFlightRef,
     setSendState,
     setSendError,
@@ -5671,7 +5650,6 @@ export const useWorkspaceController = () => {
   } = useGitSyncController({
     setSyncErrorsByProjectKey,
     setSyncRecoveriesByProjectKey,
-    providerUpdateInProgress,
     changesProjectCwd,
     syncProjectKeysRef,
     hasAiCommitInProgressForProject,
@@ -5802,7 +5780,6 @@ export const useWorkspaceController = () => {
     setSubagentListState,
     contentRef,
     scopedCommitActivitiesByMarkerId,
-    providerUpdateInProgress,
     cancelingAiCommitKeys,
     openingAiCommitChatIds,
     handleCancelAiCommit,
@@ -6288,6 +6265,8 @@ export const useWorkspaceController = () => {
       setAccountDialogOpen,
       handleCreateProviderAccount,
       projectDialogOpen,
+      editingProjectCwd,
+      setEditingProjectCwd,
       newSessionCwd,
       projects,
       setProjectDialogOpen,
@@ -6592,6 +6571,7 @@ export const useWorkspaceController = () => {
       projectOptions,
       providerResourcesRevision,
       providerUpdateErrors,
+      anyProviderUpdateInProgress,
       providerUpdateInProgress,
       updatingProviderUpdateKey,
       providerUpdateSuggestions,
@@ -6735,7 +6715,6 @@ export const useWorkspaceController = () => {
       hasSyncChanges,
       primarySyncAction,
       projectCommitInProgress,
-      providerUpdateInProgress,
       pushAfterCommit,
       renderGitAiResolutionButton,
       setCommitErrorsByProjectKey,

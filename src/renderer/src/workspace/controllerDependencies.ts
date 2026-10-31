@@ -76,7 +76,6 @@ export type GitSyncControllerDependencies = {
   setSyncRecoveriesByProjectKey: React.Dispatch<
     React.SetStateAction<Record<string, GitSyncRecoveryState>>
   >
-  providerUpdateInProgress: boolean
   changesProjectCwd: string | null
   syncProjectKeysRef: React.RefObject<Set<string>>
   hasAiCommitInProgressForProject: (projectKey: string) => boolean
@@ -148,7 +147,6 @@ export type SubagentControllerDependencies = {
   setSubagentListState: React.Dispatch<React.SetStateAction<SubagentListState | null>>
   contentRef: React.RefObject<HTMLDivElement | null>
   scopedCommitActivitiesByMarkerId: Map<string, ScopedCommitActivity>
-  providerUpdateInProgress: boolean
   cancelingAiCommitKeys: Set<string>
   openingAiCommitChatIds: Set<string>
   handleCancelAiCommit: (activity: ScopedCommitActivity) => Promise<void>

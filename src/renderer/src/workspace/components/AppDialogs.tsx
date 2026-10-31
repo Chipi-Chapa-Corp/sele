@@ -36,6 +36,7 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
     handleSelectFileEditorTarget,
     newSessionCwd,
     projectDialogOpen,
+    editingProjectCwd,
     projects,
     reviewCommentsDraft,
     setAccountDialogOpen,
@@ -43,6 +44,7 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
     setAppearanceZoomLevelInputDraft,
     setEditingSshEnvironment,
     setProjectDialogOpen,
+    setEditingProjectCwd,
     setSettingsOpen,
     setSettingsScope,
     setSettingsTab,
@@ -97,11 +99,18 @@ export function AppDialogs(props: AppDialogsProps): ReactElement {
       )}
       {projectDialogOpen && (
         <ProjectDialog
-          key="project"
+          key={editingProjectCwd ?? 'new-project'}
           defaultPath={newSessionCwd}
+          projectCwd={editingProjectCwd}
           projects={projects}
-          onClose={() => setProjectDialogOpen(false)}
-          onSaved={handleProjectSaved}
+          onClose={() => {
+            setProjectDialogOpen(false)
+            setEditingProjectCwd(null)
+          }}
+          onSaved={(project, image) => {
+            handleProjectSaved(project, image)
+            setEditingProjectCwd(null)
+          }}
         />
       )}
       {sshEnvironmentDialogOpen && (

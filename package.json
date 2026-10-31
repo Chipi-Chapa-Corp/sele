@@ -73,7 +73,7 @@
     "test:chat-navigation": "node scripts/benchmarks/benchmark-chat-navigation.cjs",
     "test:chat-rendering": "node scripts/benchmarks/benchmark-chat-rendering.cjs",
     "test:workspace-navigation": "node scripts/benchmarks/benchmark-workspace-navigation.cjs",
-    "test:chat-snapshot-items": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatSnapshotItems.test.mjs",
+    "test:chat-snapshot-items": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatSnapshotItems.test.mjs src/renderer/src/chatCursorSnapshot.test.mjs",
     "test:chat-read-state": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/renderer/src/chatReadState.test.mjs src/renderer/src/chatSeenWriter.test.mjs src/renderer/src/chatLoadRecovery.test.mjs",
     "test:message-continuity": "node scripts/tests/test-message-continuity.cjs",
     "test:ui-motion": "node scripts/tests/test-ui-motion.cjs",

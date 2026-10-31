@@ -105,7 +105,6 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   const chatReadOnly = getChatWriteAccessPresentation(chatDetail).readOnly
   const messageBoxDisabled = selectedChat
     ? modelUnavailable ||
-      providerUpdateInProgress ||
       chatLoadState !== 'ready' ||
       chatReadOnly ||
       authenticationRequired ||
@@ -114,10 +113,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
           // of whether the parent turn is still active.
           !activeSubagentChatView.summary.canMessage || activeSubagentChatView.loadState !== 'ready'
         : chatHasActiveTurn && !chatDetail?.capabilities.activeMessages)
-    : modelUnavailable ||
-      providerUpdateInProgress ||
-      !newSessionProviderAvailable ||
-      authenticationRequired
+    : modelUnavailable || !newSessionProviderAvailable || authenticationRequired
   const canEditOwnMessages = Boolean(
     selectedChat &&
       !activeSubagentChatView &&
@@ -126,7 +122,6 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
       chatDetail?.capabilities.editMessages &&
       chatLoadState === 'ready' &&
       sendState !== 'sending' &&
-      !providerUpdateInProgress &&
       !editingMessage
   )
   const visibleChatItems = useMemo(() => chatDetail?.items ?? [], [chatDetail?.items])

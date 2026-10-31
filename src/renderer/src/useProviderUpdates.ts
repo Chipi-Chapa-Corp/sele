@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderId, ProviderUpdateAvailability } from '../../shared/provider'
 import { isProviderId } from '../../shared/provider'
@@ -35,7 +35,11 @@ export function useProviderUpdates({
     items: ProviderUpdateSuggestion[]
   }>({ sourceKey: '', items: [] })
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [updatingKey, setUpdatingKey] = useState<string | null>(null)
+  const [activeUpdate, setActiveUpdate] = useState<{
+    providerId: ProviderId
+    containerKey: string
+    key: string
+  } | null>(null)
   const [preferences, setPreferences] = useState(readStoredProviderUpdatePreferences)
   const [revision, setRevision] = useState(0)
   const skipped = useRef(new Set<string>())
@@ -47,6 +51,12 @@ export function useProviderUpdates({
   // Stable across provider selection and unrelated availability refreshes.
   // Source availability and retained development state can still contain removed IDs.
   const providersKey = providerIds.filter(isProviderId).join(',')
+  const isProviderUpdating = useCallback(
+    (providerId: ProviderId, container: AppContainerTarget | null | undefined): boolean =>
+      activeUpdate?.providerId === providerId &&
+      activeUpdate.containerKey === getContainerTargetKey(container),
+    [activeUpdate]
+  )
 
   useEffect(() => {
     writeStoredProviderUpdatePreferences(preferences)
@@ -134,7 +144,7 @@ export function useProviderUpdates({
     updating.current = true
     const key = getProviderUpdateKey(suggestion)
     const scopedKey = `${containerKey}:${key}`
-    setUpdatingKey(scopedKey)
+    setActiveUpdate({ providerId: suggestion.providerId, containerKey, key })
     setErrors((current) => ({ ...current, [scopedKey]: '' }))
     try {
       const container = normalizeContainerTarget(selectedContainer)
@@ -170,7 +180,7 @@ export function useProviderUpdates({
       }))
     } finally {
       updating.current = false
-      setUpdatingKey(null)
+      setActiveUpdate(null)
       setRevision((current) => current + 1)
     }
   }
@@ -187,10 +197,10 @@ export function useProviderUpdates({
         .filter(([key]) => key.startsWith(`${containerKey}:`))
         .map(([key, error]) => [key.slice(containerKey.length + 1), error])
     ),
-    updatingProviderUpdateKey: updatingKey?.startsWith(`${containerKey}:`)
-      ? updatingKey.slice(containerKey.length + 1)
-      : null,
-    providerUpdateInProgress: updatingKey !== null,
+    updatingProviderUpdateKey:
+      activeUpdate?.containerKey === containerKey ? activeUpdate.key : null,
+    providerUpdateInProgress: activeUpdate !== null,
+    isProviderUpdating,
     handleSkipProviderUpdate: skip,
     handleNeverSuggestProviderUpdate: (suggestion: ProviderUpdateSuggestion) =>
       changePreference(suggestion, (current) => ({ ...current, neverSuggest: true })),

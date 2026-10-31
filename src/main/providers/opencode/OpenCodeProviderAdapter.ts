@@ -2597,7 +2597,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
             client,
             { id: state.id, directory: state.directory },
             {
-              cursor: null,
+              // Refresh the retained page from its original start. A fresh tail
+              // would evict loaded turns and disconnect their adjacent cursors.
+              cursor:
+                state.client === client
+                  ? this.historyPages.latestCursor(state.historyPagination)
+                  : null,
               direction: 'older',
               limit: 10
             },
@@ -2647,7 +2652,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     await forEachOpenCodeHistoryMessage(state.messages, (message) =>
       this.reportMessageTokenUsage(state, message.info)
     )
-    state.historyPagination = history.pagination
+    // An edit can reset the branch while HTTP is in flight. Its new navigation
+    // boundaries must survive even when this response still describes the old branch.
+    if (historyInvalidationRevision === (state.historyInvalidationRevision ?? 0))
+      state.historyPagination = history.pagination
     state.messagesHydrated = true
     state.messagesDirty = historyInvalidationRevision !== (state.historyInvalidationRevision ?? 0)
     state.hydratedUpdatedAt = session.time.updated

@@ -116,6 +116,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     pendingUserInput,
     projectOptions,
     providerResourcesRevision,
+    anyProviderUpdateInProgress,
     providerUpdateErrors,
     providerUpdateInProgress,
     updatingProviderUpdateKey,
@@ -245,7 +246,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             providerUpdateSuggestions={providerUpdateSuggestions}
             providerUpdateErrors={providerUpdateErrors}
             updatingProviderUpdateKey={updatingProviderUpdateKey}
-            providerUpdateInProgress={providerUpdateInProgress}
+            providerUpdateInProgress={anyProviderUpdateInProgress}
             handleSkipProviderUpdate={handleSkipProviderUpdate}
             handleNeverSuggestProviderUpdate={handleNeverSuggestProviderUpdate}
             handleNeverSuggestProviderUpdateVersion={handleNeverSuggestProviderUpdateVersion}
@@ -271,7 +272,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
         {selectedChat && !activeSubagentChatView && pendingApproval && (
           <ApprovalRequestBox
             approval={pendingApproval}
-            disabled={providerUpdateInProgress || Boolean(approvalDecisionInFlight)}
+            disabled={Boolean(approvalDecisionInFlight)}
             error={approvalError}
             onResolve={handleResolveApproval}
           />
@@ -283,13 +284,13 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             <ElicitationRequestBox
               key={pendingUserInput.id}
               request={pendingUserInput}
-              disabled={providerUpdateInProgress || userInputResolving}
+              disabled={userInputResolving}
               error={userInputError}
               onRespond={resolveSelectedUserInput}
             />
           ) : (
             <UserInputRequestBox
-              disabled={providerUpdateInProgress || userInputResolving}
+              disabled={userInputResolving}
               error={userInputError}
               key={pendingUserInput.id}
               request={pendingUserInput}
@@ -306,7 +307,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           <Dropdown
             aria-label="Project"
             title={newSessionNoProject ? 'No Project' : (newSessionCwd ?? 'Choose folder')}
-            disabled={providerUpdateInProgress || sendState === 'sending'}
+            disabled={sendState === 'sending'}
             emptyContent="No matching projects"
             menuActions={[
               {
@@ -336,11 +337,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           <span>with</span>
           <Dropdown
             aria-label="Provider"
-            disabled={
-              providerUpdateInProgress ||
-              sendState === 'sending' ||
-              newSessionProviderOptions.length === 0
-            }
+            disabled={sendState === 'sending' || newSessionProviderOptions.length === 0}
             emptyContent="No providers found"
             options={newSessionProviderOptions}
             placement="top"
@@ -352,7 +349,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           <span>in</span>
           <Dropdown
             aria-label="Session location"
-            disabled={providerUpdateInProgress || sendState === 'sending' || newSessionNoProject}
+            disabled={sendState === 'sending' || newSessionNoProject}
             options={newSessionLocationOptions}
             placement="top"
             size="small"
@@ -362,7 +359,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           <span>{newSessionSshEnvironmentId ? 'over' : 'from'}</span>
           <Dropdown
             aria-label="Runtime"
-            disabled={providerUpdateInProgress || sendState === 'sending'}
+            disabled={sendState === 'sending'}
             menuActions={[
               ...(sshEnvironmentError
                 ? [
@@ -399,11 +396,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
               <span>from</span>
               <Dropdown
                 aria-label="Remote runtime"
-                disabled={
-                  providerUpdateInProgress ||
-                  sendState === 'sending' ||
-                  remoteContainerSuggestionsLoading
-                }
+                disabled={sendState === 'sending' || remoteContainerSuggestionsLoading}
                 options={remoteRuntimeOptions}
                 placement="top"
                 size="small"
@@ -468,13 +461,10 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
               messageBoxNotesGroup ? (cwdNotesByGroup[messageBoxNotesGroup.key] ?? []) : undefined
             }
             notesLabel={messageBoxNotesGroup?.label}
-            operationsDisabled={
-              providerUpdateInProgress ||
-              Boolean(activeSubagentChatView) ||
-              !messageBoxProviderAvailable
-            }
+            operationsDisabled={Boolean(activeSubagentChatView) || !messageBoxProviderAvailable}
             pending={sendState === 'sending'}
             providerId={selectedChat?.providerId ?? newSessionProvider}
+            providerUpdating={providerUpdateInProgress}
             providerResourcesRevision={providerResourcesRevision}
             projectCwd={changesProjectCwd}
             quoteRequest={messageBoxQuoteRequest}

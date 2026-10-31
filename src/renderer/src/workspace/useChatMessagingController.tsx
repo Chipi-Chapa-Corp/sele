@@ -1151,7 +1151,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     decision: ProviderApprovalDecision,
     options: { markViewed: boolean }
   ): Promise<void> => {
-    if (providerUpdateInProgress || approvalResolution.decision) return
+    if (approvalResolution.decision) return
 
     const approvalId = approval.id
     setApprovalResolution({ approvalId, decision, error: null })
@@ -1198,8 +1198,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
       !selectedChat ||
       !pendingUserInput ||
       (userInputResolving &&
-        !(response.kind === 'cancel' && pendingUserInput.elicitation?.mode === 'verification')) ||
-      providerUpdateInProgress
+        !(response.kind === 'cancel' && pendingUserInput.elicitation?.mode === 'verification'))
     )
       return
 
@@ -1261,7 +1260,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     }
   }
   const handleStopChat = async (): Promise<void> => {
-    if (providerUpdateInProgress || !selectedChat || sendInFlightRef.current) return
+    if (!selectedChat || sendInFlightRef.current) return
     const stopProjectKey = getChatGroupKey(selectedChat)
     sendInFlightRef.current = true
     sendInFlightProjectKeyRef.current = stopProjectKey
@@ -1286,7 +1285,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   }
   const handleDeletePendingMessage = useCallback(
     async (message: ProviderPendingMessage): Promise<void> => {
-      if (providerUpdateInProgress || !selectedProviderId || !selectedChatId) return
+      if (!selectedProviderId || !selectedChatId) return
 
       try {
         const detail = await providerApi.deletePendingMessage(
@@ -1301,14 +1300,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         handleSendFailure(error, 'Unable to delete queued message.')
       }
     },
-    [
-      applyViewedChatDetail,
-      handleSendFailure,
-      providerUpdateInProgress,
-      selectedChatId,
-      selectedProviderId,
-      sendState
-    ]
+    [applyViewedChatDetail, handleSendFailure, selectedChatId, selectedProviderId, sendState]
   )
   const handleInterruptPendingMessage = useCallback(
     async (message: ProviderPendingMessage): Promise<void> => {

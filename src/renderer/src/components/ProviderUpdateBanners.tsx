@@ -7,7 +7,7 @@ import { useProviderLabels } from '../providerLabels'
 import type { useProviderUpdates } from '../useProviderUpdates'
 import { getProviderUpdateSummary } from '../workspace/gitControllerUtils'
 
-type Props = ReturnType<typeof useProviderUpdates>
+type Props = Omit<ReturnType<typeof useProviderUpdates>, 'isProviderUpdating'>
 
 export function ProviderUpdateBanners({
   providerUpdateSuggestions,

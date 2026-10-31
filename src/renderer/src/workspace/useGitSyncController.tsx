@@ -25,7 +25,6 @@ export function useGitSyncController(dependencies: GitSyncControllerDependencies
   const {
     setSyncErrorsByProjectKey,
     setSyncRecoveriesByProjectKey,
-    providerUpdateInProgress,
     changesProjectCwd,
     syncProjectKeysRef,
     hasAiCommitInProgressForProject,
@@ -96,8 +95,6 @@ export function useGitSyncController(dependencies: GitSyncControllerDependencies
       recovery?: GitSyncRecoveryState | null
     } = {}
   ): Promise<void> => {
-    if (providerUpdateInProgress) return
-
     const operationProjectKey = getChatCwdGroupKey(changesProjectCwd ?? cwd)
     if (
       syncProjectKeysRef.current.has(operationProjectKey) ||

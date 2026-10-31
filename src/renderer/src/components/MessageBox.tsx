@@ -156,6 +156,7 @@ type MessageBoxProps = {
   operationsDisabled?: boolean
   pending?: boolean
   providerId: ProviderId
+  providerUpdating?: boolean
   providerResourcesRevision?: number
   projectCwd?: string | null
   quoteRequest?: MessageBoxQuoteRequest | null
@@ -602,6 +603,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   operationsDisabled = false,
   pending = false,
   providerId,
+  providerUpdating = false,
   providerResourcesRevision = 0,
   projectCwd,
   quoteRequest = null,
@@ -982,7 +984,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     ? `${selectedApprovalMode.label}: ${selectedApprovalMode.description}`
     : (selectedApprovalMode?.label ?? formatOptionLabel(effectiveApprovalMode))
   const selectedReasoningEffortLabel = selectedReasoningEffortPresentation.label
-  // Chat settings stay editable in every composer state; only sending is gated.
+  // Provider updates temporarily block model selection; other chat settings stay editable.
   const approvalSelectorDisabled = fullAccessSelected
   const selectedServiceTierValue = selectedServiceTier ?? standardServiceTierValue
   const selectedModelLabel = modelSelectionUnavailable
@@ -995,6 +997,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       ? [
           {
             id: 'model',
+            disabled: providerUpdating,
             icon: <ProviderIcon providerId={providerId} aria-hidden="true" />,
             label: modelSelectionUnavailable ? 'Model' : selectedModelLabel,
             groups: [
@@ -1003,7 +1006,9 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 options: displayedModelOptions.map((option) => ({
                   ...option,
                   disabled:
-                    modelSelectionUnavailable || ('disabled' in option ? option.disabled : false)
+                    providerUpdating ||
+                    modelSelectionUnavailable ||
+                    ('disabled' in option ? option.disabled : false)
                 })),
                 selectedValue: model,
                 onChange: (value: string) => onModelChange(value as ProviderModelId)
@@ -1229,6 +1234,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     const speedLabel =
       resolved.serviceTier == null ? null : (tier?.label ?? formatOptionLabel(resolved.serviceTier))
     const disabled =
+      providerUpdating ||
       modelSelectionUnavailable ||
       !presetModel ||
       (hasReasoning &&
@@ -1745,6 +1751,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         linkedChats.length === 0 &&
         !submittingReview) ||
       operationsDisabled ||
+      providerUpdating ||
       attachmentSelectionPending ||
       linkedChatsBlockSend ||
       pending ||
@@ -2355,7 +2362,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 label: 'Queue',
                 title: 'Send this as the next turn after the current response finishes',
                 callback: () => submitMessage('queue'),
-                disabled: operationsDisabled,
+                disabled: operationsDisabled || providerUpdating,
                 icon: <ListPlus aria-hidden="true" />
               }
             ]
@@ -2366,7 +2373,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                   label: 'Steer',
                   title: 'Send this guidance to the current response',
                   callback: () => submitMessage('steer'),
-                  disabled: operationsDisabled,
+                  disabled: operationsDisabled || providerUpdating,
                   icon: <CornerDownRight aria-hidden="true" />
                 }
               ]
@@ -2376,7 +2383,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
           label: 'Interrupt',
           title: 'Stop the current response and send this message',
           callback: () => submitMessage('interrupt'),
-          disabled: operationsDisabled,
+          disabled: operationsDisabled || providerUpdating,
           icon: <Square aria-hidden="true" />
         }
       ]
@@ -2746,7 +2753,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 <ChatGoalButton
                   key={`${providerId}:${chatId}`}
                   objective={goalObjective}
-                  disabled={disabled || operationsDisabled || pending}
+                  disabled={disabled || operationsDisabled || providerUpdating || pending}
                   onSetGoal={onSetGoal}
                 />
               )}
@@ -2813,6 +2820,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               title={buttonLabel}
               disabled={
                 (activeWithContent ? operationsDisabled : sendBlockedDisplay) ||
+                ((!active || activeWithContent) && providerUpdating) ||
                 (attachmentSelectionPending && (!active || activeWithContent)) ||
                 (linkedChatsBlockSend && (!active || activeWithContent)) ||
                 (activeWithContent ? pending : active ? false : pending || !hasContent)

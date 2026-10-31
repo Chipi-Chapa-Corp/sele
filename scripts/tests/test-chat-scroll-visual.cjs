@@ -154,7 +154,7 @@ if (!process.versions.electron) {
         )
       }
       await run('document.fonts.ready')
-      for (const provider of ['claude', 'codex']) {
+      for (const provider of ['claude', 'codex', 'opencode-v2']) {
         results[provider] = { openings: [], pages: [] }
         await run(`openProvider('${provider}')`)
         await waitForHistory()
@@ -227,6 +227,38 @@ if (!process.versions.electron) {
             results[provider].pages.at(-1).live = live
           }
         }
+        if (provider === 'opencode-v2') {
+          // Pause in the loaded prefix of the live window, then deliver sends,
+          // edited branches, and repeated refreshes through the real resolver.
+          await run(
+            `document.querySelector('[data-chat-turn-id="user-95"]').scrollIntoView({block:'start'})`
+          )
+          await wheel(-20)
+          const before = await capture(provider + '-paused-before')
+          assert.equal(before.autoFollow, false)
+          assert.ok(before.loaded.includes('user-80'), 'older loaded page is present')
+          await run('publishTail()')
+          await wait()
+          const sent = await capture(provider + '-paused-send')
+          sameViewport(before, sent, 'OpenCode paused send')
+          assert.ok(sent.loaded.includes('user-100'), 'new prompt arrives without reopening')
+          assert.ok(sent.loaded.includes('answer-100'), 'new response arrives without reopening')
+          assert.ok(sent.rendered.includes('user-100'), 'new prompt is mounted in the chat')
+          assert.ok(sent.rendered.includes('answer-100'), 'new response is mounted in the chat')
+          assert.ok(sent.loaded.includes('user-80'), 'send retains loaded history')
+          for (let refresh = 0; refresh < 3; refresh++) {
+            await run('publishTail(true)')
+            await wait()
+            const edited = await capture(provider + '-paused-edit-' + refresh)
+            sameViewport(before, edited, 'OpenCode edit/refresh ' + refresh)
+            assert.ok(edited.loaded.includes('user-80'), 'edit retains loaded history')
+            assert.ok(edited.loaded.includes('edited-answer'), 'edited response appears')
+            assert.ok(edited.rendered.includes('edited-answer'), 'edited response is mounted')
+            assert.ok(!edited.loaded.includes('answer-99'), 'reverted response stays removed')
+            assert.ok(!edited.loaded.includes('answer-100'), 'reverted new response stays removed')
+            assert.ok(!edited.rendered.includes('answer-99'), 'reverted response is unmounted')
+          }
+        }
         // Reverse scrolling while a response is in flight, then release that response.
         await run(`openProvider('${provider}')`)
         await waitForHistory()
@@ -266,7 +298,7 @@ if (!process.versions.electron) {
       }
       fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify(results, null, 2))
       console.log(
-        'Visual scrolling checks passed: stationary text during six progressive openings (including 125% zoom), 10 page transitions with every-frame position checks, delayed response reversals, Markdown resizing, and large live diffs after viewport replacement. Screenshots: ' +
+        'Visual scrolling checks passed for Claude, Codex, and OpenCode: progressive openings (including 125% zoom), paging with every-frame position checks, paused OpenCode sends/edits, delayed response reversals, Markdown resizing, and large live diffs. Screenshots: ' +
           dir
       )
       app.exit(0)

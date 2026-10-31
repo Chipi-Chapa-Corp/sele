@@ -39,10 +39,10 @@ function detail(start = 90, end = 100) {
     revision: 1,
     status: 'idle',
     items: turns.slice(start, end).flat(),
-    itemsStartTurnIndex: provider === 'codex' ? 0 : start,
-    turnCount: provider === 'codex' ? end - start : 100,
+    itemsStartTurnIndex: provider !== 'claude' ? 0 : start,
+    turnCount: provider !== 'claude' ? end - start : 100,
     capabilities: { editMessages: false },
-    ...(provider === 'codex'
+    ...(provider !== 'claude'
       ? {
           turnPagination: {
             kind: 'cursor',
@@ -207,6 +207,10 @@ function App({ kind }) {
       window: r.chatTurnWindowRef.current,
       pending: !!window.pendingPage,
       requests: window.pageRequests.length,
+      loaded: chatDetail.items.map((item) => item.id),
+      rendered: [...el.querySelectorAll('[data-chat-message-id]')].map(
+        (el) => el.dataset.chatMessageId
+      ),
       visible: [...el.querySelectorAll('[data-chat-message-id]')]
         .map((e) => ({
           id: e.dataset.chatMessageId,
@@ -257,6 +261,31 @@ function App({ kind }) {
       preserveCurrentTurnWindow: !r.chatAutoScrollEnabledRef.current
     })
     setChatDetail(retainLoadedChatDetailTurnWindow(next, r.chatTurnWindowRef.current))
+  }
+  window.publishTail = (edit = false) => {
+    const snapshot = detail()
+    const exchange = [
+      {
+        type: 'message',
+        id: edit ? 'edited-user' : 'user-100',
+        role: 'user',
+        content: 'New prompt'
+      },
+      {
+        type: 'message',
+        id: edit ? 'edited-answer' : 'answer-100',
+        role: 'assistant',
+        content: 'New reply'
+      }
+    ]
+    snapshot.items = [...snapshot.items.slice(0, edit ? -2 : undefined), ...exchange]
+    snapshot.turnCount = edit ? 10 : 11
+    snapshot.revision = r.chatDetailRef.current.revision + 1
+    setChatDetail(
+      getChatDetailFromSnapshot(snapshot, r.chatDetailRef.current, {
+        preserveCurrentTurnWindow: !r.chatAutoScrollEnabledRef.current
+      })
+    )
   }
   return (
     <main className="chat-panel" style={{ height: '100vh' }}>
