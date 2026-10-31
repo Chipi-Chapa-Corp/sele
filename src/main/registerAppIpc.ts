@@ -565,13 +565,8 @@ const resolveLocalMediaPath = async (
   if (!isAbsolute(imagePath)) {
     if (relativeTo === 'cwd') return resolve(cwd ?? process.cwd(), imagePath)
 
-    const repositoryRoot = await runGit(
-      cwd ?? process.cwd(),
-      ['rev-parse', '--show-toplevel'],
-      true
-    )
-    if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
-    imagePath = resolve(repositoryRoot, imagePath)
+    const repositoryRoot = await runGit(cwd ?? process.cwd(), ['rev-parse', '--show-toplevel'])
+    imagePath = resolve(repositoryRoot ?? cwd ?? process.cwd(), imagePath)
   }
 
   return imagePath
@@ -2192,10 +2187,11 @@ const getTargetLocalMedia = async (
   if (!isAbsolute(imagePath)) {
     if (!cwd) throw new Error('A cwd is required for relative media paths')
     if (relativeTo === 'repository') {
-      const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-      if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
-      commandCwd = repositoryRoot
-      imagePath = getRemoteRepositoryFilePath(repositoryRoot, imagePath)
+      const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'])
+      if (repositoryRoot) {
+        commandCwd = repositoryRoot
+        imagePath = getRemoteRepositoryFilePath(repositoryRoot, imagePath)
+      }
     }
   }
 
