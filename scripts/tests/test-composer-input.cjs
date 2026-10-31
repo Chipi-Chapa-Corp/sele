@@ -74,7 +74,7 @@ if (!process.versions.electron) {
           <div class="chat-detail__message-quote-host"></div><p>Quote these words</p>
         </div></div><div id="root"></div><script>
           window.preferencesApi = {getItem: () => ({ok:true,value:null}), setItem: () => ({ok:true}), removeItem: () => ({ok:true})};
-          window.appApi = {getFileTree: async () => ({files:[],repositoryRoot:'/fixture'})};
+          window.appApi = {getProjects: async () => [{name:'Fixture project',cwd:'/fixture/main',icon:'code',additionalCwds:['/fixture/extra']}, {name:'Image project',cwd:'/fixture/image',icon:'image'}, {name:'Default project',cwd:'/fixture/default',icon:null}, {name:'Missing project',cwd:'/fixture/missing',icon:'image'}], getProjectIcon: async ({cwd}) => cwd === '/fixture/missing' ? null : ({cwd,dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF1cAAAAASUVORK5CYII=',updatedAt:0}), getFileTree: async () => ({files:[],repositoryRoot:'/fixture'})};
           window.providerApi = {getSkills: async () => [], getApps: async () => []};
         </script><script src="fixture.js"></script>`
       )
@@ -139,7 +139,7 @@ if (!process.versions.electron) {
         Selection.prototype.toString = function() { window.serializeCount++; return original.call(this) };
         void 0;
       `)
-      for (const marker of ['@', '$']) {
+      for (const marker of ['@', '$', '#']) {
         await run(`setText('prefix ${marker}query trailing')`)
         await settle()
         await run('select(9, 9)')
@@ -203,6 +203,55 @@ if (!process.versions.electron) {
           'collapsing selection restores autocomplete'
         )
       }
+      await run("setText('Use #fix')")
+      await settle()
+      assert.equal(
+        await run("document.querySelector('[role=listbox]').getAttribute('aria-label')"),
+        'Projects'
+      )
+      assert.equal(
+        await run("document.querySelector('[role=option]').textContent.includes('/fixture/main')"),
+        true
+      )
+      assert.equal(
+        await run("!!document.querySelector('[role=option] .lucide-code-xml')"),
+        true,
+        'configured glyph appears'
+      )
+      for (const query of ['image', 'default', 'missing']) {
+        await run(`setText('#${query}')`)
+        await settle()
+        assert.equal(
+          await run("!!document.querySelector('[role=option] img')"),
+          query !== 'missing',
+          'custom and detected image icons appear'
+        )
+        if (query === 'missing')
+          assert.equal(
+            await run("!!document.querySelector('[role=option] .lucide-folder')"),
+            true,
+            'missing image falls back to folder'
+          )
+      }
+      await run("setText('Use #fix')")
+      await settle()
+      await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13
+      })
+      await settle()
+      assert.equal(await run('input.value'), 'Use /fixture/main ')
+      assert.equal(await run('window.sent'), undefined, 'selecting a project must not send')
+      await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13
+      })
+      await settle()
+      assert.equal(await run('window.sent'), 'Use /fixture/main', 'send contains the main cwd')
       await run(`setText(${JSON.stringify('long draft line\n')}.repeat(6000) + 'ending')`)
       await settle()
       await run('window.commits = 0; window.serializeCount = 0')

@@ -1,7 +1,7 @@
 import { useReducedMotionPreference } from '../motion/useReducedMotionPreference'
 import { useEffect, useRef } from 'react'
 
-const hint = 'Use @ for files and $ for skills'
+const hint = 'Use @ for files, $ for skills and # for projects'
 
 // The timer updates this decorative node only, not MessageBox or its draft.
 export function ComposerPlaceholder({

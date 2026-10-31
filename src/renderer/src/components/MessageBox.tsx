@@ -23,6 +23,7 @@ import {
   Blocks,
   CornerDownRight,
   FileLock,
+  Folder,
   FolderPen,
   Gauge,
   ListPlus,
@@ -42,6 +43,8 @@ import {
 import type {
   AppContainerTarget,
   AppFileTreeFile,
+  AppProject,
+  AppProjectIcon,
   AppSelectedAttachment
 } from '../../../shared/app'
 import { toCssRem } from '../cssUnits'
@@ -69,6 +72,9 @@ import type {
   ProviderUsageOptions
 } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { getProjectDisplayName, renderProjectGlyph } from '../projectPresentation'
+import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence'
+import { getProjectMentionResults, replaceProjectMention } from '../projectMention'
 import type { MessageBoxSelection } from '../messageBoxPreferences'
 import { getChatPresetChanges } from '../chatPresets'
 import { selectionsEqual } from '../chatModelPreferences'
@@ -555,6 +561,34 @@ const isFastServiceTier = (id: string, label: string): boolean =>
   id.toLocaleLowerCase() === 'priority' ||
   label.toLocaleLowerCase() === 'fast'
 
+const ProjectMentionIcon = ({ project }: { project: AppProject }): React.JSX.Element => {
+  const [image, setImage] = useState<AppProjectIcon | null>(null)
+  const usesImage = project.icon === 'image' || project.icon == null
+  useEffect(() => {
+    if (!usesImage) return
+    let cancelled = false
+    void appApi.getProjectIcon({ cwd: project.cwd }).then(
+      (icon) => {
+        if (!cancelled) setImage(icon)
+      },
+      (error: unknown) => {
+        if (!isExpectedFileAbsenceError(error)) {
+          console.error(`Unable to load the project icon for ${project.cwd}.`, error)
+        }
+      }
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [project.cwd, usesImage])
+
+  if (usesImage && image?.cwd === project.cwd && image.dataUrl) {
+    return <img src={image.dataUrl} alt="" />
+  }
+  if (project.icon && project.icon !== 'image') return renderProjectGlyph(project.icon)
+  return <Folder aria-hidden="true" />
+}
+
 export const MessageBox: React.FC<MessageBoxProps> = ({
   agentMode,
   agentModes,
@@ -637,6 +671,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 }) => {
   const fileMentionListboxId = useId().replace(/:/g, '')
   const skillMentionListboxId = useId().replace(/:/g, '')
+  const projectMentionListboxId = useId().replace(/:/g, '')
   const { composerDrafts, setComposerDrafts, promptDraftsByScope, setPromptDraftsByScope } =
     useComposerDrafts(Boolean(editSession))
   const composerDraft = getComposerDraft(composerDrafts, draftScopeKey)
@@ -686,6 +721,10 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const loadingLinkedChatOperationsRef = useRef(new Set<string>())
   const openLinkedChat = useLinkedChatOpener()
   const [dismissedError, setDismissedError] = useState<string | null>(null)
+  const [projectMention, setProjectMention] = useState<FileMention | null>(null)
+  const [mentionProjects, setMentionProjects] = useState<AppProject[] | null>(null)
+  const [mentionProjectsError, setMentionProjectsError] = useState(false)
+  const [activeProjectMentionIndex, setActiveProjectMentionIndex] = useState(0)
   const [fileMention, setFileMention] = useState<FileMention | null>(null)
   const [projectFileCache, setProjectFileCache] = useState<ProjectFileCache | null>(null)
   const [projectFilesErrorCwd, setProjectFilesErrorCwd] = useState<string | null>(null)
@@ -1325,6 +1364,29 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     operationsDisabled || (!active && disabled),
     draftScopeKey
   )
+  const projectMentionMenuOpen = Boolean(projectMention)
+  const projectMentionResults = useMemo(
+    () => getProjectMentionResults(mentionProjects ?? [], projectMention?.query ?? ''),
+    [mentionProjects, projectMention?.query]
+  )
+  useEffect(() => {
+    if (!projectMentionMenuOpen) return
+    let cancelled = false
+    setMentionProjects(null)
+    setMentionProjectsError(false)
+    void appApi.getProjects().then(
+      (projects) => {
+        if (!cancelled) setMentionProjects(projects)
+      },
+      (error: unknown) => {
+        console.error('Unable to load projects for composer mentions.', error)
+        if (!cancelled) setMentionProjectsError(true)
+      }
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [projectMentionMenuOpen])
   const fileMentionMenuOpen = Boolean(
     fileMention && !editing && selectedAttachments.length < maxSelectedAttachmentCount
   )
@@ -1388,29 +1450,58 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   )
   const mentionDropdownOptions = useMemo<DropdownOption<string>[]>(
     () =>
-      skillMentionMenuOpen
-        ? composerResults.map((result, index) => {
-            const skill = result.kind === 'skill' ? result.skill : null
-            const app = result.kind === 'app' ? result.app : null
+      projectMentionMenuOpen
+        ? projectMentionResults.map((project, index) => ({
+            value: String(index),
+            label: getProjectDisplayName(project),
+            description: project.cwd,
+            icon: <ProjectMentionIcon key={project.cwd} project={project} />
+          }))
+        : skillMentionMenuOpen
+          ? composerResults.map((result, index) => {
+              const skill = result.kind === 'skill' ? result.skill : null
+              const app = result.kind === 'app' ? result.app : null
 
-            return {
-              value: String(index),
-              label: skill?.displayName || skill?.name || app?.name || '',
-              description: skill ? getSkillSummary(skill) : 'App',
-              icon: skill ? <Package aria-hidden="true" /> : <Blocks aria-hidden="true" />
-            }
-          })
-        : fileMentionMenuOpen
-          ? fileMentionResults.map((file, index) => ({
-              value: String(index),
-              label: getMentionFileName(file.path),
-              description: file.path,
-              icon: <SymbolsFileIcon fileName={getMentionFileName(file.path)} autoAssign />
-            }))
-          : [],
-    [composerResults, fileMentionMenuOpen, fileMentionResults, skillMentionMenuOpen]
+              return {
+                value: String(index),
+                label: skill?.displayName || skill?.name || app?.name || '',
+                description: skill ? getSkillSummary(skill) : 'App',
+                icon: skill ? <Package aria-hidden="true" /> : <Blocks aria-hidden="true" />
+              }
+            })
+          : fileMentionMenuOpen
+            ? fileMentionResults.map((file, index) => ({
+                value: String(index),
+                label: getMentionFileName(file.path),
+                description: file.path,
+                icon: <SymbolsFileIcon fileName={getMentionFileName(file.path)} autoAssign />
+              }))
+            : [],
+    [
+      composerResults,
+      fileMentionMenuOpen,
+      fileMentionResults,
+      skillMentionMenuOpen,
+      projectMentionMenuOpen,
+      projectMentionResults
+    ]
   )
-  const mentionMenuOpen = skillMentionMenuOpen || fileMentionMenuOpen
+  const mentionMenuOpen = projectMentionMenuOpen || skillMentionMenuOpen || fileMentionMenuOpen
+  const activeMentionIndex = projectMentionMenuOpen
+    ? activeProjectMentionIndex
+    : skillMentionMenuOpen
+      ? activeSkillMentionIndex
+      : activeFileMentionIndex
+  const mentionListboxId = projectMentionMenuOpen
+    ? projectMentionListboxId
+    : skillMentionMenuOpen
+      ? skillMentionListboxId
+      : fileMentionListboxId
+  const setActiveMentionIndex = projectMentionMenuOpen
+    ? setActiveProjectMentionIndex
+    : skillMentionMenuOpen
+      ? setActiveSkillMentionIndex
+      : setActiveFileMentionIndex
 
   const updateMentionMenuPosition = useCallback((): void => {
     const anchorRect = textareaWrapRef.current?.getBoundingClientRect()
@@ -1658,6 +1749,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       )
       setFileMention(null)
       setSkillMention(null)
+      setProjectMention(null)
 
       focusFrame = window.requestAnimationFrame(() => {
         const textarea = textareaRef.current
@@ -2088,10 +2180,18 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     updateMessageMentions(event.currentTarget)
     setActiveFileMentionIndex(0)
     setActiveSkillMentionIndex(0)
+    setActiveProjectMentionIndex(0)
   }
 
   const updateMessageMentions = (textarea: HTMLTextAreaElement): void => {
     const collapsed = textarea.selectionStart === textarea.selectionEnd
+    const nextProjectMention = collapsed
+      ? getComposerMentionAtCaret(textarea.value, textarea.selectionStart, '#')
+      : null
+    if (!composerMentionsEqual(nextProjectMention, projectMention)) {
+      setProjectMention(nextProjectMention)
+      setActiveProjectMentionIndex(0)
+    }
     const nextFileMention = collapsed
       ? getFileMentionAtCaret(textarea.value, textarea.selectionStart)
       : null
@@ -2197,10 +2297,28 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     })
   }
 
+  const handleSelectProjectMention = (project: AppProject): void => {
+    if (!projectMention) return
+    const replacement = replaceProjectMention(message, projectMention, project)
+    setMessage(replacement.message)
+    setProjectMention(null)
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      textarea.focus({ preventScroll: true })
+      textarea.setSelectionRange(replacement.caret, replacement.caret)
+    })
+  }
+
   const handleSelectMentionDropdown = (value: string): void => {
     const index = Number(value)
     if (!Number.isInteger(index) || index < 0) return
 
+    if (projectMentionMenuOpen) {
+      const project = projectMentionResults[index]
+      if (project) handleSelectProjectMention(project)
+      return
+    }
     if (skillMentionMenuOpen) {
       const result = composerResults[index]
       if (result) handleSelectComposerMention(result)
@@ -2212,6 +2330,32 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleMessageKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (projectMentionMenuOpen && !event.nativeEvent.isComposing) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setProjectMention(null)
+        return
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (projectMentionResults.length === 0) return
+        const direction = event.key === 'ArrowDown' ? 1 : -1
+        setActiveProjectMentionIndex(
+          (index) =>
+            (index + direction + projectMentionResults.length) % projectMentionResults.length
+        )
+        return
+      }
+      if (event.key === 'Enter' || (event.key === 'Tab' && projectMentionResults.length > 0)) {
+        event.preventDefault()
+        const project =
+          projectMentionResults[
+            Math.min(activeProjectMentionIndex, projectMentionResults.length - 1)
+          ]
+        if (project) handleSelectProjectMention(project)
+        return
+      }
+    }
     if (skillMentionMenuOpen && !event.nativeEvent.isComposing) {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -2306,6 +2450,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
       setMessage('')
       setFileMention(null)
       setSkillMention(null)
+      setProjectMention(null)
       return
     }
 
@@ -2324,6 +2469,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     setMessage((currentMessage) => appendPromptDraft(currentMessage, draft.prompt))
     setFileMention(null)
     setSkillMention(null)
+    setProjectMention(null)
 
     window.requestAnimationFrame(() => {
       const textarea = textareaRef.current
@@ -2391,7 +2537,15 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   const selectedImages = selectedAttachments.filter((attachment) => attachment.kind === 'image')
   const selectedFiles = selectedAttachments.filter((attachment) => attachment.kind === 'file')
   const showSelectedReview = Boolean(selectedReview && !editing)
-  const mentionDropdownEmptyContent = skillMentionMenuOpen ? (
+  const mentionDropdownEmptyContent = projectMentionMenuOpen ? (
+    <div className="message-box__file-mention-status">
+      {mentionProjectsError
+        ? 'Unable to load projects'
+        : mentionProjects === null
+          ? 'Loading projects…'
+          : 'No matching projects'}
+    </div>
+  ) : skillMentionMenuOpen ? (
     composerLoadErrorScope === skillScope ? (
       <div className="message-box__file-mention-status">Unable to load skills and apps</div>
     ) : !isComposerCacheCurrent(
@@ -2653,18 +2807,20 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 style={mentionMenuStyle}
               >
                 <Dropdown
-                  activeIndex={
-                    skillMentionMenuOpen ? activeSkillMentionIndex : activeFileMentionIndex
+                  activeIndex={activeMentionIndex}
+                  aria-label={
+                    projectMentionMenuOpen
+                      ? 'Projects'
+                      : skillMentionMenuOpen
+                        ? 'Skills and apps'
+                        : 'Files'
                   }
-                  aria-label={skillMentionMenuOpen ? 'Skills and apps' : 'Files'}
                   emptyContent={mentionDropdownEmptyContent}
-                  listboxId={skillMentionMenuOpen ? skillMentionListboxId : fileMentionListboxId}
+                  listboxId={mentionListboxId}
                   menuOnly
                   options={mentionDropdownOptions}
                   value=""
-                  onActiveIndexChange={
-                    skillMentionMenuOpen ? setActiveSkillMentionIndex : setActiveFileMentionIndex
-                  }
+                  onActiveIndexChange={setActiveMentionIndex}
                   onChange={handleSelectMentionDropdown}
                 />
               </div>,
@@ -2675,32 +2831,19 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             id="message-input"
             rows={1}
             value={message}
-            placeholder="Use @ for files and $ for skills"
+            placeholder="Use @ for files, $ for skills and # for projects"
             aria-autocomplete="list"
-            aria-controls={
-              skillMentionMenuOpen
-                ? skillMentionListboxId
-                : fileMentionMenuOpen
-                  ? fileMentionListboxId
-                  : undefined
-            }
-            aria-expanded={skillMentionMenuOpen || fileMentionMenuOpen}
+            aria-controls={mentionMenuOpen ? mentionListboxId : undefined}
+            aria-expanded={mentionMenuOpen}
             aria-activedescendant={
-              skillMentionMenuOpen && composerResults.length > 0
-                ? `${skillMentionListboxId}-option-${Math.min(
-                    activeSkillMentionIndex,
-                    composerResults.length - 1
-                  )}`
-                : fileMentionMenuOpen && fileMentionResults.length > 0
-                  ? `${fileMentionListboxId}-option-${Math.min(
-                      activeFileMentionIndex,
-                      fileMentionResults.length - 1
-                    )}`
-                  : undefined
+              mentionMenuOpen && mentionDropdownOptions.length > 0
+                ? `${mentionListboxId}-option-${Math.min(activeMentionIndex, mentionDropdownOptions.length - 1)}`
+                : undefined
             }
             onBlur={() => {
               setFileMention(null)
               setSkillMention(null)
+              setProjectMention(null)
             }}
             onChange={handleMessageChange}
             onKeyDown={handleMessageKeyDown}

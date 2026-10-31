@@ -7,7 +7,7 @@ export type ComposerMention = {
 export const getComposerMentionAtCaret = (
   message: string,
   caret: number,
-  marker: '@' | '$'
+  marker: '@' | '$' | '#'
 ): ComposerMention | null => {
   if (caret <= 0) return null
   // Use the native search even for long unbroken pasted strings, then validate
