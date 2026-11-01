@@ -16,7 +16,18 @@ export const readLocalFileTreePaths = async (cwd: string): Promise<FileTreePaths
   const paths: string[] = []
   while (pending.length > 0) {
     const directory = pending.pop()!
-    const entries = await readdir(join(root, directory), { withFileTypes: true })
+    const entries = await readdir(join(root, directory), { withFileTypes: true }).catch((error) => {
+      // One private folder must not hide the rest of the project.
+      if (directory && (error.code === 'EACCES' || error.code === 'EPERM')) {
+        console.warn(
+          '[fileTree] Skipping unreadable project directory',
+          join(root, directory),
+          error
+        )
+        return []
+      }
+      throw error
+    })
     for (const entry of entries) {
       if (entry.name === '.git') continue
       const path = directory ? `${directory}/${entry.name}` : entry.name

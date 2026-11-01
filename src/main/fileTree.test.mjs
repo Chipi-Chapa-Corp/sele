@@ -80,19 +80,31 @@ test('missing folders and non-directories preserve the actual error and path', a
   await assert.rejects(targetTree(missing), (error) => error.stderr.toString().includes(missing))
 })
 
-test('unreadable subdirectories report a failure rather than a successful partial listing', {
+test('unreadable local subdirectories do not hide readable project files', {
   skip: process.platform === 'win32' || process.getuid?.() === 0
 }, async (t) => {
+  const warnings = t.mock.method(console, 'warn', () => {})
   const root = await fixture(t)
+  const expected = await readLocalFileTree(root)
   const denied = join(root, 'denied')
   await mkdir(denied)
+  await writeFile(join(denied, 'private.txt'), 'private')
   await chmod(denied, 0)
   try {
+    assert.deepEqual(await readLocalFileTree(root), expected)
+    const listing = createFileTreeListing(await readLocalFileTreePaths(root))
+    assert.equal(listing.fileCount, expected.files.length)
+    assert.deepEqual(
+      listing.paths.split('\0').sort(),
+      expected.files.map((file) => file.path).sort()
+    )
+    assert.equal(warnings.mock.callCount(), 2)
+    assert.equal(warnings.mock.calls[0].arguments[1], denied)
+    // Failing to read the selected root is still a real listing failure.
     await assert.rejects(
-      readLocalFileTree(root),
+      readLocalFileTree(denied),
       (error) => error.code === 'EACCES' && error.path === denied
     )
-    await assert.rejects(targetTree(root), (error) => error.stderr.toString().includes('denied'))
   } finally {
     await chmod(denied, 0o700)
   }
