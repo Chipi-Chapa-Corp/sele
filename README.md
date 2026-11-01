@@ -8,6 +8,9 @@ Sele keeps conversations, project context, diffs, file editing, and terminal ses
 in one desktop app. It supports OpenAI Codex, Anthropic Claude Code, GitHub Copilot, and
 OpenCode.
 
+[AI prompt suggestions](docs/prompt-suggestions.md) offer native Claude and Codex next-prompt
+predictions in the composer. Press Tab to accept a suggestion or Escape to dismiss it.
+
 ## Install
 
 Download the latest Windows, macOS, or Linux package from

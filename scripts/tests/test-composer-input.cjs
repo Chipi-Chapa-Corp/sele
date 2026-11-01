@@ -13,12 +13,21 @@ if (!process.versions.electron) {
           contents: `
             import React, { Profiler } from 'react'
             import { createRoot } from 'react-dom/client'
+            import { flushSync } from 'react-dom'
+            import './src/renderer/src/assets/main.css'
+            import './src/renderer/src/App.css'
+            import * as settings from './src/renderer/src/settings'
             import { MessageBox } from './src/renderer/src/components/MessageBox'
             import { MessageSelectionQuoteButton } from './src/renderer/src/components/MessageSelectionQuoteButton'
             const noop = () => {}
             const containerRef = {current: document.getElementById('messages')}
             window.commits = 0
-            createRoot(document.getElementById('root')).render(<React.StrictMode>
+            window.settings = settings
+            window.composerProps = {}
+            const root = createRoot(document.getElementById('root'))
+            window.renderFixture = (props = {}) => {
+              Object.assign(window.composerProps, props)
+              flushSync(() => root.render(<React.StrictMode>
               <MessageSelectionQuoteButton containerRef={containerRef} onQuote={noop}/>
               <Profiler id="composer" onRender={() => window.commits++}>
                 <MessageBox autoFocus draftScopeKey="test" providerId="codex"
@@ -30,9 +39,11 @@ if (!process.versions.electron) {
                   displayUsage={{context:true,short:false,long:false}}
                   onAgentModeChange={noop} onApprovalModeChange={noop} onModelChange={noop}
                   onReasoningEffortChange={noop} onServiceTierChange={noop} onSandboxModeChange={noop}
-                  onSend={message => { window.sent = message; return true }}/>
+                  onSend={message => { window.sent = message; return true }} {...window.composerProps}/>
               </Profiler>
-            </React.StrictMode>)
+            </React.StrictMode>))
+            }
+            window.renderFixture()
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -139,6 +150,111 @@ if (!process.versions.electron) {
         Selection.prototype.toString = function() { window.serializeCount++; return original.call(this) };
         void 0;
       `)
+      // Native predictions are draft hints; accepting one must never send it.
+      const ghost = () =>
+        run('document.querySelector(".message-box__prompt-suggestion")?.textContent ?? null')
+      const key = async (key, modifiers = 0) => {
+        await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          key,
+          modifiers
+        })
+        await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          key,
+          modifiers
+        })
+        await settle()
+      }
+      await run(
+        `renderFixture({promptSuggestion:{id:'one',text:'Add regression tests for this change'}}); input.focus()`
+      )
+      assert.ok(await ghost())
+      assert.equal(await run('input.value'), '')
+      assert.equal(await run('window.sent ?? null'), null)
+      assert.equal(await run('input.getAttribute("aria-autocomplete")'), 'inline')
+      const layout = await run(`(() => {
+        const ghost = document.querySelector('.message-box__prompt-suggestion').getBoundingClientRect();
+        const box = input.getBoundingClientRect();
+        return { aligned: Math.abs(ghost.x - box.x) < 1 && Math.abs(ghost.y - box.y) < 1,
+          fits: ghost.height <= box.height + 1 };
+      })()`)
+      assert.deepEqual(layout, { aligned: true, fits: true })
+      if (process.env.SELE_PROMPT_SUGGESTION_SCREENSHOT) {
+        await fs.writeFile(
+          process.env.SELE_PROMPT_SUGGESTION_SCREENSHOT,
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
+      await key('Tab')
+      assert.equal(await run('input.value'), 'Add regression tests for this change')
+      assert.equal(await run('window.sent ?? null'), null)
+      assert.equal(await ghost(), null)
+      await run(
+        `setText(''); renderFixture({promptSuggestion:{id:'two',text:'Run the tests'}}); input.focus()`
+      )
+      await settle()
+      assert.ok(await ghost())
+      await key('Escape')
+      assert.equal(await ghost(), null)
+      assert.equal(await run('input.value'), '')
+      await run(
+        `renderFixture({promptSuggestion:{id:'three',text:'Inspect the changes'}}); input.focus(); setText('My prompt')`
+      )
+      await settle()
+      assert.equal(await ghost(), null)
+      await run(`setText('')`)
+      await settle()
+      assert.equal(
+        await ghost(),
+        null,
+        'deleting your own draft must not revive a dismissed prediction'
+      )
+      for (const blocked of [
+        { active: true },
+        { pending: true },
+        { disabled: true },
+        { operationsDisabled: true },
+        { editSession: { id: 'edit', content: 'Editing', attachments: [] } }
+      ]) {
+        await run(
+          `renderFixture({promptSuggestion:{id:'blocked',text:'A suggestion'}, ...${JSON.stringify(blocked)}})`
+        )
+        await settle()
+        assert.equal(await ghost(), null)
+        await run(
+          `renderFixture({active:false,pending:false,disabled:false,operationsDisabled:false,editSession:null}); setText('')`
+        )
+        await settle()
+      }
+      await run(
+        `renderFixture({promptSuggestion:{id:'four',text:'Review the patch'}}); input.focus()`
+      )
+      assert.ok(await ghost())
+      await key('Tab', 8) // Shift+Tab must keep normal keyboard navigation.
+      assert.equal(await run('input.value'), '')
+      await run(
+        `input.focus(); input.dispatchEvent(new KeyboardEvent('keydown', {key:'Tab',isComposing:true,bubbles:true}))`
+      )
+      await settle()
+      assert.equal(await run('input.value'), '', 'Tab during IME composition must not accept')
+      await run(
+        `renderFixture({draftScopeKey:'another-chat',promptSuggestion:{id:'other',text:'Other chat'}}); input.focus()`
+      )
+      await key('Tab')
+      assert.equal(await run('input.value'), 'Other chat')
+      await run(`renderFixture({draftScopeKey:'test',promptSuggestion:null}); input.focus()`)
+      assert.equal(await run('input.value'), '', 'accepted drafts stay scoped to their chat')
+      assert.equal(
+        await run(`(() => {
+        const settings = window.settings.readStoredAppSettings();
+        settings.chat.promptSuggestions = false;
+        window.settings.writeStoredAppSettings(settings);
+        return window.settings.readStoredAppSettings().chat.promptSuggestions;
+      })()`),
+        false,
+        'the opt-out persists'
+      )
       for (const marker of ['@', '$', '#']) {
         await run(`setText('prefix ${marker}query trailing')`)
         await settle()
@@ -282,7 +398,7 @@ if (!process.versions.electron) {
       )
       assert.deepEqual(errors, [])
       console.log(
-        'Composer input checks passed: mentions, selection without renders, large drafts, native replacement, and message quotes.'
+        'Composer input checks passed: AI prompt suggestions, mentions, selection without renders, large drafts, native replacement, and message quotes.'
       )
     } catch (error) {
       console.error(error)

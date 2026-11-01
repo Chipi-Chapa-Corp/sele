@@ -26,6 +26,7 @@ const methods = [
   'processWaitingSteeringMessage',
   'deliverWaitingSteeringMessage',
   'getSteeringMessage',
+  'getProviderPendingMessages',
   'markWaitingSteeringMessagePending',
   'runQueuedTurn',
   'deliverQueuedTurn',
@@ -48,6 +49,8 @@ const createAdapter = () => {
       createUserInput: (text, images) => ({ text, images }),
       getSteerResponseTurnId: (response) => response.turnId,
       isCodexTurnTerminal: (turn) => turn.status === 'completed',
+      collectUserInputAttachments: () => [],
+      getMessageAttachments: () => [],
       console: { error() {}, warn() {} }
     }
   )
@@ -55,6 +58,7 @@ const createAdapter = () => {
     messageDelivery: new CodexMessageDelivery(),
     queuedTurnsByThread: new Map(),
     steeringMessagesByThread: new Map(),
+    hiddenPendingMessageIdsByThread: new Map(),
     activeTurnIds: new Map(),
     pendingTurnIds: new Map(),
     threads: new Map([['chat', { turns: [{ id: 'server-turn', status: 'inProgress' }] }]]),
@@ -95,6 +99,32 @@ const steering = (adapter) => {
   adapter.steeringMessagesByThread.set('chat', [pending])
   return pending
 }
+
+test('steering publishes non-editable state before the server acknowledges delivery', async () => {
+  const adapter = createAdapter()
+  steering(adapter)
+  const updates = []
+  let acknowledge
+  adapter.emitChatUpdated = () =>
+    updates.push(adapter.getProviderPendingMessages('chat')[0].editable)
+  adapter.client = {
+    request: () => {
+      assert.deepEqual(updates, [false], 'Edit must disappear before the request waits')
+      return new Promise((resolve) => {
+        acknowledge = resolve
+      })
+    }
+  }
+  const sending = adapter.processWaitingSteeringMessage('chat', 'steer')
+  await Promise.resolve()
+  assert.deepEqual(updates, [false])
+  await assert.rejects(
+    adapter.beginPendingMessageEdit('chat', 'steer', 'edit'),
+    /already started delivery/
+  )
+  acknowledge({ turnId: 'server-turn' })
+  await sending
+})
 
 for (const action of ['interruptPendingMessageInContext', 'steerPendingMessageInContext']) {
   test(`${action} still sends a message that has not entered automatic delivery`, async () => {

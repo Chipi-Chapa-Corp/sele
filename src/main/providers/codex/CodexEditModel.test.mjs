@@ -181,6 +181,9 @@ for (const purpose of ['edit', 'mutation']) {
     const completed = {
       ...before,
       name: 'Generated title',
+      promptSuggestionsEnabled: true,
+      predictionSourceTurnId: 'server-turn',
+      promptSuggestion: { id: 'server-turn', text: 'Add tests' },
       status: { type: 'idle' },
       turns: [
         { id: 'server-turn', status: 'completed', items: [{ id: 'steer', type: 'userMessage' }] }
@@ -212,5 +215,8 @@ for (const purpose of ['edit', 'mutation']) {
     assert.equal(result.turns[0].status, 'completed')
     assert.equal(result.status.type, 'idle')
     assert.equal(result.name, 'Generated title')
+    assert.equal(result.promptSuggestionsEnabled, true)
+    assert.equal(result.predictionSourceTurnId, 'server-turn')
+    assert.equal(result.promptSuggestion.text, 'Add tests')
   })
 }

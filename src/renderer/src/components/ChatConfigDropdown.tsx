@@ -78,14 +78,11 @@ type ChatConfigMenuStyle = CSSProperties & {
   '--chat-config-menu-max-height': string
 }
 
-const getChatConfigMenuStyle = (
-  buttonRect: DOMRect,
-  presetsEnabled: boolean
-): ChatConfigMenuStyle => {
+const getChatConfigMenuStyle = (buttonRect: DOMRect, menuWidth: number): ChatConfigMenuStyle => {
   const viewportInset = 9.6
   const menuOffset = 4.8
   const maxMenuHeight = 608
-  const menuWidth = Math.min(presetsEnabled ? 400 : 288, window.innerWidth - viewportInset * 2)
+  menuWidth = Math.min(menuWidth, window.innerWidth - viewportInset * 2)
   const maxLeft = Math.max(viewportInset, window.innerWidth - menuWidth - viewportInset)
   const spaceAbove = Math.max(0, buttonRect.top - menuOffset - viewportInset)
   const spaceBelow = Math.max(
@@ -145,11 +142,38 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   const menuOpen = open && sections.length > 0
   const activeSection = sections.find((section) => section.id === activeSectionId) ?? null
   const showingPresets = presetsEnabled && presets.length > 0 && !configuring
+  const showingColumns = presetsEnabled && !showingPresets
+  const questionsSection = sections.find((section) => section.id === 'questions')
+  const configurationSections = (['model', 'reasoning', 'access', 'speed'] as const).flatMap(
+    (sectionId): ChatConfigSection[] => {
+      const section = sections.find((candidate) => candidate.id === sectionId)
+      if (sectionId !== 'access') return section ? [section] : []
+      const accessSection = section ?? questionsSection
+      if (!accessSection) return []
+      return [
+        {
+          ...accessSection,
+          id: 'access',
+          groups: [
+            ...(section?.groups ?? []),
+            ...(questionsSection?.groups ?? []).map((group) => ({
+              ...group,
+              label: 'Questions',
+              options: group.options.map((option) => ({
+                ...option,
+                disabled: questionsSection?.disabled || option.disabled
+              }))
+            }))
+          ]
+        }
+      ]
+    }
+  )
   const currentPresetSaved = presets.some((preset) => selectionsEqual(preset, selection))
   const normalizedModelSearchQuery = modelSearchQuery.trim().toLocaleLowerCase()
-  const visibleSectionGroups =
-    activeSection?.id === 'model' && normalizedModelSearchQuery
-      ? activeSection.groups
+  const getVisibleSectionGroups = (section: ChatConfigSection): readonly ChatConfigOptionGroup[] =>
+    section.id === 'model' && normalizedModelSearchQuery
+      ? section.groups
           .map((group) => ({
             ...group,
             options: group.options.filter((option) =>
@@ -161,7 +185,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
             )
           }))
           .filter((group) => group.options.length > 0)
-      : (activeSection?.groups ?? [])
+      : section.groups
 
   const closeMenu = useCallback((): void => {
     setOpen(false)
@@ -189,8 +213,14 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
     const buttonRect = buttonRef.current?.getBoundingClientRect()
     if (!buttonRect) return
 
-    setMenuStyle(getChatConfigMenuStyle(buttonRect, presetsEnabled))
-  }, [presetsEnabled])
+    setMenuStyle(
+      getChatConfigMenuStyle(buttonRect, showingColumns ? 1000 : presetsEnabled ? 400 : 288)
+    )
+  }, [presetsEnabled, showingColumns])
+
+  useEffect(() => {
+    if (menuOpen) updateMenuPosition()
+  }, [menuOpen, updateMenuPosition])
 
   const openMenu = useCallback((): void => {
     if (sections.length === 0) return
@@ -282,32 +312,56 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
 
   const renderSectionRoot = (): ReactNode => (
     <div className="message-box__chat-config-section">
-      <div className="message-box__chat-config-option-groups">
-        {sections.map((section) => (
-          <button
-            className="message-box__chat-config-section-button"
-            disabled={section.disabled}
-            data-chat-config-section={section.id}
-            aria-label={`${section.id.charAt(0).toUpperCase() + section.id.slice(1)}: ${section.label}`}
-            key={section.id}
-            type="button"
-            onClick={() => {
-              setActiveSectionId(section.id)
-              if (section.id === 'model') {
-                focusModelSearchInput()
-              } else {
-                focusFirstMenuButton()
-              }
-            }}
-          >
-            <span className="message-box__chat-config-section-icon" aria-hidden="true">
-              {section.icon}
-            </span>
-            <span className="message-box__chat-config-section-label">{section.label}</span>
-            <ChevronRight className="message-box__chat-config-section-chevron" aria-hidden="true" />
-          </button>
-        ))}
-      </div>
+      {showingColumns ? (
+        <div className="message-box__chat-config-columns">
+          {configurationSections.map((section) => (
+            <section
+              className="message-box__chat-config-column"
+              data-chat-config-section={section.id}
+              aria-label={section.id.charAt(0).toUpperCase() + section.id.slice(1)}
+              key={section.id}
+            >
+              <div className="message-box__chat-config-column-heading">
+                <span className="message-box__chat-config-section-icon" aria-hidden="true">
+                  {section.icon}
+                </span>
+                <span>{section.id.charAt(0).toUpperCase() + section.id.slice(1)}</span>
+              </div>
+              {renderSectionOptions(section, true)}
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="message-box__chat-config-option-groups">
+          {sections.map((section) => (
+            <button
+              className="message-box__chat-config-section-button"
+              disabled={section.disabled}
+              data-chat-config-section={section.id}
+              aria-label={`${section.id.charAt(0).toUpperCase() + section.id.slice(1)}: ${section.label}`}
+              key={section.id}
+              type="button"
+              onClick={() => {
+                setActiveSectionId(section.id)
+                if (section.id === 'model') {
+                  focusModelSearchInput()
+                } else {
+                  focusFirstMenuButton()
+                }
+              }}
+            >
+              <span className="message-box__chat-config-section-icon" aria-hidden="true">
+                {section.icon}
+              </span>
+              <span className="message-box__chat-config-section-label">{section.label}</span>
+              <ChevronRight
+                className="message-box__chat-config-section-chevron"
+                aria-hidden="true"
+              />
+            </button>
+          ))}
+        </div>
+      )}
       {presetsEnabled && (
         <div className="message-box__chat-config-footer">
           <div className="message-box__chat-config-separator" role="presentation" />
@@ -477,122 +531,147 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
     </div>
   )
 
-  const renderSectionOptions = (section: ChatConfigSection): ReactNode => (
-    <div className="message-box__chat-config-section">
-      <div className="message-box__chat-config-option-groups">
-        {visibleSectionGroups.map((group, groupIndex) => (
-          <div
-            className="message-box__chat-config-option-group"
-            key={group.id}
-            role="group"
-            aria-label={group.label}
-          >
-            {groupIndex > 0 && (
-              <div className="message-box__chat-config-separator" role="presentation" />
-            )}
-            {group.options.map((option) => {
-              const selected = option.value === group.selectedValue
+  const renderSectionOptions = (section: ChatConfigSection, inline = false): ReactNode => {
+    const visibleSectionGroups = getVisibleSectionGroups(section)
+    return (
+      <div className="message-box__chat-config-section">
+        <div className="message-box__chat-config-option-groups">
+          {visibleSectionGroups.map((group, groupIndex) => (
+            <div
+              className="message-box__chat-config-option-group"
+              key={group.id}
+              role="group"
+              aria-label={group.label}
+            >
+              {groupIndex > 0 && (
+                <div className="message-box__chat-config-separator" role="presentation" />
+              )}
+              {inline && group.label && (
+                <div className="message-box__chat-config-group-label">{group.label}</div>
+              )}
+              {group.options.map((option) => {
+                const selected = option.value === group.selectedValue
 
-              return (
-                <button
-                  className={[
-                    'message-box__chat-config-option',
-                    option.icon ? 'message-box__chat-config-option--has-icon' : null,
-                    option.description ? 'message-box__chat-config-option--has-description' : null,
-                    selected ? 'message-box__chat-config-option--selected' : null
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  disabled={option.disabled}
-                  key={option.value}
-                  type="button"
-                  aria-pressed={selected}
-                  title={option.description}
-                  onClick={() => {
-                    group.onChange(option.value)
-                    if (selectionAction === 'close' && !editingPreset) {
-                      closeMenu()
-                      buttonRef.current?.focus({ preventScroll: true })
-                    } else if (selectionAction === 'back' || editingPreset) {
-                      setActiveSectionId(null)
-                      setModelSearchQuery('')
-                      setConfiguring(true)
-                      focusFirstMenuButton()
-                    }
-                  }}
-                >
-                  {option.description ? (
-                    <span className="message-box__chat-config-option-copy">
-                      <span className="message-box__chat-config-option-row">
+                return (
+                  <button
+                    className={[
+                      'message-box__chat-config-option',
+                      option.icon ? 'message-box__chat-config-option--has-icon' : null,
+                      option.description
+                        ? 'message-box__chat-config-option--has-description'
+                        : null,
+                      selected ? 'message-box__chat-config-option--selected' : null
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    disabled={section.disabled || option.disabled}
+                    key={option.value}
+                    type="button"
+                    aria-pressed={selected}
+                    title={option.description}
+                    onClick={() => {
+                      group.onChange(option.value)
+                      if (inline) return
+                      if (selectionAction === 'close' && !editingPreset) {
+                        closeMenu()
+                        buttonRef.current?.focus({ preventScroll: true })
+                      } else if (selectionAction === 'back' || editingPreset) {
+                        setActiveSectionId(null)
+                        setModelSearchQuery('')
+                        setConfiguring(true)
+                        focusFirstMenuButton()
+                      }
+                    }}
+                  >
+                    {option.description ? (
+                      <span className="message-box__chat-config-option-copy">
+                        <span className="message-box__chat-config-option-row">
+                          {option.icon && (
+                            <span
+                              className="message-box__chat-config-option-icon"
+                              aria-hidden="true"
+                            >
+                              {option.icon}
+                            </span>
+                          )}
+                          <span className="message-box__chat-config-option-label">
+                            {option.menuLabel ?? option.label}
+                          </span>
+                          {selected && (
+                            <Check className="message-box__chat-config-check" aria-hidden="true" />
+                          )}
+                        </span>
+                        <span className="message-box__chat-config-option-description">
+                          {option.description}
+                        </span>
+                      </span>
+                    ) : (
+                      <>
                         {option.icon && (
                           <span className="message-box__chat-config-option-icon" aria-hidden="true">
                             {option.icon}
                           </span>
                         )}
-                        <span className="message-box__chat-config-option-label">
-                          {option.menuLabel ?? option.label}
+                        <span className="message-box__chat-config-option-copy">
+                          <span className="message-box__chat-config-option-label">
+                            {option.menuLabel ?? option.label}
+                          </span>
                         </span>
                         {selected && (
                           <Check className="message-box__chat-config-check" aria-hidden="true" />
                         )}
-                      </span>
-                      <span className="message-box__chat-config-option-description">
-                        {option.description}
-                      </span>
-                    </span>
-                  ) : (
-                    <>
-                      {option.icon && (
-                        <span className="message-box__chat-config-option-icon" aria-hidden="true">
-                          {option.icon}
-                        </span>
-                      )}
-                      <span className="message-box__chat-config-option-copy">
-                        <span className="message-box__chat-config-option-label">
-                          {option.menuLabel ?? option.label}
-                        </span>
-                      </span>
-                      {selected && (
-                        <Check className="message-box__chat-config-check" aria-hidden="true" />
-                      )}
-                    </>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        ))}
-        {section.id === 'model' && visibleSectionGroups.length === 0 && (
-          <div className="message-box__chat-config-empty" role="status">
-            No models found
-          </div>
-        )}
-      </div>
-      <div className="message-box__chat-config-footer">
-        {section.id === 'model' && (
-          <div className="message-box__chat-config-search">
-            <Input
-              ref={modelSearchInputRef}
-              type="search"
-              aria-label="Search models"
-              autoComplete="off"
-              placeholder="Search models"
-              value={modelSearchQuery}
-              onChange={(event) => setModelSearchQuery(event.target.value)}
+                      </>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
+          {section.id === 'model' && visibleSectionGroups.length === 0 && (
+            <div className="message-box__chat-config-empty" role="status">
+              No models found
+            </div>
+          )}
+          {inline && section.disabled && (
+            <div className="message-box__chat-config-empty" role="status">
+              Unavailable for this model
+            </div>
+          )}
+        </div>
+        <div className="message-box__chat-config-footer">
+          {section.id === 'model' && (
+            <div className="message-box__chat-config-search">
+              <Input
+                ref={modelSearchInputRef}
+                type="search"
+                aria-label="Search models"
+                autoComplete="off"
+                placeholder="Search models"
+                value={modelSearchQuery}
+                onChange={(event) => setModelSearchQuery(event.target.value)}
+              />
+            </div>
+          )}
+          {inline ? (
+            section.id === 'model' && modelsError ? (
+              <div className="message-box__chat-config-error" role="alert">
+                {modelsError}
+              </div>
+            ) : null
+          ) : (
+            <ChatConfigSectionHeader
+              modelError={section.id === 'model' ? modelsError : null}
+              onBack={() => {
+                setActiveSectionId(null)
+                setModelSearchQuery('')
+                focusFirstMenuButton()
+              }}
             />
-          </div>
-        )}
-        <ChatConfigSectionHeader
-          modelError={section.id === 'model' ? modelsError : null}
-          onBack={() => {
-            setActiveSectionId(null)
-            setModelSearchQuery('')
-            focusFirstMenuButton()
-          }}
-        />
+          )}
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   const menu = menuOpen ? (
     <div

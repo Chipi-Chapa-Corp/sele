@@ -1083,6 +1083,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid turn options')
 
   const options = value as {
+    promptSuggestions?: unknown
     additionalDirectories?: unknown
     networkRetry?: unknown
     agentMode?: unknown
@@ -1180,6 +1181,9 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
   }
 
   return {
+    ...(options.promptSuggestions === undefined
+      ? {}
+      : { promptSuggestions: requireBoolean(options.promptSuggestions) }),
     additionalDirectories,
     ...(networkRetry ? { networkRetry } : {}),
     ...(agentMode == null ? {} : { agentMode }),

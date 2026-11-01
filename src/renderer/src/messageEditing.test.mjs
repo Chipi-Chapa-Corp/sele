@@ -202,6 +202,7 @@ const pendingEditFixture = () => {
       }
     },
     providerApi: {
+      getChat: async () => ({ id: 'chat', items: [pending] }),
       beginPendingMessageEdit: async (...args) => {
         calls.push(['begin', ...args])
         return { id: 'chat', items: [pending] }
@@ -239,7 +240,7 @@ test('pending edit acquires a hold before loading attachments and passes its tok
   assert.equal(f.globals.pendingEditRef.current, null)
 })
 
-test('an edit that loses the race to provider acceptance never opens the editor', async () => {
+test('an edit that loses the race to provider acceptance explains why the editor cannot open', async () => {
   const f = pendingEditFixture()
   f.globals.providerApi.beginPendingMessageEdit = async () => {
     f.calls.push(['begin'])
@@ -248,11 +249,23 @@ test('an edit that loses the race to provider acceptance never opens the editor'
   await f.controller.edit(f.pending)
   assert.deepEqual(
     f.calls.map((call) => call[0]),
-    ['begin', 'cancel'],
+    ['begin', 'cancel', 'error'],
     'a doomed editor is released instead of shown'
   )
   assert.equal(f.editingMessage, null)
   assert.equal(f.globals.pendingEditRef.current, null)
+  assert.match(f.calls.at(-1)[1], /already started delivery/)
+})
+
+test('a steering message echoed into history while opening an edit reports delivery', async () => {
+  const f = pendingEditFixture()
+  f.globals.providerApi.beginPendingMessageEdit = async () => ({ id: 'chat', items: [] })
+  f.globals.providerApi.getChat = async () => ({ id: 'chat', items: [] })
+  f.globals.console = { error() {} }
+  await f.controller.edit(f.pending)
+  assert.equal(f.editingMessage, null)
+  assert.equal(f.globals.pendingEditRef.current, null)
+  assert.match(f.calls.find((call) => call[0] === 'error')[1], /already started delivery/)
 })
 
 test('attachment failure releases the backend hold and leaves the editor closed', async () => {

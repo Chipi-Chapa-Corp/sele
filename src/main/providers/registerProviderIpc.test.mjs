@@ -548,6 +548,38 @@ test('new-chat IPC preserves native goals and rejects blank or malformed objecti
   assert.equal(received.length, 3)
 })
 
+test('chat IPC preserves the prompt suggestion preference for new and continued chats', async () => {
+  const h = setup()
+  const received = []
+  const collect = async (options) => {
+    received.push(options)
+    return { id: 'chat', revision: 1, items: [] }
+  }
+  h.harness.startChat = (_provider, _message, options) => collect(options)
+  h.harness.continueChat = (_provider, _chat, _message, options) => collect(options)
+  const options = {
+    model: 'fixture',
+    approvalPolicy: 'on-request',
+    sandboxMode: 'workspace-write'
+  }
+  for (const provider of ['codex', 'claude']) {
+    for (const channel of [channels.startChat, channels.continueChatSummary]) {
+      const handler = h.harness.handlers.get(channel)
+      const args =
+        channel === channels.startChat ? [provider, 'Hello'] : [provider, 'chat', 'Hello']
+      for (const enabled of [true, false, undefined]) {
+        await handler({}, ...args, { ...options, promptSuggestions: enabled })
+        assert.equal(received.at(-1).promptSuggestions, enabled)
+      }
+      const count = received.length
+      for (const invalid of ['true', 'false', null, 1, {}, []]) {
+        await assert.rejects(handler({}, ...args, { ...options, promptSuggestions: invalid }))
+      }
+      assert.equal(received.length, count, 'invalid preferences never reach the provider')
+    }
+  }
+})
+
 test('chat IPC forwards validated retry settings and rejects invalid values', async () => {
   const h = setup()
   let received

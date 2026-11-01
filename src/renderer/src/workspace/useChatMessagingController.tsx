@@ -265,16 +265,12 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           (item): item is ProviderPendingMessage =>
             item.type === 'pendingMessage' && item.id === message.id
         )
-        if (!current) throw new Error('The message is no longer pending.')
         // The provider may accept the message while the editor opens; the main process then
         // reports the settled chat instead of a hold, so never open an editor that cannot save.
-        if (current.editable === false) {
-          const refreshed = await releasePendingEdit(session).catch(() => detail)
-          if (pendingEditRef.current === session) pendingEditRef.current = null
-          if (chatKey === selectedChatKeyRef.current)
-            applyViewedChatDetail(session.providerId, refreshed, { allowEqualRevision: true })
-          return
-        }
+        if (!current || current.editable === false)
+          throw new Error(
+            'This message has already started delivery. Only messages still waiting to send can be edited.'
+          )
         const attachments = await prepareEditAttachments(current)
         if (
           !attachments ||
@@ -308,13 +304,6 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         if (chatKey === selectedChatKeyRef.current) {
           const detail = await providerApi.getChat(editProviderId, editChatId).catch(() => null)
           if (detail) applyViewedChatDetail(editProviderId, detail, { allowEqualRevision: true })
-          // The provider accepted the message while the editor was opening: it is now a normal
-          // pending message, which is not an error worth interrupting the user over.
-          if (
-            detail &&
-            !detail.items.some((item) => item.type === 'pendingMessage' && item.id === message.id)
-          )
-            return
           handleSendFailure(error, 'Unable to edit pending message.')
         }
       } finally {
@@ -382,6 +371,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     : undefined
   const getCurrentTurnOptions = (): ProviderTurnOptions =>
     normalizeTurnOptionsForModels({
+      promptSuggestions: effectiveAppSettings.chat.promptSuggestions,
       additionalDirectories: currentProjectDirectories,
       agentMode,
       ...getApprovalAccessOptions(effectiveApprovalMode, effectiveSandboxMode),

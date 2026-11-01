@@ -62,6 +62,7 @@ import type {
   ProviderId,
   ProviderModel,
   ProviderModelId,
+  ProviderPromptSuggestion,
   ProviderReasoningEffort,
   ProviderServiceTier,
   ProviderReview,
@@ -139,6 +140,7 @@ type MessageBoxProps = {
   autoFocus?: boolean
   draftScopeKey: string
   chatId?: string | null
+  promptSuggestion?: ProviderPromptSuggestion | null
   /**
    * Gates sending and actions only, like `operationsDisabled` and `pending`. The prompt,
    * attachments, usage, chat settings and notes remain usable in every state.
@@ -610,6 +612,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   actions = [],
   contextUsage,
   chatId,
+  promptSuggestion = null,
   displayUsage,
   lastActionId,
   goalObjective,
@@ -720,6 +723,20 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   >({})
   const loadingLinkedChatOperationsRef = useRef(new Set<string>())
   const openLinkedChat = useLinkedChatOpener()
+  const [dismissedPromptSuggestions, setDismissedPromptSuggestions] = useState<Map<string, string>>(
+    () => new Map()
+  )
+  const dismissPromptSuggestion = (): void => {
+    if (!promptSuggestion || dismissedPromptSuggestions.get(draftScopeKey) === promptSuggestion.id)
+      return
+    setDismissedPromptSuggestions((current) => {
+      const next = new Map(current)
+      next.delete(draftScopeKey)
+      next.set(draftScopeKey, promptSuggestion.id)
+      if (next.size > 100) next.delete(next.keys().next().value!)
+      return next
+    })
+  }
   const [dismissedError, setDismissedError] = useState<string | null>(null)
   const [projectMention, setProjectMention] = useState<FileMention | null>(null)
   const [mentionProjects, setMentionProjects] = useState<AppProject[] | null>(null)
@@ -1487,6 +1504,24 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     ]
   )
   const mentionMenuOpen = projectMentionMenuOpen || skillMentionMenuOpen || fileMentionMenuOpen
+  const visiblePromptSuggestion =
+    promptSuggestion?.text &&
+    !message &&
+    !active &&
+    !pending &&
+    !disabled &&
+    !operationsDisabled &&
+    !providerUpdating &&
+    !editSession &&
+    !selectedReview &&
+    selectedAttachments.length === 0 &&
+    selectedSkills.length === 0 &&
+    selectedApps.length === 0 &&
+    linkedChats.length === 0 &&
+    !mentionMenuOpen &&
+    dismissedPromptSuggestions.get(draftScopeKey) !== promptSuggestion.id
+      ? promptSuggestion
+      : null
   const activeMentionIndex = projectMentionMenuOpen
     ? activeProjectMentionIndex
     : skillMentionMenuOpen
@@ -2176,6 +2211,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
 
   const handleMessageChange = (event: React.ChangeEvent<HTMLTextAreaElement>): void => {
     const nextMessage = event.currentTarget.value
+    dismissPromptSuggestion()
     setMessage(nextMessage)
     updateMessageMentions(event.currentTarget)
     setActiveFileMentionIndex(0)
@@ -2330,6 +2366,27 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }
 
   const handleMessageKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (
+      visiblePromptSuggestion &&
+      !event.nativeEvent.isComposing &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        dismissPromptSuggestion()
+        setMessage(visiblePromptSuggestion.text)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        dismissPromptSuggestion()
+        return
+      }
+    }
     if (projectMentionMenuOpen && !event.nativeEvent.isComposing) {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -2826,13 +2883,25 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               </div>,
               document.body
             )}
+          {visiblePromptSuggestion && (
+            <div className="message-box__prompt-suggestion" aria-hidden="true">
+              {visiblePromptSuggestion.text} <kbd>Tab</kbd>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             id="message-input"
             rows={1}
             value={message}
-            placeholder="Use @ for files, $ for skills and # for projects"
-            aria-autocomplete="list"
+            placeholder={
+              visiblePromptSuggestion ? '' : 'Use @ for files, $ for skills and # for projects'
+            }
+            aria-autocomplete={visiblePromptSuggestion ? 'inline' : 'list'}
+            aria-description={
+              visiblePromptSuggestion
+                ? `Suggested next prompt: ${visiblePromptSuggestion.text}. Press Tab to accept or Escape to dismiss.`
+                : undefined
+            }
             aria-controls={mentionMenuOpen ? mentionListboxId : undefined}
             aria-expanded={mentionMenuOpen}
             aria-activedescendant={

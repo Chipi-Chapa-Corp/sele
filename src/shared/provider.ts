@@ -991,7 +991,14 @@ export type ProviderChatGoal = {
   updatedAt: number
 }
 
+export type ProviderPromptSuggestion = {
+  id: string
+  text: string
+}
+
 export type ProviderChatDetail = {
+  /** Ephemeral native prediction for the next user prompt. */
+  promptSuggestion?: ProviderPromptSuggestion | null
   accountId?: string | null
   /** Native conversation activity time in milliseconds, independent of snapshot delivery. */
   updatedAt?: number
@@ -1130,6 +1137,8 @@ export type ProviderAppInput = {
 }
 
 export type ProviderTurnOptions = {
+  /** Request native next-prompt predictions when supported by the provider. */
+  promptSuggestions?: boolean
   networkRetry?: NetworkRetrySettings
   additionalDirectories?: string[]
   agentMode?: ProviderAgentMode

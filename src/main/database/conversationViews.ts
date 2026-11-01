@@ -56,6 +56,7 @@ export class SqliteConversationViews {
         if (!view.conversationView || !Array.isArray(view.items) || typeof view.id !== 'string')
           throw new Error('Invalid conversation view')
         assertUniqueProviderChatItemIds(view.items)
+        delete view.promptSuggestion
         result.set(row.scope_key, view)
       } catch (error) {
         console.warn('Unable to read conversation view.', error)
@@ -71,7 +72,7 @@ export class SqliteConversationViews {
   ): Promise<boolean> {
     if (!current()) return false
     assertUniqueProviderChatItemIds(view.items)
-    const payload = JSON.stringify(view)
+    const payload = JSON.stringify({ ...view, promptSuggestion: undefined })
     const db = await this.database()
     if (!current()) return false
     await db

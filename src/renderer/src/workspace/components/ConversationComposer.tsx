@@ -94,6 +94,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     messageBoxDisabled,
     messageBoxNotesGroup,
     messageBoxProviderAvailable,
+    promptSuggestion,
     goalObjective,
     onSetGoal,
     messageBoxQuoteRequest,
@@ -434,6 +435,11 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             autoFocus={!selectedChat && newChatOpen}
             disabled={messageBoxDisabled}
             editSession={editingMessage}
+            promptSuggestion={
+              effectiveAppSettings.chat.promptSuggestions && !activeSubagentChatView
+                ? promptSuggestion
+                : null
+            }
             accountUsage={accountUsage}
             accountUsageError={accountUsageError}
             accountUsageState={accountUsageState}

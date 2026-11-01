@@ -56,6 +56,7 @@ import type {
   ProviderChatPage,
   ProviderChatDetail,
   ProviderChatGoal,
+  ProviderPromptSuggestion,
   ProviderChatStatus,
   ProviderCapabilities,
   ProviderLoginResult,
@@ -228,6 +229,9 @@ type CodexThreadStatus =
     }
 
 type CodexThread = {
+  promptSuggestionsEnabled?: boolean
+  predictionSourceTurnId?: string | null
+  promptSuggestion?: ProviderPromptSuggestion | null
   path?: string | null
   id: string
   name?: string | null
@@ -4588,6 +4592,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     )
     if (!steeringMessage) return
 
+    // Publish the loss of editability before waiting for the server acknowledgment.
+    // Otherwise the renderer keeps offering Edit from the still-local snapshot.
+    this.emitChatUpdated(chatId)
+
     let expectedTurnId = activeTurnId
     let steeringMessageId = steeringMessage.id
     let didRetryWithServerTurnId = false
@@ -4964,6 +4972,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
       authenticationRequired: this.authenticationFailures.has(
         getContainerTargetKey(this.threadContainers.get(thread.id))
       ),
+      promptSuggestion:
+        thread.promptSuggestion &&
+        !isReadOnly &&
+        !thread.turnPagination?.newerCursor &&
+        !this.hasActiveOrSubmittingTurn(thread.id)
+          ? thread.promptSuggestion ?? null
+          : null,
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
       subagents: this.getThreadSubagents(thread, renderableTurns),
       goal: this.goals.get(thread.id),
@@ -4988,6 +5003,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
     assertUniqueCodexSnapshotIds(thread.turns, 'thread turns')
     // Indexed live updates preserve uniqueness; validate unknown snapshots once on ingestion.
     thread.turns.forEach((turn) => indexTranscriptRecords(turn.items))
+    const previous = this.threads.get(thread.id)
+    thread.promptSuggestionsEnabled ??= previous?.promptSuggestionsEnabled
+    if (previous && thread.turns.at(-1)?.id === previous.turns.at(-1)?.id) {
+      // Native reads do not carry the frontend's pending prediction state.
+      if (thread.predictionSourceTurnId === undefined)
+        thread.predictionSourceTurnId = previous.predictionSourceTurnId
+      if (thread.promptSuggestion === undefined) thread.promptSuggestion = previous.promptSuggestion
+    }
     this.threads.set(thread.id, thread)
     this.startPendingMessageRestore(thread)
     const parentThreadId = getCodexSubagentParentThreadId(thread)
@@ -5458,6 +5481,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const turns = existingThread.turns
     const commonThread = {
       ...resume.thread,
+      promptSuggestionsEnabled: options?.promptSuggestions ?? existingThread.promptSuggestionsEnabled,
+      predictionSourceTurnId: existingThread.predictionSourceTurnId,
+      promptSuggestion: existingThread.promptSuggestion,
       createdAt: existingThread?.createdAt ?? resume.thread.createdAt,
       name: existingThread !== resumedFrom ? (getThreadName(existingThread) ?? name) : name,
       cwd,
@@ -5993,6 +6019,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     this.cacheThread({
       ...thread,
+      promptSuggestionsEnabled: options?.promptSuggestions === true,
+      predictionSourceTurnId: null,
+      promptSuggestion: null,
       status: { type: 'active', activeFlags: [] },
       updatedAt: nowSeconds(),
       turns: this.insertTurnBeforeQueued(
@@ -7172,6 +7201,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'turn/started') {
+      if (currentThread) {
+        this.threads.set(threadId, {
+          ...currentThread,
+          predictionSourceTurnId: null,
+          promptSuggestion: null
+        })
+      }
       this.completionCoordinator.cancel(threadId)
       this.reconcileStartedTurn(threadId, pendingTurnId, turn)
     } else if (pendingTurnId) {
@@ -7216,6 +7252,26 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'turn/completed') {
+      const thread = this.threads.get(threadId)
+      if (
+        thread?.promptSuggestionsEnabled &&
+        turn.status === 'completed' &&
+        !turn.error &&
+        !this.hasActiveOrSubmittingTurn(threadId) &&
+        !this.queuedTurnsByThread.get(threadId)?.length &&
+        !this.hasWaitingSteeringMessageForTurn(threadId, turn.id) &&
+        !isCodexSubagentThread(thread)
+      ) {
+        this.threads.set(threadId, { ...thread, predictionSourceTurnId: turn.id })
+        void this.client
+          .request('thread/prediction/request', { threadId, sourceTurnId: turn.id })
+          .catch(() => {
+            // Older builds and ineligible accounts may reject this optional request.
+            const current = this.threads.get(threadId)
+            if (current?.predictionSourceTurnId === turn.id)
+              this.threads.set(threadId, { ...current, predictionSourceTurnId: null })
+          })
+      }
       if (!wasManuallyStoppedTurn && !this.hasWaitingSteeringMessageForTurn(threadId, turn.id)) {
         this.scheduleQueueDrain(threadId)
       }
@@ -7636,6 +7692,34 @@ export class CodexProviderAdapter implements ProviderAdapter {
           console.error(`Unable to restore live Codex thread ${threadId}.`, error)
         })
       }
+      return
+    }
+
+    if (notification.method === 'thread/prediction/updated') {
+      const payload = params as {
+        threadId?: string
+        sourceTurnId?: string
+        result?: { type?: string; text?: unknown }
+      }
+      if (!payload.threadId || !payload.sourceTurnId) return
+      const thread = this.threads.get(payload.threadId)
+      if (
+        !thread?.promptSuggestionsEnabled ||
+        thread.predictionSourceTurnId !== payload.sourceTurnId ||
+        this.hasActiveOrSubmittingTurn(thread.id) ||
+        this.queuedTurnsByThread.get(thread.id)?.length
+      )
+        return
+      const text =
+        payload.result?.type === 'completed' && typeof payload.result.text === 'string'
+          ? payload.result.text.trim()
+          : ''
+      this.threads.set(thread.id, {
+        ...thread,
+        promptSuggestion: text ? { id: payload.sourceTurnId, text } : null,
+        predictionSourceTurnId: null
+      })
+      this.emitChatUpdated(thread.id)
       return
     }
 

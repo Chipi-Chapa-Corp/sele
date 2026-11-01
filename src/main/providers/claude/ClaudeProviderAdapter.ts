@@ -191,6 +191,9 @@ type ClaudeSessionState = {
   cwd: string | null
   metadata: SDKSessionInfo | null
   goal: ProviderChatGoal | null
+  promptSuggestion?: ProviderChatDetail['promptSuggestion']
+  promptSuggestionCloseTimer?: ReturnType<typeof setTimeout>
+  queryPromptSuggestions?: boolean
   goalUpdatedAt?: number
   goalMutation?: boolean
   goalRequest?: {
@@ -2688,7 +2691,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state: ClaudeSessionState,
     options?: ProviderTurnOptions
   ): Promise<void> => {
-    if (state.query) return
+    if (state.query) {
+      const enabled = (options ?? state.options)?.promptSuggestions === true
+      if (state.active || state.queryPromptSuggestions === enabled) return
+    }
     await this.startStateQuery(state, options)
   }
 
@@ -2739,6 +2745,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           prompt: input,
           options: {
             ...this.getBaseQueryOptions(state.options, runtime),
+            promptSuggestions: state.options?.promptSuggestions === true,
             ...(browser ? { mcpServers: { [claudeBrowserServerName]: browser.server } } : {}),
             canUseTool: this.createPermissionHandler(state),
             onElicitation: this.createElicitationHandler(state),
@@ -2760,6 +2767,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.query = control
       state.queryReadOnly = queryReadOnly
       state.queryModel = getClaudeModel(state.options)
+      state.queryPromptSuggestions = state.options?.promptSuggestions === true
       void this.consumeStateQuery(state, control)
     } finally {
       this.unpinState(state)
@@ -2769,6 +2777,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private closeStateQuery = async (state: ClaudeSessionState): Promise<void> => {
     state.queryStartupRevision += 1
+    clearTimeout(state.promptSuggestionCloseTimer)
+    state.promptSuggestionCloseTimer = undefined
     state.resultSettling = false
     const control = state.query
     state.browser?.close()
@@ -3128,6 +3138,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.failed = false
     state.waitingForSessionIdle = false
     state.taskNotificationPending = false
+    clearTimeout(state.promptSuggestionCloseTimer)
+    state.promptSuggestionCloseTimer = undefined
+    state.promptSuggestion = null
     this.emitUpdate(state)
   }
 
@@ -3154,6 +3167,24 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     // The SDK forwards active_goal at runtime but omits it from Query's SDKMessage union.
     event: SDKMessage | SDKActiveGoalMessage
   ): Promise<boolean> => {
+    if (event.type === 'prompt_suggestion') {
+      if (
+        event.session_id !== state.id ||
+        state.active ||
+        state.queueDrainInProgress ||
+        state.queuedMessages.length > 0 ||
+        state.turnAwaitingStart ||
+        this.getOutstandingBackgroundWork(state) > 0 ||
+        state.failed ||
+        state.stopped ||
+        !state.options?.promptSuggestions
+      )
+        return false
+      const text = event.suggestion.trim()
+      state.promptSuggestion = text ? { id: event.uuid, text } : null
+      this.emitUpdate(state, false, false)
+      return Boolean(state.promptSuggestionCloseTimer)
+    }
     if (event.type === 'active_goal') {
       state.goalUpdatedAt = Date.now()
       state.goal = mapClaudeActiveGoal(state.id, event.value)
@@ -3243,6 +3274,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         state.taskNotificationPending = true
       }
       state.backgroundTaskIds = taskIds
+      if (state.promptSuggestionCloseTimer && taskIds.size > 0) {
+        clearTimeout(state.promptSuggestionCloseTimer)
+        state.promptSuggestionCloseTimer = undefined
+        state.waitingForSessionIdle = true
+      }
       state.terminalTaskIds = new Set(
         event.tasks
           .filter((task) => task.task_type === 'local_bash' && !task.ambient)
@@ -3432,6 +3468,28 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       if (this.getQueueDrainDecision(state) === 'start') {
         state.waitingForSessionIdle = false
         await this.drainNextQueuedMessage(state)
+        return false
+      }
+      if (
+        !lifecycle.keepQueryAlive &&
+        !state.failed &&
+        !wasStopped &&
+        state.queryPromptSuggestions &&
+        state.options?.promptSuggestions
+      ) {
+        clearTimeout(state.promptSuggestionCloseTimer)
+        // Suggestions may be omitted. Bound the wait so idle provider processes still close.
+        state.promptSuggestionCloseTimer = setTimeout(() => {
+          state.promptSuggestionCloseTimer = undefined
+          if (
+            state.query === control &&
+            !state.active &&
+            !state.queueDrainInProgress &&
+            this.getOutstandingBackgroundWork(state) === 0
+          )
+            void this.closeStateQuery(state)
+        }, 15_000)
+        state.promptSuggestionCloseTimer.unref?.()
         return false
       }
       return !lifecycle.keepQueryAlive
@@ -3706,6 +3764,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     label: string | null = null,
     kind?: 'steering'
   ): void => {
+    clearTimeout(state.promptSuggestionCloseTimer)
+    state.promptSuggestionCloseTimer = undefined
+    state.promptSuggestion = null
     this.addTranscriptMessage(state, this.createUserTranscriptMessage(state, message, label, kind))
   }
 
@@ -3905,6 +3966,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       ),
       pendingApproval: this.getPendingApproval(state),
       pendingUserInput: this.getPendingUserInput(state),
+      promptSuggestion:
+        !foregroundActive &&
+        !state.failed &&
+        !state.stopped &&
+        !state.historyPagination?.newerCursor
+          ? (state.promptSuggestion ?? null)
+          : null,
       contextUsage: state.contextUsage,
       ...(projected ?? {
         items: renderClaudeChatItems([...state.messages, ...overlays], renderOptions)

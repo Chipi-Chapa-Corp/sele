@@ -33,6 +33,7 @@ function setup({ remote = false, readOnly = false, failQuery = false } = {}) {
   }
   const control = { close: () => events.push('query.close') }
   const context = vm.createContext({
+    clearTimeout,
     AsyncMessageQueue: class {
       close() {
         events.push('input.close')

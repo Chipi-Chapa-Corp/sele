@@ -179,59 +179,110 @@ if (!process.versions.electron) {
         true,
         'an empty preset library opens directly into configuration'
       )
-      assert.deepEqual(await labels(), [
-        'Alpha',
-        'Low',
-        'Workspace write',
-        'Standard',
-        'Save preset'
-      ])
-      await click('Low')
+      const columns = () =>
+        run(
+          `[...document.querySelectorAll('.message-box__chat-config-column')].map(n=>n.getAttribute('aria-label'))`
+        )
+      assert.deepEqual(await columns(), ['Model', 'Reasoning', 'Access', 'Speed'])
+      const assertColumnLayout = async () => {
+        const layout = await run(`(() => {
+          const menu=document.querySelector('.message-box__chat-config-menu').getBoundingClientRect()
+          const columns=[...document.querySelectorAll('.message-box__chat-config-column')].map(n=>n.getBoundingClientRect())
+          return {inside:menu.left>=0 && menu.right<=innerWidth && menu.top>=0 && menu.bottom<=innerHeight,
+            aligned:columns.every(c=>c.top===columns[0].top),
+            sideBySide:columns.every((c,i)=>i===0 || c.left>=columns[i-1].right)}
+        })()`)
+        assert.deepEqual(layout, { inside: true, aligned: true, sideBySide: true })
+      }
+      await assertColumnLayout()
+      // Large catalogs scroll independently without hiding the save controls.
+      await run(`window.renderFixture({models:[
+        {id:'alpha',label:'Alpha',supportedReasoningEfforts:[{id:'low'},{id:'high'}],supportedServiceTiers:[{id:'priority',label:'Fast'}]},
+        ...Array.from({length:80},(_,i)=>({id:'extra-'+i,label:'Extra model '+i,supportedReasoningEfforts:[]}))
+      ]})`)
+      await wait()
+      await assertColumnLayout()
+      assert.equal(
+        await run(`(() => {
+        const list=document.querySelector('.message-box__chat-config-column .message-box__chat-config-option-groups')
+        const footer=document.querySelector('.message-box__chat-config-footer .message-box__chat-config-section-button').getBoundingClientRect()
+        return list.scrollHeight>list.clientHeight && footer.bottom<innerHeight
+      })()`),
+        true
+      )
+      await run(`(() => {
+        const input=document.querySelector('input[aria-label="Search models"]')
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'extra model 79')
+        input.dispatchEvent(new Event('input',{bubbles:true}))
+      })()`)
+      await wait()
+      assert.equal(
+        await run(
+          `document.querySelectorAll('[data-chat-config-section="model"] .message-box__chat-config-option').length`
+        ),
+        1
+      )
+      assert.deepEqual(await columns(), ['Model', 'Reasoning', 'Access', 'Speed'])
+      await run(`delete window.props.models; window.renderFixture()`)
+      // Reopening clears search; a narrow viewport keeps columns horizontally scrollable.
+      await open()
+      await open()
+      win.setSize(700, 800)
+      await wait()
+      await assertColumnLayout()
+      assert.equal(
+        await run(`(() => {
+        const lists=document.querySelector('.message-box__chat-config-columns')
+        return lists.scrollWidth>lists.clientWidth
+      })()`),
+        true
+      )
+      win.setSize(1100, 800)
+      await wait()
+
       await click('High')
-      assert.ok((await labels()).includes('High'), 'Back defaults to the section view')
-      assert.equal(await run(`document.querySelector('[data-menu-page]').dataset.menuPage`), 'root')
-      await click('Alpha')
+      assert.equal(await run(`window.selection.reasoningEffort`), 'high')
+      assert.deepEqual(await columns(), ['Model', 'Reasoning', 'Access', 'Speed'])
       await click('Beta')
-      assert.ok((await labels()).includes('Beta'), 'model selection returns to sections too')
-      await click('Beta')
+      assert.equal(await run(`window.selection.model`), 'beta')
+      assert.equal(
+        await run(`document.querySelectorAll('.message-box__chat-config-empty').length`),
+        2
+      )
       await click('Alpha (default)')
       await run(`window.renderFixture({selectionAction:'stay'})`)
-      await click('Low')
       await click('High')
       assert.equal(
         await run(
           `document.querySelector('.message-box__chat-config-trigger').getAttribute('aria-expanded')`
         ),
         'true',
-        'Stay keeps the current parameter page open'
+        'changing parameters keeps all lists open'
       )
       await click('Low')
-      await click('Back')
       await open()
       await open()
       assert.equal((await rows()).length, 0)
-      assert.ok(
-        (await labels()).includes('Save preset'),
-        'reopening an empty library keeps the create action visible'
-      )
+      assert.ok((await labels()).includes('Save preset'))
       await click('Save preset')
       assert.equal((await rows()).length, 1)
       await click('Configure')
       assert.equal(
         await run(
-          `document.querySelectorAll('.message-box__chat-config-footer button')[0].disabled`
+          `document.querySelector('.message-box__chat-config-footer .message-box__chat-config-section-button').disabled`
         ),
         true
       )
-      await click('Low')
       await click('High')
-      await click('Back')
-      await click('Standard')
       await click('Fast')
-      await click('Back')
-      await click('Workspace write')
       await click('Full access')
-      await click('Back')
+      await assertColumnLayout()
+      if (process.env.SELE_PRESETS_CONFIG_SCREENSHOT) {
+        await fs.writeFile(
+          process.env.SELE_PRESETS_CONFIG_SCREENSHOT,
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
       await click('Save preset')
       const savedRows = await rows()
       assert.equal(savedRows.length, 2)
@@ -317,19 +368,12 @@ if (!process.versions.electron) {
       await run(`window.renderFixture({presetsEnabled:true,selectionAction:'back'})`)
       await open()
       await click('Configure')
-      await click('Low')
       await click('High')
-      assert.equal(
-        await run(`document.querySelector('[data-menu-page]').dataset.menuPage`),
-        'root',
-        'Back returns to configuration, not the preset list'
-      )
-      await click('Standard')
+      assert.deepEqual(await columns(), ['Model', 'Reasoning', 'Access', 'Speed'])
       await click('Fast')
-      assert.ok((await labels()).includes('Fast'))
-      await click('Workspace write')
+      assert.equal(await run(`window.selection.serviceTier`), 'priority')
       await click('Read only')
-      assert.ok((await labels()).includes('Read only'))
+      assert.equal(await run(`window.selection.sandboxMode`), 'read-only')
       await open()
       await run(
         `window.renderFixture({presetsEnabled:true,model:'beta',reasoningEffort:'low',serviceTier:null})`
@@ -360,7 +404,6 @@ if (!process.versions.electron) {
       await run(`document.querySelector('button[title="Edit preset"]').click()`)
       await wait()
       assert.ok((await labels()).includes('Save changes'))
-      await click('Low')
       await click('High')
       assert.ok((await labels()).includes('Save changes'), 'editing stays open until saved')
       await click('Save changes')

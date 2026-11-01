@@ -84,6 +84,7 @@ const context = vm.createContext({
   getClaudeSessionStateLifecycleDecision,
   backgroundIdleCloseGraceMs: 0,
   setTimeout,
+  clearTimeout,
   randomUUID: () => 'marker',
   claudeBackgroundTurnSubtype: 'sele_background_turn',
   getTokenBreakdown: (inputTokens, outputTokens, cachedInputTokens) => ({
@@ -983,4 +984,152 @@ test('failed Claude startup while saving restores the original queued payload an
   assert.equal(state.queuedMessages[0], original)
   assert.equal(state.queuedMessagesPaused, false)
   assert.equal(instance.pendingMessageEdits.has('session'), true)
+})
+
+test('native prompt suggestions arrive after result without keeping visible work active', async () => {
+  const { instance, state, transcript } = setup()
+  const control = { getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }), close() {} }
+  Object.assign(state, {
+    query: control,
+    active: true,
+    options: { promptSuggestions: true },
+    queryPromptSuggestions: true,
+    queuedMessages: []
+  })
+  instance.queueUpdate = () => {}
+  instance.refreshSessionMetadata = async () => {}
+  assert.equal(await instance.handleQueryEvent(state, control, successfulResult()), false)
+  assert.equal(state.active, false)
+  assert.ok(state.promptSuggestionCloseTimer)
+  const count = transcript.length
+  assert.equal(
+    await instance.handleQueryEvent(state, control, {
+      type: 'prompt_suggestion',
+      uuid: 'suggestion',
+      session_id: 'session',
+      suggestion: '  Add tests  '
+    }),
+    true
+  )
+  assert.equal(state.promptSuggestion.text, 'Add tests')
+  assert.equal(transcript.length, count, 'a suggestion is not a transcript message')
+  await instance.closeStateQuery(state)
+  assert.equal(state.promptSuggestionCloseTimer, undefined)
+  assert.equal(
+    state.promptSuggestion.text,
+    'Add tests',
+    'closing the idle query preserves the suggestion'
+  )
+})
+
+test('late Claude suggestions cannot close a preparing turn or overwrite failed and disabled turns', async () => {
+  for (const patch of [
+    { active: true },
+    { queueDrainInProgress: true },
+    { queuedMessages: [{ id: 'next' }] },
+    { turnAwaitingStart: true },
+    { backgroundTaskIds: new Set(['task']) },
+    { failed: true },
+    { stopped: true },
+    { options: { promptSuggestions: false } }
+  ]) {
+    const { instance, state } = setup()
+    Object.assign(state, {
+      queuedMessages: [],
+      options: { promptSuggestions: true },
+      promptSuggestionCloseTimer: {},
+      ...patch
+    })
+    const shouldClose = await instance.handleQueryEvent(
+      state,
+      {},
+      {
+        type: 'prompt_suggestion',
+        uuid: 'old',
+        session_id: 'session',
+        suggestion: 'Stale suggestion'
+      }
+    )
+    assert.equal(state.promptSuggestion, undefined)
+    assert.equal(shouldClose, false, 'a late prediction cannot close the sending query')
+  }
+  const { instance, state } = setup()
+  state.options = { promptSuggestions: true }
+  await instance.handleQueryEvent(
+    state,
+    {},
+    {
+      type: 'prompt_suggestion',
+      uuid: 'other',
+      session_id: 'another-session',
+      suggestion: 'Other chat'
+    }
+  )
+  assert.equal(state.promptSuggestion, undefined)
+})
+
+test('a new Claude user message clears its suggestion and pending idle close', () => {
+  const { instance, state } = setup()
+  state.promptSuggestion = { id: 'old', text: 'Old suggestion' }
+  state.promptSuggestionCloseTimer = setTimeout(() => assert.fail('cleared timer fired'), 50)
+  instance.addUserMessage(state, { id: 'next', content: 'My own prompt', createdAt: 1 })
+  assert.equal(state.promptSuggestion, null)
+  assert.equal(state.promptSuggestionCloseTimer, undefined)
+})
+
+test('a skipped Claude prediction closes the idle query after a bounded wait', async () => {
+  const { instance, state } = setup()
+  let expire
+  const originalSetTimeout = context.setTimeout
+  context.setTimeout = (callback, delay) => {
+    assert.equal(delay, 15_000)
+    expire = callback
+    return { unref() {} }
+  }
+  let closed = 0
+  const control = {
+    getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }),
+    close: () => closed++
+  }
+  Object.assign(state, {
+    query: control,
+    active: true,
+    options: { promptSuggestions: true },
+    queryPromptSuggestions: true,
+    queuedMessages: []
+  })
+  instance.queueUpdate = () => {}
+  instance.refreshSessionMetadata = async () => {}
+  try {
+    assert.equal(await instance.handleQueryEvent(state, control, successfulResult()), false)
+    assert.equal(closed, 0)
+    expire()
+    assert.equal(closed, 1)
+    assert.equal(state.query, null)
+  } finally {
+    context.setTimeout = originalSetTimeout
+  }
+})
+
+test('background work arriving during the prediction wait retains the normal task lifecycle', async () => {
+  const { instance, state } = setup()
+  const control = { close() {} }
+  Object.assign(state, {
+    query: control,
+    queuedMessages: [],
+    options: { promptSuggestions: true },
+    promptSuggestion: { id: 'previous', text: 'Stale' },
+    promptSuggestionCloseTimer: setTimeout(() => {}, 60_000)
+  })
+  instance.queueUpdate = () => {}
+  await instance.handleQueryEvent(state, control, {
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'task', task_type: 'agent' }]
+  })
+  assert.equal(state.promptSuggestionCloseTimer, undefined)
+  assert.equal(state.waitingForSessionIdle, true)
+  instance.resumeBackgroundTurn(state, control)
+  assert.equal(state.active, true)
+  assert.equal(state.promptSuggestion, null)
 })

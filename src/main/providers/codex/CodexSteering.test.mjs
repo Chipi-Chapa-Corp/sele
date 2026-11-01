@@ -322,6 +322,7 @@ for (const successor of [null, 'next-turn']) {
       activeTurnIds: new Map([['chat', 'turn']]),
       getSteeringMessage: () => message,
       markWaitingSteeringMessagePending: () => ({ ...message, status: 'pending' }),
+      emitChatUpdated() {},
       client: { request: () => response }
     })
     const send = adapter.processWaitingSteeringMessage('chat', 'steer')

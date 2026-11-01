@@ -357,6 +357,13 @@ export const setAppProjectSettingsForCwd = (
 
 export const chatPromptBoxSettingFields = [
   {
+    key: 'promptSuggestions',
+    label: 'Show AI prompt suggestions',
+    description:
+      'Suggest the next prompt after a response when supported by your provider. Press Tab to accept.',
+    id: 'settings-chat-prompt-suggestions'
+  },
+  {
     key: 'hidePlans',
     label: 'Hide plans in chats',
     description: 'Hide the expandable plan panel above the message box.',

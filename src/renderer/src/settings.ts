@@ -204,6 +204,7 @@ export type AppSettings = {
     networkRetryDelaySeconds: number
     recentChatCacheLimit: number
     displayUsage: AppChatUsageDisplay
+    promptSuggestions: boolean
     hidePlans: boolean
     presets: boolean
     enableActions: boolean
@@ -410,6 +411,7 @@ export const defaultAppSettings: AppSettings = {
     networkRetryDelaySeconds: defaultNetworkRetrySettings.delaySeconds,
     recentChatCacheLimit: 10,
     displayUsage: { context: false, short: true, long: true },
+    promptSuggestions: true,
     hidePlans: false,
     enableActions: true,
     enableNotesButton: true,
@@ -551,6 +553,7 @@ const getStoredChatBoolean = (
   key:
     | keyof AppChatProgressSettings
     | 'presets'
+    | 'promptSuggestions'
     | 'enableActions'
     | 'enableNotesButton'
     | 'hidePlans'
@@ -656,6 +659,7 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
 
   const booleanKeys = [
     'presets',
+    'promptSuggestions',
     'hidePlans',
     'enableActions',
     'enableNotesButton',
@@ -1155,8 +1159,11 @@ export const readStoredAppSettings = (): AppSettings => {
         displayUsage:
           getStoredChatUsageDisplay(chat.displayUsage) ?? defaultAppSettings.chat.displayUsage,
         presets: getStoredChatBoolean(chat, 'presets'),
+        promptSuggestions: getStoredChatBoolean(chat, 'promptSuggestions'),
         defaultActiveAction:
-          chat.defaultActiveAction === 'steer' ? 'steer' : defaultAppSettings.chat.defaultActiveAction,
+          chat.defaultActiveAction === 'steer'
+            ? 'steer'
+            : defaultAppSettings.chat.defaultActiveAction,
         selectionAction: isAppChatDropdownSelectionAction(chat.selectionAction)
           ? chat.selectionAction
           : defaultAppChatDropdownSettings.selectionAction,
@@ -1482,6 +1489,9 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       )
     ) {
       storedChat.displayUsage = settings.chat.displayUsage
+    }
+    if (settings.chat.promptSuggestions !== defaultAppSettings.chat.promptSuggestions) {
+      storedChat.promptSuggestions = settings.chat.promptSuggestions
     }
     if (settings.chat.presets !== defaultAppSettings.chat.presets) {
       storedChat.presets = settings.chat.presets

@@ -6537,6 +6537,10 @@ export const useWorkspaceController = () => {
       messageBoxDisabled,
       messageBoxNotesGroup,
       messageBoxProviderAvailable,
+      promptSuggestion:
+        selectedChat && chatDetail?.id === selectedChat.id && !chatDetail.historyPreview
+          ? chatDetail.promptSuggestion
+          : null,
       goalObjective:
         selectedChat && chatDetail?.id === selectedChat.id
           ? (chatDetail.goal?.objective ?? null)
