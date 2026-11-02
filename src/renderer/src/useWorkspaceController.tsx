@@ -138,12 +138,9 @@ import { shouldDisableRateLimitReset } from './accountRateLimits'
 import { nextLimitReset } from '../../shared/limitReset'
 import { browserApi } from './browserApi'
 import {
-  getComparableChatPreview,
-  isViewedChatCompletion,
   mapPreservingIdentity,
   mergeChatMetadata,
-  mergeSeenUpdatedAt,
-  type ComparableChatPreview
+  mergeSeenUpdatedAt
 } from './chatMetadata'
 import {
   readStoredCollapsedProjectGroups,
@@ -437,7 +434,7 @@ export const useWorkspaceController = () => {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const { selectedChat, setSelectedChat, chatDetail, setChatDetail, selectChatView } =
     useChatViewState()
-  useChatTerminalActivity(chats, selectedChat)
+  useChatTerminalActivity(chats)
   const [recentChatReferencesCache, setRecentChatReferencesCache] = useState<{
     chatKey: string
     references: RecentChatReference[]
@@ -901,7 +898,6 @@ export const useWorkspaceController = () => {
   const selectedChatUpdatedAtRef = useRef<number | null>(null)
   const recentChatCacheLimitRef = useRef(effectiveAppSettings.chat.recentChatCacheLimit)
   const recentChatCacheRef = useRef(new Map<string, RecentChatCacheEntry>())
-  const recentlyViewedActiveChatPreviewsRef = useRef(new Map<string, ComparableChatPreview>())
   const chatOrderMutationsRef = useRef(new Map<string, number>())
   const projectOrderMutationRef = useRef(0)
   const expandedProjectGroupsBeforeDragRef = useRef<Set<string> | null>(null)
@@ -2952,26 +2948,16 @@ export const useWorkspaceController = () => {
   )
 
   const markSelectedChatSeen = useCallback(
-    (rememberPendingCompletion = false): void => {
+    (): void => {
       if (!selectedChat) return
 
       const chatKey = getChatKey(selectedChat)
       const cacheEntry = recentChatCacheRef.current.get(chatKey)
-      if (rememberPendingCompletion && isActiveChatStatus(selectedChat.status)) {
-        const selectedDetail = chatDetailRef.current
-        const lastVisibleMessage =
-          selectedDetail?.id === selectedChat.id
-            ? selectedDetail.items.findLast((item) => item.type === 'message')
-            : null
-        const viewedPreview = getComparableChatPreview(
-          lastVisibleMessage?.role === 'assistant' ? lastVisibleMessage.content : null
-        )
-        if (viewedPreview) recentlyViewedActiveChatPreviewsRef.current.set(chatKey, viewedPreview)
-      }
       markChatSeenAt(
         selectedChat.providerId,
         selectedChat.id,
         Math.max(
+          Date.now(),
           selectedChat.updatedAt,
           chatDetailRef.current?.id === selectedChat.id
             ? (chatDetailRef.current.updatedAt ?? 0)
@@ -3006,24 +2992,6 @@ export const useWorkspaceController = () => {
           updateSubagentWorkingChat(updatedChatKey, event.detail.subagents)
         chatTerminalActivity.requestProbe(updatedChatKey)
         const viewingUpdatedChat = selectedChatKeyRef.current === updatedChatKey
-        const recentlyViewedPreview =
-          recentlyViewedActiveChatPreviewsRef.current.get(updatedChatKey)
-        const completedWhileRecentlyViewed =
-          !viewingUpdatedChat &&
-          isViewedChatCompletion(
-            recentlyViewedPreview,
-            event.summary.preview,
-            event.summary.previewLength,
-            event.turnCompleted
-          )
-        if (
-          recentlyViewedPreview &&
-          (event.summary.preview !== recentlyViewedPreview.preview ||
-            event.summary.previewLength !== recentlyViewedPreview.length ||
-            event.turnCompleted)
-        ) {
-          recentlyViewedActiveChatPreviewsRef.current.delete(updatedChatKey)
-        }
         const staleSelectedDetail = Boolean(
           viewingUpdatedChat &&
             event.detail &&
@@ -3140,17 +3108,6 @@ export const useWorkspaceController = () => {
           }
           providerApi.acknowledgeChatUpdate(event.sequence, false)
         }
-        if ((viewingUpdatedChat && event.turnCompleted) || completedWhileRecentlyViewed) {
-          markChatSeenAt(
-            event.providerId,
-            event.chatId,
-            Math.max(
-              Date.now(),
-              event.summary.updatedAt,
-              viewingUpdatedChat ? (selectedChatUpdatedAtRef.current ?? 0) : 0
-            )
-          )
-        }
         if (
           event.turnCompleted &&
           changesCwdRef.current &&
@@ -3221,7 +3178,7 @@ export const useWorkspaceController = () => {
           })
         }
       }),
-    [applyChatDetail, applyChatSummary, markChatSeenAt, updateSubagentWorkingChat]
+    [applyChatDetail, applyChatSummary, updateSubagentWorkingChat]
   )
 
   useEffect(() => {
@@ -4787,8 +4744,7 @@ export const useWorkspaceController = () => {
       // Even a click on the currently painted chat is a selection request: a
       // different transition may still be pending behind that visible view.
       // Publishing this request cancels the intermediate destination.
-      markSelectedChatSeen(true)
-      recentlyViewedActiveChatPreviewsRef.current.delete(getChatKey(chat))
+      markSelectedChatSeen()
       selectedChatKeyRef.current = getChatKey(chat)
       selectedChatUpdatedAtRef.current = chat.updatedAt
       chatDetailRef.current = nextCachedDetail
@@ -4838,7 +4794,7 @@ export const useWorkspaceController = () => {
         return
       }
 
-      markSelectedChatSeen(true)
+      markSelectedChatSeen()
       setCommitChatReturnTarget(null)
       subagentChatLoadRequestRef.current += 1
       setSubagentChatView(null)
@@ -4863,7 +4819,7 @@ export const useWorkspaceController = () => {
       const projectCwd =
         currentChat && !currentChat.imported ? getChatProjectCwd(currentChat) : undefined
       const projectContainer = currentChat?.container ?? undefined
-      markSelectedChatSeen(true)
+      markSelectedChatSeen()
       selectedChatKeyRef.current = null
       selectedChatUpdatedAtRef.current = null
       subagentChatLoadRequestRef.current += 1
@@ -4873,7 +4829,7 @@ export const useWorkspaceController = () => {
 
   const handleNewChatNoProject = (): void =>
     startTransition(() => {
-      markSelectedChatSeen(true)
+      markSelectedChatSeen()
       selectedChatKeyRef.current = null
       selectedChatUpdatedAtRef.current = null
       subagentChatLoadRequestRef.current += 1
@@ -4886,7 +4842,7 @@ export const useWorkspaceController = () => {
     startTransition(() => {
       if (group.kind !== 'cwd') return
 
-      markSelectedChatSeen(true)
+      markSelectedChatSeen()
       selectedChatKeyRef.current = null
       selectedChatUpdatedAtRef.current = null
       subagentChatLoadRequestRef.current += 1

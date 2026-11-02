@@ -530,7 +530,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
 
     try {
       const detail = await providerApi.getChat(marker.providerId, commitChatId)
-      markSelectedChatSeen(true)
+      markSelectedChatSeen()
       setSendState(sendInFlightRef.current ? 'sending' : 'idle')
       setEditingMessage(null)
       setSearchOpen(false)

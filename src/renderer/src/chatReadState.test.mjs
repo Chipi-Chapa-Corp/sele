@@ -72,3 +72,100 @@ test('delayed detail and metadata snapshots keep read chats read while new repli
   assert.equal(summary(legacyDetail, 12000).updatedAt, 12000)
   assert.equal(fromDetail('claude', legacyDetail, null, 12000).updatedAt, 12000)
 })
+
+test('committed views save the viewing time; delayed older turns stay read and later turns are unread', () => {
+  const path = './workspace/useWorkspaceSelection.tsx'
+  const source = ts.createSourceFile(
+    path,
+    readFileSync(new URL(path, import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const code = new Map()
+  let effect
+  let dependencyCode
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'renderedChatUpdatedAt')
+      code.set(node.name.getText(source), node.initializer.getText(source))
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(source) === 'useEffect' &&
+      node.arguments[0]?.getText(source).includes('renderedChatUpdatedAt')
+    ) {
+      effect = node.arguments[0].getText(source)
+      dependencyCode = node.arguments[1].getText(source)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  assert.equal(code.size, 1)
+  assert.ok(effect)
+  const seen = []
+  let now = 1000
+  const context = vm.createContext({
+    Date: class extends Date {
+      static now() {
+        return now
+      }
+    },
+    selectedChat: { id: 'chat', providerId: 'codex', updatedAt: 100, seenUpdatedAt: null },
+    selectedChatKey: 'codex:chat',
+    selectedProviderId: 'codex',
+    selectedChatId: 'chat',
+    chatDetail: null,
+    latestCommitFinishedAtByChatKey: new Map(),
+    markChatSeenAt: (...args) => seen.push(args)
+  })
+  let previousDependencies
+  const render = () => {
+    for (const [name, initializer] of code)
+      context[name] = vm.runInContext(
+        ts.transpile(`(${initializer})`, { target: ts.ScriptTarget.ES2022 }),
+        context
+      )
+    const dependencies = vm.runInContext(dependencyCode, context)
+    if (previousDependencies?.every((value, index) => Object.is(value, dependencies[index])))
+      return () => {}
+    previousDependencies = dependencies
+    return vm.runInContext(ts.transpile(`(${effect})`, { target: ts.ScriptTarget.ES2022 }), context)
+  }
+  render()()
+  assert.deepEqual(seen, [], 'a loader has no readable transcript')
+  context.chatDetail = { id: 'other', updatedAt: 200 }
+  render()()
+  assert.deepEqual(seen, [], 'a retained transcript for another chat does not count')
+  context.chatDetail = { id: 'chat', updatedAt: 200 }
+  const commit = render()
+  assert.deepEqual(seen, [], 'rendering alone cannot persist before the effect commits')
+  commit()
+  assert.deepEqual(seen.pop(), ['codex', 'chat', 1000])
+  context.selectedChat.seenUpdatedAt = 1000
+  render()()
+  assert.deepEqual(seen, [], 'read-marker feedback does not produce another write')
+  now = 1100
+  context.selectedChat.updatedAt = 300
+  render()()
+  assert.deepEqual(seen.pop(), ['codex', 'chat', 1100], 'a late sidebar update is seen')
+  context.selectedChat.seenUpdatedAt = 1100
+  now = 1200
+  context.latestCommitFinishedAtByChatKey.set('claude:chat', 900)
+  context.latestCommitFinishedAtByChatKey.set('codex:chat', 400)
+  render()()
+  assert.deepEqual(seen.pop(), ['codex', 'chat', 1200], 'viewed commit results are read')
+  context.selectedChat.seenUpdatedAt = 1200
+  context.selectedChat.title = 'Renamed'
+  render()()
+  assert.deepEqual(seen, [], 'unrelated renders do not keep writing the current time')
+
+  const chat = context.selectedChat
+  context.selectedChat = null
+  context.selectedChatId = undefined
+  context.selectedProviderId = undefined
+  render()()
+  for (const updatedAt of [300, 1100, 1200]) {
+    assert.ok(updatedAt <= chat.seenUpdatedAt, 'delayed old turns remain read after departure')
+  }
+  assert.ok(1201 > chat.seenUpdatedAt, 'a turn completed after the last viewing is unread')
+  assert.deepEqual(seen, [], 'departed views do not acknowledge new turns')
+})

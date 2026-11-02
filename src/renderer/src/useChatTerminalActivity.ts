@@ -2,11 +2,8 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import type { ProviderChat } from '../../shared/provider'
 import { chatTerminalActivity } from './chatTerminalActivity'
 import { createChatTerminalPoller } from './chatTerminalPolling'
-import { preferences } from './preferences'
 import { providerApi } from './providerApi'
 import { rememberAgentTerminalChats } from './agentTerminalChats'
-
-const storageKey = 'sele:terminal-chat-unread:v1'
 
 export const useChatTerminalStatus = (key: string) => {
   const subscribe = useCallback(
@@ -17,35 +14,10 @@ export const useChatTerminalStatus = (key: string) => {
   return useSyncExternalStore(subscribe, snapshot, snapshot)
 }
 
-export const useChatTerminalActivity = (
-  chats: ProviderChat[],
-  selectedChat: ProviderChat | null
-): void => {
+export const useChatTerminalActivity = (chats: ProviderChat[]): void => {
   const chatsRef = useRef(chats)
   chatsRef.current = chats
   useEffect(() => rememberAgentTerminalChats(chats), [chats])
-  useEffect(() => {
-    const raw = preferences.getItem(storageKey)
-    let stored: unknown = []
-    try {
-      stored = JSON.parse(raw ?? '[]')
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error
-      console.error('Unable to read saved terminal completion markers.', error)
-    }
-    chatTerminalActivity.initialize(
-      Array.isArray(stored) ? stored.filter((key): key is string => typeof key === 'string') : [],
-      (keys) => preferences.setItem(storageKey, JSON.stringify(keys))
-    )
-  }, [])
-  useEffect(() => {
-    for (const chat of chats)
-      chatTerminalActivity.setIdle(`${chat.providerId}:${chat.id}`, chat.status !== 'active')
-  }, [chats])
-  const selectedKey = selectedChat ? `${selectedChat.providerId}:${selectedChat.id}` : null
-  useEffect(() => {
-    if (selectedKey) chatTerminalActivity.markSeen(selectedKey)
-  }, [selectedKey])
   useEffect(() => {
     const poller = createChatTerminalPoller({
       getChats: () => chatsRef.current,

@@ -531,6 +531,25 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
 
     return finishedAtByChatKey
   }, [chatCommitMarkers])
+  // Save when the chat was viewed, so delayed delivery of an older turn stays read.
+  // Only selection/activity changes retrigger this; read-marker feedback does not.
+  const renderedChatUpdatedAt =
+    selectedChat && chatDetail?.id === selectedChat.id
+      ? Math.max(
+          selectedChat.updatedAt,
+          chatDetail.updatedAt ?? 0,
+          latestCommitFinishedAtByChatKey.get(selectedChatKey!) ?? 0
+        )
+      : null
+  useEffect(() => {
+    if (!selectedProviderId || !selectedChatId || renderedChatUpdatedAt === null) return
+
+    markChatSeenAt(
+      selectedProviderId,
+      selectedChatId,
+      Math.max(Date.now(), renderedChatUpdatedAt)
+    )
+  }, [markChatSeenAt, renderedChatUpdatedAt, selectedChatId, selectedProviderId])
   const selectedChatCommitMarkers = useMemo(
     () =>
       selectedProviderId && selectedChatId

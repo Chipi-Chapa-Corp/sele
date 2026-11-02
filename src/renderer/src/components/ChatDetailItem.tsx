@@ -2145,9 +2145,9 @@ const WorkingStep: React.FC<{
       >
         <div className="chat-detail__working-heading">{heading}</div>
       </div>
-      {turnActions}
       {renderedGeneratedImages}
       {failureLabel}
+      {turnActions}
     </>
   )
 
@@ -2192,8 +2192,8 @@ const WorkingStep: React.FC<{
             </span>
           )}
         </div>
-        {turnActions}
         {failureLabel}
+        {turnActions}
       </>
     )
   }
@@ -2202,9 +2202,9 @@ const WorkingStep: React.FC<{
     if (item.status !== 'stopped' && renderedGeneratedImages.length > 0) {
       return (
         <>
-          {turnActions}
           {renderedGeneratedImages}
           {failureLabel}
+          {turnActions}
         </>
       )
     }
@@ -2389,9 +2389,9 @@ const WorkingStep: React.FC<{
           </div>
         )}
       </details>
-      {turnActions}
       {renderedGeneratedImages}
       {failureLabel}
+      {turnActions}
     </>
   )
 }

@@ -56,9 +56,6 @@ if (!process.versions.electron) {
             import './src/renderer/src/assets/styles/tokens.css'
             import './src/renderer/src/assets/styles/base.css'
             window.taskSnapshot = key => chatTerminalActivity.getSnapshot(key)
-            window.readTasks = key => chatTerminalActivity.markSeen(key)
-            chatTerminalActivity.setIdle('codex:fixture', true)
-            chatTerminalActivity.setIdle('claude:other', true)
             window.terminals = []
             const open = Terminal.prototype.open
             Terminal.prototype.open = function(...args) {
@@ -235,14 +232,12 @@ if (!process.versions.electron) {
         )
         assert.equal(await run('window.emptySession.isConnected'), true, 'Reuses the empty tab')
         assert.equal(await run(`document.querySelectorAll('.terminal-panel__session').length`), 1)
-        await waitFor(
-          `window.taskSnapshot('codex:fixture').unread === true && !window.taskSnapshot('codex:fixture').running`
-        )
+        await waitFor(`!window.taskSnapshot('codex:fixture').running`)
         assert.equal(
           await run(`document.querySelector('[aria-label="Finished since last viewed"]') !== null`),
-          true
+          false,
+          'Terminal completion must not mark the chat unread'
         )
-        await run(`window.readTasks('codex:fixture')`)
         assert.ok(
           !output.includes('[process exited'),
           'Keep-open action leaves an interactive shell'
@@ -259,7 +254,6 @@ if (!process.versions.electron) {
           await run(`document.querySelectorAll('[aria-label="Terminal 1"][role="region"]').length`),
           0
         )
-        await run(`window.readTasks('codex:fixture')`)
         const once = path.join(directory, 'task-once')
         // A shell with a draft is not empty. Find another blank tab even when it is inactive.
         await run(`window.terminalCount = window.terminals.length;
@@ -284,10 +278,8 @@ if (!process.versions.electron) {
           )
         }
         await run(`window.selectChat('claude:other')`)
-        await waitFor(
-          `window.taskSnapshot('codex:fixture').unread && !window.taskSnapshot('codex:fixture').running`
-        )
-        assert.equal(await run(`window.taskSnapshot('claude:other').unread`), false)
+        await waitFor(`!window.taskSnapshot('codex:fixture').running`)
+        assert.equal(await run(`window.taskSnapshot('claude:other').running`), false)
         assert.equal(
           await fs.readFile(once, 'utf8'),
           'done',
@@ -297,15 +289,13 @@ if (!process.versions.electron) {
         assert.ok(await run(`window.text(window.draftTerminal).includes('printf DRAFT')`))
         assert.equal(
           await run(`document.querySelector('[aria-label="Finished since last viewed"]') !== null`),
-          true
+          false,
+          'Background terminal completion must not mark the chat unread'
         )
         if (process.env.SELE_TERMINAL_FIXTURE_SHELL?.endsWith('fish')) {
-          await run(`window.readTasks('claude:other')`)
           await run(`window.terminals.at(-1).input('printf QUICK_TASK_DONE\\r', true)`)
-          await waitFor(
-            `window.taskSnapshot('claude:other').unread && !window.taskSnapshot('claude:other').running`
-          )
           await waitFor(`window.text(window.terminals.at(-1)).includes('QUICK_TASK_DONE')`)
+          await waitFor(`!window.taskSnapshot('claude:other').running`)
         }
         // Native jobs use the same tab strip and xterm, without rerunning their commands.
         const sources = terminal.agentTerminalSessions

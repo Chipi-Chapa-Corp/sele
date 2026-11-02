@@ -5,7 +5,7 @@ export const createPanelTerminalTask = (options: {
   initialChatKey: string | null
   currentChatKey: () => string | null
   readStatus: () => Promise<TerminalProcessStatus>
-  report: (chatKey: string, running: boolean, completed: boolean) => void
+  report: (chatKey: string, running: boolean) => void
 }) => {
   let owner = options.initialChatKey
   let candidate = owner
@@ -21,13 +21,13 @@ export const createPanelTerminalTask = (options: {
     running = true
     foregroundSeen = false
     revision++
-    if (owner) options.report(owner, true, false)
+    if (owner) options.report(owner, true)
   }
   const finish = () => {
     if (disposed || !running) return
     running = false
     revision++
-    if (owner) options.report(owner, false, true)
+    if (owner) options.report(owner, false)
   }
   return {
     start,
@@ -71,7 +71,7 @@ export const createPanelTerminalTask = (options: {
     dispose: () => {
       disposed = true
       revision++
-      if (owner && running) options.report(owner, false, false)
+      if (owner && running) options.report(owner, false)
     }
   }
 }

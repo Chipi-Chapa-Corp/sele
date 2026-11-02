@@ -294,7 +294,6 @@ test('cached selection schedules its matching transcript as one view update', ()
     getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
     subagentChatLoadRequestRef: { current: 0 },
     sendInFlightRef: { current: false },
-    recentlyViewedActiveChatPreviewsRef: { current: new Map() },
     selectedChatKeyRef: { current: null },
     selectedChatUpdatedAtRef: { current: null },
     chatDetailRef: { current: null },

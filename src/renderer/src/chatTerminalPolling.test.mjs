@@ -6,7 +6,6 @@ import { createChatTerminalPoller } from './chatTerminalPolling.ts'
 const fixture = (options = {}) => {
   const activity = createChatTerminalActivity()
   const key = 'opencode:chat'
-  activity.setIdle(key, true)
   const errors = []
   let tasks = ['shell']
   let reads = 0
@@ -41,21 +40,21 @@ const fixture = (options = {}) => {
 test('connection loss clears the running claim without a completion notification, then retries idle chats', async () => {
   const f = fixture()
   await f.poller.poll()
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: true, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: true })
   f.setTasks(new Error('server disconnected'))
   await f.poller.poll()
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false })
   assert.equal(f.errors.length, 1)
   f.setTasks([])
   f.advance(1000)
   await f.poller.poll()
   assert.equal(f.reads(), 3)
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false })
   await f.poller.poll()
   assert.equal(f.reads(), 3, 'successfully discovered idle chats no longer need polling')
 })
 
-test('failed initial discovery retries and verified task completion still marks unread', async () => {
+test('failed initial discovery retries and verified task completion returns to idle', async () => {
   const f = fixture()
   f.setTasks(new Error('temporarily offline'))
   await f.poller.poll()
@@ -65,7 +64,7 @@ test('failed initial discovery retries and verified task completion still marks 
   assert.equal(f.activity.getSnapshot(f.key).running, true)
   f.setTasks([])
   await f.poller.poll()
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: true })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false })
 })
 
 test('losing provider telemetry does not clear independently tracked panel tasks', async () => {
@@ -74,7 +73,7 @@ test('losing provider telemetry does not clear independently tracked panel tasks
   await f.poller.poll()
   f.setTasks(new Error('provider offline'))
   await f.poller.poll()
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: true, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: true })
 })
 
 test('disposed pollers ignore late responses and overlapping polls do not duplicate reads', async () => {
@@ -92,7 +91,7 @@ test('disposed pollers ignore late responses and overlapping polls do not duplic
   f.poller.dispose()
   finish(['shell'])
   await reading
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false })
   await f.poller.poll()
   assert.equal(f.reads(), 1)
 })
@@ -109,13 +108,13 @@ test('an unresponsive provider loses its running claim and late replies cannot r
       })
   )
   await f.poller.poll()
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false })
   assert.match(f.errors[0].message, /Timed out/)
   finish(['shell'])
   f.setTasks([])
   f.advance(1000)
   await f.poller.poll()
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false })
 })
 
 test('persistent failures back off to one retry per minute and report once until recovery', async () => {
@@ -145,7 +144,7 @@ test('persistent failures back off to one retry per minute and report once until
   f.advance(1000)
   f.setTasks([])
   await f.poller.poll()
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false })
 })
 
 test('a failing chat does not delay healthy active chats', async () => {
@@ -194,7 +193,7 @@ test('marking a chat Done stops polling and reopening it discovers terminals aga
   await f.poller.poll()
   await f.poller.poll()
   assert.equal(f.reads(), 1)
-  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false })
   chats = [{ ...chats[0], done: false }]
   await f.poller.poll()
   assert.equal(f.reads(), 2)
@@ -229,8 +228,7 @@ test('chats marked Done during a poll ignore late results and skip queued reques
     assert.equal(f.errors.length, 0)
     for (const chat of chats)
       assert.deepEqual(f.activity.getSnapshot(`codex:${chat.id}`), {
-        running: false,
-        unread: false
+        running: false
       })
     await f.poller.poll()
     assert.equal(reads.length, 4)

@@ -217,7 +217,7 @@ export type CommitControllerDependencies = {
   openingAiCommitChatIds: Set<string>
   chatsRef: React.RefObject<ProviderChat[]>
   setOpeningAiCommitChatIds: React.Dispatch<React.SetStateAction<Set<string>>>
-  markSelectedChatSeen: (rememberPendingCompletion?: boolean) => void
+  markSelectedChatSeen: () => void
   setSendState: React.Dispatch<React.SetStateAction<SendState>>
   setEditingMessage: React.Dispatch<React.SetStateAction<EditingMessage | null>>
   setSearchOpen: React.Dispatch<React.SetStateAction<boolean>>

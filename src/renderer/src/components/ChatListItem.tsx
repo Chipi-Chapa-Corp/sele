@@ -46,7 +46,6 @@ import './ChatListItem.css'
 import { Dropdown } from './Dropdown'
 import { providerApi } from '../providerApi'
 import { useChatTerminalStatus } from '../useChatTerminalActivity'
-import { chatTerminalActivity } from '../chatTerminalActivity'
 import { getChatSleepKey, sleepChat, useChatWakeAt, wakeChat } from '../chatSleep'
 import { BedOff } from './BedOffIcon'
 import { ChatSleepPanel, formatWakeIn } from './ChatSleepPanel'
@@ -208,7 +207,7 @@ export const ChatListItem = memo(function ChatListItem({
     !selected &&
     !childOpen &&
     !chat.done &&
-    (terminalActivity.unread || unreadUpdatedAt > (chat.seenUpdatedAt ?? 0))
+    unreadUpdatedAt > (chat.seenUpdatedAt ?? 0)
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()
@@ -354,10 +353,7 @@ export const ChatListItem = memo(function ChatListItem({
               type: 'button' as const,
               'aria-current': selected ? ('true' as const) : undefined,
               'aria-describedby': detailOpen ? detailCardId : undefined,
-              onClick: () => {
-                chatTerminalActivity.markSeen(`${chat.providerId}:${chat.id}`)
-                onClick(chat)
-              }
+              onClick: () => onClick(chat)
             })}
       >
         <span className="chat-list-item__header">

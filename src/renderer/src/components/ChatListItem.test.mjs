@@ -168,9 +168,8 @@ test('an already read failed reply keeps its red reminder without making the tit
 })
 
 for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
-  test(`${providerId}: an idle terminal task replaces the dot, then completion marks even a read chat unread`, () => {
+  test(`${providerId}: terminal completion preserves the chat read timestamp`, () => {
     const key = `${providerId}:chat`
-    chatTerminalActivity.setIdle(key, true)
     chatTerminalActivity.report(key, 'panel', ['task'])
     assert.match(render(null, { providerId }), /aria-label="Terminal task running"/)
     assert.doesNotMatch(
@@ -178,8 +177,7 @@ for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
       /aria-label="Terminal task running"/
     )
     chatTerminalActivity.report(key, 'panel', [])
-    assert.match(render(null, { providerId }), /status--finished-unseen/)
-    chatTerminalActivity.markSeen(key)
     assert.doesNotMatch(render(null, { providerId }), /status--finished-unseen/)
+    assert.match(render(null, { providerId, updatedAt: 3000 }), /status--finished-unseen/)
   })
 }

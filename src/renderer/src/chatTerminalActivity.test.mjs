@@ -14,7 +14,7 @@ test('terminal updates address one chat and empty task sources return to the sha
   store.subscribe(() => all++)
   store.report('target', 'panel', ['running'])
   store.report('target', 'panel', ['running'])
-  store.report('target', 'panel', [], false)
+  store.report('target', 'panel', [])
   assert.equal(store.getSnapshot('target'), idle)
   assert.equal(target, 2)
   assert.equal(all, 2)
@@ -22,65 +22,30 @@ test('terminal updates address one chat and empty task sources return to the sha
 })
 
 for (const provider of ['codex', 'claude', 'copilot', 'opencode']) {
-  test(`${provider}: panel and agent tasks share one idle indicator and completion marker`, () => {
+  test(`${provider}: panel and agent tasks share a running indicator and completion returns to idle`, () => {
     const store = createChatTerminalActivity()
     const key = `${provider}:chat`
-    store.setIdle(key, true)
+    const idle = store.getSnapshot(key)
     store.report(key, 'panel:tab', ['panel-task'])
     store.report(key, 'agent', ['agent-task'])
-    assert.deepEqual(store.getSnapshot(key), { running: true, unread: false })
-    store.markSeen(key)
+    assert.deepEqual(store.getSnapshot(key), { running: true })
     store.report(key, 'panel:tab', [])
-    assert.deepEqual(store.getSnapshot(key), { running: true, unread: true })
+    assert.deepEqual(store.getSnapshot(key), { running: true })
     store.report(key, 'agent', [])
-    assert.deepEqual(store.getSnapshot(key), { running: false, unread: true })
-    store.markSeen(key)
-    assert.deepEqual(store.getSnapshot(key), { running: false, unread: false })
+    assert.equal(store.getSnapshot(key), idle)
+    assert.deepEqual(store.getSnapshot(key), { running: false })
   })
 }
 
-test('completion while the chat is working does not create an idle-task unread marker', () => {
+test('a first empty snapshot and duplicate updates preserve the idle snapshot', () => {
   const store = createChatTerminalActivity()
-  store.setIdle('chat', false)
-  store.report('chat', 'agent', ['one'])
-  store.report('chat', 'agent', [])
-  assert.equal(store.getSnapshot('chat').unread, false)
-  store.setIdle('chat', true)
-  store.report('chat', 'agent', ['two'])
-  store.report('chat', 'agent', [])
-  assert.equal(store.getSnapshot('chat').unread, true)
-})
-
-test('a first empty snapshot, duplicate updates and deliberate tab closure do not invent completions', () => {
-  const store = createChatTerminalActivity()
-  store.setIdle('chat', true)
-  store.report('chat', 'agent', [])
   const snapshot = store.getSnapshot('chat')
+  store.report('chat', 'agent', [])
   store.report('chat', 'agent', [])
   assert.equal(store.getSnapshot('chat'), snapshot)
   store.report('chat', 'panel', ['one'])
-  store.report('chat', 'panel', [], false)
-  assert.equal(store.getSnapshot('chat').unread, false)
-})
-
-test('terminal unread state survives restart and clears only when that chat is read', () => {
-  const store = createChatTerminalActivity()
-  let saved = []
-  store.initialize([], (keys) => {
-    saved = keys
-  })
-  store.setIdle('chat', true)
-  store.report('chat', 'agent', ['one'])
-  store.report('chat', 'agent', [])
-  const restarted = createChatTerminalActivity()
-  restarted.initialize(saved, (keys) => {
-    saved = keys
-  })
-  assert.deepEqual(restarted.getSnapshot('chat'), { running: false, unread: true })
-  restarted.markSeen('other')
-  assert.equal(restarted.getSnapshot('chat').unread, true)
-  restarted.markSeen('chat')
-  assert.deepEqual(saved, [])
+  store.report('chat', 'panel', [])
+  assert.equal(store.getSnapshot('chat'), snapshot)
 })
 
 test('a panel command retains its launching chat when selection changes, then uses the new chat for the next command', async () => {
@@ -101,10 +66,10 @@ test('a panel command retains its launching chat when selection changes, then us
   task.input('sleep 1\r')
   task.output('\x1b]777;sele-command-finished;0\x07')
   assert.deepEqual(events, [
-    ['first', true, false],
-    ['first', false, true],
-    ['second', true, false],
-    ['second', false, true]
+    ['first', true],
+    ['first', false],
+    ['second', true],
+    ['second', false]
   ])
 })
 
@@ -122,10 +87,10 @@ test('keep-open commands and shell integration finish without closing the termin
   task.output('\x1b]133;C\x07')
   task.output('\x1b]133;D;0\x07')
   assert.deepEqual(events, [
-    ['chat', true, false],
-    ['chat', false, true],
-    ['chat', true, false],
-    ['chat', false, true]
+    ['chat', true],
+    ['chat', false],
+    ['chat', true],
+    ['chat', false]
   ])
 })
 

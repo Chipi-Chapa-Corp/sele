@@ -274,13 +274,8 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
       initialChatKey,
       currentChatKey: () => chatKeyRef.current,
       readStatus: () => terminalApi.getProcessStatus(sessionId),
-      report: (key, running, completed) =>
-        chatTerminalActivity.report(
-          key,
-          `panel:${sessionId}`,
-          running ? [sessionId] : [],
-          completed
-        )
+      report: (key, running) =>
+        chatTerminalActivity.report(key, `panel:${sessionId}`, running ? [sessionId] : [])
     })
 
     const updateState = (nextState: TerminalState): void => {

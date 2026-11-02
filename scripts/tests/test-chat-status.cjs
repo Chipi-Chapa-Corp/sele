@@ -50,7 +50,7 @@ if (!process.versions.electron) {
             window.closeChat = () => {selected = null; render()}
             window.completeChat = id => {chats.find(chat => chat.id === id).lastTurnOutcome = null; render()}
             function Fixture() {
-              useChatTerminalActivity(chats, chats.find(chat => chat.id === selected) ?? null)
+              useChatTerminalActivity(chats)
               return <>{chats.map(chat => <div key={chat.id} data-chat={chat.id}>
                 <ChatListItem chat={{...chat, seenUpdatedAt:JSON.parse(localStorage.getItem(chat.id) || 'null')}}
                   selected={selected === chat.id}
@@ -93,6 +93,10 @@ if (!process.versions.electron) {
         #root {display:grid; gap:10px}
         </style><div id="root"></div><script>
           window.agentTasks={}; window.agentTaskErrors={};
+          // Legacy terminal markers must have no effect, including after restart.
+          localStorage.setItem('sele:terminal-chat-unread:v1', JSON.stringify(
+            ['codex','claude','copilot','opencode'].map(provider => provider+':'+provider+'-unread')
+          ));
           window.providerApi={getChatTerminalTasks:async (_provider,id)=>{
             if(window.agentTaskErrors[id]) throw new Error('Fixture provider disconnected');
             return window.agentTasks[id]||[];
@@ -230,18 +234,42 @@ if (!process.versions.electron) {
         await waitFor(
           `document.querySelector('[data-chat="${id}"] [aria-label="Terminal task running"]') !== null`
         )
+        await run(`document.querySelector('[data-chat="${id}"] .chat-list-item__main').click()`)
         await run(`window.setAgentTasks('${id}', [])`)
         await waitFor(
-          `document.querySelector('[data-chat="${id}"] [aria-label="Finished since last viewed"]') !== null`
+          `document.querySelector('[data-chat="${id}"] [aria-label="Terminal task running"]') === null`
+        )
+        await run('window.closeChat()')
+        assert.equal(
+          await indicator(id),
+          null,
+          'completion while viewing stays read after departure'
+        )
+        await run(`window.setAgentTasks('${id}', ['background-task'])`)
+        await waitFor(
+          `document.querySelector('[data-chat="${id}"] [aria-label="Terminal task running"]') !== null`
+        )
+        await run(`window.setAgentTasks('${id}', [])`)
+        await waitFor(
+          `document.querySelector('[data-chat="${id}"] [aria-label="Terminal task running"]') === null`
+        )
+        assert.equal(
+          await indicator(id),
+          null,
+          'background terminal completion must not mark unread'
         )
       }
       win.destroy()
       await open()
       for (const provider of ['codex', 'claude', 'copilot', 'opencode']) {
-        assert.equal((await indicator(provider + '-unread')).label, 'Finished since last viewed')
+        assert.equal(
+          await indicator(provider + '-unread'),
+          null,
+          'terminal markers stay absent after restart'
+        )
       }
       console.log(
-        'PASS chat status UI: all four providers, restored progress agrees with terminal sidebar status across restart, unread startup, persistent red/gray dots after read, successful continuation, agent terminal polling, connection loss and recovery, and persisted unread'
+        'PASS chat status UI: all four providers, restored progress, unread startup, error/stopped reminders, terminal polling, connection recovery, foreground/background completion never marks unread, and legacy terminal markers ignored across restart'
       )
       win.destroy()
       app.exit(0)

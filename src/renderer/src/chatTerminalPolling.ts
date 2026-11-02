@@ -31,7 +31,7 @@ export const createChatTerminalPoller = (options: {
     discovered.delete(key)
     running.delete(key)
     failures.delete(key)
-    options.activity.report(key, 'agent', [], false)
+    options.activity.report(key, 'agent', [])
   }
   return {
     dispose: () => {
@@ -94,7 +94,7 @@ export const createChatTerminalPoller = (options: {
                 // persistent failure cannot flood IPC or repeatedly launch a provider.
                 discovered.delete(key)
                 running.delete(key)
-                options.activity.report(key, 'agent', [], false)
+                options.activity.report(key, 'agent', [])
                 const previous = failures.get(key)
                 const attempts = (previous?.attempts ?? 0) + 1
                 failures.set(key, {
