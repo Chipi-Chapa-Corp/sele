@@ -20,9 +20,6 @@ type Flight = {
 }
 const flights = new Set<Flight>()
 const duration = 360
-const landingDuration = 80
-const totalDuration = duration + landingDuration
-const landingOffset = duration / totalDuration
 const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const finishFlight = (flight: Flight): void => {
@@ -79,11 +76,11 @@ function revealLandingTarget(flight: Flight): void {
   if (!flight.target || !flight.animation) return
   flight.arrivalAnimation?.cancel()
   flight.arrivalAnimation = flight.target.animate(
-    [{ opacity: 0 }, { opacity: 0, offset: landingOffset }, { opacity: 1 }],
-    { duration: totalDuration, fill: 'both' }
+    [{ opacity: 0 }, { opacity: 1 }],
+    { duration, easing: 'steps(1, end)', fill: 'both' }
   )
-  // A provider can replace the row during the handover, too. Continue its fade
-  // at the same age instead of briefly exposing or hiding the replacement.
+  // Replacements use the same clock so the row and copy switch visibility on
+  // the same frame, even if provider confirmation arrives right at landing.
   if (flight.animation.startTime !== null) {
     flight.arrivalAnimation.startTime = flight.animation.startTime
   } else {
@@ -139,7 +136,7 @@ function flyToTarget(flight: Flight): void {
   document.body.append(ghost)
   flight.ghost = ghost
   window.clearTimeout(flight.timer)
-  flight.timer = window.setTimeout(() => finishFlight(flight), totalDuration + 80)
+  flight.timer = window.setTimeout(() => finishFlight(flight), duration + 80)
   const cancel = (): void => finishFlight(flight)
   window.addEventListener('wheel', cancel, { passive: true, capture: true })
   window.addEventListener('resize', cancel)
@@ -154,12 +151,14 @@ function flyToTarget(flight: Flight): void {
         opacity: 1,
         easing: 'cubic-bezier(0.25, 0.65, 0.3, 1)'
       },
-      { transform: 'translate(0, 0)', opacity: 1, offset: landingOffset },
-      { transform: 'translate(0, 0)', opacity: 0 }
+      { transform: 'translate(0, 0)', opacity: 1, offset: 1 },
+      { transform: 'translate(0, 0)', opacity: 0, offset: 1 }
     ],
-    { duration: totalDuration, fill: 'both' }
+    { duration, fill: 'both' }
   )
-  // Schedule both sides of the handover now. Provider updates can occupy the
+  // Keep one layer fully visible throughout: crossfading overlapping copies
+  // dims even when their opacities add to one (50% over 50% covers only 75%).
+  // Schedule both sides of the swap now. Provider updates can occupy the
   // renderer when travel ends; only DOM cleanup should wait for JavaScript.
   // The fixed endpoint keeps the path straight even if the live row moves.
   flight.animation.startTime = document.timeline.currentTime

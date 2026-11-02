@@ -1,12 +1,15 @@
 import { Check, X } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useId, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import type { ProviderPendingUserInput } from '../../../shared/provider'
 import { getOptionalRenderableText, getRenderableText } from '../renderableText'
+import { readUserInputDraft, writeUserInputDraft } from '../userInputDrafts'
 import { Button } from './Button'
 import { CompactMarkdown } from './CompactMarkdown'
 import { Input } from './Input'
+import { Textarea } from './Textarea'
 
 type UserInputRequestBoxProps = {
+  chatKey: string
   disabled?: boolean
   error?: string | null
   request: ProviderPendingUserInput
@@ -15,6 +18,7 @@ type UserInputRequestBoxProps = {
 }
 
 export const UserInputRequestBox = ({
+  chatKey,
   disabled = false,
   error = null,
   request,
@@ -22,7 +26,7 @@ export const UserInputRequestBox = ({
   onSubmit
 }: UserInputRequestBoxProps): React.ReactElement => {
   const questionId = useId()
-  const [freeformAnswer, setFreeformAnswer] = useState('')
+  const [freeformAnswer, setFreeformAnswer] = useState(() => readUserInputDraft(chatKey, request))
 
   const answer = freeformAnswer.trim()
   const question = getRenderableText(request.question, 'The agent requested input.')
@@ -38,6 +42,25 @@ export const UserInputRequestBox = ({
   const handleSubmit = (): void => {
     if (disabled || !answer) return
     void onSubmit(answer, true)
+  }
+
+  const answerInputProps = {
+    'aria-label': "Answer the agent's question",
+    autoFocus: true,
+    className: 'chat-user-input__input',
+    disabled,
+    placeholder: choices.length > 0 ? 'Or type an answer…' : 'Type your answer…',
+    value: freeformAnswer,
+    onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const value = event.target.value
+      setFreeformAnswer(value)
+      writeUserInputDraft(chatKey, request, value)
+    },
+    onKeyDown: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+      event.preventDefault()
+      handleSubmit()
+    }
   }
 
   return (
@@ -95,21 +118,11 @@ export const UserInputRequestBox = ({
         )}
         {request.allowFreeform && (
           <div className="chat-user-input__answer">
-            <Input
-              aria-label="Answer the agent's question"
-              autoFocus
-              className="chat-user-input__input"
-              disabled={disabled}
-              placeholder={choices.length > 0 ? 'Or type an answer…' : 'Type your answer…'}
-              type={request.isSecret ? 'password' : 'text'}
-              value={freeformAnswer}
-              onChange={(event) => setFreeformAnswer(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
-                event.preventDefault()
-                handleSubmit()
-              }}
-            />
+            {request.isSecret ? (
+              <Input {...answerInputProps} type="password" />
+            ) : (
+              <Textarea {...answerInputProps} rows={1} />
+            )}
             {answer && (
               <Button
                 callback={handleSubmit}

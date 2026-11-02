@@ -138,6 +138,13 @@
   background: var(--depth-popup-surface);
 }
 
+textarea.chat-user-input__input {
+  field-sizing: content;
+  max-height: 9rem;
+  overflow-y: auto;
+  resize: none;
+}
+
 .chat-provider-updates {
   max-height: min(40vh, 28rem);
   overflow-y: auto;

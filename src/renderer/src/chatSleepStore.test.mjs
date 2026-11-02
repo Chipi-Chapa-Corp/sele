@@ -183,6 +183,56 @@ test('sleeping again replaces the timer and waking cancels it', () => {
   assert.equal(harness.values.has(chatSleepStorageKey), false)
 })
 
+test('bulk sleep shares a deadline, persists once and leaves unrelated chats unchanged', () => {
+  const harness = createHarness()
+  const store = harness.createStore()
+  store.sleep('codex:other', day)
+  const otherWakeAt = store.getSnapshot().get('codex:other')
+  const writes = []
+  harness.storage.setItem = (key, value) => {
+    writes.push(value)
+    harness.values.set(key, value)
+  }
+  const snapshots = []
+  store.subscribeKey('codex:a', () => snapshots.push([...store.getSnapshot()]))
+  let untouched = 0
+  store.subscribeKey('codex:other', () => untouched++)
+
+  store.sleepMany(['codex:a', 'claude:a', 'codex:a'], hour)
+  const expected = [
+    ['codex:other', otherWakeAt],
+    ['codex:a', harness.time + hour],
+    ['claude:a', harness.time + hour]
+  ]
+  assert.deepEqual([...store.getSnapshot()], expected)
+  assert.deepEqual(snapshots, [expected], 'subscribers see the complete batch')
+  assert.equal(writes.length, 1)
+  assert.equal(untouched, 0)
+  assert.equal(harness.timers.length, 1)
+
+  harness.advance(hour)
+  assert.deepEqual([...store.getSnapshot()], [['codex:other', otherWakeAt]])
+})
+
+test('bulk untimed sleep replaces timers and ignores empty or unchanged batches', () => {
+  const harness = createHarness()
+  const store = harness.createStore()
+  store.sleepMany(['codex:a', 'claude:b'], hour)
+  store.sleepMany(['codex:a', 'claude:b'])
+  const snapshot = store.getSnapshot()
+  assert.deepEqual(
+    [...snapshot],
+    [
+      ['codex:a', null],
+      ['claude:b', null]
+    ]
+  )
+  assert.equal(harness.timers.length, 0)
+  store.sleepMany([])
+  store.sleepMany(['codex:a', 'claude:b'])
+  assert.equal(store.getSnapshot(), snapshot)
+})
+
 test('repeating the current state notifies nobody', () => {
   const harness = createHarness()
   const store = harness.createStore()
@@ -192,6 +242,37 @@ test('repeating the current state notifies nobody', () => {
   store.sleep('codex:a')
   store.sleep('codex:a')
   assert.equal(notifications, 1)
+})
+
+test('bulk wake clears only its targets in one write and cancels their timers', () => {
+  const harness = createHarness()
+  const store = harness.createStore()
+  store.sleep('codex:other')
+  store.sleepMany(['codex:a', 'claude:b'], hour)
+  let writes = 0
+  const setItem = harness.storage.setItem
+  harness.storage.setItem = (...args) => {
+    writes++
+    setItem(...args)
+  }
+  const snapshots = []
+  store.subscribeKey('codex:a', () => snapshots.push([...store.getSnapshot()]))
+  let untouched = 0
+  store.subscribeKey('codex:other', () => untouched++)
+  store.wakeMany(['codex:a', 'claude:b', 'codex:a', 'codex:awake'])
+  assert.deepEqual([...store.getSnapshot()], [['codex:other', null]])
+  assert.deepEqual(snapshots, [[['codex:other', null]]])
+  assert.equal(writes, 1)
+  assert.equal(untouched, 0)
+  assert.equal(harness.timers.length, 0)
+
+  const snapshot = store.getSnapshot()
+  store.wakeMany([])
+  store.wakeMany(['codex:a', 'claude:b'])
+  assert.equal(store.getSnapshot(), snapshot)
+  assert.equal(writes, 1)
+  store.wakeMany(['codex:other'])
+  assert.equal(harness.values.has(chatSleepStorageKey), false)
 })
 
 test('existing bookmarks become untimed sleeps and do not return after waking', () => {

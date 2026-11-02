@@ -23,6 +23,7 @@ import { unloadWorkingStepItems } from '../../../shared/chatTurns'
 import { providerOneShotGenerationCanceledMessage } from '../../../shared/provider'
 import { appApi } from '../appApi'
 import { providerApi } from '../providerApi'
+import { clearUserInputDraft } from '../userInputDrafts'
 import { getComposerDraftScopeKey } from '../composerDraft'
 import { moveComposerDraftScope, updateStoredComposerDrafts } from '../composerDraftStorage'
 import { getContainerTargetKey } from '../containerSelection'
@@ -1200,6 +1201,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           ? getCurrentTurnOptions()
           : undefined
       )
+      clearUserInputDraft(getChatKey(selectedChat), pendingUserInput)
       applyViewedChatDetail(selectedChat.providerId, detail)
     } catch (error) {
       console.error('[caught:useChatMessagingController:resolveSelectedUserInput]', error)

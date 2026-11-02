@@ -64,6 +64,7 @@ type ButtonProps = NativeButtonProps & {
   size?: ButtonSize
   fill?: boolean
   dropdownActions?: readonly ButtonDropdownAction[]
+  dropdownContent?: (close: () => void) => ReactNode
   dropdownLabel?: string
   dropdownMenuAlign?: 'start' | 'end'
   dropdownPlacement?: 'bottom' | 'top'
@@ -243,6 +244,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     callback,
     disabled = false,
     dropdownActions,
+    dropdownContent,
     dropdownLabel = 'More actions',
     dropdownMenuAlign = 'start',
     dropdownPlacement = 'bottom',
@@ -265,8 +267,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
   const enabledDropdownActions = dropdownActions?.filter((action) => !action.disabled) ?? []
-  const hasDropdownActions = Boolean(dropdownActions?.length)
-  const dropdownDisabled = enabledDropdownActions.length === 0
+  const hasDropdown = Boolean(dropdownActions?.length || dropdownContent)
+  const dropdownDisabled = !dropdownContent && enabledDropdownActions.length === 0
 
   useEffect(() => {
     if (!open) return
@@ -332,7 +334,14 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       nextMenuStyle.top = toCssRem(buttonRect.bottom + menuOffset)
     }
 
-    if (dropdownMenuAlign === 'end') {
+    if (dropdownContent) {
+      const width = Math.min(maxMenuWidth, window.innerWidth - 2 * viewportInset)
+      const left = dropdownMenuAlign === 'end' ? buttonRect.right - width : buttonRect.left
+      nextMenuStyle.width = toCssRem(width)
+      nextMenuStyle.left = toCssRem(
+        Math.max(viewportInset, Math.min(left, window.innerWidth - width - viewportInset))
+      )
+    } else if (dropdownMenuAlign === 'end') {
       nextMenuStyle.right = toCssRem(Math.max(viewportInset, window.innerWidth - buttonRect.right))
     } else {
       nextMenuStyle.left = toCssRem(startLeft)
@@ -406,9 +415,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     void action.callback()
   }
 
-  if (hasDropdownActions) {
+  if (hasDropdown) {
     const menu =
-      open && dropdownActions ? (
+      open && (dropdownActions || dropdownContent) ? (
         <div
           ref={menuRef}
           className={getMenuRootClassName(theme, size, dropdownPlacement, dropdownMenuAlign)}
@@ -417,11 +426,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           <MotionSurface
             className="ui-button-menu"
             id={menuId}
-            role="menu"
-            aria-labelledby={buttonId}
+            role={dropdownContent ? 'dialog' : 'menu'}
+            aria-label={dropdownContent ? dropdownLabel : undefined}
+            aria-labelledby={dropdownContent ? undefined : buttonId}
             onKeyDown={handleMenuKeyDown}
           >
-            {dropdownActions.map((action) =>
+            {dropdownContent?.(closeMenu)}
+            {dropdownActions?.map((action) =>
               action.inlineActions?.length ? (
                 <ButtonMenuRow
                   disabled={action.disabled}
@@ -497,7 +508,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         <button
           aria-controls={open ? menuId : undefined}
           aria-expanded={open}
-          aria-haspopup="menu"
+          aria-haspopup={dropdownContent ? 'dialog' : 'menu'}
           aria-label={dropdownLabel}
           className={getButtonClassName(
             theme,

@@ -191,7 +191,8 @@
   overflow: hidden;
 }
 
-.chat-list-group--cwd .chat-list-group__header:is(:hover, :has(:focus-visible))
+.chat-list-group--cwd
+  .chat-list-group__header:is(:hover, :has(:focus-visible), :has(.ui-button-group--open))
   .chat-list-group__action {
   width: auto;
   margin-left: 0.3rem;
@@ -212,7 +213,8 @@
 }
 
 .chat-list-group__header:hover .chat-list-group__action,
-.chat-list-group__header:has(:focus-visible) .chat-list-group__action {
+.chat-list-group__header:has(:focus-visible) .chat-list-group__action,
+.chat-list-group__header:has(.ui-button-group--open) .chat-list-group__action {
   opacity: 1;
   pointer-events: auto;
 }

@@ -1,4 +1,9 @@
 import {
+  chatSidebarFilters,
+  type ChatSidebarFilter,
+  type ChatSidebarTabs
+} from '../chatSidebarFilter'
+import {
   networkRetryCountMax,
   networkRetryDelaySecondsMin,
   networkRetryDelaySecondsMax
@@ -97,8 +102,8 @@ export type ProviderResourcesLoadState = 'idle' | 'loading' | 'ready'
 export type SettingsPanelProps = {
   groupChatsByProject: boolean
   handleGroupChatsByProjectChange: (enabled: boolean) => void
-  hideSleepingChats: boolean
-  handleHideSleepingChatsChange: (hide: boolean) => void
+  chatSidebarTabs: ChatSidebarTabs
+  handleChatSidebarTabChange: (tab: ChatSidebarFilter, visible: boolean) => void
   appearanceFontSizeInputDraft: { key: string; value: string } | null
   appearanceZoomLevelInput: string
   browserDefaultScaleInput: string
@@ -1030,20 +1035,33 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 }
               />
             </div>
-            <div className={getSettingsFieldClassName()}>
-              <div className="settings-dialog__field-header">
-                <h3 id="settings-hide-sleeping-chats">Hide sleeping chats</h3>
-                <p>Hide sleeping chats from the conversation list.</p>
+          </div>
+        </section>
+        <section className="settings-dialog__section" aria-labelledby="settings-chat-sidebar-tabs">
+          <h2 className="settings-dialog__section-heading" id="settings-chat-sidebar-tabs">
+            Header tabs
+          </h2>
+          <div className="settings-dialog__section-cards">
+            {chatSidebarFilters.map(({ value, label, description }) => (
+              <div className={getSettingsFieldClassName()} key={value}>
+                <div className="settings-dialog__field-header">
+                  <h3 id={`settings-sidebar-tab-${value}`}>{label}</h3>
+                  <p>
+                    {value === 'sleeping'
+                      ? 'Show the Sleeping tab and Sleep and Wake up buttons.'
+                      : description}
+                  </p>
+                </div>
+                <Switch
+                  className="settings-switch"
+                  aria-labelledby={`settings-sidebar-tab-${value}`}
+                  checked={props.chatSidebarTabs[value]}
+                  onChange={(event) =>
+                    props.handleChatSidebarTabChange(value, event.currentTarget.checked)
+                  }
+                />
               </div>
-              <Switch
-                className="settings-switch"
-                aria-labelledby="settings-hide-sleeping-chats"
-                checked={props.hideSleepingChats}
-                onChange={(event) =>
-                  props.handleHideSleepingChatsChange(event.currentTarget.checked)
-                }
-              />
-            </div>
+            ))}
           </div>
         </section>
         <section

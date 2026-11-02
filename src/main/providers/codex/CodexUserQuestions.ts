@@ -180,6 +180,13 @@ export class CodexUserQuestions {
   // Seed from the current tail, including when reopening a chat. A later ordinary user message
   // makes older questions historical; known pending questions survive our own answer steering.
   syncAsync(threadId: string, turn: CodexTurn | undefined): void {
+    // Completed history must never restore questions, including when the items array
+    // is unchanged from the last live update or the chat is reopened.
+    if (turn && ['completed', 'failed', 'interrupted'].includes(turn.status ?? '')) {
+      this.asynchronous.delete(threadId)
+      this.expectedReplies.delete(threadId)
+      return
+    }
     if (!turn) return
     let state = this.asynchronous.get(threadId)
     if (!state || state.turnId !== turn.id) {

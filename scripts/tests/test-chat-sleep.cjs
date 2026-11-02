@@ -12,6 +12,8 @@ if (!process.versions.electron) {
             import React from 'react'
             import { createRoot } from 'react-dom/client'
             import { ChatList } from './src/renderer/src/components/ChatList'
+            import { ChatListGroup } from './src/renderer/src/components/ChatListGroup'
+            import { ChatSleepActionsContext } from './src/renderer/src/chatSleep'
             import './src/renderer/src/assets/main.css'
             const stored = new Map()
             window.preferencesApi = {
@@ -22,12 +24,24 @@ if (!process.versions.electron) {
             const noop = () => {}
             const chat = { id: 'a', providerId: 'codex', title: 'Conversation a', createdAt: Date.now(),
               updatedAt: Date.now(), cwd: '/project', status: null }
-            createRoot(document.getElementById('root')).render(
+            const Fixture = () => {
+              const [sleepAction, setSleepAction] = React.useState('sleep')
+              window.setSleepAction = setSleepAction
+              return <ChatSleepActionsContext.Provider value={sleepAction}>
               <aside style={{width:280,padding:24}}>
                 <ChatList chats={[chat]} selectedChatKey={null} onMarkDone={noop} onRename={noop}
                   onResolveApproval={noop} onSelect={noop} onTogglePinned={noop} />
+                <ChatListGroup contentId="project-chats" open visibleChatCount={1}
+                  group={{ key: 'cwd:/project', cwd: '/project', label: 'Project', kind: 'cwd',
+                    chats: [{ ...chat, id: 'b' }, { ...chat, id: 'c', providerId: 'claude' }] }}
+                  selectedChatKey={null} onMarkChatDone={noop} onMarkCwdChatsDone={noop}
+                  onNewChatInCwd={noop} onRenameChat={noop} onResolveApproval={noop}
+                  onReorderChats={noop} onSelectChat={noop} onToggle={noop}
+                  onToggleChatPinned={noop} onUnpinPinnedChats={noop} />
               </aside>
-            )
+              </ChatSleepActionsContext.Provider>
+            }
+            createRoot(document.getElementById('root')).render(<Fixture />)
           `,
           loader: 'tsx',
           resolveDir: process.cwd()
@@ -162,6 +176,135 @@ if (!process.versions.electron) {
       await run(`document.querySelector('.ui-dropdown__action').click()`)
       await wait(250)
       assert.deepEqual(JSON.parse(await storedSleep()), { 'codex:a': null }, 'no timer by default')
+
+      const projectSleep = 'Sleep all chats in project Project'
+      const projectDropdown = `${projectSleep} for a set time`
+      const clickButton = (label) =>
+        run(`document.querySelector('[aria-label="${label}"]').click()`)
+      assert.deepEqual(
+        await run(`(() => {
+        const row = document.querySelector('.chat-list-group__action');
+        return [...row.querySelectorAll('button')].map(button => button.getAttribute('aria-label'));
+      })()`),
+        ['New chat in Project', projectSleep, projectDropdown, 'Mark all Project chats done']
+      )
+      await clickButton(projectDropdown)
+      await wait(250)
+      if (process.env.SELE_TEST_SCREENSHOT_PATH) {
+        await fs.writeFile(
+          process.env.SELE_TEST_SCREENSHOT_PATH,
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
+      assert.equal(
+        await run(`(() => {
+        const panel = document.querySelector('.ui-button-menu').getBoundingClientRect();
+        return panel.left >= 0 && panel.right <= innerWidth && panel.bottom <= innerHeight;
+      })()`),
+        true,
+        'project sleep dropdown stays inside the viewport'
+      )
+      assert.equal(
+        await run(`document.activeElement?.getAttribute('aria-label')`),
+        'Sleep duration'
+      )
+      assert.equal(
+        await run(
+          `document.querySelector('.ui-button-menu[role="dialog"]').getAttribute('aria-label')`
+        ),
+        projectDropdown
+      )
+      assert.equal(
+        await run(`getComputedStyle(document.querySelector('.chat-list-group__action')).opacity`),
+        '1',
+        'project actions stay visible while the dropdown has focus'
+      )
+      await run(`document.querySelector('[aria-label="Sleep for 1h"]').click()`)
+      await wait(250)
+      const projectTimers = JSON.parse(await storedSleep())
+      assert.deepEqual(Object.keys(projectTimers).sort(), ['claude:c', 'codex:a', 'codex:b'])
+      assert.equal(projectTimers['codex:a'], null, 'another chat keeps its existing sleep')
+      assert.equal(
+        projectTimers['codex:b'],
+        projectTimers['claude:c'],
+        'all project chats share the deadline, including the unrendered page'
+      )
+      assert.ok(Math.abs(projectTimers['codex:b'] - Date.now() - 3600000) < 5000)
+      assert.equal(await run(`document.querySelector('.ui-button-menu')`), null)
+
+      await clickButton(projectDropdown)
+      await wait(250)
+      await typeDuration('2h 15m')
+      await wait(50)
+      await run(`${sleepButton}.click()`)
+      await wait(250)
+      const customTimers = JSON.parse(await storedSleep())
+      assert.equal(customTimers['codex:b'], customTimers['claude:c'])
+      assert.ok(Math.abs(customTimers['codex:b'] - Date.now() - 8100000) < 5000)
+
+      await clickButton(projectDropdown)
+      await wait(250)
+      await run(
+        `document.querySelector('.chat-sleep-panel input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`
+      )
+      await wait(250)
+      assert.equal(
+        await run(`document.querySelector('.ui-button-menu')`),
+        null,
+        'Escape closes the dropdown'
+      )
+      assert.equal(await run(`document.activeElement?.getAttribute('aria-label')`), projectDropdown)
+
+      await clickButton(projectSleep)
+      await wait(250)
+      assert.deepEqual(
+        JSON.parse(await storedSleep()),
+        { 'codex:a': null, 'codex:b': null, 'claude:c': null },
+        'main button sleeps every project chat without a timer'
+      )
+
+      await run(`window.setSleepAction('wake')`)
+      await wait(100)
+      const projectWake = 'Wake all chats in project Project'
+      assert.equal(
+        await run(`document.querySelector('[aria-label="${projectWake}"]').title`),
+        projectWake
+      )
+      assert.equal(await run(`document.querySelector('[aria-label="${projectSleep}"]')`), null)
+      await clickButton(projectDropdown)
+      await wait(250)
+      await run(`document.querySelector('[aria-label="Sleep for 30m"]').click()`)
+      await wait(250)
+      const rescheduled = JSON.parse(await storedSleep())
+      assert.equal(rescheduled['codex:a'], null)
+      assert.equal(rescheduled['codex:b'], rescheduled['claude:c'])
+      assert.ok(
+        Math.abs(rescheduled['codex:b'] - Date.now() - 1800000) < 5000,
+        'the sleeping tab dropdown reschedules sleep'
+      )
+
+      await clickButton(projectWake)
+      await wait(250)
+      assert.deepEqual(
+        JSON.parse(await storedSleep()),
+        { 'codex:a': null },
+        'Wake all clears every project timer, including chats beyond the visible page'
+      )
+
+      await run(`window.setSleepAction('sleep')`)
+      await wait(100)
+      assert.equal(
+        await run(`Boolean(document.querySelector('[aria-label="${projectSleep}"]'))`),
+        true,
+        'other tabs keep the Sleep action'
+      )
+      await run(`window.setSleepAction(false)`)
+      await wait(100)
+      assert.equal(
+        await run(`document.querySelector('.ui-button-group')`),
+        null,
+        'disabling the sleeping tab hides project sleep controls'
+      )
       console.log('Chat sleep checks passed')
     } catch (error) {
       console.error(error)

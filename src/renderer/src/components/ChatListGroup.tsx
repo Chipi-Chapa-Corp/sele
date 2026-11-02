@@ -1,4 +1,5 @@
 import {
+  Bed,
   CheckCheck,
   ChevronDown,
   ChevronRight,
@@ -12,6 +13,7 @@ import {
   memo,
   forwardRef,
   useDeferredValue,
+  useContext,
   useMemo,
   type DragEvent,
   type DragEventHandler,
@@ -21,7 +23,10 @@ import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/pro
 import { noProjectGroupKey } from '../../../shared/noProject'
 import { appMaxChatsRenderedDefault } from '../performanceSettings'
 import { formatProjectLabel } from '../projectPresentation'
+import { ChatSleepActionsContext, getChatSleepKey, sleepChats, wakeChats } from '../chatSleep'
 import { Button } from './Button'
+import { BedOff } from './BedOffIcon'
+import { ChatSleepPanel } from './ChatSleepPanel'
 import { ChatList } from './ChatList'
 import { MotionListItem } from '../motion/MotionListItem'
 import { DisclosureToggle } from './DisclosureToggle'
@@ -169,12 +174,20 @@ export const ChatListGroup = memo(function ChatListGroup({
   selectedChatChildren = null,
   selectedChatChildOpen = false
 }: ChatListGroupProps) {
+  const sleepAction = useContext(ChatSleepActionsContext)
   const projectLike = group.kind === 'cwd' || group.kind === 'imported'
   const noProject = group.key === noProjectGroupKey
+  const sleepProjectChats = (durationMs?: number): void => {
+    sleepChats(
+      group.chats.map((chat) => getChatSleepKey(chat.providerId, chat.id)),
+      durationMs
+    )
+  }
   const groupLabel =
     group.kind === 'cwd'
       ? group.projectName?.trim() || formatProjectLabel(group.label)
       : group.label
+  const sleepActionLabel = `${sleepAction === 'wake' ? 'Wake' : 'Sleep'} all chats in project ${groupLabel}`
   const visibleChats = useMemo(
     () => group.chats.slice(0, visibleChatCount),
     [group.chats, visibleChatCount]
@@ -272,6 +285,39 @@ export const ChatListGroup = memo(function ChatListGroup({
               callback={() => onNewChatInCwd(group)}
               icon={<SquarePen aria-hidden="true" />}
             />
+            {sleepAction && (
+              <Button
+                theme="transparent"
+                size="small"
+                aria-label={sleepActionLabel}
+                title={sleepActionLabel}
+                callback={() => {
+                  if (sleepAction === 'wake') {
+                    wakeChats(group.chats.map((chat) => getChatSleepKey(chat.providerId, chat.id)))
+                  } else {
+                    sleepProjectChats()
+                  }
+                }}
+                icon={
+                  sleepAction === 'wake' ? (
+                    <BedOff aria-hidden="true" />
+                  ) : (
+                    <Bed aria-hidden="true" />
+                  )
+                }
+                dropdownLabel={`Sleep all chats in project ${groupLabel} for a set time`}
+                dropdownMenuAlign="end"
+                dropdownContent={(close) => (
+                  <ChatSleepPanel
+                    wakeAt={undefined}
+                    onSleep={(durationMs) => {
+                      close()
+                      sleepProjectChats(durationMs)
+                    }}
+                  />
+                )}
+              />
+            )}
             <Button
               theme="transparent"
               size="small"

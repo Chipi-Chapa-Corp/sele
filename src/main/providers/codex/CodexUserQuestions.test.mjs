@@ -88,17 +88,30 @@ test('an ordinary live reply dismisses old questions', () => {
   assert.equal(questions.getPending('chat'), null)
 })
 
-test('answering after completion keeps remaining questions when a new turn starts', async () => {
-  const questions = new CodexUserQuestions()
-  questions.syncAsync('chat', { ...asyncTurn(), status: 'completed' })
-  await questions.resolve('chat', questions.getPending('chat').id, answer('Integration #3'), {
-    server: () => assert.fail(),
-    asynchronous: async () => {
-      questions.syncAsync('chat', { id: 'new-turn', items: [{ type: 'userMessage', id: 'reply' }] })
-    }
+for (const status of ['completed', 'failed', 'interrupted']) {
+  test(`${status} turns dismiss unanswered async questions and do not restore them from history`, async () => {
+    const questions = new CodexUserQuestions()
+    const turn = asyncTurn()
+    questions.syncAsync('chat', turn)
+    const pending = questions.getPending('chat')
+    assert.ok(pending)
+    const finished = { ...turn, status }
+    questions.syncAsync('chat', finished)
+    assert.equal(questions.getPending('chat'), null)
+    await assert.rejects(
+      questions.resolve('chat', pending.id, answer('Late answer'), {
+        server: () => assert.fail(),
+        asynchronous: () => assert.fail('a stale answer must not start another turn')
+      }),
+      /no longer pending/
+    )
+    questions.syncAsync('chat', { ...finished, items: [...turn.items] })
+    assert.equal(questions.getPending('chat'), null)
+    const reopened = new CodexUserQuestions()
+    reopened.syncAsync('chat', finished)
+    assert.equal(reopened.getPending('chat'), null)
   })
-  assert.equal(questions.getPending('chat').question, 'Which date?')
-})
+}
 
 test('a late answer message after acknowledgment preserves the remaining questions', async () => {
   const questions = new CodexUserQuestions()
@@ -344,12 +357,14 @@ test('the question UI submits current settings for async answers, including afte
   }
   visit(rendererSource)
   assert.ok(handler)
-  for (const [isBlocking, response] of [
+  for (const [isBlocking, response, fails = false] of [
     [false, answer('Continue Login')],
     [true, answer('Continue Login')],
-    [false, { kind: 'cancel' }]
+    [false, { kind: 'cancel' }],
+    [false, answer('Retry this answer'), true]
   ]) {
     const calls = []
+    const cleared = []
     const submit = vm.runInNewContext(
       ts.transpile(`(${handler.getText(rendererSource)})`, { target: ts.ScriptTarget.ES2022 }),
       {
@@ -358,13 +373,27 @@ test('the question UI submits current settings for async answers, including afte
         userInputResolving: false,
         providerUpdateInProgress: false,
         getCurrentTurnOptions: () => turnOptions,
+        clearUserInputDraft: (...args) => cleared.push(args),
+        getErrorMessage: (error) => error.message,
+        console: { error: () => {} },
+        getChatKey: () => 'codex:chat',
         setUserInputResolution: () => {},
         applyViewedChatDetail: () => {},
-        providerApi: { resolveUserInput: async (...args) => calls.push(args) }
+        providerApi: {
+          resolveUserInput: async (...args) => {
+            calls.push(args)
+            if (fails) throw new Error('Expected delivery failure')
+          }
+        }
       }
     )
     await submit(response)
     assert.equal(calls.length, 1)
+    assert.equal(cleared.length, fails ? 0 : 1)
+    if (!fails) {
+      assert.equal(cleared[0][0], 'codex:chat')
+      assert.equal(cleared[0][1].id, 'question')
+    }
     assert.equal(calls[0][4], !isBlocking && response.kind === 'answer' ? turnOptions : undefined)
   }
 })
@@ -394,61 +423,13 @@ for (const active of [true, false]) {
   })
 }
 
-test('an answer after completion starts Codex with the selected permissions and model', async () => {
-  const helperNames = [
-    'getApprovalPolicy',
-    'getApprovalsReviewer',
-    'getSandboxMode',
-    'getRuntimeWorkspaceRoots',
-    'getTurnModelOptions',
-    'getTurnAccessOptions'
-  ]
-  const helpers = source.statements.filter(
-    (node) =>
-      ts.isVariableStatement(node) &&
-      node.declarationList.declarations.some((entry) =>
-        helperNames.includes(entry.name.getText(source))
-      )
-  )
-  const adapter = vm.runInNewContext(
-    ts.transpile(`${helpers.map((node) => node.getText(source)).join('\n')}\n${adapterCode}`, {
-      target: ts.ScriptTarget.ES2022
-    }),
-    { createUserInput: (text) => [{ type: 'text', text }] }
-  )
-  const requests = []
+test('the adapter exposes no unanswered questions from a completed turn', () => {
+  const adapter = vm.runInNewContext(adapterCode)
   Object.assign(adapter, {
     userQuestions: new CodexUserQuestions(),
-    threads: new Map([
-      ['chat', { cwd: '/project', turns: [{ ...asyncTurn(), status: 'completed' }] }]
-    ]),
-    getThreadContainer: () => null,
-    runWithContainer: (_container, work) => work(),
-    hasActiveOrSubmittingTurn: () => false,
-    continueChatImmediately: (chat, text, options) =>
-      adapter.startCodexTurn(chat, text, options, 'submitted-answer'),
-    startSubmittedCodexTurn: (_chat, _pending, start) => start(),
-    resumeThread: async (_chat, options) => assert.equal(options, turnOptions),
-    client: { request: async (method, params) => requests.push({ method, params }) },
-    setThreadActiveFlag: () => {},
-    emitChatUpdated: () => {},
-    getCachedChatDetail: () => ({ id: 'chat' })
+    threads: new Map([['chat', { turns: [{ ...asyncTurn(), status: 'completed' }] }]])
   })
-  await adapter.resolveUserInput(
-    'chat',
-    adapter.getProviderPendingUserInput('chat').id,
-    answer('Integration #3'),
-    turnOptions
-  )
-  assert.equal(requests.length, 1)
-  const { method, params } = requests[0]
-  assert.equal(method, 'turn/start')
-  assert.equal(params.approvalPolicy, 'never')
-  assert.equal(params.sandboxPolicy.type, 'dangerFullAccess')
-  assert.equal(params.model, 'gpt-6.1-sol')
-  assert.equal(params.effort, 'high')
-  assert.equal(params.serviceTier, 'fast')
-  assert.deepEqual(Array.from(params.runtimeWorkspaceRoots), ['/project', '/shared'])
+  assert.equal(adapter.getProviderPendingUserInput('chat'), null)
 })
 
 test('the actual adapter handles and answers the Codex server request without stopping its turn', async () => {

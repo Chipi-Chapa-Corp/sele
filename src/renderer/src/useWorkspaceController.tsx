@@ -102,12 +102,16 @@ import {
 import type { AccountAuthorizationSession } from './components/AccountDialog'
 import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
+import { getChatSleepKey, useSleepingChats } from './chatSleep'
 import {
-  getChatSleepKey,
-  readHideSleepingChats,
-  useSleepingChats,
-  writeHideSleepingChats
-} from './chatSleep'
+  chatSidebarFilters,
+  matchesChatSidebarFilter,
+  readChatSidebarFilter,
+  readChatSidebarTabs,
+  writeChatSidebarFilter,
+  writeChatSidebarTabs,
+  type ChatSidebarFilter
+} from './chatSidebarFilter'
 import { getChatWriteAccessPresentation } from './chatWriteAccess'
 import { type ChatListGroupData } from './components/ChatListGroup'
 import { ChatSubagentList } from './components/ChatSubagentList'
@@ -451,8 +455,11 @@ export const useWorkspaceController = () => {
   const [recentlyOpenedFilesByWorkspace, setRecentlyOpenedFilesByWorkspace] =
     useState<RecentlyOpenedFilesByWorkspace>(readStoredRecentlyOpenedFiles)
   const sleepingChats = useSleepingChats()
-  const [showOnlySleepingChats, setShowOnlySleepingChats] = useState(false)
-  const [hideSleepingChats, setHideSleepingChats] = useState(readHideSleepingChats)
+  const [chatSidebarTabs, setChatSidebarTabs] = useState(readChatSidebarTabs)
+  const [chatSidebarFilter, setChatSidebarFilter] = useState(readChatSidebarFilter)
+  const activeChatSidebarFilter = chatSidebarTabs[chatSidebarFilter]
+    ? chatSidebarFilter
+    : (chatSidebarFilters.find(({ value }) => chatSidebarTabs[value])?.value ?? 'all')
   const [chatTurnWindow, setChatTurnWindow] = useState<ChatTurnWindow | null>(null)
   const [chatTurnPageLoadDirection, setChatTurnPageLoadDirection] =
     useState<ChatTurnPageLoadDirection | null>(null)
@@ -3403,34 +3410,37 @@ export const useWorkspaceController = () => {
     (chat: ProviderChat): boolean => sleepingChats.has(getChatSleepKey(chat.providerId, chat.id)),
     [sleepingChats]
   )
+  const matchesSidebarFilter = useCallback(
+    (chat: ProviderChat): boolean => {
+      const key = getChatKey(chat)
+      return matchesChatSidebarFilter(chat, activeChatSidebarFilter, {
+        sleeping: isSleepingChat(chat),
+        selected: key === selectedChatKey,
+        working: committingChatKeys.has(key) || workingSubagentChatKeys.has(key),
+        latestCommitFinishedAt: latestCommitFinishedAtByChatKey.get(key) ?? 0
+      })
+    },
+    [
+      activeChatSidebarFilter,
+      isSleepingChat,
+      selectedChatKey,
+      committingChatKeys,
+      workingSubagentChatKeys,
+      latestCommitFinishedAtByChatKey
+    ]
+  )
   const filteredChats = useMemo(() => {
-    const sleepFilteredChats = showOnlySleepingChats
-      ? chats.filter(isSleepingChat)
-      : hideSleepingChats
-        ? chats.filter((chat) => !isSleepingChat(chat))
-        : chats
-    if (searchTerms.length === 0) return sleepFilteredChats
+    const tabChats = chats.filter(matchesSidebarFilter)
+    if (searchTerms.length === 0) return tabChats
     const matching = new Map(
-      sleepFilteredChats.filter(matchesChatSearch).map((chat) => [getChatKey(chat), chat])
+      tabChats.filter(matchesChatSearch).map((chat) => [getChatKey(chat), chat])
     )
     for (const chat of sidebarSearch.chats) {
-      if (
-        (showOnlySleepingChats && !isSleepingChat(chat)) ||
-        (!showOnlySleepingChats && hideSleepingChats && isSleepingChat(chat))
-      )
-        continue
+      if (!matchesSidebarFilter(chat)) continue
       if (!matching.has(getChatKey(chat))) matching.set(getChatKey(chat), chat)
     }
     return [...matching.values()]
-  }, [
-    chats,
-    isSleepingChat,
-    matchesChatSearch,
-    searchTerms,
-    hideSleepingChats,
-    showOnlySleepingChats,
-    sidebarSearch.chats
-  ])
+  }, [chats, matchesSidebarFilter, matchesChatSearch, searchTerms, sidebarSearch.chats])
   const projectRecordsByCwd = useMemo(
     () => new Map(projects.map((project) => [project.cwd, project])),
     [projects]
@@ -5934,10 +5944,11 @@ export const useWorkspaceController = () => {
     handleChatDropdownSettingChange,
     handleChatUsageDisplayChange,
     groupChatsByProject: chatGroupingPreference === 'grouped',
-    hideSleepingChats,
-    handleHideSleepingChatsChange: (hide) => {
-      setHideSleepingChats(hide)
-      writeHideSleepingChats(hide)
+    chatSidebarTabs,
+    handleChatSidebarTabChange: (tab, visible) => {
+      const next = { ...chatSidebarTabs, [tab]: visible }
+      setChatSidebarTabs(next)
+      writeChatSidebarTabs(next)
     },
     handleGroupChatsByProjectChange: (enabled) => {
       const preference = enabled ? 'grouped' : 'ungrouped'
@@ -6334,8 +6345,12 @@ export const useWorkspaceController = () => {
           )
       },
       importedChatGroup,
-      showOnlySleepingChats,
-      handleToggleSleepFilter: () => setShowOnlySleepingChats((current) => !current),
+      chatSidebarFilter: activeChatSidebarFilter,
+      chatSidebarTabs,
+      handleChatSidebarFilterChange: (filter: ChatSidebarFilter) => {
+        setChatSidebarFilter(filter)
+        writeChatSidebarFilter(filter)
+      },
       handleImportedChat: (providerId: ProviderId, summary: ProviderChatUpdateSummary): void => {
         const chat = getChatFromUpdateSummary(providerId, summary, null, false)
         setChats((current) => mergeChats(current, [chat]))

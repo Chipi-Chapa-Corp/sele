@@ -12,19 +12,37 @@ if (!process.versions.electron) {
             import React from 'react'
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
+            import { createPreferenceClient } from './src/preload/preferenceClient'
+            import { initializePreferences, flushPreferences } from './src/renderer/src/preferences'
             import { UserInputRequestBox } from './src/renderer/src/components/UserInputRequestBox'
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/workspace/styles/conversation-requests.css'
             const root = createRoot(document.getElementById('root'))
+            const store = values => {
+              const saved = JSON.parse(localStorage.getItem('question-fixture') || '{}')
+              for (const [key, value] of Object.entries(values)) {
+                if (value === null) delete saved[key]
+                else saved[key] = value
+              }
+              localStorage.setItem('question-fixture', JSON.stringify(saved))
+              return {ok: true, value: null}
+            }
+            window.preferencesApi = createPreferenceClient({
+              initialize: async () => ({ok: true, value: JSON.parse(localStorage.getItem('question-fixture') || '{}')}),
+              write: async values => store(values),
+              commit: values => store(values)
+            })
+            window.flush = flushPreferences
             window.answers = []
             window.canceled = 0
             window.renderQuestion = (options = {}) => flushSync(() => root.render(
-              <UserInputRequestBox key={options.id || 'async'} disabled={options.disabled} error={options.error}
+              <UserInputRequestBox chatKey={options.chatKey || 'codex:chat'} key={(options.chatKey || 'codex:chat') + ':' + (options.id || 'async')} disabled={options.disabled} error={options.error}
                 request={{id: options.id || 'async', question: 'Which saved Freedom24 integration is yours: database ID #1 or #3?', choices: [{label: 'Integration #1', description: null}, {label: 'Integration #3', description: null}], allowFreeform: true, startedAt: 1, isBlocking: false, ...options}}
                 onSubmit={(answer, freeform) => window.answers.push({answer, freeform})}
                 onCancel={() => window.canceled++} />
             ))
-            window.renderQuestion()
+            window.hideQuestion = () => flushSync(() => root.render(null))
+            window.ready = initializePreferences().then(() => window.renderQuestion())
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -57,6 +75,7 @@ if (!process.versions.electron) {
   })
 } else {
   const { app, BrowserWindow } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'profile'))
   app.whenReady().then(async () => {
     const win = new BrowserWindow({
       show: false,
@@ -70,6 +89,7 @@ if (!process.versions.electron) {
       const run = (source) => win.webContents.executeJavaScript(source)
       const settle = () =>
         run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+      await run('window.ready')
       await settle()
       assert.equal(
         await run(`document.querySelectorAll('[aria-label="Answer choices"] button').length`),
@@ -88,22 +108,62 @@ if (!process.versions.electron) {
       await run(`document.querySelectorAll('[aria-label="Answer choices"] button')[1].click()`)
       assert.deepEqual(await run('window.answers'), [{ answer: 'Integration #3', freeform: false }])
       await run(`(() => {
-        const input = document.querySelector('input')
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Custom account')
+        const input = document.querySelector('textarea')
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Custom account')
         input.dispatchEvent(new Event('input', {bubbles: true}))
       })()`)
       await settle()
       await run(
-        `document.querySelector('input').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}))`
+        `document.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}))`
       )
       assert.deepEqual(await run('window.answers.at(-1)'), {
         answer: 'Custom account',
         freeform: true
       })
+      const initialHeight = await run(
+        `document.querySelector('textarea').getBoundingClientRect().height`
+      )
+      await run(`document.querySelector('textarea').focus()`)
+      const answersBeforeNewline = await run('window.answers.length')
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter', modifiers: ['shift'] })
+      win.webContents.sendInputEvent({ type: 'char', keyCode: '\r', modifiers: ['shift'] })
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter', modifiers: ['shift'] })
+      await settle()
+      assert.equal(await run('window.answers.length'), answersBeforeNewline)
+      assert.equal(await run(`document.querySelector('textarea').value`), 'Custom account\n')
+      assert.ok(
+        (await run(`document.querySelector('textarea').getBoundingClientRect().height`)) >
+          initialHeight
+      )
+      await run(`window.hideQuestion(); window.renderQuestion({chatKey: 'codex:other'})`)
+      assert.equal(await run(`document.querySelector('textarea').value`), '')
+      await run(`window.renderQuestion()`)
+      assert.equal(await run(`document.querySelector('textarea').value`), 'Custom account\n')
+      await run(`window.renderQuestion({id: 'different-question'})`)
+      assert.equal(await run(`document.querySelector('textarea').value`), '')
+      await run(`window.renderQuestion()`)
+      await run('window.flush()')
+      win.webContents.reload()
+      await new Promise((resolve) => win.webContents.once('did-finish-load', resolve))
+      await run('window.ready')
+      await settle()
+      assert.equal(await run(`document.querySelector('textarea').value`), 'Custom account\n')
+      await run(`(() => {
+        const input = document.querySelector('textarea')
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, Array(30).fill('Long answer').join('\\n'))
+        input.dispatchEvent(new Event('input', {bubbles: true}))
+      })()`)
+      await settle()
+      assert.ok(
+        await run(`(() => {
+        const input = document.querySelector('textarea')
+        return input.scrollHeight > input.clientHeight && input.getBoundingClientRect().height <= 146
+      })()`)
+      )
       await run(`window.renderQuestion({disabled: true})`)
       assert.equal(
         await run(
-          `[...document.querySelectorAll('button,input')].every(element => element.disabled)`
+          `[...document.querySelectorAll('button,input,textarea')].every(element => element.disabled)`
         ),
         true
       )
@@ -117,10 +177,23 @@ if (!process.versions.electron) {
         'Please retry'
       )
       assert.equal(await run(`document.body.textContent.includes('keeps working')`), false)
+      await run(`(() => {
+        const input = document.querySelector('input')
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'secret-value')
+        input.dispatchEvent(new Event('input', {bubbles: true}))
+      })()`)
+      await settle()
+      await run('window.flush()')
+      assert.equal(
+        await run(`localStorage.getItem('question-fixture').includes('secret-value')`),
+        false
+      )
+      await run(`window.hideQuestion(); window.renderQuestion({id: 'secret', isSecret: true})`)
+      assert.equal(await run(`document.querySelector('input').value`), '')
       await run(`document.querySelector('[aria-label="Cancel question"]').click()`)
       assert.equal(await run('window.canceled'), 1)
       console.log(
-        'Codex question UI checks passed: choices, freeform Enter, disabled state, secret input, errors and cancel'
+        'Codex question UI checks passed: choices, multiline input, autosizing, draft persistence, disabled state, secret input, errors and cancel'
       )
     } catch (error) {
       console.error(error)

@@ -9,8 +9,28 @@ import type { ChatImportPreview } from '../../../../shared/chatArchive'
 import { providerApi } from '../../providerApi'
 import { ChatImportDialog } from '../../components/ChatImportDialog'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import { Bed, Download, LoaderCircle, MessageSquare, Search, SquarePen, X } from 'lucide-react'
-import { BedOff } from '../../components/BedOffIcon'
+import {
+  BotMessageSquare,
+  Download,
+  LoaderCircle,
+  MessagesSquare,
+  MessageSquare,
+  MessageSquareDashed,
+  MessageSquareWarning,
+  Search,
+  SquarePen,
+  X
+} from 'lucide-react'
+import { chatSidebarFilters, type ChatSidebarFilter } from '../../chatSidebarFilter'
+import { ChatSleepActionsContext } from '../../chatSleep'
+import { SegmentedControl } from '../../components/SegmentedControl'
+
+const filterIcons = {
+  all: MessagesSquare,
+  attention: MessageSquareWarning,
+  sleeping: MessageSquareDashed,
+  working: BotMessageSquare
+}
 import { Button } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { ChatSidebarLoadingState } from '../../components/AppStatusStates'
@@ -20,8 +40,9 @@ type ChatSidebarProps = WorkspaceController['chatSidebar']
 export function ChatSidebar(props: ChatSidebarProps): ReactElement {
   const {
     handleImportedChat,
-    showOnlySleepingChats,
-    handleToggleSleepFilter,
+    chatSidebarFilter,
+    chatSidebarTabs,
+    handleChatSidebarFilterChange,
     importedChatGroup,
     chats,
     chromeControlTheme,
@@ -123,17 +144,28 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
                   )
                 }
               />
-              <Button
-                theme={chromeControlTheme}
-                aria-label={showOnlySleepingChats ? 'Show all chats' : 'Show only sleeping chats'}
-                aria-pressed={showOnlySleepingChats}
-                title={showOnlySleepingChats ? 'Show all chats' : 'Show only sleeping chats'}
-                callback={handleToggleSleepFilter}
-                icon={
-                  showOnlySleepingChats ? <Bed aria-hidden="true" /> : <BedOff aria-hidden="true" />
-                }
-              />
             </div>
+            {Object.values(chatSidebarTabs).some(Boolean) && (
+              <SegmentedControl<ChatSidebarFilter>
+                aria-label="Filter conversations"
+                className="chat-home__filter-tabs"
+                size="small"
+                value={chatSidebarFilter}
+                onChange={handleChatSidebarFilterChange}
+                options={chatSidebarFilters
+                  .filter(({ value }) => chatSidebarTabs[value])
+                  .map(({ value, label, description }) => {
+                    const Icon = filterIcons[value]
+                    return {
+                      value,
+                      label: null,
+                      ariaLabel: label,
+                      title: description,
+                      icon: <Icon aria-hidden="true" />
+                    }
+                  })}
+              />
+            )}
             <div className="chat-home__actions-right">
               <Button
                 theme={chromeControlTheme}
@@ -185,9 +217,13 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           <p className="chat__status">
             {searchQuery.trim()
               ? 'No matching chats.'
-              : showOnlySleepingChats
+              : chatSidebarFilter === 'sleeping'
                 ? 'No sleeping chats.'
-                : 'No chats found.'}
+                : chatSidebarFilter === 'attention'
+                  ? 'No chats need attention.'
+                  : chatSidebarFilter === 'working'
+                    ? 'No chats in progress.'
+                    : 'No chats found.'}
           </p>
         )}
         {sidebarSearch.error && (
@@ -195,15 +231,19 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
             {sidebarSearch.error}
           </p>
         )}
-        <ChatSidebarGroups
-          pinnedChatGroup={pinnedChatGroup}
-          importedChatGroup={importedChatGroup}
-          displayedActiveChatGroups={displayedActiveChatGroups}
-          doneChatGroup={doneChatGroup}
-          renderChatGroup={renderChatGroup}
-          handleProjectDrop={handleProjectDrop}
-          handleProjectStackDragOver={handleProjectStackDragOver}
-        />
+        <ChatSleepActionsContext.Provider
+          value={chatSidebarTabs.sleeping && (chatSidebarFilter === 'sleeping' ? 'wake' : 'sleep')}
+        >
+          <ChatSidebarGroups
+            pinnedChatGroup={pinnedChatGroup}
+            importedChatGroup={importedChatGroup}
+            displayedActiveChatGroups={displayedActiveChatGroups}
+            doneChatGroup={doneChatGroup}
+            renderChatGroup={renderChatGroup}
+            handleProjectDrop={handleProjectDrop}
+            handleProjectStackDragOver={handleProjectStackDragOver}
+          />
+        </ChatSleepActionsContext.Provider>
         {sidebarSearch.hasMore && (
           <Button
             theme="transparent"

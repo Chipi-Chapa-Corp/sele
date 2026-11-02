@@ -93,7 +93,7 @@ if (!process.versions.electron) {
                       onSend={content=>{ window.renderFixture({users:[{type:'message',id:'composer',role:'user',content,createdAt:Date.now()}]});return true }}/>
                     : <div className="message-box"><div className="message-box__textarea-wrap">
                       <ComposerPlaceholder scope="new-chat:test" empty={s.empty}/>
-                      <textarea id="source" placeholder="Use @ for files and $ for skills" onChange={()=>window.renderFixture({empty:false})}/>
+                      <textarea id="source" placeholder="Use @ for files, $ for skills and # for projects" onChange={()=>window.renderFixture({empty:false})}/>
                     </div></div>}
                     <AnimatePresence>{s.modal && <MotionSurface motionKind="overlay" className="settings-overlay">
                       <section role="dialog" aria-label="Test modal" className="settings-dialog">Modal</section>
@@ -208,10 +208,10 @@ if (!process.versions.electron) {
       const wait = (ms) => run(`new Promise(resolve => setTimeout(resolve, ${ms}))`)
       const frames = () =>
         run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
-      await wait(600)
+      await wait(800)
       assert.equal(
         await run(`document.querySelector('.composer-placeholder').textContent`),
-        'Use @ for files and $ for skills'
+        'Use @ for files, $ for skills and # for projects'
       )
       await run(`document.getElementById('source').focus()`)
       await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
@@ -222,7 +222,7 @@ if (!process.versions.electron) {
       await run(`window.renderFixture({empty:true})`)
       assert.equal(
         await run(`document.querySelector('.composer-placeholder').textContent`),
-        'Use @ for files and $ for skills',
+        'Use @ for files, $ for skills and # for projects',
         'clearing a draft must not replay the hint'
       )
       // Row subscriptions must stay local through the real React integration,
@@ -608,6 +608,49 @@ if (!process.versions.electron) {
           'flight cleans up'
         )
       }
+      // Compare painted bubble pixels across landing, including translucent
+      // pending messages. Complementary opacity values still dim when layered.
+      for (const theme of ['dark', 'light']) {
+        for (const kind of [null, 'queued', 'steering']) {
+          await run(`document.documentElement.dataset.colorScheme=${JSON.stringify(theme)};
+            window.renderFixture({users:[],content:'',streaming:false});
+            window.sendFixture('landing-pixels','Landing should stay visible',false,${JSON.stringify(kind)})`)
+          await frames()
+          await run(`window.landingGhost=document.querySelector('.message-flight');
+            window.landingTarget=document.querySelector('[data-motion-message-id="landing-pixels"]');
+            window.landingAnimations=[...landingGhost.getAnimations(),...landingTarget.getAnimations()];
+            landingAnimations.forEach(animation=>animation.pause());
+            landingAnimations[0].onfinish=null`)
+          let baseline
+          for (const time of [359, 380, 400, 420]) {
+            const state = await run(`(() => {
+              landingAnimations.forEach(animation=>animation.currentTime=${time});
+              const bounds=landingTarget.querySelector('.chat-detail__message--user').getBoundingClientRect();
+              return {x:Math.round(bounds.x+bounds.width/2),y:Math.round(bounds.bottom-7),
+                copy:Number(getComputedStyle(landingGhost).opacity),row:Number(getComputedStyle(landingTarget).opacity)};
+            })()`)
+            await frames()
+            const shot = await win.webContents.capturePage()
+            const bitmap = shot.toBitmap()
+            const offset = (state.y * shot.getSize().width + state.x) * 4
+            const pixel = [...bitmap.subarray(offset, offset + 3)]
+            baseline ??= pixel
+            assert.ok(
+              pixel.every((channel, i) => Math.abs(channel - baseline[i]) <= 1),
+              `${theme} ${kind ?? 'send'} bubble must not blink at ${time}ms: ${baseline} -> ${pixel}`
+            )
+            assert.deepEqual(
+              [state.copy, state.row],
+              time < 360 ? [1, 0] : [0, 1],
+              'exactly one message layer is visible, even before completion cleanup'
+            )
+          }
+          await run(`window.renderFixture({users:[]})`)
+          await frames()
+          assert.equal(await run(`document.querySelector('.message-flight')`), null)
+        }
+      }
+      await run(`document.documentElement.dataset.colorScheme='dark'`)
       // Provider reconciliation can replace an optimistic row before either
       // startup frame. Repeated replacements must not keep restarting the wait.
       const startup = await run(`new Promise(resolve => {
@@ -785,8 +828,8 @@ if (!process.versions.electron) {
       assert.equal(busyLanding.row, 1, 'landing reveals the row without a completion callback')
       assert.equal(busyLanding.copy, 0, 'landing hides the copy without a completion callback')
       await frames()
-      // Scrolling preserves the path and clock. A moved row is revealed by
-      // opacity at landing, including replacement during that handover.
+      // Scrolling preserves the path and clock. Even if the row moves and is
+      // replaced just before landing, the visibility swap remains synchronized.
       await run(`(() => {
         window.renderFixture({users:[],content:'Earlier message\\n\\n'.repeat(40)});
         window.sendFixture('scrolling', 'Send while the viewport adjusts');
@@ -822,8 +865,7 @@ if (!process.versions.electron) {
         const target = document.querySelector('[data-motion-message-id="scrolling"] .chat-detail__message--user').getBoundingClientRect();
         const targetRow = document.querySelector('[data-motion-message-id="scrolling"]');
         for (const part of [...ghost.getAnimations(), ...targetRow.getAnimations()]) {
-          part.currentTime = 360;
-          part.play();
+          part.currentTime = 359;
         }
         return {x:bounds.x,y:bounds.y,time,landingX:landing.x,landingY:landing.y,targetY:target.y};
       })()`)
@@ -843,27 +885,22 @@ if (!process.versions.electron) {
         Math.abs(afterScroll.landingY - afterScroll.targetY) > 20,
         'the fixture requires a handover to a different position'
       )
-      const duringHandover = await run(`new Promise((resolve, reject) => {
-        let frames = 0;
-        const sample = () => {
-          const ghost = document.querySelector('.message-flight');
-          if (!ghost || ++frames > 10) { reject(new Error('No visible landing fade')); return; }
-          const copyOpacity = Number(getComputedStyle(ghost).opacity);
-          if (copyOpacity > 0 && copyOpacity < 1) {
-            window.renderFixture({users:[{...window.state.users[0],id:'confirmed-during-handover'}]});
-            const target = document.querySelector('[data-motion-message-id="confirmed-during-handover"]');
-            resolve({copyOpacity,rowOpacity:Number(getComputedStyle(target).opacity)});
-          } else requestAnimationFrame(sample);
-        };
-        requestAnimationFrame(sample);
-      })`)
-      assert.ok(
-        duringHandover.copyOpacity > 0 && duringHandover.copyOpacity < 1,
-        'the copy dissolves instead of jumping to the moved destination'
-      )
-      assert.ok(
-        Math.abs(duringHandover.copyOpacity + duringHandover.rowOpacity - 1) < 0.05,
-        'a replacement row continues the same fade without a flash'
+      const duringHandover = await run(`(() => {
+        const ghost = document.querySelector('.message-flight');
+        window.renderFixture({users:[{...window.state.users[0],id:'confirmed-during-handover'}]});
+        const target = document.querySelector('[data-motion-message-id="confirmed-during-handover"]');
+        const visibility = () => [Number(getComputedStyle(ghost).opacity),Number(getComputedStyle(target).opacity)];
+        const before = visibility();
+        for (const part of [...ghost.getAnimations(), ...target.getAnimations()]) {
+          part.pause();
+          part.currentTime = 360;
+        }
+        return {before,after:visibility()};
+      })()`)
+      assert.deepEqual(
+        duringHandover,
+        { before: [1, 0], after: [0, 1] },
+        'a replacement row swaps visibility with the copy at landing without a flash'
       )
       await wait(450)
       assert.equal(

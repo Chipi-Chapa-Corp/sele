@@ -292,9 +292,10 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             />
           ) : (
             <UserInputRequestBox
+              chatKey={`${selectedChat.providerId}:${selectedChat.id}`}
               disabled={userInputResolving}
               error={userInputError}
-              key={pendingUserInput.id}
+              key={`${selectedChat.providerId}:${selectedChat.id}:${pendingUserInput.id}`}
               request={pendingUserInput}
               onCancel={() => resolveSelectedUserInput({ kind: 'cancel' })}
               onSubmit={(answer, wasFreeform) =>

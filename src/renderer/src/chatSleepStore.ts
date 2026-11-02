@@ -170,12 +170,37 @@ export const createChatSleepStore = ({
       if (chats.get(key) === wakeAt) return
       commit(key, new Map(chats).set(key, wakeAt))
     },
+    /** Sleeps a group with a shared wake time and one storage write. */
+    sleepMany(keys: readonly string[], durationMs?: number): void {
+      load()
+      const wakeAt = durationMs === undefined ? null : now() + durationMs
+      const changedKeys = new Set(keys.filter((key) => chats.get(key) !== wakeAt))
+      if (changedKeys.size === 0) return
+      const next = new Map(chats)
+      for (const key of changedKeys) next.set(key, wakeAt)
+      chats = next
+      write(next)
+      schedule()
+      for (const key of changedKeys) subscriptions.notify(key)
+    },
     wake(key: string): void {
       load()
       if (!chats.has(key)) return
       const next = new Map(chats)
       next.delete(key)
       commit(key, next)
+    },
+    /** Wakes a group and cancels its timers with one storage write. */
+    wakeMany(keys: readonly string[]): void {
+      load()
+      const changedKeys = new Set(keys.filter((key) => chats.has(key)))
+      if (changedKeys.size === 0) return
+      const next = new Map(chats)
+      for (const key of changedKeys) next.delete(key)
+      chats = next
+      write(next)
+      schedule()
+      for (const key of changedKeys) subscriptions.notify(key)
     }
   }
 }

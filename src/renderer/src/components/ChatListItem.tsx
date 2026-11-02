@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import {
   memo,
+  useContext,
   useId,
   useLayoutEffect,
   useMemo,
@@ -46,7 +47,13 @@ import './ChatListItem.css'
 import { Dropdown } from './Dropdown'
 import { providerApi } from '../providerApi'
 import { useChatTerminalStatus } from '../useChatTerminalActivity'
-import { getChatSleepKey, sleepChat, useChatWakeAt, wakeChat } from '../chatSleep'
+import {
+  ChatSleepActionsContext,
+  getChatSleepKey,
+  sleepChat,
+  useChatWakeAt,
+  wakeChat
+} from '../chatSleep'
 import { BedOff } from './BedOffIcon'
 import { ChatSleepPanel, formatWakeIn } from './ChatSleepPanel'
 
@@ -145,6 +152,7 @@ export const ChatListItem = memo(function ChatListItem({
 }: ChatListItemProps) {
   const providerLabels = useProviderLabels()
   const terminalActivity = useChatTerminalStatus(`${chat.providerId}:${chat.id}`)
+  const sleepActionsEnabled = useContext(ChatSleepActionsContext)
   const sleepKey = getChatSleepKey(chat.providerId, chat.id)
   const wakeAt = useChatWakeAt(sleepKey)
   const sleeping = wakeAt !== undefined
@@ -204,10 +212,7 @@ export const ChatListItem = memo(function ChatListItem({
   const pendingApproval = chat.pendingApproval
   const unreadUpdatedAt = Math.max(chat.updatedAt, latestCommitFinishedAt ?? 0)
   const unread =
-    !selected &&
-    !childOpen &&
-    !chat.done &&
-    unreadUpdatedAt > (chat.seenUpdatedAt ?? 0)
+    !selected && !childOpen && !chat.done && unreadUpdatedAt > (chat.seenUpdatedAt ?? 0)
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()
@@ -539,24 +544,28 @@ export const ChatListItem = memo(function ChatListItem({
             }
             disabled={exporting}
             menuActions={[
-              {
-                id: 'sleep',
-                label: sleeping ? 'Wake up' : 'Sleep',
-                icon: sleeping ? <BedOff /> : <Bed />,
-                callback: () => (sleeping ? wakeChat(sleepKey) : sleepChat(sleepKey)),
-                panel: {
-                  ariaLabel: 'Sleep for a set time',
-                  content: (close) => (
-                    <ChatSleepPanel
-                      wakeAt={wakeAt}
-                      onSleep={(durationMs) => {
-                        close()
-                        sleepChat(sleepKey, durationMs)
-                      }}
-                    />
-                  )
-                }
-              },
+              ...(sleepActionsEnabled
+                ? [
+                    {
+                      id: 'sleep',
+                      label: sleeping ? 'Wake up' : 'Sleep',
+                      icon: sleeping ? <BedOff /> : <Bed />,
+                      callback: () => (sleeping ? wakeChat(sleepKey) : sleepChat(sleepKey)),
+                      panel: {
+                        ariaLabel: 'Sleep for a set time',
+                        content: (close) => (
+                          <ChatSleepPanel
+                            wakeAt={wakeAt}
+                            onSleep={(durationMs) => {
+                              close()
+                              sleepChat(sleepKey, durationMs)
+                            }}
+                          />
+                        )
+                      }
+                    }
+                  ]
+                : []),
               {
                 id: 'pin',
                 label: chat.pinned ? 'Unpin' : 'Pin',
