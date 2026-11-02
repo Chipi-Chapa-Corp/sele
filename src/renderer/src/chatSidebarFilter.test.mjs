@@ -7,6 +7,7 @@ import {
   writeChatSidebarFilter,
   writeChatSidebarTabs
 } from './chatSidebarFilter.ts'
+import { readManuallyUnreadChats, writeManuallyUnreadChats } from './manualChatReadState.ts'
 
 const readChat = {
   status: null,
@@ -70,7 +71,7 @@ test('attention includes unread chats, questions, approvals, and failures', () =
   }
   assert.equal(
     matchesChatSidebarFilter({ ...readChat, seenUpdatedAt: 0 }, 'attention', { selected: true }),
-    false
+    true
   )
   assert.equal(
     matchesChatSidebarFilter({ ...readChat, seenUpdatedAt: 0, done: true }, 'attention'),
@@ -91,6 +92,50 @@ test('working includes active chats and ongoing child or commit work', () => {
   assert.equal(matchesChatSidebarFilter({ ...readChat, status: 'active' }, 'working'), true)
   assert.equal(matchesChatSidebarFilter(readChat, 'working', { working: true }), true)
   assert.equal(matchesChatSidebarFilter(readChat, 'all'), true)
+})
+
+test('opening an unread chat keeps it available until selection changes or it is marked done', () => {
+  const unread = { ...readChat, seenUpdatedAt: 0 }
+  assert.equal(matchesChatSidebarFilter(unread, 'attention'), true)
+  assert.equal(matchesChatSidebarFilter(readChat, 'attention', { selected: true }), true)
+  assert.equal(matchesChatSidebarFilter(readChat, 'attention'), false)
+  assert.equal(
+    matchesChatSidebarFilter({ ...readChat, done: true }, 'attention', { selected: true }),
+    false
+  )
+  assert.equal(matchesChatSidebarFilter(readChat, 'attention', { manuallyUnread: true }), true)
+})
+
+test('manual unread markers survive reload and automatic seen timestamps', () => {
+  let stored = null
+  globalThis.window = {
+    preferencesApi: {
+      getItem: () => ({ ok: true, value: stored }),
+      setItem: (_key, value) => {
+        stored = value
+        return { ok: true, value: null }
+      },
+      removeItem: () => {
+        stored = null
+        return { ok: true, value: null }
+      }
+    }
+  }
+  try {
+    assert.equal(readManuallyUnreadChats().size, 0)
+    writeManuallyUnreadChats(new Set(['codex:chat', 'claude:chat']))
+    assert.deepEqual([...readManuallyUnreadChats()], ['codex:chat', 'claude:chat'])
+    assert.equal(
+      matchesChatSidebarFilter({ ...readChat, seenUpdatedAt: 100 }, 'attention', {
+        manuallyUnread: true
+      }),
+      true
+    )
+    writeManuallyUnreadChats(new Set())
+    assert.equal(readManuallyUnreadChats().size, 0)
+  } finally {
+    delete globalThis.window
+  }
 })
 
 test('tab visibility persists and disabled tabs are preserved and invalid values use defaults', () => {

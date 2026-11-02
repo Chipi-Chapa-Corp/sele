@@ -52,7 +52,13 @@ export const matchesChatSidebarFilter = (
     'status' | 'lastTurnOutcome' | 'pendingApproval' | 'updatedAt' | 'seenUpdatedAt' | 'done'
   >,
   filter: ChatSidebarFilter,
-  { sleeping = false, selected = false, working = false, latestCommitFinishedAt = 0 } = {}
+  {
+    sleeping = false,
+    selected = false,
+    manuallyUnread = false,
+    working = false,
+    latestCommitFinishedAt = 0
+  } = {}
 ): boolean => {
   if (filter === 'sleeping') return sleeping
   if (sleeping) return false
@@ -64,9 +70,10 @@ export const matchesChatSidebarFilter = (
       Boolean(chat.pendingApproval) ||
       chat.status === 'error' ||
       chat.lastTurnOutcome === 'failed' ||
-      (!selected &&
-        !chat.done &&
-        Math.max(chat.updatedAt, latestCommitFinishedAt) > (chat.seenUpdatedAt ?? 0))
+      (!chat.done &&
+        (selected ||
+          manuallyUnread ||
+          Math.max(chat.updatedAt, latestCommitFinishedAt) > (chat.seenUpdatedAt ?? 0)))
     )
   }
   return true

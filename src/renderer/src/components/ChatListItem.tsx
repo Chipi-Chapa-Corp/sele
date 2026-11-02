@@ -9,6 +9,8 @@ import {
   GitFork,
   GripVertical,
   LoaderCircle,
+  Mail,
+  MailOpen,
   MessageSquare,
   Pencil,
   Pin,
@@ -56,6 +58,7 @@ import {
 } from '../chatSleep'
 import { BedOff } from './BedOffIcon'
 import { ChatSleepPanel, formatWakeIn } from './ChatSleepPanel'
+import { ChatReadStateContext } from '../manualChatReadState'
 
 type ChatListItemProps = {
   chat: ProviderChat
@@ -153,6 +156,7 @@ export const ChatListItem = memo(function ChatListItem({
   const providerLabels = useProviderLabels()
   const terminalActivity = useChatTerminalStatus(`${chat.providerId}:${chat.id}`)
   const sleepActionsEnabled = useContext(ChatSleepActionsContext)
+  const { manuallyUnreadChatKeys, onMarkRead } = useContext(ChatReadStateContext)
   const sleepKey = getChatSleepKey(chat.providerId, chat.id)
   const wakeAt = useChatWakeAt(sleepKey)
   const sleeping = wakeAt !== undefined
@@ -211,8 +215,9 @@ export const ChatListItem = memo(function ChatListItem({
         : null
   const pendingApproval = chat.pendingApproval
   const unreadUpdatedAt = Math.max(chat.updatedAt, latestCommitFinishedAt ?? 0)
-  const unread =
-    !selected && !childOpen && !chat.done && unreadUpdatedAt > (chat.seenUpdatedAt ?? 0)
+  const markedUnread = manuallyUnreadChatKeys.has(`${chat.providerId}:${chat.id}`)
+  const hasUnread = markedUnread || unreadUpdatedAt > (chat.seenUpdatedAt ?? 0)
+  const unread = !chat.done && (markedUnread || (!selected && !childOpen && hasUnread))
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()
@@ -572,7 +577,17 @@ export const ChatListItem = memo(function ChatListItem({
                 icon: chat.pinned ? <PinOff /> : <Pin />,
                 callback: () => onTogglePinned(chat)
               },
-              { id: 'export', label: 'Export', icon: <Download />, callback: exportChat }
+              { id: 'export', label: 'Export', icon: <Download />, callback: exportChat },
+              ...(onMarkRead
+                ? [
+                    {
+                      id: 'read-state',
+                      label: hasUnread ? 'Mark read' : 'Mark unread',
+                      icon: hasUnread ? <Mail /> : <MailOpen />,
+                      callback: () => onMarkRead(chat, hasUnread)
+                    }
+                  ]
+                : [])
             ]}
             onChange={() => {}}
           />

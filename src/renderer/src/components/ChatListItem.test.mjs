@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 const result = await build({
   stdin: {
     contents:
-      "export { ChatListItem } from './ChatListItem'; export { chatTerminalActivity } from '../chatTerminalActivity'",
+      "export { ChatListItem } from './ChatListItem'; export { chatTerminalActivity } from '../chatTerminalActivity'; export { ChatReadStateContext } from '../manualChatReadState'; export { getMenuActions } from './Dropdown'",
     resolveDir: fileURLToPath(new URL('.', import.meta.url)),
     loader: 'tsx'
   },
@@ -31,7 +31,8 @@ const result = await build({
           namespace: 'fixture'
         }))
         build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
-          contents: 'export const Dropdown = () => null'
+          contents:
+            'let actions; export const getMenuActions = () => actions; export const Dropdown = (props) => { actions = props.menuActions; return null }'
         }))
       }
     }
@@ -46,31 +47,73 @@ vm.runInNewContext(result.outputFiles[0].text, {
   setInterval,
   clearInterval
 })
-const { ChatListItem, chatTerminalActivity } = module.exports
-const render = (outcome, extra = {}, props = {}) =>
+const { ChatListItem, chatTerminalActivity, ChatReadStateContext, getMenuActions } = module.exports
+const render = (
+  outcome,
+  extra = {},
+  props = {},
+  readState = { manuallyUnreadChatKeys: new Set(), onMarkRead: null }
+) =>
   renderToStaticMarkup(
-    createElement(ChatListItem, {
-      chat: {
-        id: 'chat',
-        providerId: 'codex',
-        title: 'Chat',
-        cwd: '/repo',
-        createdAt: 1000,
-        updatedAt: 2000,
-        seenUpdatedAt: 2000,
-        status: null,
-        lastTurnOutcome: outcome,
-        ...extra
-      },
-      selected: false,
-      onClick() {},
-      onMarkDone() {},
-      onRename() {},
-      onResolveApproval() {},
-      onTogglePinned() {},
-      ...props
-    })
+    createElement(
+      ChatReadStateContext.Provider,
+      { value: readState },
+      createElement(ChatListItem, {
+        chat: {
+          id: 'chat',
+          providerId: 'codex',
+          title: 'Chat',
+          cwd: '/repo',
+          createdAt: 1000,
+          updatedAt: 2000,
+          seenUpdatedAt: 2000,
+          status: null,
+          lastTurnOutcome: outcome,
+          ...extra
+        },
+        selected: false,
+        onClick() {},
+        onMarkDone() {},
+        onRename() {},
+        onResolveApproval() {},
+        onTogglePinned() {},
+        ...props
+      })
+    )
   )
+
+test('read toggle is the final menu action with the requested icon and state', () => {
+  const changes = []
+  const readState = {
+    manuallyUnreadChatKeys: new Set(),
+    onMarkRead: (chat, read) => changes.push([chat.id, read])
+  }
+  render(null, {}, {}, readState)
+  let action = getMenuActions().at(-1)
+  assert.equal(action.label, 'Mark unread')
+  assert.match(renderToStaticMarkup(action.icon), /lucide-mail-open/)
+  action.callback()
+  render(null, { seenUpdatedAt: 0 }, {}, readState)
+  action = getMenuActions().at(-1)
+  assert.equal(action.label, 'Mark read')
+  assert.match(renderToStaticMarkup(action.icon), /class="lucide lucide-mail"/)
+  action.callback()
+  assert.deepEqual(changes, [
+    ['chat', false],
+    ['chat', true]
+  ])
+})
+
+test('marking the selected chat unread remains visible and can be toggled back to read', () => {
+  const readState = { manuallyUnreadChatKeys: new Set(['codex:chat']), onMarkRead() {} }
+  const markup = render(null, {}, { selected: true }, readState)
+  assert.match(markup, /chat-list-item--unread/)
+  assert.equal(getMenuActions().at(-1).label, 'Mark read')
+  assert.doesNotMatch(
+    render(null, {}, { selected: true }, { ...readState, manuallyUnreadChatKeys: new Set() }),
+    /chat-list-item--unread/
+  )
+})
 
 for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
   test(`${providerId}: failed and stopped reminders stay visible when read, selected and done`, () => {

@@ -103,6 +103,7 @@ import type { AccountAuthorizationSession } from './components/AccountDialog'
 import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
 import { getChatSleepKey, useSleepingChats } from './chatSleep'
+import { readManuallyUnreadChats, writeManuallyUnreadChats } from './manualChatReadState'
 import {
   chatSidebarFilters,
   matchesChatSidebarFilter,
@@ -455,6 +456,9 @@ export const useWorkspaceController = () => {
   const [recentlyOpenedFilesByWorkspace, setRecentlyOpenedFilesByWorkspace] =
     useState<RecentlyOpenedFilesByWorkspace>(readStoredRecentlyOpenedFiles)
   const sleepingChats = useSleepingChats()
+  const [manuallyUnreadChatKeys, setManuallyUnreadChatKeys] =
+    useState(readManuallyUnreadChats)
+  useEffect(() => writeManuallyUnreadChats(manuallyUnreadChatKeys), [manuallyUnreadChatKeys])
   const [chatSidebarTabs, setChatSidebarTabs] = useState(readChatSidebarTabs)
   const [chatSidebarFilter, setChatSidebarFilter] = useState(readChatSidebarFilter)
   const activeChatSidebarFilter = chatSidebarTabs[chatSidebarFilter]
@@ -3410,12 +3414,37 @@ export const useWorkspaceController = () => {
     (chat: ProviderChat): boolean => sleepingChats.has(getChatSleepKey(chat.providerId, chat.id)),
     [sleepingChats]
   )
+  const handleMarkChatRead = useCallback(
+    (chat: ProviderChat, read: boolean): void => {
+      const key = getChatKey(chat)
+      if (read) {
+        markChatSeenAt(
+          chat.providerId,
+          chat.id,
+          Math.max(Date.now(), chat.updatedAt, latestCommitFinishedAtByChatKey.get(key) ?? 0)
+        )
+      }
+      setManuallyUnreadChatKeys((current) => {
+        if (current.has(key) === !read) return current
+        const next = new Set(current)
+        if (read) next.delete(key)
+        else next.add(key)
+        return next
+      })
+    },
+    [markChatSeenAt, latestCommitFinishedAtByChatKey]
+  )
+  const chatReadState = useMemo(
+    () => ({ manuallyUnreadChatKeys, onMarkRead: handleMarkChatRead }),
+    [manuallyUnreadChatKeys, handleMarkChatRead]
+  )
   const matchesSidebarFilter = useCallback(
     (chat: ProviderChat): boolean => {
       const key = getChatKey(chat)
       return matchesChatSidebarFilter(chat, activeChatSidebarFilter, {
         sleeping: isSleepingChat(chat),
         selected: key === selectedChatKey,
+        manuallyUnread: manuallyUnreadChatKeys.has(key),
         working: committingChatKeys.has(key) || workingSubagentChatKeys.has(key),
         latestCommitFinishedAt: latestCommitFinishedAtByChatKey.get(key) ?? 0
       })
@@ -3424,6 +3453,7 @@ export const useWorkspaceController = () => {
       activeChatSidebarFilter,
       isSleepingChat,
       selectedChatKey,
+      manuallyUnreadChatKeys,
       committingChatKeys,
       workingSubagentChatKeys,
       latestCommitFinishedAtByChatKey
@@ -4716,6 +4746,13 @@ export const useWorkspaceController = () => {
 
   const handleSelectChat = (chat: ProviderChat): void =>
     startTransition(() => {
+      setManuallyUnreadChatKeys((current) => {
+        const key = getChatKey(chat)
+        if (!current.has(key)) return current
+        const next = new Set(current)
+        next.delete(key)
+        return next
+      })
       const selectingCurrentChat =
         selectedChatKeyRef.current === getChatKey(chat) &&
         selectedChat?.providerId === chat.providerId &&
@@ -6347,6 +6384,7 @@ export const useWorkspaceController = () => {
       importedChatGroup,
       chatSidebarFilter: activeChatSidebarFilter,
       chatSidebarTabs,
+      chatReadState,
       handleChatSidebarFilterChange: (filter: ChatSidebarFilter) => {
         setChatSidebarFilter(filter)
         writeChatSidebarFilter(filter)

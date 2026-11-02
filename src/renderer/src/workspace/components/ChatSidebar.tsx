@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { chatSidebarFilters, type ChatSidebarFilter } from '../../chatSidebarFilter'
 import { ChatSleepActionsContext } from '../../chatSleep'
+import { ChatReadStateContext } from '../../manualChatReadState'
 import { SegmentedControl } from '../../components/SegmentedControl'
 
 const filterIcons = {
@@ -42,6 +43,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     handleImportedChat,
     chatSidebarFilter,
     chatSidebarTabs,
+    chatReadState,
     handleChatSidebarFilterChange,
     importedChatGroup,
     chats,
@@ -234,15 +236,17 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
         <ChatSleepActionsContext.Provider
           value={chatSidebarTabs.sleeping && (chatSidebarFilter === 'sleeping' ? 'wake' : 'sleep')}
         >
-          <ChatSidebarGroups
-            pinnedChatGroup={pinnedChatGroup}
-            importedChatGroup={importedChatGroup}
-            displayedActiveChatGroups={displayedActiveChatGroups}
-            doneChatGroup={doneChatGroup}
-            renderChatGroup={renderChatGroup}
-            handleProjectDrop={handleProjectDrop}
-            handleProjectStackDragOver={handleProjectStackDragOver}
-          />
+          <ChatReadStateContext.Provider value={chatReadState}>
+            <ChatSidebarGroups
+              pinnedChatGroup={pinnedChatGroup}
+              importedChatGroup={importedChatGroup}
+              displayedActiveChatGroups={displayedActiveChatGroups}
+              doneChatGroup={doneChatGroup}
+              renderChatGroup={renderChatGroup}
+              handleProjectDrop={handleProjectDrop}
+              handleProjectStackDragOver={handleProjectStackDragOver}
+            />
+          </ChatReadStateContext.Provider>
         </ChatSleepActionsContext.Provider>
         {sidebarSearch.hasMore && (
           <Button
