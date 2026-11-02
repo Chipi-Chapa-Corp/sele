@@ -15,6 +15,24 @@ export const createChatTerminalPoller = (options: {
   const running = new Set<string>()
   const failures = new Map<string, { attempts: number; retryAt: number }>()
   const now = options.now ?? Date.now
+  let indexedChats: ProviderChat[] | undefined
+  let eligibleKeys = new Set<string>()
+  const isEligible = (key: string): boolean => {
+    const chats = options.getChats()
+    if (chats !== indexedChats) {
+      indexedChats = chats
+      eligibleKeys = new Set(
+        chats.filter((chat) => !chat.done).map((chat) => `${chat.providerId}:${chat.id}`)
+      )
+    }
+    return eligibleKeys.has(key)
+  }
+  const stopTracking = (key: string): void => {
+    discovered.delete(key)
+    running.delete(key)
+    failures.delete(key)
+    options.activity.report(key, 'agent', [], false)
+  }
   return {
     dispose: () => {
       disposed = true
@@ -25,6 +43,10 @@ export const createChatTerminalPoller = (options: {
       const requested = new Set(options.activity.takeProbes())
       const targets = options.getChats().filter((chat) => {
         const key = `${chat.providerId}:${chat.id}`
+        if (chat.done) {
+          stopTracking(key)
+          return false
+        }
         const failure = failures.get(key)
         if (failure && now() < failure.retryAt) return false
         return (
@@ -36,6 +58,10 @@ export const createChatTerminalPoller = (options: {
           await Promise.all(
             targets.slice(index, index + 4).map(async (chat) => {
               const key = `${chat.providerId}:${chat.id}`
+              if (!isEligible(key)) {
+                stopTracking(key)
+                return
+              }
               let timeout: ReturnType<typeof setTimeout> | undefined
               try {
                 const ids = await Promise.race([
@@ -48,6 +74,10 @@ export const createChatTerminalPoller = (options: {
                   })
                 ])
                 if (disposed) return
+                if (!isEligible(key)) {
+                  stopTracking(key)
+                  return
+                }
                 failures.delete(key)
                 discovered.add(key)
                 if (ids.length) running.add(key)
@@ -55,6 +85,10 @@ export const createChatTerminalPoller = (options: {
                 options.activity.report(key, 'agent', ids)
               } catch (error) {
                 if (disposed) return
+                if (!isEligible(key)) {
+                  stopTracking(key)
+                  return
+                }
                 // Losing contact is unknown, not proof of continued execution or
                 // successful completion. Retry even idle chats, with backoff so a
                 // persistent failure cannot flood IPC or repeatedly launch a provider.

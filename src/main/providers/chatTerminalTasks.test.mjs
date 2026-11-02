@@ -32,6 +32,8 @@ const harness = (provider, globals = {}, methods = ['getChatTerminalTasks']) => 
     ),
     {
       getContainerTargetKey: (target) => target?.name ?? 'host',
+      isCodexThreadNotLoadedError: (error) =>
+        /\bthread not (?:found|loaded)\b/i.test(error.message),
       requireData: (result) => result.data,
       reconcileOpenCodeMessageSnapshot,
       forEachOpenCodeEvent,
@@ -82,6 +84,28 @@ test('Codex polling never restarts a stopped server with an unavailable account'
   client.connectionIdentity = {}
   client.request = async () => ({ data: [{ processId: 'recovered' }] })
   assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), ['recovered'])
+})
+
+test('Codex treats unloaded terminal probes as empty without hiding real failures', async () => {
+  const adapter = harness('codex')
+  let failure = new Error('thread not found: old-chat')
+  const policies = []
+  adapter.clients = new Map([
+    [
+      'host',
+      {
+        connectionIdentity: {},
+        request: async (_method, _params, options) => {
+          policies.push(options.isExpectedError(failure))
+          throw failure
+        }
+      }
+    ]
+  ])
+  assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('old-chat')), [])
+  failure = new Error('permission denied')
+  await assert.rejects(adapter.getChatTerminalTasks('old-chat'), /permission denied/)
+  assert.deepEqual(policies, [true, false])
 })
 
 test('Codex pagination cannot restart a server or mix tasks from a replacement process', async () => {

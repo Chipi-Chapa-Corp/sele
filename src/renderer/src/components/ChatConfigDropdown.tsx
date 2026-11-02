@@ -321,12 +321,6 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
               aria-label={section.id.charAt(0).toUpperCase() + section.id.slice(1)}
               key={section.id}
             >
-              <div className="message-box__chat-config-column-heading">
-                <span className="message-box__chat-config-section-icon" aria-hidden="true">
-                  {section.icon}
-                </span>
-                <span>{section.id.charAt(0).toUpperCase() + section.id.slice(1)}</span>
-              </div>
               {renderSectionOptions(section, true)}
             </section>
           ))}

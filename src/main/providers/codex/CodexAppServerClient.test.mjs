@@ -66,6 +66,7 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
         return true
       }
       child.autoReply = true
+      child.requests = []
       child.failure = children.length === 0 && failInitialize ? brokenPipe() : null
       child.stdin = new Writable({
         write(chunk, _encoding, callback) {
@@ -74,6 +75,7 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
             return
           }
           const message = JSON.parse(chunk.toString())
+          child.requests.push(message)
           if (message.id && (child.autoReply || message.method === 'initialize'))
             queueMicrotask(() => {
               child.stdout.write(
@@ -110,6 +112,29 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
   })
   return { client, children, logs }
 }
+
+test('expected terminal probes reject quietly while other RPC failures remain logged', async (t) => {
+  const { client, children, logs } = fixture(t)
+  await client.request('model/list')
+  const child = children[0]
+  child.autoReply = false
+  const isExpectedError = (error) => /\bthread not (?:found|loaded)\b/i.test(error.message)
+  for (const [method, message, options, logged] of [
+    ['thread/backgroundTerminals/list', 'thread not found: old-chat', { isExpectedError }, false],
+    ['thread/backgroundTerminals/list', 'permission denied', { isExpectedError }, true],
+    ['thread/read', 'thread not found: old-chat', undefined, true]
+  ]) {
+    logs.length = 0
+    const result = client.request(method, { threadId: 'old-chat' }, options)
+    const rejected = assert.rejects(result, { message, code: -32600 })
+    await tick()
+    const id = child.requests.at(-1).id
+    child.stdout.write(`${JSON.stringify({ id, error: { code: -32600, message } })}\n`)
+    await rejected
+    assert.equal(logs.length, logged ? 1 : 0)
+    if (logged) assert.equal(logs[0][1], method)
+  }
+})
 
 test('asynchronous EPIPE rejects all pending RPCs and releases the failed connection once', async (t) => {
   const { client, children, logs } = fixture(t)

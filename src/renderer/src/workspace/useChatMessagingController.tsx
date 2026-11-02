@@ -106,8 +106,6 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     handleSendFailure,
     newSessionProvider,
     newSessionLocation,
-    defaultCwd,
-    rememberProject,
     chatHasActiveTurn,
     applyChatSummary,
     markChatSeenAt,
@@ -726,9 +724,6 @@ export function useChatMessagingController(dependencies: ChatMessagingController
 
             // Live updates continue normally; reopening the chat remains a manual recovery path.
           })
-        if (startingCwd?.trim() && startingCwd.trim() === defaultCwd?.trim()) {
-          void rememberProject(startingCwd)
-        }
         setSendState('idle')
         return true
       } catch (error) {

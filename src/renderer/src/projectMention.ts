@@ -5,6 +5,7 @@ export const getProjectMentionResults = (projects: AppProject[], query: string):
   const normalizedQuery = query.toLocaleLowerCase()
   return projects
     .flatMap((project) => {
+      if (project.orderOnly) return []
       const name = project.name.toLocaleLowerCase()
       const cwd = project.cwd.toLocaleLowerCase()
       if (!name.includes(normalizedQuery) && !cwd.includes(normalizedQuery)) return []

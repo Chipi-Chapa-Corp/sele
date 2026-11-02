@@ -2245,11 +2245,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
       if (client.connectionIdentity !== connection) return []
       let page: { data: { processId: string }[]; nextCursor?: string | null }
       try {
-        page = await client.request('thread/backgroundTerminals/list', {
-          threadId: chatId,
-          cursor,
-          limit: 100
-        })
+        page = await client.request(
+          'thread/backgroundTerminals/list',
+          { threadId: chatId, cursor, limit: 100 },
+          { isExpectedError: !cursor ? isCodexThreadNotLoadedError : undefined }
+        )
       } catch (error) {
         // Background terminals live in the app-server process. A thread it has not loaded,
         // such as any chat after a restart until it is opened again, has none.

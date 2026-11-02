@@ -188,8 +188,6 @@ export type ChatMessagingControllerDependencies = {
   handleSendFailure: (error: unknown, fallback: string) => void
   newSessionProvider: 'codex' | 'claude' | 'copilot' | 'opencode-v2'
   newSessionLocation: NewSessionLocation
-  defaultCwd: string | null
-  rememberProject: (cwd: string | null | undefined) => Promise<void>
   chatHasActiveTurn: boolean
   applyChatSummary: (
     providerId: ProviderId,

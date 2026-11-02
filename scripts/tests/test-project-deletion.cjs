@@ -15,10 +15,16 @@ if (!process.versions.electron) {
           resolveDir: project,
           contents: `
             import assert from 'node:assert/strict'
+            import Database from 'better-sqlite3'
             import {getDatabase,disposeDatabase} from './src/main/database/sqlite'
             import {addProject,deleteProject,getProjects,getDeletedProjectCwds,setProjectOrder} from './src/main/database/projects'
             import {setChatPinned,getChatMetadata} from './src/main/database/chat'
             async function run() {
+              const legacy = new Database(process.env.SELE_DATABASE_PATH)
+              legacy.exec("CREATE TABLE projects (cwd TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', icon TEXT, additional_cwds_json TEXT NOT NULL DEFAULT '[]', sidebar_order INTEGER, added_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); INSERT INTO projects VALUES ('/legacy','Legacy',NULL,'[]',NULL,1,1)")
+              legacy.close()
+              assert.equal((await getProjects())[0].orderOnly,false)
+              await deleteProject('/legacy')
               await addProject({cwd:'/saved',name:'Saved project',additionalCwds:['/extra']})
               await addProject({cwd:'/other',name:'Other'})
               await setChatPinned('retained-chat',true)
@@ -26,15 +32,26 @@ if (!process.versions.electron) {
               await deleteProject('/saved')
               await deleteProject('/history')
               assert.deepEqual((await getProjects()).map(p=>p.cwd),['/other'])
-              assert.deepEqual((await getDeletedProjectCwds()).sort(),['/history','/saved'])
+              assert.deepEqual((await getDeletedProjectCwds()).sort(),['/history','/legacy','/saved'])
               assert.equal((await getChatMetadata('retained-chat')).pinned,true)
               await disposeDatabase()
-              assert.deepEqual((await getDeletedProjectCwds()).sort(),['/history','/saved'])
+              assert.deepEqual((await getDeletedProjectCwds()).sort(),['/history','/legacy','/saved'])
               await setProjectOrder(['/history','/saved','/other'])
               assert.deepEqual((await getProjects()).map(p=>p.cwd),['/other'])
               await addProject({cwd:'/saved',name:'Restored project'})
-              assert.deepEqual(await getDeletedProjectCwds(),['/history'])
+              assert.deepEqual((await getDeletedProjectCwds()).sort(),['/history','/legacy'])
               assert.equal((await getProjects()).find(p=>p.cwd==='/saved').name,'Restored project')
+              await setProjectOrder(['/discovered','/other','/saved'])
+              await disposeDatabase()
+              const ordered = await getProjects()
+              assert.equal(ordered.find(p=>p.cwd==='/discovered').orderOnly,true)
+              assert.equal(ordered.find(p=>p.cwd==='/discovered').sidebarOrder,0)
+              assert.equal(ordered.find(p=>p.cwd==='/saved').orderOnly,false)
+              assert.equal(ordered.find(p=>p.cwd==='/other').orderOnly,false)
+              await addProject({cwd:'/discovered'})
+              assert.equal((await getProjects()).find(p=>p.cwd==='/discovered').orderOnly,false)
+              await setProjectOrder(['/saved','/discovered'])
+              assert.equal((await getProjects()).find(p=>p.cwd==='/discovered').orderOnly,false)
               await assert.rejects(deleteProject('  '),/Invalid project cwd/)
               await disposeDatabase()
               console.log('Project deletion store checks passed: persistence, history exclusions, retained chats, reorder and restore.')
@@ -106,7 +123,7 @@ if (!process.versions.electron) {
             window.confirm=message=>{window.confirmations.push(message);return window.approve}
             const appApi={deleteProject:async cwd=>{window.calls.push(cwd);if(window.fail)throw Error('Fixture failure')}}
             function Fixture(){
-              const [projects,setProjects]=useState([{cwd:'/saved',name:'Saved project',icon:null},{cwd:'/other',name:'Other',icon:null}])
+              const [projects,setProjects]=useState([{cwd:'/saved',name:'Saved project',icon:null},{cwd:'/other',name:'Other',icon:null},{cwd:'/history',name:'',icon:null,orderOnly:true}])
               const [deletedProjectCwds,setDeletedProjectCwds]=useState(new Set(['/hidden']))
               const [deletingProject,setDeletingProject]=useState(false)
               const deletingProjectRef=useRef(false)
@@ -180,7 +197,9 @@ if (!process.versions.electron) {
     }
     const assertOpen = async () => {
       assert.equal(
-        await run('document.querySelector("button[aria-label=Project]").getAttribute("aria-expanded")'),
+        await run(
+          'document.querySelector("button[aria-label=Project]").getAttribute("aria-expanded")'
+        ),
         'true'
       )
       assert.equal(await run('!!document.querySelector("[role=listbox]")'), true)
@@ -189,6 +208,7 @@ if (!process.versions.electron) {
       await window.loadFile(path.join(process.argv[2], 'fixture.html'))
       await waitFor('!!window.fixture')
       assert.equal(await run('window.fixture.values.includes("/hidden")'), false)
+      assert.equal(await run('window.fixture.values.includes("/history")'), false)
       await open()
       assert.equal(
         await run(
@@ -218,27 +238,30 @@ if (!process.versions.electron) {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '/')
         input.dispatchEvent(new Event('input', {bubbles: true}))
       `)
-      await waitFor('document.querySelectorAll("[role=option]").length === 3')
+      await waitFor('document.querySelectorAll("[role=option]").length === 2')
       await run(
         'window.fail=false;document.querySelector("button[aria-label=\\"Remove project Saved project\\"]").focus();document.querySelector("button[aria-label=\\"Remove project Saved project\\"]").click()'
       )
       await waitFor('!window.fixture.values.includes("/saved")')
       assert.equal(await run('window.fixture.sendError'), null)
       assert.notEqual(await run('window.fixture.current'), '/saved')
-      assert.equal(await run('window.fixture.values.includes("/history")'), true)
+      assert.equal(await run('window.fixture.values.includes("/history")'), false)
       await assertOpen()
       assert.equal(await run('document.querySelector("input[type=search]").value'), '/')
-      assert.equal(await run('document.activeElement === document.querySelector("input[type=search]")'), true)
-      await waitFor('!!document.querySelector("button[aria-label=\\"Remove project history\\"]")')
-      await run('document.querySelector("button[aria-label=\\"Remove project history\\"]").click()')
-      await waitFor('!window.fixture.values.includes("/history")')
-      await assertOpen()
+      assert.equal(
+        await run('document.activeElement === document.querySelector("input[type=search]")'),
+        true
+      )
       await run('window.reorder()')
       assert.equal(await run('window.fixture.values.includes("/saved")'), false)
       await run('window.restore()')
       await waitFor('window.fixture.values.includes("/saved")')
-      await run('Array.from(document.querySelectorAll("[role=option]")).find(option=>option.textContent.includes("Saved again")).click()')
-      await waitFor('document.querySelector("button[aria-label=Project]").getAttribute("aria-expanded") === "false"')
+      await run(
+        'Array.from(document.querySelectorAll("[role=option]")).find(option=>option.textContent.includes("Saved again")).click()'
+      )
+      await waitFor(
+        'document.querySelector("button[aria-label=Project]").getAttribute("aria-expanded") === "false"'
+      )
       assert.equal(await run('window.fixture.current'), '/saved')
       console.log(
         'Project selector UI checks passed: confirmation, cancel, failure, removal keeps menu and search open, restore, and selection closes menu.'

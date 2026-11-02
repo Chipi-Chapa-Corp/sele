@@ -14,7 +14,6 @@ import type {
 } from '../../../shared/provider'
 import { Button } from '../components/Button'
 import type { AppAction } from '../actions'
-import { appApi } from '../appApi'
 import {
   type AppAppearancePositionPreference,
   type AppAppearanceControlStylePreference,
@@ -638,22 +637,6 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     },
     [setDeletedProjectCwds]
   )
-  const rememberProject = useCallback(
-    async (cwd: string | null | undefined): Promise<void> => {
-      const normalizedCwd = cwd?.trim()
-      if (!normalizedCwd) return
-
-      try {
-        const project = await appApi.addProject({ cwd: normalizedCwd })
-        setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
-        restoreProject(project.cwd)
-      } catch (error) {
-        console.error('[caught:useSettingsController:useSettingsController]', error)
-        // Keep the project selected even if local persistence fails.
-      }
-    },
-    [restoreProject, setProjects]
-  )
   const handleProjectSaved = (project: AppProject, image: AppProjectIcon | null): void => {
     setProjects((currentProjects) => mergeProjects(currentProjects, [project]))
     restoreProject(project.cwd)
@@ -761,7 +744,6 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handleSandboxModeChange,
     handleThemePreferenceChange,
     isScopedSettingControlDisabled,
-    rememberProject,
     renderProjectSettingAction
   }
 }

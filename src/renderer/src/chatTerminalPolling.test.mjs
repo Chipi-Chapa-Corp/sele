@@ -166,3 +166,73 @@ test('a failing chat does not delay healthy active chats', async () => {
   assert.deepEqual(reads, ['failed', 'healthy', 'healthy'])
   assert.equal(f.activity.getSnapshot('codex:healthy').running, true)
 })
+
+test('Done chats are never polled, including active chats and explicit probes', async () => {
+  const reads = []
+  const f = fixture({
+    getChats: () => [
+      { id: 'done', providerId: 'codex', done: true, status: 'active' },
+      { id: 'open', providerId: 'codex', done: false, status: 'active' }
+    ],
+    readTasks: async (_providerId, id) => {
+      reads.push(id)
+      return []
+    }
+  })
+  f.activity.requestProbe('codex:done')
+  await f.poller.poll()
+  await f.poller.poll()
+  assert.deepEqual(reads, ['open', 'open'])
+})
+
+test('marking a chat Done stops polling and reopening it discovers terminals again', async () => {
+  let chats = [{ id: 'chat', providerId: 'opencode', done: false, status: null }]
+  const f = fixture({ getChats: () => chats })
+  await f.poller.poll()
+  assert.equal(f.activity.getSnapshot(f.key).running, true)
+  chats = [{ ...chats[0], done: true }]
+  await f.poller.poll()
+  await f.poller.poll()
+  assert.equal(f.reads(), 1)
+  assert.deepEqual(f.activity.getSnapshot(f.key), { running: false, unread: false })
+  chats = [{ ...chats[0], done: false }]
+  await f.poller.poll()
+  assert.equal(f.reads(), 2)
+  assert.equal(f.activity.getSnapshot(f.key).running, true)
+})
+
+test('chats marked Done during a poll ignore late results and skip queued requests', async () => {
+  for (const reject of [false, true]) {
+    let chats = Array.from({ length: 5 }, (_, i) => ({
+      id: String(i),
+      providerId: 'codex',
+      done: false,
+      status: null
+    }))
+    const reads = []
+    const finish = []
+    const f = fixture({
+      getChats: () => chats,
+      readTasks: (_providerId, id) => {
+        reads.push(id)
+        return new Promise((resolve, fail) =>
+          finish.push(() => (reject ? fail(new Error('unavailable')) : resolve(['shell'])))
+        )
+      }
+    })
+    const polling = f.poller.poll()
+    assert.deepEqual(reads, ['0', '1', '2', '3'])
+    chats = chats.map((chat) => ({ ...chat, done: true }))
+    finish.forEach((complete) => complete())
+    await polling
+    assert.deepEqual(reads, ['0', '1', '2', '3'])
+    assert.equal(f.errors.length, 0)
+    for (const chat of chats)
+      assert.deepEqual(f.activity.getSnapshot(`codex:${chat.id}`), {
+        running: false,
+        unread: false
+      })
+    await f.poller.poll()
+    assert.equal(reads.length, 4)
+  }
+})

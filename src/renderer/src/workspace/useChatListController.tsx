@@ -225,6 +225,7 @@ export function useChatListController(dependencies: ChatListControllerDependenci
             icon: null,
             additionalCwds: [],
             sidebarOrder,
+            orderOnly: true,
             addedAt: reorderedAt,
             updatedAt: reorderedAt
           }

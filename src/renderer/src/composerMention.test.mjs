@@ -45,6 +45,13 @@ test('project references insert only the main directory and preserve surrounding
   )
   assert.deepEqual(getProjectMentionResults(projects, 'missing'), [])
   assert.deepEqual(getProjectMentionResults(projects, '/workspace/box'), [projects[1]])
+  assert.deepEqual(
+    getProjectMentionResults(
+      [...projects, { name: 'Tool', cwd: '/tmp/history', orderOnly: true }],
+      ''
+    ),
+    getProjectMentionResults(projects, '')
+  )
   const message = 'Use #tool after'
   const mention = getComposerMentionAtCaret(message, 9, '#')
   assert.deepEqual(replaceProjectMention(message, mention, projects[2]), {

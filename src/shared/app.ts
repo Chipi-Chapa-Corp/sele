@@ -82,6 +82,8 @@ export type AppProject = {
   icon: AppProjectIconKind | null
   additionalCwds: string[]
   sidebarOrder: number | null
+  /** Internal sidebar ordering record, not a project added by the user. */
+  orderOnly?: boolean
   addedAt: number
   updatedAt: number
 }

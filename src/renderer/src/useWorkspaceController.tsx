@@ -657,7 +657,6 @@ export const useWorkspaceController = () => {
     },
     [settingsProjectCwd, settingsProjectOverrides, settingsViewIsProject]
   )
-  const [defaultCwd, setDefaultCwd] = useState<string | null>(null)
   const [newSessionLocation, setNewSessionLocation] = useState<NewSessionLocation>('folder')
   const [worktreeCreationState, setWorktreeCreationState] = useState<WorktreeCreationState>('idle')
   const [newSessionProvider, setNewSessionProvider] = useState<ProviderId>('codex')
@@ -3377,7 +3376,6 @@ export const useWorkspaceController = () => {
     setUncommittedPatchFilterError,
     setGitChangeLoadErrorDismissed,
     newChatOpen,
-    setDefaultCwd,
     initializeNewSessionCwd,
     gitBranchRequestIdRef,
     setGitBranches,
@@ -3716,11 +3714,12 @@ export const useWorkspaceController = () => {
       }
     }
 
-    projects.forEach((project) => addProject(project.cwd, 0, project))
-    for (const [cwd, createdAt] of JSON.parse(chatProjectCreatedAtKey) as [string, number][]) {
-      addProject(cwd, createdAt)
-    }
-    addProject(newSessionCwd, 0)
+    // History affects recency, but only explicitly added projects are choices.
+    const latestCreatedAtByCwd = new Map<string, number>(JSON.parse(chatProjectCreatedAtKey))
+    projects.forEach((project) => {
+      if (!project.orderOnly)
+        addProject(project.cwd, latestCreatedAtByCwd.get(project.cwd) ?? 0, project)
+    })
 
     const getProjectOptionIcon = (
       cwd: string | null,
@@ -5006,7 +5005,6 @@ export const useWorkspaceController = () => {
     handleSandboxModeChange,
     handleThemePreferenceChange,
     isScopedSettingControlDisabled,
-    rememberProject,
     renderProjectSettingAction
   } = useSettingsController({
     setAppSettings,
@@ -5223,8 +5221,6 @@ export const useWorkspaceController = () => {
     handleSendFailure,
     newSessionProvider,
     newSessionLocation,
-    defaultCwd,
-    rememberProject,
     chatHasActiveTurn: isActiveChatStatus(chatDetail?.status),
     applyChatSummary,
     markChatSeenAt,

@@ -8,6 +8,7 @@ export type ProjectRecord = {
   icon: AppProjectIconKind | null
   additionalCwds: string[]
   sidebarOrder: number | null
+  orderOnly: boolean
   addedAt: number
   updatedAt: number
 }
@@ -25,6 +26,7 @@ const mapProjectRow = (row: {
   icon: string | null
   additional_cwds_json: string
   sidebar_order: number | null
+  order_only: number
   added_at: number
   updated_at: number
 }): ProjectRecord => {
@@ -50,6 +52,7 @@ const mapProjectRow = (row: {
     name: row.name,
     icon: isAppProjectIconKind(row.icon) ? row.icon : null,
     additionalCwds,
+    orderOnly: row.order_only === 1,
     sidebarOrder:
       typeof row.sidebar_order === 'number' && Number.isFinite(row.sidebar_order)
         ? row.sidebar_order
@@ -75,6 +78,7 @@ export const getProjects = async (): Promise<ProjectRecord[]> => {
       'icon',
       'additional_cwds_json',
       'sidebar_order',
+      'order_only',
       'added_at',
       'updated_at'
     ])
@@ -115,6 +119,7 @@ export const addProject = async (options: AddProjectRecordOptions): Promise<Proj
   const additionalCwds = options.additionalCwds ?? []
   const update = {
     updated_at: updatedAt,
+    order_only: 0,
     ...(options.name !== undefined ? { name } : {}),
     ...(options.icon !== undefined ? { icon } : {}),
     ...(options.additionalCwds !== undefined
@@ -132,6 +137,7 @@ export const addProject = async (options: AddProjectRecordOptions): Promise<Proj
         icon,
         additional_cwds_json: JSON.stringify(additionalCwds),
         sidebar_order: null,
+        order_only: 0,
         added_at: updatedAt,
         updated_at: updatedAt
       })
@@ -147,6 +153,7 @@ export const addProject = async (options: AddProjectRecordOptions): Promise<Proj
       'icon',
       'additional_cwds_json',
       'sidebar_order',
+      'order_only',
       'added_at',
       'updated_at'
     ])
@@ -180,6 +187,7 @@ export const setProjectOrder = async (projectCwds: string[]): Promise<ProjectRec
           icon: null,
           additional_cwds_json: '[]',
           sidebar_order: sidebarOrder,
+          order_only: 1,
           added_at: addedAt,
           updated_at: addedAt
         })

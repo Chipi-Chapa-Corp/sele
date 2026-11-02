@@ -35,10 +35,17 @@ export type RpcRequest = {
 }
 
 type PendingRequest = {
+  method: string
+  isExpectedError?: (error: Error) => boolean
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
   cleanup?: () => void
+}
+
+type RequestOptions = {
+  signal?: AbortSignal
+  isExpectedError?: (error: Error) => boolean
 }
 
 const requestTimeoutMs = 30_000
@@ -180,7 +187,7 @@ export class CodexAppServerClient {
   request = async <Result>(
     method: string,
     params: unknown,
-    options?: { signal?: AbortSignal }
+    options?: RequestOptions
   ): Promise<Result> => {
     await this.start()
     const input = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
@@ -418,7 +425,7 @@ export class CodexAppServerClient {
   private sendRequest = <Result>(
     method: string,
     params: unknown,
-    options?: { signal?: AbortSignal }
+    options?: RequestOptions
   ): Promise<Result> => {
     if (options?.signal?.aborted) return Promise.reject(new Error('Request canceled.'))
     const id = this.nextRequestId++
@@ -454,6 +461,8 @@ export class CodexAppServerClient {
       )
 
       this.pendingRequests.set(id, {
+        method,
+        isExpectedError: options?.isExpectedError,
         resolve: (value) => resolve(value as Result),
         reject,
         timeout,
@@ -530,13 +539,13 @@ export class CodexAppServerClient {
     this.pendingRequests.delete(response.id)
 
     if (response.error) {
-      console.error('Codex app-server request failed', response.error)
-      pending.reject(
-        Object.assign(new Error(response.error.message), {
-          code: response.error.code,
-          data: response.error.data
-        })
-      )
+      const error = Object.assign(new Error(response.error.message), {
+        code: response.error.code,
+        data: response.error.data
+      })
+      if (!pending.isExpectedError?.(error))
+        console.error('Codex app-server request failed', pending.method, response.error)
+      pending.reject(error)
       return
     }
 

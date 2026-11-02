@@ -152,7 +152,6 @@ export type WorkspaceSelectionDependencies = {
   >
   setGitChangeLoadErrorDismissed: React.Dispatch<React.SetStateAction<boolean>>
   newChatOpen: boolean
-  setDefaultCwd: React.Dispatch<React.SetStateAction<string | null>>
   initializeNewSessionCwd: (cwd: string | null) => void
   gitBranchRequestIdRef: React.RefObject<number>
   setGitBranches: React.Dispatch<React.SetStateAction<AppGitBranchesResult | null>>

@@ -171,7 +171,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     setUncommittedPatchFilterError,
     setGitChangeLoadErrorDismissed,
     newChatOpen,
-    setDefaultCwd,
     initializeNewSessionCwd,
     gitBranchRequestIdRef,
     setGitBranches,
@@ -1418,7 +1417,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       .getDefaultCwd()
       .then((cwd) => {
         if (active) {
-          setDefaultCwd(cwd)
           initializeNewSessionCwd(cwd)
         }
       })

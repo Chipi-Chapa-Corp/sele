@@ -15,6 +15,7 @@ import { ProviderUpdateBanners } from '../../components/ProviderUpdateBanners'
 import { RequestErrorBanner } from '../../components/RequestErrorBanner'
 import { OpenCodeConnectionError } from '../../components/OpenCodeConnectionError'
 import { newSessionNoProjectValue, newSessionProjectPlaceholderValue } from '../controllerTypes'
+import { getFolderName } from '../chatControllerUtils'
 
 type ConversationComposerProps = WorkspaceController['conversationComposer']
 
@@ -325,6 +326,11 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             searchPlaceholder="Search projects"
             size="small"
             value={newSessionProjectValue}
+            valueLabel={
+              newSessionCwd && !projectOptions.some((option) => option.value === newSessionCwd)
+                ? getFolderName(newSessionCwd)
+                : undefined
+            }
             onChange={(value) => {
               if (value === newSessionNoProjectValue) {
                 setNewSessionCwd(null)

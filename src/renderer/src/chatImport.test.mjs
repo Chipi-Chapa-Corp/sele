@@ -28,11 +28,13 @@ const declaration = (path, name) => {
   }).outputText
 }
 
-test('import workspaces never become project choices alongside real projects', () => {
+test('project choices contain only added projects, even with native, done and imported history', () => {
   const context = vm.createContext({
     useMemo: (fn) => fn(),
     chats: [
       { cwd: '/repo', createdAt: 1 },
+      { cwd: '/tmp/t3code-claude-title-dp8ilZ', createdAt: 100 },
+      { cwd: '/home/user/.t3/scratch/uuid', createdAt: 101, done: true },
       { cwd: '/home/user', noProject: true, createdAt: 2 },
       ...Array.from({ length: 40 }, (_, i) => ({
         cwd: `/sele/imports/${i}`,
@@ -42,7 +44,15 @@ test('import workspaces never become project choices alongside real projects', (
         createdAt: i + 10
       }))
     ],
-    projects: [{ cwd: '/saved', name: 'Saved project' }],
+    projects: [
+      { cwd: '/saved', name: 'Saved project' },
+      { cwd: '/reordered-history', name: '', orderOnly: true },
+      { cwd: '/removed', name: 'Removed' }
+    ],
+    deletedProjectCwds: new Set(['/removed']),
+    deletingProject: false,
+    handleDeleteProject: () => {},
+    Trash2: 'delete-icon',
     newSessionCwd: '/new-project',
     newSessionNoProject: false,
     newSessionNoProjectValue: '__no_project__',
@@ -62,17 +72,28 @@ test('import workspaces never become project choices alongside real projects', (
   context.chatProjectCreatedAtKey = context.result
   vm.runInContext(declaration('./useWorkspaceController.tsx', 'projectOptions'), context)
   assert.equal(context.result[0].value, '__no_project__')
-  assert.deepEqual(Array.from(context.result.slice(1), (option) => option.value).sort(), [
-    '/new-project',
-    '/repo',
-    '/saved'
-  ])
+  assert.deepEqual(
+    Array.from(context.result.slice(1), (option) => option.value),
+    ['/saved']
+  )
+  // A temporary folder remains selectable when the user explicitly adds it.
+  context.projects.push({ cwd: '/tmp/t3code-claude-title-dp8ilZ', name: 'My temporary project' })
+  vm.runInContext(declaration('./useWorkspaceController.tsx', 'projectOptions'), context)
+  assert.deepEqual(
+    Array.from(context.result.slice(1), (option) => option.value),
+    ['/tmp/t3code-claude-title-dp8ilZ', '/saved']
+  )
 })
 
 test('marking an imported chat done preserves the regular new-chat project', async () => {
   const selected = { id: 'imported', providerId: 'claude', cwd: '/sele/imports/id', imported: {} }
   const opened = []
   const context = vm.createContext({
+    doneMutations: { current: { next: 0, pending: new Map() } },
+    startTransition: (fn) => fn(),
+    setChats: () => {},
+    getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
+    selectedChatKeyRef: { current: 'claude:imported' },
     providerApi: { markChatDone: async () => ({ done: true }) },
     applyChatMetadata: () => {},
     updateStoredComposerDrafts: () => {},
@@ -84,6 +105,8 @@ test('marking an imported chat done preserves the regular new-chat project', asy
     newSessionContainer: { kind: 'host' },
     console
   })
+  vm.runInContext(declaration('./workspace/useChatListController.tsx', 'changeChatDone'), context)
+  context.changeChatDone = context.result
   vm.runInContext(
     declaration('./workspace/useChatListController.tsx', 'handleMarkChatDone'),
     context

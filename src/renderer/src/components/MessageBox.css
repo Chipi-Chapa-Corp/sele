@@ -260,16 +260,6 @@
   flex: 1;
 }
 
-.message-box__chat-config-column-heading {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.55rem 0.65rem;
-  color: var(--ink);
-  font-weight: 600;
-}
-
 .message-box__chat-config-group-label {
   padding: 0.4rem 0.55rem;
   color: var(--quiet);
