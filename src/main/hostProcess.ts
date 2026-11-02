@@ -52,6 +52,7 @@ const forwardedEnvironmentVariables = new Set([
   'CLAUDE_CONFIG_DIR',
   'CLAUDE_SECURESTORAGE_CONFIG_DIR',
   'CODEX_HOME',
+  'CODEX_SQLITE_HOME',
   'COLORTERM',
   'COPILOT_CLI_PATH',
   'COPILOT_HOME',

@@ -9,16 +9,8 @@ import type { ChatImportPreview } from '../../../../shared/chatArchive'
 import { providerApi } from '../../providerApi'
 import { ChatImportDialog } from '../../components/ChatImportDialog'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import {
-  Bookmark,
-  BookmarkOff,
-  Download,
-  LoaderCircle,
-  MessageSquare,
-  Search,
-  SquarePen,
-  X
-} from 'lucide-react'
+import { Bed, Download, LoaderCircle, MessageSquare, Search, SquarePen, X } from 'lucide-react'
+import { BedOff } from '../../components/BedOffIcon'
 import { Button } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { ChatSidebarLoadingState } from '../../components/AppStatusStates'
@@ -28,8 +20,8 @@ type ChatSidebarProps = WorkspaceController['chatSidebar']
 export function ChatSidebar(props: ChatSidebarProps): ReactElement {
   const {
     handleImportedChat,
-    showOnlyBookmarkedChats,
-    handleToggleBookmarkFilter,
+    showOnlySleepingChats,
+    handleToggleSleepFilter,
     importedChatGroup,
     chats,
     chromeControlTheme,
@@ -133,18 +125,12 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
               />
               <Button
                 theme={chromeControlTheme}
-                aria-label={
-                  showOnlyBookmarkedChats ? 'Show all chats' : 'Show only bookmarked chats'
-                }
-                aria-pressed={showOnlyBookmarkedChats}
-                title={showOnlyBookmarkedChats ? 'Show all chats' : 'Show only bookmarked chats'}
-                callback={handleToggleBookmarkFilter}
+                aria-label={showOnlySleepingChats ? 'Show all chats' : 'Show only sleeping chats'}
+                aria-pressed={showOnlySleepingChats}
+                title={showOnlySleepingChats ? 'Show all chats' : 'Show only sleeping chats'}
+                callback={handleToggleSleepFilter}
                 icon={
-                  showOnlyBookmarkedChats ? (
-                    <Bookmark aria-hidden="true" />
-                  ) : (
-                    <BookmarkOff aria-hidden="true" />
-                  )
+                  showOnlySleepingChats ? <Bed aria-hidden="true" /> : <BedOff aria-hidden="true" />
                 }
               />
             </div>
@@ -199,8 +185,8 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           <p className="chat__status">
             {searchQuery.trim()
               ? 'No matching chats.'
-              : showOnlyBookmarkedChats
-                ? 'No bookmarked chats.'
+              : showOnlySleepingChats
+                ? 'No sleeping chats.'
                 : 'No chats found.'}
           </p>
         )}

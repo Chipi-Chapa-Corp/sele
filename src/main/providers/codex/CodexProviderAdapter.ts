@@ -1,3 +1,4 @@
+import { createCodexTerminalSessions } from './CodexTerminalSessions'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import {
   raceLinkedChatCancellation,
@@ -14,6 +15,7 @@ import { normalizeTokenUsage } from '../../../shared/tokenUsage.ts'
 import { CodexMessageDelivery } from './CodexMessageDelivery'
 import { getCodexTurnOutcome } from './CodexTurnOutcome'
 import { CodexUserQuestions } from './CodexUserQuestions'
+import { CodexPromptSuggestions } from './CodexPromptSuggestions.ts'
 import { isCodexAuthenticationFailure } from './CodexAuthentication'
 import { parseCodexPermissions } from './CodexPermissionRequests'
 import { CodexCommandStartAnchors } from './CodexCommandStartAnchors.ts'
@@ -1356,6 +1358,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
   onTokenUsage = this.tokenUsageReporter.subscribe
 
   private clients = new Map<string, CodexAppServerClient>()
+  private promptSuggestions = new Map<CodexAppServerClient, CodexPromptSuggestions>()
+  private agentTerminals = new WeakMap<
+    CodexAppServerClient,
+    ReturnType<typeof createCodexTerminalSessions>
+  >()
   private threadListScanClients = new WeakSet<CodexAppServerClient>()
   private clientContainerContext = new AsyncLocalStorage<AppContainerTarget | null>()
   private threadContainers = new Map<string, AppContainerTarget | null>()
@@ -1473,6 +1480,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (existingClient) return existingClient
 
     const client = new CodexAppServerClient(storedContainer, this.accountId, true)
+    const predictions = new CodexPromptSuggestions(client, (notification) =>
+      this.clientContainerContext.run(storedContainer, () => this.handleNotification(notification))
+    )
+    this.promptSuggestions.set(client, predictions)
     client.onRequestFailed((method, _params, error) => {
       if (!/^(?:account|thread|turn|model)\//.test(method) || !isCodexAuthenticationFailure(error))
         return
@@ -1480,13 +1491,28 @@ export class CodexProviderAdapter implements ProviderAdapter {
       for (const [threadId, target] of this.threadContainers)
         if (getContainerTargetKey(target) === key) this.emitChatUpdated(threadId)
     })
+    const terminals = createCodexTerminalSessions({
+      container: storedContainer,
+      metadata: (chatId) => {
+        const thread = this.threads.get(chatId)
+        return { title: thread?.name ?? thread?.preview ?? 'Codex chat', cwd: thread?.cwd ?? null }
+      },
+      stop: (threadId, processId) =>
+        client.request('thread/backgroundTerminals/terminate', { threadId, processId }),
+      interrupt: (threadId, turnId) => client.request('turn/interrupt', { threadId, turnId })
+    })
+    this.agentTerminals.set(client, terminals)
     client.onNotification((notification) => {
-      this.clientContainerContext.run(storedContainer, () => this.handleNotification(notification))
+      this.clientContainerContext.run(storedContainer, () => {
+        this.handleNotification(notification)
+        terminals.consume(notification)
+      })
     })
     client.onServerRequest((request) =>
       this.clientContainerContext.run(storedContainer, () => this.handleServerRequest(request))
     )
     client.onStopped((error) => {
+      terminals.dispose()
       this.rejectLoginWaitersForContainer(key, error)
       for (const threadId of this.userQuestions.removeContainer(
         (container) => getContainerTargetKey(container) === key
@@ -1543,6 +1569,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.subagentHistory.clearContainer(key)
     this.userQuestions.removeContainer((target) => getContainerTargetKey(target) === key)
     const client = this.clients.get(key)
+    if (client) {
+      this.promptSuggestions.get(client)?.dispose()
+      this.promptSuggestions.delete(client)
+    }
     client?.dispose()
     this.clients.delete(key)
 
@@ -2239,11 +2269,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
     // especially when its pinned account is unavailable and startup cannot succeed.
     if (!client || !connection) return []
     const ids: string[] = []
+    const terminals: { processId: string; itemId: string; command: string; cwd: string }[] = []
     let cursor: string | null = null
     const seen = new Set<string>()
     do {
       if (client.connectionIdentity !== connection) return []
-      let page: { data: { processId: string }[]; nextCursor?: string | null }
+      let page: {
+        data: { processId: string; itemId: string; command: string; cwd: string }[]
+        nextCursor?: string | null
+      }
       try {
         page = await client.request(
           'thread/backgroundTerminals/list',
@@ -2257,10 +2291,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
         throw error
       }
       ids.push(...page.data.map((task) => task.processId))
+      terminals.push(...page.data)
       cursor = page.nextCursor ?? null
       if (cursor && seen.has(cursor)) throw new Error('Repeated background terminal cursor')
       if (cursor) seen.add(cursor)
     } while (cursor)
+    if (client.connectionIdentity !== connection) return []
+    this.agentTerminals?.get(client)?.background(chatId, terminals)
     return ids
   }
 
@@ -4483,6 +4520,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.pendingApprovalsByThread.clear()
     this.userQuestions.clear()
     this.contextUsageByThread.clear()
+    this.promptSuggestions.forEach((predictions) => predictions.dispose())
+    this.promptSuggestions.clear()
     this.clients.forEach((client) => client.dispose({ preserveRuntime: true }))
     this.clients.clear()
     this.threadRevisions.clear()
@@ -4977,7 +5016,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         !isReadOnly &&
         !thread.turnPagination?.newerCursor &&
         !this.hasActiveOrSubmittingTurn(thread.id)
-          ? thread.promptSuggestion ?? null
+          ? (thread.promptSuggestion ?? null)
           : null,
       contextUsage: this.contextUsageByThread.get(thread.id) ?? null,
       subagents: this.getThreadSubagents(thread, renderableTurns),
@@ -5481,7 +5520,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const turns = existingThread.turns
     const commonThread = {
       ...resume.thread,
-      promptSuggestionsEnabled: options?.promptSuggestions ?? existingThread.promptSuggestionsEnabled,
+      promptSuggestionsEnabled:
+        options?.promptSuggestions ?? existingThread.promptSuggestionsEnabled,
       predictionSourceTurnId: existingThread.predictionSourceTurnId,
       promptSuggestion: existingThread.promptSuggestion,
       createdAt: existingThread?.createdAt ?? resume.thread.createdAt,
@@ -6014,6 +6054,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (!thread) return null
 
     const previousPendingTurnId = this.pendingTurnIds.get(threadId)
+    this.promptSuggestions.get(this.client)?.cancel(threadId)
     const pendingTurn = this.createPendingTurn(pendingTurnId, text, options, input)
     this.pendingTurnIds.set(threadId, pendingTurnId)
 
@@ -7263,8 +7304,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
         !isCodexSubagentThread(thread)
       ) {
         this.threads.set(threadId, { ...thread, predictionSourceTurnId: turn.id })
-        void this.client
-          .request('thread/prediction/request', { threadId, sourceTurnId: turn.id })
+        void this.promptSuggestions
+          .get(this.client)
+          ?.request(threadId, turn.id)
           .catch(() => {
             // Older builds and ineligible accounts may reject this optional request.
             const current = this.threads.get(threadId)
@@ -7678,6 +7720,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private handleNotification = (notification: RpcNotification): void => {
     const params = notification.params
     if (!params || typeof params !== 'object') return
+    const notificationThreadId = getThreadId(params)
+    if (
+      notificationThreadId &&
+      this.promptSuggestions.get(this.client)?.isTemporaryThread(notificationThreadId)
+    )
+      return
 
     if (notification.method === 'sele/runtime/restored') {
       const threadIds = (params as { threadIds?: string[] }).threadIds ?? []
@@ -7686,11 +7734,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
         this.rememberThreadContainer(threadId, container)
         // Rehydrate from the still-running provider rather than replaying deltas
         // or turn/start requests that could duplicate accepted work.
-        void this.getChat(threadId, { container }).then(() => {
-          this.emitChatUpdated(threadId)
-        }).catch((error: unknown) => {
-          console.error(`Unable to restore live Codex thread ${threadId}.`, error)
-        })
+        void this.getChat(threadId, { container })
+          .then(() => {
+            this.emitChatUpdated(threadId)
+          })
+          .catch((error: unknown) => {
+            console.error(`Unable to restore live Codex thread ${threadId}.`, error)
+          })
       }
       return
     }

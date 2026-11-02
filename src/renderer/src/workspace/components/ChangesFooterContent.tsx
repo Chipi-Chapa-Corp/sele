@@ -165,7 +165,7 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
             title={syncButtonTitle}
             disabled={syncDisplayDisabled}
             callback={() => void handleSyncChanges(primarySyncAction)}
-            dropdownActions={primarySyncAction === 'push' ? undefined : syncDropdownActions}
+            dropdownActions={primarySyncAction === 'pullAndPush' ? syncDropdownActions : undefined}
             dropdownLabel="Sync actions"
             dropdownMenuAlign="end"
             dropdownPlacement="top"

@@ -11,7 +11,7 @@ if (!process.versions.electron) {
       await fs.symlink(path.resolve('node_modules'), path.join(directory, 'node_modules'), 'dir')
       await build({
         stdin: {
-          contents: `export { registerTerminalIpc, disposeTerminalSessions } from './src/main/registerTerminalIpc'; export { stopPtys } from './src/main/pty'`,
+          contents: `export { registerTerminalIpc, disposeTerminalSessions } from './src/main/registerTerminalIpc'; export { stopPtys } from './src/main/pty'; export { agentTerminalSessions } from './src/main/agentTerminalSessions'; export { createClaudeTerminalSessions } from './src/main/providers/claude/ClaudeTerminalSessions'; export { createAgentTerminalOutputReader } from './src/main/agentTerminalOutput'`,
           resolveDir: process.cwd(),
           loader: 'ts'
         },
@@ -23,6 +23,10 @@ if (!process.versions.electron) {
           {
             name: 'current-container-fixture',
             setup(build) {
+              build.onLoad({ filter: /\/database\/sshEnvironments\.ts$/ }, () => ({
+                contents: 'export const getSshEnvironment = async () => null',
+                loader: 'ts'
+              }))
               build.onLoad({ filter: /\/currentContainer\.ts$/ }, () => ({
                 // Exercise the current-container launch branch without host/runtime probes.
                 contents: `export const getCurrentContainerHostBridge = async () => null;
@@ -46,9 +50,11 @@ if (!process.versions.electron) {
             import React, {useState} from 'react'
             import {createRoot} from 'react-dom/client'
             import {Terminal} from '@xterm/xterm'
-            import {TerminalPanel} from './src/renderer/src/components/TerminalPanel'
+            import {TerminalPanel, TerminalSession} from './src/renderer/src/components/TerminalPanel'
             import {ChatListItem} from './src/renderer/src/components/ChatListItem'
             import {chatTerminalActivity} from './src/renderer/src/chatTerminalActivity'
+            import './src/renderer/src/assets/styles/tokens.css'
+            import './src/renderer/src/assets/styles/base.css'
             window.taskSnapshot = key => chatTerminalActivity.getSnapshot(key)
             window.readTasks = key => chatTerminalActivity.markSeen(key)
             chatTerminalActivity.setIdle('codex:fixture', true)
@@ -61,22 +67,36 @@ if (!process.versions.electron) {
             }
             function Fixture() {
               const [request, setRequest] = useState(null)
+              const [active, setActive] = useState(true)
+              window.setTerminalActive = setActive
+              const [workspaceKey, setWorkspaceKey] = useState(${JSON.stringify(`toolbox:fixture${String.fromCharCode(0)}${directory}`)})
+              window.selectWorkspace = setWorkspaceKey
               const [chatKey, selectChat] = useState('codex:fixture')
               window.selectChat = selectChat
               window.launch = (command, closeOnFinish) => setRequest({
                 id: crypto.randomUUID(), chatKey, command, closeOnFinish, focus: true, label: 'Deploy',
                 cwd: ${JSON.stringify(directory)}, projectCwd: ${JSON.stringify(directory)},
-                workspaceKey: 'fixture', container: {kind: 'container', tool: 'toolbox', name: 'fixture'}
+                workspaceKey, container: {kind: 'container', tool: 'toolbox', name: 'fixture'}
               })
-              return <><ChatListItem chat={{id:'fixture', providerId:'codex', title:'Chat with terminal task', status:null,
+              return <><input id="focus-target" style={{position:'fixed',right:0,top:0,width:100}} /><ChatListItem chat={{id:'fixture', providerId:'codex', title:'Chat with terminal task', status:null,
                 createdAt:1000, updatedAt:2000, seenUpdatedAt:2000, cwd:'/tmp', lastTurnOutcome:null}}
                 selected={false} onClick={() => {}} onMarkDone={() => {}} onRename={async () => {}}
                 onResolveApproval={() => {}} onTogglePinned={() => {}} />
-              <TerminalPanel active chatKey={chatKey} container={{kind: 'container', tool: 'toolbox', name: 'fixture'}}
+              <TerminalPanel active={active} chatKey={chatKey} container={{kind: 'container', tool: 'toolbox', name: 'fixture'}}
                 cwd={${JSON.stringify(directory)}} projectCwd={${JSON.stringify(directory)}}
-                workspaceKey="fixture" commandLaunchRequest={request} /></>
+                workspaceKey={workspaceKey} commandLaunchRequest={request} /></>
             }
-            createRoot(document.getElementById('root')).render(<React.StrictMode><Fixture /></React.StrictMode>)
+            const root = createRoot(document.getElementById('root'))
+            root.render(<React.StrictMode><Fixture /></React.StrictMode>)
+            const retainedOutput = {value: ''}
+            const ignore = () => {}
+            window.renderExpired = sourceId => root.render(<TerminalSession
+              outputCache={retainedOutput} agentSessionId={sourceId} agentInteractive={false}
+              chatKey={null} initialChatKey={null} closeOnCommandFinish container={null}
+              cwd={${JSON.stringify(directory)}} initialCommand="/usr/bin/bash -lc 'PORT=43187 npm run dev'"
+              label="Ended process" tabId="expired-fixture" visible focusOnShow={false}
+              onInterrupt={ignore} onCommandFinish={ignore} onInput={ignore} onStateChange={ignore}
+            />)
           `,
           resolveDir: process.cwd(),
           loader: 'tsx'
@@ -84,7 +104,23 @@ if (!process.versions.electron) {
         outfile: path.join(directory, 'fixture.js'),
         bundle: true,
         platform: 'browser',
-        jsx: 'automatic'
+        jsx: 'automatic',
+        plugins: [
+          {
+            name: 'memory-preferences',
+            setup(builder) {
+              builder.onLoad({ filter: /\/renderer\/src\/preferences\.ts$/ }, () => ({
+                contents: `const values = new Map(); export const preferences = {
+                getItem: key => values.get(key) ?? null,
+                setItem: (key, value) => { values.set(key, value) },
+                removeItem: key => { values.delete(key) }
+              }; export const initializePreferences = async () => {};
+              export const flushPreferences = async () => {};`,
+                loader: 'ts'
+              }))
+            }
+          }
+        ]
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
@@ -133,13 +169,13 @@ if (!process.versions.electron) {
     .whenReady()
     .then(async () => {
       const window = new BrowserWindow({
-        show: false,
+        show: true,
         width: 1000,
         height: 600,
         webPreferences: {
           preload: path.join(directory, 'preload.cjs'),
           backgroundThrottling: false,
-          offscreen: true
+          offscreen: false
         }
       })
       window.webContents.on('console-message', (details) => {
@@ -155,6 +191,14 @@ if (!process.versions.electron) {
         const waitFor = async (source) => {
           const deadline = Date.now() + 8000
           while (!(await run(source))) {
+            if (Date.now() >= deadline)
+              console.error(
+                await run(`({
+              html: document.body.innerHTML.slice(0, 5000), emptyConnected: window.emptySession?.isConnected,
+              sessions: [...document.querySelectorAll('.terminal-panel__session')].map(el => ({ label: el.getAttribute('aria-label'), hidden: el.hidden })),
+              terminals: window.terminals.map(t => ({ disabled: t.options.disableStdin, output: window.text ? window.text(t) : '' }))
+            })`)
+              )
             assert.ok(Date.now() < deadline, `Timed out: ${source}`)
             await new Promise((resolve) => setTimeout(resolve, 25))
           }
@@ -263,8 +307,334 @@ if (!process.versions.electron) {
           )
           await waitFor(`window.text(window.terminals.at(-1)).includes('QUICK_TASK_DONE')`)
         }
+        // Native jobs use the same tab strip and xterm, without rerunning their commands.
+        const sources = terminal.agentTerminalSessions
+        let stopped = 0
+        const sourceOptions = {
+          providerId: 'claude',
+          chatId: 'agent-chat',
+          chatTitle: 'Fix the background terminal visibility',
+          cwd: directory,
+          container: { kind: 'container', tool: 'toolbox', name: 'fixture' },
+          command: 'npm run dev',
+          background: true,
+          stop: async () => {
+            stopped++
+          }
+        }
+        const label = (index) => `Fix the background … ${index}`
+        const tab = (index) =>
+          `document.querySelector('[aria-label="${label(index)}"][aria-pressed]')`
+        const region = (index) =>
+          `document.querySelector('[aria-label="${label(index)}"][role="region"]')`
+        await run(`window.confirm = () => true;
+          window.previousTab = document.querySelector('.terminal-panel__tabs [aria-pressed="true"]');
+          document.getElementById('focus-target').focus()`)
+        const unseen = sources.register('native-unseen', sourceOptions)
+        unseen.append('server ready\r\n')
+        await waitFor(`${tab(1)} !== null`)
+        assert.equal(await run(`window.previousTab.getAttribute('aria-pressed')`), 'true')
+        assert.equal(
+          await run(`document.activeElement.id`),
+          'focus-target',
+          'Creation leaves keyboard focus alone'
+        )
+        assert.equal(await run(`${region(1)}.hidden`), true)
+        await unseen.finish()
+        await waitFor(`${tab(1)} === null`)
+
+        const viewed = sources.register('native-viewed', sourceOptions)
+        viewed.append('server ready\r\n')
+        await waitFor(`${tab(2)} !== null`)
+        await run(`${tab(2)}.click()`)
+        await waitFor(`${region(2)}.hidden === false`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('server ready')`)
+        assert.match(await run('window.text(window.terminals.at(-1))'), /\$ npm run dev/)
+        assert.equal(await run('window.terminals.at(-1).options.disableStdin'), true)
+        // Match a narrow sidebar with enough history to show and exercise xterm's scrollbar.
+        window.setSize(460, 700)
+        viewed.append(
+          Array.from({ length: 200 }, (_, index) => `line ${index}: terminal output\r\n`).join('')
+        )
+        await waitFor(
+          `window.terminals.at(-1).cols < 60 && window.terminals.at(-1).buffer.active.baseY > 100`
+        )
+        const geometry = await run(`(() => {
+          const host = document.querySelector('.terminal-panel__session--active .terminal-panel__host')
+          const screen = host.querySelector('.xterm-screen')
+          const bar = host.querySelector('.xterm-scrollable-element > .scrollbar.vertical')
+          const slider = bar.querySelector('.slider')
+          return { host: host.getBoundingClientRect().width, screen: screen.getBoundingClientRect().width,
+            bar: bar.getBoundingClientRect().width, slider: slider.getBoundingClientRect().width }
+        })()`)
+        assert.equal(geometry.bar, 14, JSON.stringify(geometry))
+        assert.ok(geometry.slider <= geometry.bar, JSON.stringify(geometry))
+        assert.ok(geometry.screen >= geometry.host - 32, 'Terminal text must use the sidebar width')
+        if (process.env.SELE_TERMINAL_STYLE_SCREENSHOT) {
+          await fs.writeFile(
+            process.env.SELE_TERMINAL_STYLE_SCREENSHOT,
+            (await window.webContents.capturePage()).toPNG()
+          )
+        }
+        await run(`window.terminals.at(-1).scrollToTop()`)
+        await waitFor(`window.terminals.at(-1).buffer.active.viewportY === 0`)
+        await run(`window.terminals.at(-1).scrollLines(5)`)
+        await waitFor(`window.terminals.at(-1).buffer.active.viewportY > 0`)
+        assert.equal(await run(`document.querySelector('[aria-label="Restart terminal"]')`), null)
+        window.setSize(1000, 600)
+        await viewed.finish()
+        await waitFor(`window.text(window.terminals.at(-1)).includes('process exited')`)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        assert.equal(
+          await run(`${tab(2)} !== null`),
+          true,
+          'An opened tab remains after completion'
+        )
+
+        sources.register('native-stopped', sourceOptions)
+        await waitFor(`${tab(3)} !== null`)
+        await run(`document.querySelector('[aria-label="Close ${label(3)}"]').click()`)
+        await waitFor(`${tab(3)} === null`)
+        assert.equal(stopped, 1, 'Closing cancels the original native task')
+
+        // A previously opened native tab stays interactive when the source has a PTY.
+        const input = []
+        const interactive = sources.register('native-interactive', {
+          ...sourceOptions,
+          write: (data) => {
+            input.push(data)
+            interactive.append('echo:' + data)
+          }
+        })
+        await waitFor(`${tab(4)} !== null`)
+        await run(`${tab(4)}.click()`)
+        await waitFor(`window.terminals.at(-1).options.disableStdin === false`)
+        await run(`window.terminals.at(-1).input('status\\r', true)`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('echo:status')`)
+        assert.deepEqual(input, ['status\r'])
+        await interactive.finish()
+        await waitFor(`window.text(window.terminals.at(-1)).includes('process exited')`)
+
+        // A hidden terminal panel and a different project's tabs are not opened by new jobs.
+        await run(
+          `window.setTerminalActive(false); document.getElementById('focus-target').focus()`
+        )
+        const hidden = sources.register('native-hidden', sourceOptions)
+        await waitFor(`${tab(5)} !== null`)
+        assert.equal(await run(`${region(5)}.hidden`), true)
+        assert.equal(await run(`document.activeElement.id`), 'focus-target')
+        await hidden.finish()
+        await waitFor(`${tab(5)} === null`)
+
+        const otherDirectory = path.join(directory, 'another-project')
+        const otherKey = `toolbox:fixture${String.fromCharCode(0)}${otherDirectory}`
+        const firstVisible = sources.register('native-first-visible', {
+          ...sourceOptions,
+          chatId: 'first',
+          chatTitle: 'First chat',
+          cwd: otherDirectory
+        })
+        await waitFor(
+          `document.querySelector('[aria-label="First chat 1"][role="region"]') !== null`
+        )
+        // This first job was created while hidden. Opening its project and the panel counts as viewing it.
+        await run(
+          `window.selectWorkspace(${JSON.stringify(otherKey)}); window.setTerminalActive(true)`
+        )
+        await waitFor(
+          `document.querySelector('[aria-label="First chat 1"][role="region"]').hidden === false`
+        )
+        await firstVisible.finish()
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        assert.equal(
+          await run(`document.querySelector('[aria-label="First chat 1"][aria-pressed]') !== null`),
+          true
+        )
+        // Close the last tab, then create a first tab while the panel is already open.
+        await run(
+          `document.querySelector('[aria-label="Close First chat 1"]').click(); document.getElementById('focus-target').focus()`
+        )
+        await waitFor(
+          `document.querySelectorAll('.terminal-panel__tabs [aria-pressed]').length === 0`
+        )
+        const firstInOpenPanel = sources.register('native-first-open', {
+          ...sourceOptions,
+          chatId: 'first',
+          chatTitle: 'First chat',
+          cwd: otherDirectory
+        })
+        await waitFor(
+          `document.querySelector('[aria-label="First chat 2"][role="region"]')?.hidden === false`
+        )
+        assert.equal(await run(`document.activeElement.id`), 'focus-target')
+        await firstInOpenPanel.finish()
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        assert.equal(
+          await run(`document.querySelector('[aria-label="First chat 2"][aria-pressed]') !== null`),
+          true,
+          'The first tab in an already opened terminal panel remains after completion'
+        )
+
+        // Exercise Claude's real task-output-file reader through the same native tab.
+        const logDirectory = path.join(directory, 'native logs', 'tasks')
+        await fs.mkdir(logDirectory, { recursive: true })
+        const outputFile = path.join(logDirectory, 'native-log.output')
+        await fs.writeFile(outputFile, 'server ready λ🙂\n')
+        const nativeStops = []
+        const claude = terminal.createClaudeTerminalSessions({
+          ...sourceOptions,
+          chatId: 'log-chat',
+          chatTitle: 'Native log chat',
+          stop: async (id) => {
+            nativeStops.push(id)
+          },
+          interrupt: async () => {},
+          readOutputFile: (file) =>
+            terminal.createAgentTerminalOutputReader(file, sourceOptions.container)
+        })
+        claude.consume({
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'tool_use', id: 'log-call', name: 'Bash', input: { command: 'npm run dev' } }
+            ]
+          }
+        })
+        claude.consume({
+          type: 'system',
+          subtype: 'task_started',
+          task_id: 'native-log',
+          tool_use_id: 'log-call',
+          task_type: 'local_bash',
+          is_backgrounded: true
+        })
+        claude.consume({
+          type: 'user',
+          tool_use_result: { backgroundTaskId: 'native-log' },
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'log-call',
+                content: `Command running in background with ID: native-log. Output is being written to: ${outputFile}`
+              }
+            ]
+          }
+        })
+        await waitFor(
+          `document.querySelector('[aria-label="Native log chat 1"][role="region"]') !== null`
+        )
+        await run(
+          `window.selectWorkspace(${JSON.stringify(`toolbox:fixture${String.fromCharCode(0)}${directory}`)})`
+        )
+        await waitFor(
+          `document.querySelector('[aria-label="Native log chat 1"][aria-pressed]') !== null`
+        )
+        await run(
+          `document.querySelector('[aria-label="Native log chat 1"][aria-pressed]').click()`
+        )
+        await waitFor(`window.text(window.terminals.at(-1)).includes('server ready λ🙂')`)
+        await fs.appendFile(outputFile, 'handling requests\n')
+        await waitFor(`window.text(window.terminals.at(-1)).includes('handling requests')`)
+        await run(`document.querySelector('[aria-label="Close Native log chat 1"]').click()`)
+        await waitFor(
+          `document.querySelector('[aria-label="Native log chat 1"][aria-pressed]') === null`
+        )
+        assert.deepEqual(nativeStops, ['native-log'])
+        claude.dispose()
+
+        // A native read-only shell still accepts Ctrl+C as task cancellation.
+        sources.register('native-ctrl-c', {
+          ...sourceOptions,
+          chatId: 'ctrl-c',
+          chatTitle: 'Ctrl C'
+        })
+        await waitFor(`document.querySelector('[aria-label="Ctrl C 1"][aria-pressed]') !== null`)
+        await run(`document.querySelector('[aria-label="Ctrl C 1"][aria-pressed]').click()`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('$ npm run dev')`)
+        await run(
+          `window.terminals.at(-1).textarea.dispatchEvent(new KeyboardEvent('keydown', {key:'c',code:'KeyC',keyCode:67,ctrlKey:true,bubbles:true,cancelable:true})); undefined`
+        )
+        await waitFor(`window.text(window.terminals.at(-1)).includes('process exited')`)
+        assert.equal(stopped, 2)
+        assert.equal(
+          await run(`document.querySelector('[aria-label="Ctrl C 1"][aria-pressed]') !== null`),
+          true
+        )
+
+        let stoppedTurns = 0
+        sources.register('native-turn-scope', {
+          ...sourceOptions,
+          chatId: 'turn',
+          chatTitle: 'Turn scoped',
+          stopScope: 'turn',
+          stop: async () => {
+            stoppedTurns++
+          }
+        })
+        await waitFor(
+          `document.querySelector('[aria-label="Turn scoped 1"][aria-pressed]') !== null`
+        )
+        await run(`window.confirmations = []; window.confirm = message => { window.confirmations.push(message); return false };
+          document.querySelector('[aria-label="Close Turn scoped 1"]').click()`)
+        await waitFor(`window.confirmations.length > 0`)
+        assert.match(await run('window.confirmations[0]'), /Stop that turn/)
+        assert.equal(stoppedTurns, 0)
+        await run(
+          `window.confirm = () => true; document.querySelector('[aria-label="Close Turn scoped 1"]').click()`
+        )
+        await waitFor(
+          `document.querySelector('[aria-label="Turn scoped 1"][aria-pressed]') === null`
+        )
+        assert.equal(stoppedTurns, 1)
+
+        assert.equal(await run(`document.querySelector('[aria-label="Restart terminal"]')`), null)
+        // A failed reattachment must keep the already displayed output and hide IPC internals.
+        const cacheSource = sources.register('cached-output', {
+          ...sourceOptions,
+          chatId: 'cached',
+          chatTitle: 'Cached output'
+        })
+        cacheSource.append('SERVER_OUTPUT_KEPT\r\n')
+        await run(
+          `window.oldTerminalCount = window.terminals.length; window.renderExpired(${JSON.stringify(cacheSource.id)})`
+        )
+        await waitFor(
+          `window.terminals.length > window.oldTerminalCount && window.text(window.terminals.at(-1)).includes('SERVER_OUTPUT_KEPT')`
+        )
+        await run(
+          `window.oldTerminalCount = window.terminals.length; window.renderExpired('expired-process')`
+        )
+        await waitFor(
+          `window.terminals.length > window.oldTerminalCount && window.text(window.terminals.at(-1)).includes('Process is no longer connected')`
+        )
+        const expired = await run('window.text(window.terminals.at(-1))')
+        assert.match(expired, /SERVER_OUTPUT_KEPT/)
+        assert.equal(expired.split('SERVER_OUTPUT_KEPT').length, 2)
+        assert.ok(
+          expired.indexOf('SERVER_OUTPUT_KEPT') < expired.indexOf('Process is no longer connected')
+        )
+        assert.doesNotMatch(expired, /Error invoking remote method|terminal:attach-agent-session/)
+        const available = sources.available
+        sources.available = (id) => {
+          if (id === 'legacy-expired') throw new Error('This agent process is no longer available.')
+          return available(id)
+        }
+        await run(
+          `window.oldTerminalCount = window.terminals.length; window.renderExpired('legacy-expired')`
+        )
+        await waitFor(
+          `window.terminals.length > window.oldTerminalCount && window.text(window.terminals.at(-1)).includes('Process is no longer connected')`
+        )
+        const legacyExpired = await run('window.text(window.terminals.at(-1))')
+        assert.match(legacyExpired, /SERVER_OUTPUT_KEPT/)
+        assert.doesNotMatch(
+          legacyExpired,
+          /Error invoking remote method|terminal:attach-agent-session/
+        )
+        sources.available = available
         console.log(
-          'Terminal action UI passed: real PTY output, keep-open/close-on-finish, terminal icon, idle completion unread, chat ownership, no restart, StrictMode.'
+          'Terminal action UI passed: real PTYs, native process attachments, no automatic focus, unviewed auto-close, viewed retention, per-chat indexes, project ownership and StrictMode.'
         )
       } catch (error) {
         console.error(error)

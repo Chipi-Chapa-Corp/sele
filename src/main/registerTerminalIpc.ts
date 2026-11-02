@@ -11,11 +11,13 @@ import type {
   TerminalProcessStatus,
   TerminalRunCommandOptions,
   TerminalRunCommandResult,
-  TerminalSession
+  TerminalSession,
+  TerminalAttachResult
 } from '../shared/terminal'
 import { terminalIpcChannels } from '../shared/terminal'
 import { requireContainerTarget } from './containerTarget'
 import { getHostCommand, getHostTerminalCommand } from './hostProcess'
+import { agentTerminalSessions } from './agentTerminalSessions'
 
 const minimumColumns = 2
 const maximumColumns = 500
@@ -43,6 +45,10 @@ type ManagedTerminalSession = {
 }
 
 const sessions = new Map<string, ManagedTerminalSession>()
+const agentAttachments = new Map<
+  string,
+  { owner: WebContents; sourceId: string; detach: () => void }
+>()
 const observedOwners = new Set<number>()
 
 const getDimension = (value: unknown, minimum: number, maximum: number, name: string): number => {
@@ -313,6 +319,11 @@ const disposeOwnerSessions = (ownerId: number): void => {
   for (const session of sessions.values()) {
     if (session.owner.id === ownerId) disposeSession(session, true)
   }
+  for (const [id, attachment] of agentAttachments) {
+    if (attachment.owner.id !== ownerId) continue
+    attachment.detach()
+    agentAttachments.delete(id)
+  }
 }
 
 const observeOwner = (owner: WebContents): void => {
@@ -342,7 +353,8 @@ const createSession = async (
   const baseShell = getShell()
   if (basename(baseShell.file) === 'fish') baseShell.args.push('-C', fishTerminalIntegration)
   const id = options.sessionId
-  if (sessions.has(id)) throw new Error('Terminal session already exists')
+  if (sessions.has(id) || agentAttachments.has(id))
+    throw new Error('Terminal session already exists')
   const command = options.initialCommand?.trim() || null
   const shell = command
     ? getTerminalCommandShell(baseShell, command, Boolean(options.keepAliveOnCommandFinish))
@@ -469,10 +481,58 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
 }
 
 export const registerTerminalIpc = (): void => {
+  handleLoggedIpc(terminalIpcChannels.listAgentSessions, () => agentTerminalSessions.list())
+  handleLoggedIpc(
+    terminalIpcChannels.attachAgentSession,
+    (event, sessionId: unknown, sourceId: unknown): TerminalAttachResult => {
+      if (
+        typeof sessionId !== 'string' ||
+        typeof sourceId !== 'string' ||
+        sessions.has(sessionId) ||
+        agentAttachments.has(sessionId)
+      )
+        throw new Error('Invalid agent terminal attachment.')
+      const owner = event.sender
+      if (!agentTerminalSessions.available(sourceId)) {
+        const completed = agentTerminalSessions.completed(sourceId)
+        if (!completed) return { status: 'unavailable' }
+        if (completed.output)
+          owner.send(terminalIpcChannels.data, { sessionId, data: completed.output })
+        owner.send(terminalIpcChannels.exit, { sessionId, exitCode: completed.exitCode })
+        return { status: 'exited' }
+      }
+      observeOwner(owner)
+      const detach = agentTerminalSessions.attach(sourceId, {
+        data: (data) => {
+          if (!owner.isDestroyed()) owner.send(terminalIpcChannels.data, { sessionId, data })
+        },
+        exit: (exitCode) => {
+          if (!owner.isDestroyed()) owner.send(terminalIpcChannels.exit, { sessionId, exitCode })
+        }
+      })
+      agentAttachments.set(sessionId, { owner, sourceId, detach })
+      return { status: 'attached' }
+    }
+  )
+  handleLoggedIpc(terminalIpcChannels.stopAgentSession, (_event, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('Invalid agent terminal ID.')
+    return agentTerminalSessions.stop(id)
+  })
+  handleLoggedIpc(terminalIpcChannels.dismissAgentSession, (_event, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('Invalid agent terminal ID.')
+    agentTerminalSessions.dismiss(id)
+  })
   handleLoggedIpc(terminalIpcChannels.createSession, createSession)
   handleLoggedIpc(terminalIpcChannels.runCommand, (_event, value: unknown) => runCommand(value))
 
   ipcMain.on(terminalIpcChannels.write, (event, sessionId: unknown, data: unknown) => {
+    const attachment = typeof sessionId === 'string' ? agentAttachments.get(sessionId) : undefined
+    if (attachment?.owner.id === event.sender.id && typeof data === 'string') {
+      void agentTerminalSessions
+        .write(attachment.sourceId, data)
+        .catch((error) => console.error('Unable to write to agent terminal.', error))
+      return
+    }
     const session = getOwnedSession(event, sessionId)
     if (!session || typeof data !== 'string' || data.length === 0) return
     session.pty.write(data)
@@ -506,16 +566,30 @@ export const registerTerminalIpc = (): void => {
   })
 
   handleLoggedIpc(terminalIpcChannels.getProcessStatus, (event, sessionId: unknown) => {
+    const attachment = typeof sessionId === 'string' ? agentAttachments.get(sessionId) : undefined
+    if (attachment?.owner.id === event.sender.id)
+      return {
+        hasActiveProcess: agentTerminalSessions.status(attachment.sourceId) === 'running',
+        processName: null
+      }
     const session = getOwnedSession(event, sessionId)
     return session ? getProcessStatus(session) : { hasActiveProcess: false, processName: null }
   })
 
   handleLoggedIpc(terminalIpcChannels.closeSession, (event, sessionId: unknown) => {
+    const attachment = typeof sessionId === 'string' ? agentAttachments.get(sessionId) : undefined
+    if (attachment?.owner.id === event.sender.id) {
+      attachment.detach()
+      agentAttachments.delete(sessionId as string)
+      return
+    }
     const session = getOwnedSession(event, sessionId)
     if (session) disposeSession(session, true)
   })
 }
 
 export const disposeTerminalSessions = (): void => {
+  for (const attachment of agentAttachments.values()) attachment.detach()
+  agentAttachments.clear()
   for (const session of [...sessions.values()]) disposeSession(session, true)
 }

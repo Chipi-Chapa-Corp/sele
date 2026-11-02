@@ -81,7 +81,6 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
     setGitChangeLoadRequest,
     terminalChatKey,
     terminalCommandLaunchRequest,
-    terminalOpened,
     terminalWorkspaceKey,
     untrackedFilesAiDisabled,
     untrackedFilesHiddenForPerformance,
@@ -220,24 +219,22 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
           )}
         </div>
       )}
-      {terminalOpened && (
-        <div
-          className={`changes-sidebar__terminal${
-            changesPaneView === 'terminal' ? ' changes-sidebar__terminal--active' : ''
-          }`}
-          aria-hidden={changesPaneView !== 'terminal'}
-        >
-          <TerminalPanel
-            chatKey={terminalChatKey}
-            active={changesPaneView === 'terminal'}
-            commandLaunchRequest={terminalCommandLaunchRequest}
-            container={changesContainer}
-            cwd={changesCwd}
-            projectCwd={changesProjectCwd}
-            workspaceKey={terminalWorkspaceKey}
-          />
-        </div>
-      )}
+      <div
+        className={`changes-sidebar__terminal${
+          changesPaneView === 'terminal' ? ' changes-sidebar__terminal--active' : ''
+        }`}
+        aria-hidden={changesPaneView !== 'terminal'}
+      >
+        <TerminalPanel
+          chatKey={terminalChatKey}
+          active={changesPaneView === 'terminal'}
+          commandLaunchRequest={terminalCommandLaunchRequest}
+          container={changesContainer}
+          cwd={changesCwd}
+          projectCwd={changesProjectCwd}
+          workspaceKey={terminalWorkspaceKey}
+        />
+      </div>
       {browserOpened && effectiveAppSettings.browser.enabled && (
         <div
           className={`changes-sidebar__browser${

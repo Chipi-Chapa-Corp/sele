@@ -1,8 +1,7 @@
 import { useProviderLabels } from '../providerLabels'
 import { isNoProjectChat, isNoProjectCwd } from '../../../shared/noProject'
 import {
-  Bookmark,
-  BookmarkOff,
+  Bed,
   Check,
   Folder,
   FolderKanban,
@@ -48,7 +47,9 @@ import { Dropdown } from './Dropdown'
 import { providerApi } from '../providerApi'
 import { useChatTerminalStatus } from '../useChatTerminalActivity'
 import { chatTerminalActivity } from '../chatTerminalActivity'
-import { getChatBookmarkKey, setChatBookmarked, useChatBookmarked } from '../chatBookmarks'
+import { getChatSleepKey, sleepChat, useChatWakeAt, wakeChat } from '../chatSleep'
+import { BedOff } from './BedOffIcon'
+import { ChatSleepPanel, formatWakeIn } from './ChatSleepPanel'
 
 type ChatListItemProps = {
   chat: ProviderChat
@@ -145,8 +146,9 @@ export const ChatListItem = memo(function ChatListItem({
 }: ChatListItemProps) {
   const providerLabels = useProviderLabels()
   const terminalActivity = useChatTerminalStatus(`${chat.providerId}:${chat.id}`)
-  const bookmarkKey = getChatBookmarkKey(chat.providerId, chat.id)
-  const bookmarked = useChatBookmarked(bookmarkKey)
+  const sleepKey = getChatSleepKey(chat.providerId, chat.id)
+  const wakeAt = useChatWakeAt(sleepKey)
+  const sleeping = wakeAt !== undefined
   const [exporting, setExporting] = useState(false)
   const [exportResult, setExportResult] = useState<string | null>(null)
   const exportChat = async (): Promise<void> => {
@@ -542,10 +544,22 @@ export const ChatListItem = memo(function ChatListItem({
             disabled={exporting}
             menuActions={[
               {
-                id: 'bookmark',
-                label: bookmarked ? 'Remove bookmark' : 'Bookmark',
-                icon: bookmarked ? <BookmarkOff /> : <Bookmark />,
-                callback: () => setChatBookmarked(bookmarkKey, !bookmarked)
+                id: 'sleep',
+                label: sleeping ? 'Wake up' : 'Sleep',
+                icon: sleeping ? <BedOff /> : <Bed />,
+                callback: () => (sleeping ? wakeChat(sleepKey) : sleepChat(sleepKey)),
+                panel: {
+                  ariaLabel: 'Sleep for a set time',
+                  content: (close) => (
+                    <ChatSleepPanel
+                      wakeAt={wakeAt}
+                      onSleep={(durationMs) => {
+                        close()
+                        sleepChat(sleepKey, durationMs)
+                      }}
+                    />
+                  )
+                }
               },
               {
                 id: 'pin',
@@ -607,6 +621,12 @@ export const ChatListItem = memo(function ChatListItem({
               />
               <span className="chat-list-item__detail-branch">{branchName}</span>
             </div>
+            {sleeping && (
+              <div className="chat-list-item__detail-location">
+                <Bed aria-hidden="true" className="chat-list-item__detail-location-icon" />
+                <span>{typeof wakeAt === 'number' ? formatWakeIn(wakeAt) : 'Sleeping'}</span>
+              </div>
+            )}
             <span className="chat-list-item__detail-provider">
               <ProviderIcon
                 providerId={chat.providerId}

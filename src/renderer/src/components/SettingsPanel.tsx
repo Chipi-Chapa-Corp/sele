@@ -97,8 +97,8 @@ export type ProviderResourcesLoadState = 'idle' | 'loading' | 'ready'
 export type SettingsPanelProps = {
   groupChatsByProject: boolean
   handleGroupChatsByProjectChange: (enabled: boolean) => void
-  hideBookmarkedChats: boolean
-  handleHideBookmarkedChatsChange: (hide: boolean) => void
+  hideSleepingChats: boolean
+  handleHideSleepingChatsChange: (hide: boolean) => void
   appearanceFontSizeInputDraft: { key: string; value: string } | null
   appearanceZoomLevelInput: string
   browserDefaultScaleInput: string
@@ -1032,15 +1032,15 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
             </div>
             <div className={getSettingsFieldClassName()}>
               <div className="settings-dialog__field-header">
-                <h3 id="settings-hide-bookmarks">Hide bookmarks</h3>
-                <p>Hide bookmarked chats from the conversation list.</p>
+                <h3 id="settings-hide-sleeping-chats">Hide sleeping chats</h3>
+                <p>Hide sleeping chats from the conversation list.</p>
               </div>
               <Switch
                 className="settings-switch"
-                aria-labelledby="settings-hide-bookmarks"
-                checked={props.hideBookmarkedChats}
+                aria-labelledby="settings-hide-sleeping-chats"
+                checked={props.hideSleepingChats}
                 onChange={(event) =>
-                  props.handleHideBookmarkedChatsChange(event.currentTarget.checked)
+                  props.handleHideSleepingChatsChange(event.currentTarget.checked)
                 }
               />
             </div>

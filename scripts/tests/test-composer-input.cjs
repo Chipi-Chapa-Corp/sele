@@ -30,7 +30,7 @@ if (!process.versions.electron) {
               flushSync(() => root.render(<React.StrictMode>
               <MessageSelectionQuoteButton containerRef={containerRef} onQuote={noop}/>
               <Profiler id="composer" onRender={() => window.commits++}>
-                <MessageBox autoFocus draftScopeKey="test" providerId="codex"
+                {window.composerProps.fixtureVisible !== false && <MessageBox autoFocus draftScopeKey="test" providerId="codex"
                   cwd="/fixture" model="test" models={[]} agentMode="default" agentModes={[]}
                   approvalMode="on-request" approvalModes={[]} sandboxMode="workspace-write" sandboxModes={[]}
                   reasoningEffort="medium" serviceTier={null} accountUsage={null}
@@ -39,7 +39,7 @@ if (!process.versions.electron) {
                   displayUsage={{context:true,short:false,long:false}}
                   onAgentModeChange={noop} onApprovalModeChange={noop} onModelChange={noop}
                   onReasoningEffortChange={noop} onServiceTierChange={noop} onSandboxModeChange={noop}
-                  onSend={message => { window.sent = message; return true }} {...window.composerProps}/>
+                  onSend={message => { window.sent = message; window.sendCount = (window.sendCount || 0) + 1; return true }} {...window.composerProps}/>}
               </Profiler>
             </React.StrictMode>))
             }
@@ -84,7 +84,12 @@ if (!process.versions.electron) {
         <div id="messages"><div class="chat-detail__message--assistant">
           <div class="chat-detail__message-quote-host"></div><p>Quote these words</p>
         </div></div><div id="root"></div><script>
-          window.preferencesApi = {getItem: () => ({ok:true,value:null}), setItem: () => ({ok:true}), removeItem: () => ({ok:true})};
+          const preferenceValues = new Map();
+          window.preferencesApi = {
+            getItem: key => ({ok:true,value:preferenceValues.get(key) ?? null}),
+            setItem: (key,value) => {preferenceValues.set(key,value);return {ok:true}},
+            removeItem: key => {preferenceValues.delete(key);return {ok:true}}
+          };
           window.appApi = {getProjects: async () => [{name:'Fixture project',cwd:'/fixture/main',icon:'code',additionalCwds:['/fixture/extra']}, {name:'Image project',cwd:'/fixture/image',icon:'image'}, {name:'Default project',cwd:'/fixture/default',icon:null}, {name:'Missing project',cwd:'/fixture/missing',icon:'image'}], getProjectIcon: async ({cwd}) => cwd === '/fixture/missing' ? null : ({cwd,dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF1cAAAAASUVORK5CYII=',updatedAt:0}), getFileTree: async () => ({files:[],repositoryRoot:'/fixture'})};
           window.providerApi = {getSkills: async () => [], getApps: async () => []};
         </script><script src="fixture.js"></script>`
@@ -180,6 +185,27 @@ if (!process.versions.electron) {
           fits: ghost.height <= box.height + 1 };
       })()`)
       assert.deepEqual(layout, { aligned: true, fits: true })
+      const hintLayout = await run(`(() => {
+        const first = document.querySelector('[aria-label="Accept suggestion into draft (Tab)"]').getBoundingClientRect();
+        const text = document.querySelector('.message-box__suggestion-text').getBoundingClientRect();
+        const last = document.querySelector('[aria-label="Send suggestion immediately (Enter)"]').getBoundingClientRect();
+        const mid = rect => rect.y + rect.height / 2;
+        return {leading: first.right < text.left, trailing: last.left > text.right,
+          aligned: Math.abs(mid(first) - mid(text)) < 1 && Math.abs(mid(last) - mid(text)) < 1};
+      })()`)
+      assert.deepEqual(hintLayout, { leading: true, trailing: true, aligned: true })
+      const caret = await run(`(() => {
+        const style = getComputedStyle(input);
+        const text = document.querySelector('.message-box__suggestion-text').getBoundingClientRect();
+        return {visible: style.caretColor === style.color && style.caretColor !== 'rgba(0, 0, 0, 0)',
+          aligned: Math.abs(input.getBoundingClientRect().left + parseFloat(style.paddingLeft) - text.left) < 1};
+      })()`)
+      assert.deepEqual(
+        caret,
+        { visible: true, aligned: true },
+        'suggestions keep a visible caret at the text start'
+      )
+
       if (process.env.SELE_PROMPT_SUGGESTION_SCREENSHOT) {
         await fs.writeFile(
           process.env.SELE_PROMPT_SUGGESTION_SCREENSHOT,
@@ -245,6 +271,47 @@ if (!process.versions.electron) {
       assert.equal(await run('input.value'), 'Other chat')
       await run(`renderFixture({draftScopeKey:'test',promptSuggestion:null}); input.focus()`)
       assert.equal(await run('input.value'), '', 'accepted drafts stay scoped to their chat')
+      const click = async (selector) => {
+        const point =
+          await run(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+          return {x:r.x + r.width/2, y:r.y + r.height/2} })()`)
+        await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          button: 'left',
+          clickCount: 1,
+          ...point
+        })
+        await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          button: 'left',
+          clickCount: 1,
+          ...point
+        })
+        await settle()
+      }
+      for (const activation of ['Enter', 'click-send', 'click-accept']) {
+        await run(
+          `setText(''); window.sent = undefined; renderFixture({promptSuggestion:{id:${JSON.stringify(activation)},text:'Send this suggestion'}}); input.focus()`
+        )
+        const count = await run('window.sendCount || 0')
+        if (activation === 'Enter') await key('Enter')
+        else
+          await click(
+            activation === 'click-send'
+              ? '[aria-label="Send suggestion immediately (Enter)"]'
+              : '[aria-label="Accept suggestion into draft (Tab)"]'
+          )
+        if (activation === 'click-accept') {
+          assert.equal(await run('input.value'), 'Send this suggestion')
+          assert.equal(await run('window.sendCount || 0'), count, 'Tab keycap only fills the draft')
+        } else {
+          assert.equal(await run('window.sent'), 'Send this suggestion')
+          assert.equal(await run('input.value'), '')
+          assert.equal(await run('window.sendCount'), count + 1, 'Enter sends exactly once')
+        }
+        assert.equal(await run('document.activeElement === input'), true)
+      }
+      await run(`setText(''); window.sent = undefined; renderFixture({promptSuggestion:null})`)
       assert.equal(
         await run(`(() => {
         const settings = window.settings.readStoredAppSettings();
@@ -396,9 +463,202 @@ if (!process.versions.electron) {
         await run(`!!document.querySelector('[aria-label="Quote selected text"]')`),
         true
       )
+      await run(`
+        getSelection().removeAllRanges(); input.focus(); setText('focus draft');
+        const controls = document.createElement('div'); controls.id = 'focus-controls';
+        controls.style.cssText = 'position:fixed;right:10px;top:180px;width:230px;z-index:9999;background:white';
+        controls.innerHTML = '<button id="copy-action">Copy</button><button id="pin-action">Pin</button>' +
+          '<button id="fork-action">Fork</button><button id="close-chat">Close chat</button><button id="open-chat">Open chat</button>' +
+          '<details><summary id="worked-action">Worked</summary><details><summary id="tool-action">Tool</summary>Tool details</details></details>' +
+          '<input id="other-editor" aria-label="Search"><button id="dialog-action">Open dialog</button>' +
+          '<button id="draggable-action" draggable="true">Drag chat</button>';
+        document.body.append(controls);
+        document.querySelector('#copy-action').onclick = () => {
+          const temporary = document.createElement('textarea'); temporary.value = 'Copied text';
+          document.body.append(temporary); temporary.focus(); temporary.select(); temporary.remove();
+        };
+        document.querySelector('#pin-action').onclick = event => event.currentTarget.setAttribute('aria-pressed','true');
+        document.querySelector('#draggable-action').ondragstart = event => {window.dragStarted = true; event.preventDefault()};
+        document.querySelector('#fork-action').onclick = () => setTimeout(() => renderFixture({draftScopeKey:'fork-focus'}),20);
+        document.querySelector('#close-chat').onclick = () => renderFixture({fixtureVisible:false});
+        document.querySelector('#open-chat').onclick = () => {
+          renderFixture({fixtureVisible:true,draftScopeKey:'test'}); window.input = document.querySelector('#message-input');
+        };
+        document.querySelector('#dialog-action').onclick = () => {
+          const dialog = document.createElement('dialog'); dialog.id = 'focus-dialog';
+          dialog.innerHTML = '<input id="dialog-editor" autofocus><button id="dialog-close">Close</button>';
+          document.body.append(dialog); dialog.showModal();
+          dialog.querySelector('button').onclick = () => dialog.remove();
+        };
+        void 0;
+      `)
+      await settle()
+      for (const action of [
+        'copy-action',
+        'pin-action',
+        'fork-action',
+        'worked-action',
+        'tool-action'
+      ]) {
+        await click('#' + action)
+        assert.equal(
+          await run('document.activeElement === input'),
+          true,
+          action + ' keeps composer focus'
+        )
+      }
+      await win.webContents.debugger.sendCommand('Input.insertText', {
+        text: 'typing after actions'
+      })
+      await settle()
+      assert.equal(await run('input.value'), 'typing after actions')
+      await click('#close-chat')
+      assert.equal(await run('document.querySelector("#message-input")'), null)
+      await click('#open-chat')
+      assert.equal(
+        await run('document.activeElement === input'),
+        true,
+        'opening a chat focuses its composer'
+      )
+      assert.equal(await run('input.value'), 'focus draft', 'chat actions retain scoped drafts')
+      await click('#other-editor')
+      await win.webContents.debugger.sendCommand('Input.insertText', { text: 'search text' })
+      await settle()
+      assert.equal(
+        await run('document.activeElement.id'),
+        'other-editor',
+        'other text fields stay usable'
+      )
+      assert.equal(await run('document.querySelector("#other-editor").value'), 'search text')
+      await click('#pin-action')
+      assert.equal(
+        await run('document.activeElement === input'),
+        true,
+        'a completed action returns from search to the composer'
+      )
+      await click('#dialog-action')
+      assert.equal(
+        await run('document.activeElement.id'),
+        'dialog-editor',
+        'dialogs own their input focus'
+      )
+      await win.webContents.debugger.sendCommand('Input.insertText', { text: 'dialog text' })
+      await click('#dialog-close')
+      assert.equal(
+        await run('document.activeElement === input'),
+        true,
+        'closing a dialog restores composer focus'
+      )
+      await run(`input.blur(); const selected = document.querySelector('#messages p').firstChild;
+        getSelection().setBaseAndExtent(selected,0,selected,5)`)
+      await settle()
+      assert.equal(await run('getSelection().toString()'), 'Quote')
+      assert.equal(
+        await run('document.activeElement === input'),
+        false,
+        'transcript selection keeps focus away from the composer'
+      )
+      // Real selection gestures must be allowed to finish before focus is restored.
+      await run(`getSelection().removeAllRanges(); input.focus()`)
+      const drag =
+        await run(`(() => {const r = document.querySelector('#messages p').getBoundingClientRect();
+        return {x:r.x + 2, y:r.y + r.height/2, endX:r.x + 80}})()`)
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        button: 'left',
+        clickCount: 1,
+        x: drag.x,
+        y: drag.y
+      })
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        button: 'left',
+        buttons: 1,
+        x: drag.endX,
+        y: drag.y
+      })
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        button: 'left',
+        clickCount: 1,
+        x: drag.endX,
+        y: drag.y
+      })
+      await settle()
+      assert.equal(
+        await run('getSelection().isCollapsed'),
+        false,
+        'native text dragging retains its selection'
+      )
+      assert.equal(
+        await run('document.activeElement === input'),
+        false,
+        'native selection does not bounce back to the prompt'
+      )
+      await run(`getSelection().removeAllRanges(); input.focus()`)
+      const draggable =
+        await run(`(() => {const r = document.querySelector('#draggable-action').getBoundingClientRect();
+        return {x:r.x+r.width/2,y:r.y+r.height/2}})()`)
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        button: 'left',
+        clickCount: 1,
+        ...draggable
+      })
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        button: 'left',
+        buttons: 1,
+        x: draggable.x - 35,
+        y: draggable.y
+      })
+      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        button: 'left',
+        clickCount: 1,
+        x: draggable.x - 35,
+        y: draggable.y
+      })
+      await settle()
+      assert.equal(
+        await run('window.dragStarted'),
+        true,
+        'retaining composer focus must not disable chat dragging'
+      )
+      await click('#pin-action')
+      assert.equal(
+        await run('document.activeElement === input'),
+        true,
+        'a canceled drag must not strand focus'
+      )
+      // Keyboard focus can still move intentionally; activating the action returns to typing.
+      await run(`getSelection().removeAllRanges(); input.focus();
+        input.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true}));
+        document.querySelector('#pin-action').focus(); void 0`)
+      await settle()
+      assert.equal(
+        await run('document.activeElement.id'),
+        'pin-action',
+        'Tab navigation remains usable'
+      )
+      await key('Enter')
+      assert.equal(
+        await run('document.activeElement === input'),
+        true,
+        'keyboard actions also restore the prompt'
+      )
+      await run(`getSelection().removeAllRanges(); input.focus(); setText('after selection')`)
+      await settle()
+      await win.webContents.debugger.sendCommand('Input.insertText', { text: '!' })
+      await settle()
+      assert.equal(
+        await run('input.value'),
+        'after selection!',
+        'restored focus retains a usable native caret'
+      )
       assert.deepEqual(errors, [])
       console.log(
-        'Composer input checks passed: AI prompt suggestions, mentions, selection without renders, large drafts, native replacement, and message quotes.'
+        'Composer input checks passed: prompt keycaps, Enter sending, persistent focus, text selection, mentions, selection without renders, large drafts, native replacement, and message quotes.'
       )
     } catch (error) {
       console.error(error)

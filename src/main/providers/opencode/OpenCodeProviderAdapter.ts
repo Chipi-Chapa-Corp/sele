@@ -1,4 +1,5 @@
 import { PendingMessageEdits } from '../PendingMessageEdits'
+import { createOpenCodeTerminalSessions } from './OpenCodeTerminalSessions'
 import { PersistentPendingMessages } from '../PersistentPendingMessages'
 import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
 import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
@@ -159,6 +160,7 @@ type OpenCodeClientEntry = {
   container: AppContainerTarget | null
   eventAbortController: AbortController
   terminalTasks: ReturnType<typeof createOpenCodeTerminalTasks>
+  terminals?: Map<string, ReturnType<typeof createOpenCodeTerminalSessions>>
 }
 
 type QueuedOpenCodeMessage = ProviderPendingMessage & {
@@ -166,6 +168,7 @@ type QueuedOpenCodeMessage = ProviderPendingMessage & {
 }
 
 type OpenCodeChatState = {
+  terminals?: ReturnType<typeof createOpenCodeTerminalSessions>
   browser: BrowserMcpIntegration | null
   browserGeneration: number
   id: string
@@ -2055,6 +2058,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.states.forEach((state) => {
       this.closeBrowser(state)
       state.messagesDirty = true
+      state.terminals?.dispose()
+      state.terminals = undefined
       state.client = null
     })
     const pendingEntries = Array.from(this.clientEntryPromises.values())
@@ -2073,6 +2078,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     await Promise.all(
       Array.from(entries, async (entry) => {
         entry.terminalTasks.dispose()
+        entry.terminals?.forEach((terminals) => terminals.dispose())
         entry.eventAbortController.abort()
         await entry.server.dispose()
       })
@@ -2093,10 +2099,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       client,
       container: storedContainer,
       eventAbortController: new AbortController(),
-      terminalTasks
+      terminalTasks,
+      terminals: new Map()
     }
     server.onExit((error) => {
       terminalTasks.dispose()
+      entry.terminals?.forEach((terminals) => terminals.dispose())
       console.error('[OpenCodeProviderAdapter:createClientEntry] OpenCode server exited', error)
       const key = getContainerTargetKey(storedContainer)
       if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
@@ -2149,6 +2157,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       )
     } finally {
       entry.terminalTasks.dispose()
+      entry.terminals?.forEach((terminals) => terminals.dispose())
       if (!entry.eventAbortController.signal.aborted) {
         const key = getContainerTargetKey(entry.container)
         if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
@@ -2215,6 +2224,21 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const directory = event.directory ?? this.states.get(sessionID)?.directory
     if (!directory) return
     const state = this.getOrCreateState(sessionID, directory, entry.container)
+    if (entry.terminals) {
+      let terminals = entry.terminals.get(sessionID)
+      if (!terminals) {
+        terminals = createOpenCodeTerminalSessions({
+          chatId: state.id,
+          chatTitle: state.session?.title ?? state.fallbackTitle ?? 'OpenCode chat',
+          cwd: state.directory,
+          container: state.container,
+          abortTurn: () => this.stopChat(state.id)
+        })
+        entry.terminals.set(sessionID, terminals)
+      }
+      state.terminals = terminals
+    }
+    state.terminals?.consume(type, properties)
     state.eventRevision += 1
     if (type.startsWith('message.')) {
       if (!queueOpenCodeMessageEvent(state, type, properties)) {

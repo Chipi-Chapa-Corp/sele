@@ -19,15 +19,23 @@ if (!process.versions.electron) {
             import { renderCopilotChatItems } from './src/main/providers/copilot/CopilotItemRenderers'
             export const fixtures = {}
             for (const provider of ['claude', 'opencode', 'copilot']) {
-              for (const operation of ['fetch_file', 'create_issue', 'native-read', ...(provider === 'opencode' ? ['execute'] : [])]) {
+              for (const operation of ['fetch_file', 'create_issue', 'native-read', ...(provider === 'opencode' ? ['execute'] : []), ...(provider === 'claude' ? ['tool-search', 'task-stop', 'task-plan'] : [])]) {
                 for (const finished of [false, true]) {
                   const input = { path: '/repo/file.ts', file_path: '/repo/file.ts', command: 'private-protocol-input' }
                   if (operation === 'execute') input.code = 'text("script result")'
+                  if (operation === 'tool-search') input.query = 'select:TaskStop'
+                  if (operation === 'task-stop') input.task_id = 'background-task'
+                  if (operation === 'task-plan') input.subject = 'Inspect the code'
                   const options = { active: !finished, stopped: false }
                   let items
                   if (provider === 'claude') {
-                    const source = [{ type: 'assistant', uuid: 'call', message: { content: [{ type: 'tool_use', id: 'call', name: operation === 'native-read' ? 'Read' : 'mcp__github__' + operation, input }] } }]
-                    if (finished) source.push({ type: 'user', uuid: 'result', message: { content: [{ type: 'tool_result', tool_use_id: 'call', content: 'private-protocol-output' }] } })
+                    const name = { 'native-read': 'Read', 'tool-search': 'ToolSearch', 'task-stop': 'TaskStop', 'task-plan': 'TaskCreate' }[operation] ?? 'mcp__github__' + operation
+                    const source = [{ type: 'assistant', uuid: 'call', message: { content: [{ type: 'tool_use', id: 'call', name, input }] } }]
+                    if (operation === 'task-plan') {
+                      source.push({ type: 'user', uuid: 'created', tool_use_result: { task: { id: '42', subject: 'Inspect the code' } }, message: { content: [{ type: 'tool_result', tool_use_id: 'call', content: 'private-protocol-output' }] } })
+                      source.push({ type: 'assistant', uuid: 'update', message: { content: [{ type: 'tool_use', id: 'update', name: 'TaskUpdate', input: { taskId: '42', status: 'completed' } }] } })
+                    }
+                    if (finished) source.push({ type: 'user', uuid: 'result', message: { content: [{ type: 'tool_result', tool_use_id: operation === 'task-plan' ? 'update' : 'call', content: 'private-protocol-output' }] } })
                     items = renderClaudeChatItems(source, options)
                   } else if (provider === 'opencode') {
                     items = renderOpenCodeChatItems([{ info: { id: 'call', role: 'assistant', time: { created: 1000 } }, parts: [{ type: 'tool', id: 'call', callID: 'call', tool: operation === 'native-read' ? 'read' : operation === 'execute' ? 'execute' : 'github_' + operation, state: { status: finished ? 'completed' : 'running', input, output: operation === 'execute' ? 'script result' : 'private-protocol-output', metadata: {}, time: { start: 1000, end: 2000 } } }] }], options)
@@ -59,11 +67,16 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import { ChatDetailItem } from './src/renderer/src/components/ChatDetailItem'
+            import { ChatPlan } from './src/renderer/src/components/ChatPlan'
+            import { getLatestChatPlan } from './src/renderer/src/chatPlans'
             const fixtures = ${JSON.stringify(fixtures)}
             const root = createRoot(document.getElementById('root'))
             window.fixtureKeys = Object.keys(fixtures)
             window.renderFixture = key => flushSync(() => root.render(
-              fixtures[key].map(item => <ChatDetailItem key={item.id} item={item} />)
+              <>
+                {fixtures[key].map(item => <ChatDetailItem key={item.id} item={item} />)}
+                <ChatPlan plan={getLatestChatPlan(fixtures[key], key)} />
+              </>
             ))
           `,
           resolveDir: path.resolve(__dirname, '../..'),
@@ -128,8 +141,16 @@ if (!process.versions.electron) {
           const details = document.querySelector('.chat-detail__tool-group')
           if (!details.open) { details.querySelector('summary').click(); await new Promise(resolve => setTimeout(resolve, 30)) }
         }
+        const plan = document.querySelector('.chat-plan__toggle')
+        if (plan && plan.getAttribute('aria-expanded') !== 'true') {
+          plan.click()
+          await new Promise(resolve => setTimeout(resolve, 30))
+        }
         states.push({ key, label: document.querySelector('.chat-detail__tool-read, .chat-detail__tool-label')?.textContent,
           scriptIcon: !!document.querySelector('.lucide-file-code-corner'),
+          planProgress: document.querySelector('.chat-plan__progress')?.textContent,
+          planItems: document.querySelector('.chat-plan__list')?.textContent,
+          hasGoal: !!document.querySelector('.chat-goal'),
           disclosures: document.querySelectorAll('.chat-detail__tool-group').length,
           text: document.body.textContent })
       }
@@ -138,6 +159,28 @@ if (!process.versions.electron) {
       for (const state of states) {
         const [, operation, completed] = state.key.split(':')
         const finished = completed === 'true'
+        if (operation === 'tool-search' || operation === 'task-stop' || operation === 'task-plan') {
+          assert.equal(state.disclosures, 0, JSON.stringify(state))
+          assert.equal(state.hasGoal, false)
+          assert.doesNotMatch(state.text, /private-protocol|select:TaskStop|task_id|max_results/)
+          if (operation === 'task-plan') {
+            assert.equal(state.planProgress, finished ? '1/1' : '0/1')
+            assert.match(state.planItems, /Inspect the code/)
+          } else {
+            assert.equal(
+              state.label,
+              operation === 'tool-search'
+                ? finished
+                  ? 'Searched available tools'
+                  : 'Searching available tools'
+                : finished
+                  ? 'Stopped background task'
+                  : 'Stopping background task'
+            )
+            assert.equal(state.planProgress, undefined)
+          }
+          continue
+        }
         const expected =
           operation === 'execute'
             ? finished
@@ -158,7 +201,7 @@ if (!process.versions.electron) {
         }
         assert.doesNotMatch(state.text, /private-protocol|mcp__|github_/)
       }
-      assert.equal(states.length, 20)
+      assert.equal(states.length, 26)
       console.log('Claude, OpenCode and Copilot tool presentation passed in Electron.')
       app.quit()
     })

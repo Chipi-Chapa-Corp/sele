@@ -1,5 +1,6 @@
 import { CopilotHistoryPages } from './CopilotHistoryPages'
 import { PendingMessageEdits } from '../PendingMessageEdits'
+import { createCopilotTerminalSessions } from './CopilotTerminalSessions'
 import {
   PersistentPendingMessages,
   type PersistedPendingMessage
@@ -157,6 +158,7 @@ type CopilotPendingMessage = ProviderPendingMessage & {
 }
 
 type CopilotSessionState = {
+  terminals?: ReturnType<typeof createCopilotTerminalSessions>
   id: string
   revision: number
   createdAt: number
@@ -803,6 +805,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       if (getContainerTargetKey(state.container) !== key) return
       this.persistPendingMessages(state)
       this.closeBrowserIntegration(state)
+      state.terminals?.dispose()
+      state.terminals = undefined
       state.session = null
       state.client = null
     })
@@ -1096,10 +1100,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   resetRateLimits = async (): Promise<'nothingToReset'> => 'nothingToReset'
 
   getChatTerminalTasks = async (chatId: string): Promise<string[]> => {
-    const session = this.states.get(chatId)?.session
+    const state = this.states.get(chatId)
+    const session = state?.session
     if (!session) return []
     await session.rpc.tasks.refresh()
-    return (await session.rpc.tasks.list()).tasks
+    const tasks = (await session.rpc.tasks.list()).tasks
+    state.terminals?.sync(tasks)
+    return tasks
       .filter(
         (task) => task.type === 'shell' && (task.status === 'running' || task.status === 'idle')
       )
@@ -1619,6 +1626,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const session = state.session ?? (await this.createSession(state, options))
     const native = await session.getEvents()
     await session.disconnect()
+    state.terminals?.dispose()
+    state.terminals = undefined
     state.session = null
     this.closeBrowserIntegration(state)
     const file = await nativeHistoryFile(
@@ -2431,6 +2440,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationTimers.clear()
     this.states.forEach((state) => {
       this.closeBrowserIntegration(state)
+      state.terminals?.dispose()
       state.pendingPermissions.splice(0).forEach((pending) => pending.resolve({ kind: 'reject' }))
       this.cancelPendingUserInputs(state)
     })
@@ -2702,6 +2712,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       this.sessionModels.set(session, getSessionModelKey(options?.model, reasoningEffort))
       await this.addAdditionalDirectories(session, options)
       state.session = session
+      state.terminals = createCopilotTerminalSessions({
+        session,
+        chatId: state.id,
+        chatTitle: this.getTitle(state),
+        cwd: this.getCwd(state),
+        container: state.container
+      })
       state.metadata =
         (await client.getSessionMetadata(state.id).catch((error) => {
           console.error('[caught:CopilotProviderAdapter:createSession]', error)
@@ -2734,6 +2751,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     const load = (async (): Promise<CopilotSessionState> => {
       const previous = state.session
+      state.terminals?.dispose()
+      state.terminals = undefined
       state.session = null
       this.closeBrowserIntegration(state)
       await previous?.disconnect()
@@ -2765,6 +2784,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       if (options?.model)
         this.sessionModels.set(session, getSessionModelKey(options.model, reasoningEffort))
       state.session = session
+      state.terminals = createCopilotTerminalSessions({
+        session,
+        chatId: state.id,
+        chatTitle: this.getTitle(state),
+        cwd: this.getCwd(state),
+        container: state.container
+      })
       await this.addAdditionalDirectories(session, options)
       await this.loadSessionTitle(state)
       await this.loadEvents(state)
@@ -2787,6 +2813,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     try {
       return await load
     } catch (error) {
+      state.terminals?.dispose()
+      state.terminals = undefined
       state.session = null
       this.closeBrowserIntegration(state)
       throw error
@@ -2801,6 +2829,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const check = (async (): Promise<void> => {
       const metadata = (await state.client!.getSessionMetadata(state.id)) ?? null
       if (!metadata) {
+        state.terminals?.dispose()
+        state.terminals = undefined
         state.session = null
         this.closeBrowserIntegration(state)
         throw new Error(`Copilot session was not found: ${state.id}`)

@@ -103,7 +103,12 @@ stops running Claude turns in that environment; existing chats can then resume w
 selected account. If browser authorization returns a code, paste it into the account dialog.
 Usage lookups use a separate per-account cache so Claude cannot reuse another account's
 limits. This background lookup does not create chats or change the shared chat configuration.
-Codex account switching remains Linux-only.
+
+Codex accounts also share native history across Linux, macOS, and Windows using
+account-specific shadow homes. Existing saved accounts keep their credentials;
+Codex handles sign-in and token refresh. Linux and macOS no longer need the
+privileged account helper. On Windows, enable Developer Mode or allow symbolic
+link creation. See [per-chat accounts](docs/per-chat-accounts.md).
 
 For Copilot, start `copilot` once and use `/login` if the CLI is not already authenticated.
 
@@ -127,9 +132,8 @@ credentials or unsupported remote MCP OAuth credentials may require sign-in agai
 
 ## Development
 
-For the source-backed ChatGPT desktop and Codex app/CLI feature audit, see the
-[compatibility table](docs/compatibility/README.md), including a searchable HTML
-view, CSV, source coverage, and reproducible protocol/feature inventories.
+See the [repository guide](docs/README.md) for the code layout and focused
+implementation notes.
 
 Requires Node.js 22.
 

@@ -17,6 +17,7 @@ function startRuntime(config) {
   const requests = new Map()
   const approvals = new Map()
   const threads = new Map()
+  const temporaryThreads = new Map()
   const active = new Set()
   const completedTurns = new Set()
   const send = (socket, message) => {
@@ -46,11 +47,21 @@ function startRuntime(config) {
     if (!client && !active.size && !approvals.size && !requests.size)
       idleTimer = setTimeout(stop, config.idleTimeoutMs ?? 300_000)
   }
+  const releaseTemporaryThread = (threadId) => {
+    const turnId = temporaryThreads.get(threadId)
+    if (turnId) write({ id: nextId++, method: 'turn/interrupt', params: { threadId, turnId } })
+    write({ id: nextId++, method: 'thread/unsubscribe', params: { threadId } })
+  }
   const disconnect = (socket) => {
     if (client !== socket) return
     client = null
     // Detached turns must keep running even if the frontend stopped reading.
     child?.stdout.resume()
+    for (const threadId of temporaryThreads.keys()) releaseTemporaryThread(threadId)
+    for (const [requestId, request] of requests) {
+      if (request.socket === socket && request.method === 'thread/sample')
+        write({ id: nextId++, method: 'thread/sample/cancel', params: { requestId } })
+    }
     // Never repeat a client-side action whose result was lost during a crash.
     // Other server requests are approvals/questions, and remain pending for reattachment.
     for (const [id, request] of approvals) {
@@ -73,7 +84,13 @@ function startRuntime(config) {
   }
   const observe = (message) => {
     const params = message.params ?? {}
-    if (message.method === 'turn/started') active.add(params.threadId)
+    if (message.method === 'turn/started') {
+      active.add(params.threadId)
+      if (temporaryThreads.has(params.threadId)) {
+        temporaryThreads.set(params.threadId, params.turn?.id)
+        if (!client) releaseTemporaryThread(params.threadId)
+      }
+    }
     if (message.method === 'turn/completed') {
       active.delete(params.threadId)
       completedTurns.add(params.turn?.id)
@@ -81,6 +98,7 @@ function startRuntime(config) {
     }
     if (message.method === 'thread/closed') {
       threads.delete(params.threadId)
+      temporaryThreads.delete(params.threadId)
       active.delete(params.threadId)
     }
     if (message.method === 'thread/status/changed' && threads.has(params.threadId))
@@ -149,6 +167,19 @@ function startRuntime(config) {
         return
       }
       if (message.method && typeof message.id === 'number') {
+        if (message.method === 'thread/sample/cancel') {
+          const target = [...requests].find(
+            ([, request]) =>
+              request.socket === socket &&
+              request.method === 'thread/sample' &&
+              request.id === message.params?.requestId
+          )
+          if (!target) {
+            send(socket, { id: message.id, result: {} })
+            return
+          }
+          message = { ...message, params: { ...message.params, requestId: target[0] } }
+        }
         const id = nextId++
         const timer = setTimeout(
           () => {
@@ -232,11 +263,16 @@ function startRuntime(config) {
             ['thread/start', 'thread/resume', 'thread/fork'].includes(request.method)
           ) {
             const inherited = threads.get(request.params?.threadId)
-            threads.set(thread.id, {
-              thread: { ...thread, turns: [] },
-              dynamicTools: request.params?.dynamicTools ?? inherited?.dynamicTools,
-              readOnly: request.params?.sandbox === 'read-only'
-            })
+            if (request.params?.ephemeral === true) {
+              temporaryThreads.set(thread.id, null)
+              if (request.socket !== client) releaseTemporaryThread(thread.id)
+            } else {
+              threads.set(thread.id, {
+                thread: { ...thread, turns: [] },
+                dynamicTools: request.params?.dynamicTools ?? inherited?.dynamicTools,
+                readOnly: request.params?.sandbox === 'read-only'
+              })
+            }
           }
           if (request.method === 'turn/start' && !completedTurns.has(message.result?.turn?.id))
             active.add(request.params?.threadId)

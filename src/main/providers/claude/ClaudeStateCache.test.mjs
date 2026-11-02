@@ -99,6 +99,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
     },
     getBrowserAutomationService: () => null,
     getClaudeModel: () => undefined,
+    createClaudeTerminalSessions: () => ({ consume() {}, dispose() {} }),
     query: () => {
       queryCreations += 1
       return { close() {} }

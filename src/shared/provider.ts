@@ -815,6 +815,18 @@ export type ProviderToolImage = {
   name?: string | null
 }
 
+export type ProviderPlanItem = {
+  step: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+export type ProviderPlan = {
+  items: ProviderPlanItem[]
+  explanation?: string | null
+  /** Result order can differ from call order when checklist tools run in parallel. */
+  revision?: number
+}
+
 export type ProviderWorkingTool = {
   type: 'tool'
   id: string
@@ -828,6 +840,8 @@ export type ProviderWorkingTool = {
   label: string
   /** Short action or exact tool name for collapsed sequences. */
   summaryLabel?: string
+  /** Structured checklist state, retained independently of expandable tool payloads. */
+  plan?: ProviderPlan
   command: string | null
   cwd: string | null
   stdout: string | null

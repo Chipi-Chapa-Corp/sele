@@ -8,11 +8,11 @@ import {
   isCodexAccountId,
   parseCodexAccountsOutput
 } from './CodexAccountConfig'
-import { codexAccountViewSetupScript, getCodexAccountViewSetupArgs } from './CodexAccountViewHelper'
+import { createCodexAccountStore, type CodexAccountOperation } from './CodexAccountStore.ts'
+import { codexHome } from './CodexShadowHome.ts'
 import { codexAccountDisplayName } from '../AccountDisplayName'
 
 const accountCommandTimeoutMs = 15_000
-const accountSetupTimeoutMs = 5 * 60_000
 const accountCommandMaxBuffer = 1024 * 1024
 
 const inspectAccountsScript = String.raw`
@@ -20,7 +20,7 @@ set -eu
 umask 077
 platform=$(uname -s 2>/dev/null || printf 'Unknown')
 printf '%s\0' "$platform"
-[ "$platform" = 'Linux' ] || exit 0
+case "$platform" in Linux|Darwin) ;; *) exit 0;; esac
 codex_home=${'${'}CODEX_HOME:-"$HOME/.codex"}
 sele_home="$codex_home/sele"
 accounts_home="$sele_home/accounts"
@@ -203,13 +203,7 @@ fi
 `.trim()
 
 const getLocalUnavailableMessage = (): string | null => {
-  if (process.platform === 'linux') return null
-  if (process.platform === 'darwin') {
-    return 'Accounts configuration is not available on MacOS'
-  }
-  if (process.platform === 'win32') {
-    return 'Accounts configuration is not available on Windows'
-  }
+  if (['linux', 'darwin', 'win32'].includes(process.platform)) return null
   return 'Accounts configuration is not available on this operating system'
 }
 
@@ -225,30 +219,21 @@ const runAccountCommand = async (
   script: string,
   args: string[],
   container: AppContainerTarget | null | undefined,
-  timeout = accountCommandTimeoutMs
+  operation: CodexAccountOperation
 ): Promise<string> => {
+  if (process.platform === 'win32' && container?.kind !== 'container')
+    return createCodexAccountStore(codexHome())(operation, args)
   const hostCommand = await getHostCommand('sh', ['-lc', script, 'sele-codex-accounts', ...args], {
     container,
     env: process.env
   })
 
   const { error, stdout, stderr } = await bufferedCommands.run(hostCommand, {
-    timeout,
+    timeout: accountCommandTimeoutMs,
     maxBuffer: accountCommandMaxBuffer
   })
   if (error) throw new Error(stderr.trim() || error.message)
   return stdout
-}
-
-export const ensureCodexAccountView = async (
-  container: AppContainerTarget | null | undefined
-): Promise<void> => {
-  await runAccountCommand(
-    codexAccountViewSetupScript,
-    getCodexAccountViewSetupArgs(),
-    container,
-    accountSetupTimeoutMs
-  )
 }
 
 export const getCodexAccounts = async (
@@ -257,7 +242,9 @@ export const getCodexAccounts = async (
   const unavailableMessage = container?.kind === 'container' ? null : getLocalUnavailableMessage()
   if (unavailableMessage) return { available: false, unavailableMessage, accounts: [] }
 
-  return parseCodexAccountsOutput(await runAccountCommand(inspectAccountsScript, [], container))
+  return parseCodexAccountsOutput(
+    await runAccountCommand(inspectAccountsScript, [], container, 'inspect')
+  )
 }
 
 export const getCodexAccountsWithDisplayNames = async (
@@ -279,7 +266,8 @@ for id do
 done
 `,
     accounts.map((account) => account.id),
-    container
+    container,
+    'names'
   ).catch(() => '')
   const fields = output.split('\0')
   const names = new Map<string, string | null>()
@@ -300,9 +288,8 @@ export const createCodexAccount = async (
   const configuration = await getCodexAccounts(container)
   if (!configuration.available) throw new Error(configuration.unavailableMessage ?? 'Unavailable')
 
-  await ensureCodexAccountView(container)
   const accountId = randomUUID()
-  await runAccountCommand(createAccountScript, [accountId], container)
+  await runAccountCommand(createAccountScript, [accountId], container, 'create')
   return { accountId }
 }
 
@@ -320,8 +307,7 @@ export const useCodexAccount = async (
     throw new Error('Codex account was not found.')
   }
 
-  if (accountId !== codexDefaultAccountId) await ensureCodexAccountView(container)
-  await runAccountCommand(useAccountScript, [accountId], container)
+  await runAccountCommand(useAccountScript, [accountId], container, 'use')
   return getCodexAccounts(container)
 }
 
@@ -329,7 +315,12 @@ export const finalizeCodexAccount = async (
   accountIdValue: string,
   container?: AppContainerTarget | null
 ): Promise<ProviderAccountConfiguration> => {
-  await runAccountCommand(finalizeAccountScript, [requireAccountId(accountIdValue)], container)
+  await runAccountCommand(
+    finalizeAccountScript,
+    [requireAccountId(accountIdValue)],
+    container,
+    'finalize'
+  )
   return getCodexAccounts(container)
 }
 
@@ -340,7 +331,8 @@ export const cancelCodexAccountCreation = async (
   await runAccountCommand(
     cancelAccountCreationScript,
     [requireAccountId(accountIdValue)],
-    container
+    container,
+    'cancel'
   )
   return getCodexAccounts(container)
 }
@@ -356,6 +348,6 @@ export const deleteCodexAccount = async (
     throw new Error('Codex account was not found.')
   }
 
-  await runAccountCommand(deleteAccountScript, [accountId], container)
+  await runAccountCommand(deleteAccountScript, [accountId], container, 'delete')
   return getCodexAccounts(container)
 }

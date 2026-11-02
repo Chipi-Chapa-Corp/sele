@@ -11,6 +11,7 @@ type Operation =
   | 'edit'
   | 'delete'
   | 'search'
+  | 'tool-search'
   | 'shell'
   | 'script'
   | 'output'
@@ -47,13 +48,15 @@ const nativeTools: Record<NativeProvider, Map<string, Operation>> = {
     ['bash', 'shell'],
     ['bashoutput', 'output'],
     ['killshell', 'stop'],
+    ['taskstop', 'stop'],
+    ['taskoutput', 'output'],
     ['webfetch', 'webfetch'],
     ['websearch', 'websearch'],
     ['todowrite', 'plan'],
     ['todoread', 'plan'],
     ['askuserquestion', 'question'],
     ['skill', 'skill'],
-    ['toolsearch', 'search'],
+    ['toolsearch', 'tool-search'],
     ['taskcreate', 'task-create'],
     ['taskupdate', 'task-update'],
     ['taskget', 'task-read'],
@@ -223,9 +226,26 @@ export const getProviderToolPresentation = (
   }
   if (operation === 'git')
     return { activity: 'git', label: `Used Git ${name.replace(/^git_/, '')}` }
-  if (operation === 'output') return { activity: 'command', label: 'Read command output' }
+  if (operation === 'output')
+    return {
+      activity: 'command',
+      label:
+        name.toLowerCase() === 'taskoutput' ? 'Read background task output' : 'Read command output'
+    }
   if (operation === 'stop')
-    return { activity: 'other', label: 'Stopped command', compact: true, hidePayload: true }
+    return {
+      activity: 'other',
+      label: name.toLowerCase() === 'taskstop' ? 'Stopped background task' : 'Stopped command',
+      compact: true,
+      hidePayload: true
+    }
+  if (operation === 'tool-search')
+    return {
+      activity: 'search',
+      label: 'Searched available tools',
+      compact: true,
+      hidePayload: true
+    }
   if (operation === 'read')
     return { activity: 'read', label: file ? `Read ${file}` : 'Read files', hidePayload: true }
   if (operation === 'create' || operation === 'edit' || operation === 'delete') {

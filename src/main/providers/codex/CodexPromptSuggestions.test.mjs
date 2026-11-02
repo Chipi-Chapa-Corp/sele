@@ -75,6 +75,17 @@ const setup = () => {
     insertTurnBeforeQueued: (turns, turn) => [...turns, turn],
     cacheThread: (next) => adapter.threads.set(next.id, next)
   })
+  adapter.promptSuggestions = new Map([
+    [
+      adapter.client,
+      {
+        request: (threadId, sourceTurnId) =>
+          adapter.client.request('thread/prediction/request', { threadId, sourceTurnId }),
+        cancel() {},
+        isTemporaryThread: () => false
+      }
+    ]
+  ])
   const complete = (patch = {}) =>
     adapter.handleNotification({
       method: 'turn/completed',
@@ -161,4 +172,22 @@ test('submitting another prompt clears predictions and rejects the previous turn
   assert.equal(thread.promptSuggestionsEnabled, false)
   predict()
   assert.equal(thread.promptSuggestion, null)
+})
+
+test('temporary Desktop fork notifications never create transcript turns or visible usage', () => {
+  const { adapter, updates } = setup()
+  adapter.promptSuggestions.get(adapter.client).isTemporaryThread = (id) => id === 'temporary'
+  for (const method of [
+    'turn/started',
+    'turn/completed',
+    'item/completed',
+    'thread/tokenUsage/updated'
+  ])
+    adapter.handleNotification({
+      method,
+      params: { threadId: 'temporary', turn: { id: 'prediction', status: 'completed' } }
+    })
+  assert.deepEqual([...adapter.threads.keys()], ['chat'])
+  assert.equal(adapter.threads.get('chat').turns.length, 1)
+  assert.equal(updates.length, 0)
 })

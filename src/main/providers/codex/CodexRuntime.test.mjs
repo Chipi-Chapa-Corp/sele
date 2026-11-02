@@ -41,6 +41,7 @@ await writeFile(
 const fs=require('node:fs');const {createInterface}=require('node:readline');
 const send=m=>process.stdout.write(JSON.stringify(m)+'\\n');
 let starts=0,lastResult=null,active=false,initializes=0;
+let sampleId=null,lastSampleId=null,lastCancel=null;const interrupts=[],unsubscribed=[];
 createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line),p=m.params||{};
  const reply=result=>send({id:m.id,result});
@@ -48,8 +49,21 @@ createInterface({input:process.stdin}).on('line',line=>{
  if(m.method==='initialize') { initializes++; return setTimeout(()=>reply({pid:process.pid,initializes}),p.delay||0) }
  if(m.method==='initialized')return;
  if(m.method==='thread/start')return reply({thread:{id:'thread',cwd:'/fixture',status:{type:'idle'},turns:[]}});
+ if(m.method==='thread/fork')return reply({thread:{id:'temporary',cwd:'/fixture',status:{type:'idle'},turns:[]}});
+ if(m.method==='thread/sample'){sampleId=m.id;lastSampleId=m.id;return}
+ if(m.method==='thread/sample/cancel'){
+  lastCancel=p.requestId;
+  if(sampleId===p.requestId){send({id:sampleId,result:{text:null}});sampleId=null}
+  return reply({});
+ }
+ if(m.method==='turn/interrupt'){
+  interrupts.push(p);send({method:'turn/completed',params:{threadId:p.threadId,turn:{id:p.turnId,status:'interrupted'}}});return reply({});
+ }
+ if(m.method==='thread/unsubscribe'){
+  unsubscribed.push(p.threadId);send({method:'thread/closed',params:{threadId:p.threadId}});return reply({status:'notLoaded'});
+ }
  if(m.method==='turn/start'){
-  starts++;active=true;send({method:'turn/started',params:{threadId:'thread',turn:{id:'turn',status:'inProgress'}}});
+  starts++;active=true;send({method:'turn/started',params:{threadId:p.threadId||'thread',turn:{id:'turn',status:'inProgress'}}});
   reply({turn:{id:'turn',status:'inProgress'}});
   if(p.finishFile)setTimeout(()=>{fs.writeFileSync(p.finishFile,'completed');active=false;
    send({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed'}}})},600);
@@ -63,7 +77,7 @@ createInterface({input:process.stdin}).on('line',line=>{
  if(m.method==='fixture/large')return reply({marker:p.marker,text:'ж'.repeat(p.size)});
  if(m.method==='fixture/complete') {active=false;
   send({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed'}}});return reply({})}
- if(m.method==='fixture/state')return reply({pid:process.pid,starts,active,lastResult});
+ if(m.method==='fixture/state')return reply({pid:process.pid,starts,active,lastResult,lastSampleId,lastCancel,sampleId,interrupts,unsubscribed});
  reply({});
 });
 `
@@ -393,4 +407,56 @@ test('profile, account and execution environment cannot share workers accidental
   assert.notEqual(codexRuntimeKey('/a', ['host', 'a']), codexRuntimeKey('/b', ['host', 'a']))
   assert.notEqual(codexRuntimeKey('/a', ['host', 'a']), codexRuntimeKey('/a', ['host', 'b']))
   assert.notEqual(codexRuntimeKey('/a', ['host', 'a']), codexRuntimeKey('/a', ['ssh:box', 'a']))
+})
+
+test('sample cancellation translates frontend request IDs into the owning wire IDs', async () => {
+  const client = rpc(await connectRuntime(join(directory, 'prediction-cancel')))
+  await client.initialize()
+  client.write({
+    id: 100,
+    method: 'thread/sample',
+    params: { threadId: 'parent', expectedTurnId: 'source' }
+  })
+  await waitFor(async () => (await client.request('fixture/state')).sampleId != null)
+  const before = await client.request('fixture/state')
+  assert.notEqual(before.lastSampleId, 100, 'the runtime owns a separate RPC ID space')
+  await client.request('thread/sample/cancel', { requestId: 100 })
+  const after = await client.request('fixture/state')
+  assert.equal(after.lastCancel, before.lastSampleId)
+  assert.equal(after.sampleId, null)
+})
+
+test('frontend disconnect cancels samples and temporary forks are never restored as chats', async () => {
+  const profile = join(directory, 'prediction-detach')
+  const transport = await connectRuntime(profile),
+    first = rpc(transport)
+  await first.initialize()
+  await first.request('thread/start')
+  await first.request('thread/fork', {
+    threadId: 'thread',
+    ephemeral: true,
+    experimentalPredictionMode: true
+  })
+  await first.request('turn/start', { threadId: 'temporary' })
+  first.write({
+    id: 100,
+    method: 'thread/sample',
+    params: { threadId: 'thread', expectedTurnId: 'source' }
+  })
+  await waitFor(async () => (await first.request('fixture/state')).sampleId != null)
+  await detach(transport)
+  const second = rpc(await connectRuntime(profile))
+  const initialized = await second.initialize()
+  assert.deepEqual(
+    initialized.seleRuntime.threads.map((entry) => entry.thread.id),
+    ['thread']
+  )
+  await waitFor(async () => {
+    const state = await second.request('fixture/state')
+    return state.sampleId == null && state.unsubscribed.includes('temporary')
+  })
+  const state = await second.request('fixture/state')
+  assert.equal(state.lastCancel, state.lastSampleId)
+  assert.deepEqual(state.interrupts, [{ threadId: 'temporary', turnId: 'turn' }])
+  assert.equal(state.unsubscribed.includes('thread'), false, 'ordinary user chats remain owned')
 })

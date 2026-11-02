@@ -52,13 +52,6 @@
   flex-direction: column;
 }
 
-.terminal-panel__restart {
-  position: absolute;
-  top: 0.2rem;
-  right: 0.2rem;
-  z-index: 2;
-}
-
 .terminal-panel__surface {
   width: 100%;
   min-width: 0;
@@ -97,21 +90,4 @@
 
 .terminal-panel__host .xterm {
   padding: 0;
-}
-
-.terminal-panel__host .xterm-viewport {
-  background-color: var(--control-surface);
-  scrollbar-color: var(--glass-edge) transparent;
-  scrollbar-width: thin;
-}
-
-.terminal-panel__host .xterm-viewport::-webkit-scrollbar {
-  width: 0.45rem;
-}
-
-.terminal-panel__host .xterm-viewport::-webkit-scrollbar-thumb {
-  border: 0.125rem solid transparent;
-  border-radius: 49.95rem;
-  background: var(--glass-edge);
-  background-clip: padding-box;
 }

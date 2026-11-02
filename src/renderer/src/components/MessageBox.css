@@ -646,6 +646,8 @@
 }
 
 .message-box__textarea-wrap {
+  --prompt-suggestion-key-width: 1.65em;
+  --prompt-suggestion-gap: 0.4em;
   display: grid;
   position: relative;
   width: 100%;
@@ -653,6 +655,10 @@
 }
 
 .message-box__prompt-suggestion {
+  display: flex;
+  align-items: center;
+  gap: var(--prompt-suggestion-gap);
+  z-index: 1;
   grid-area: 1 / 1;
   min-width: 0;
   max-height: 9rem;
@@ -669,14 +675,40 @@
   user-select: none;
 }
 
-.message-box__prompt-suggestion kbd {
-  display: inline-block;
-  padding: 0 0.25rem;
-  border: 1px solid currentColor;
-  border-radius: 0.2rem;
+.message-box__suggestion-text {
+  min-width: 0;
+}
+
+.message-box__suggestion-key {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--prompt-suggestion-key-width);
+  height: 1.4em;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 0.3em;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  color: inherit;
   font: inherit;
-  font-size: 0.75em;
-  vertical-align: baseline;
+  line-height: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.message-box__suggestion-key:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.message-box__suggestion-key svg {
+  width: 1em;
+  height: 1em;
+}
+
+.message-box__textarea-wrap:has(.message-box__prompt-suggestion) textarea {
+  padding-inline-start: calc(var(--prompt-suggestion-key-width) + var(--prompt-suggestion-gap));
 }
 
 .message-box textarea {
@@ -693,6 +725,7 @@
   border: 0;
   outline: 0;
   color: var(--ink);
+  caret-color: var(--ink);
   background: transparent;
   font-family: var(--chat-font-family);
   font-size: var(--chat-font-size);

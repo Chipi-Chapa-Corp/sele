@@ -1,7 +1,7 @@
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ITheme, Terminal as XtermTerminal } from '@xterm/xterm'
-import { Plus, RefreshCw, Terminal as TerminalIcon, X } from 'lucide-react'
+import { Plus, Terminal as TerminalIcon, X } from 'lucide-react'
 import type { AppContainerTarget } from '../../../shared/app'
 import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { terminalApi } from '../terminalApi'
@@ -11,6 +11,8 @@ import '@xterm/xterm/css/xterm.css'
 import './TerminalPanel.css'
 import { chatTerminalActivity } from '../chatTerminalActivity'
 import { createPanelTerminalTask } from '../panelTerminalTask'
+import { getAgentTerminalChat, getAgentTerminalTabLabel } from '../agentTerminalChats'
+import { getContainerTargetKey } from '../containerSelection'
 
 export type TerminalCommandLaunchRequest = {
   chatKey?: string | null
@@ -37,7 +39,14 @@ type TerminalPanelProps = {
 
 type TerminalState = 'starting' | 'running' | 'exited' | 'error'
 
+type TerminalOutputCache = { value: string }
+
 type TerminalTab = {
+  outputCache: TerminalOutputCache
+  agentSessionId?: string
+  agentStopScope?: 'process' | 'turn'
+  agentInteractive?: boolean
+  focusOnShow?: boolean
   chatKey?: string | null
   id: string
   label: string
@@ -48,6 +57,11 @@ type TerminalTab = {
 }
 
 type TerminalSessionProps = {
+  outputCache: TerminalOutputCache
+  agentSessionId?: string
+  agentInteractive?: boolean
+  onInterrupt: () => void
+  focusOnShow: boolean
   chatKey: string | null
   initialChatKey: string | null
   closeOnCommandFinish: boolean
@@ -59,10 +73,16 @@ type TerminalSessionProps = {
   visible: boolean
   onCommandFinish: (tabId: string) => void
   onInput: (tabId: string) => void
-  onStateChange: (tabId: string, state: TerminalState, sessionId: string | null) => void
+  onStateChange: (
+    tabId: string,
+    state: TerminalState,
+    sessionId: string | null,
+    agentAttached: boolean
+  ) => void
 }
 
 type TerminalTabRuntime = {
+  agentAttached: boolean
   sessionId: string | null
   state: TerminalState
 }
@@ -138,7 +158,9 @@ const getTerminalTheme = (host: HTMLElement): ITheme => {
 }
 
 const getErrorMessage = (error: unknown): string =>
-  error instanceof Error && error.message ? error.message : 'Unable to start the terminal.'
+  error instanceof Error && error.message
+    ? error.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
+    : 'Unable to start the terminal.'
 
 const isExpectedWebglUnavailableError = (error: unknown): boolean =>
   error instanceof Error &&
@@ -151,6 +173,7 @@ const createTerminalTab = (
   cwd: string | null,
   container: AppContainerTarget | null
 ): TerminalTab => ({
+  outputCache: { value: '' },
   id: crypto.randomUUID(),
   label: `Terminal ${number}`,
   container,
@@ -167,6 +190,7 @@ const getCommandTabLabel = (command: string): string => {
 }
 
 const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): TerminalTab => ({
+  outputCache: { value: '' },
   chatKey: request.chatKey,
   id: crypto.randomUUID(),
   label: request.label?.trim() || getCommandTabLabel(request.command),
@@ -176,7 +200,12 @@ const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): Termin
   closeOnCommandFinish: request.closeOnFinish
 })
 
-const TerminalSession: React.FC<TerminalSessionProps> = ({
+export const TerminalSession: React.FC<TerminalSessionProps> = ({
+  agentSessionId,
+  agentInteractive,
+  outputCache,
+  onInterrupt,
+  focusOnShow,
   chatKey,
   initialChatKey,
   closeOnCommandFinish,
@@ -196,16 +225,18 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
   const terminalRef = useRef<XtermTerminal | null>(null)
   const fitRef = useRef<(() => void) | null>(null)
   const visibleRef = useRef(visible)
-  const [generation, setGeneration] = useState(0)
-  const [state, setState] = useState<TerminalState>('starting')
-  const [error, setError] = useState<string | null>(null)
+  const focusOnShowRef = useRef(focusOnShow)
+  const interruptRef = useRef(onInterrupt)
+  interruptRef.current = onInterrupt
+  const nativeSessionId = agentSessionId
+  focusOnShowRef.current = focusOnShow
 
   useEffect(() => {
     visibleRef.current = visible
   }, [visible])
 
   useEffect(() => {
-    if (!visible) return
+    if (!visible || !focusOnShow) return
 
     const frame = requestAnimationFrame(() => {
       fitRef.current?.()
@@ -213,9 +244,8 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
     })
 
     return () => cancelAnimationFrame(frame)
-  }, [visible])
+  }, [visible, focusOnShow])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: generation explicitly restarts an exited terminal.
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -224,6 +254,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
     let active = true
     let sessionCreated = false
     let sessionExited = false
+    let receivedOutput = false
     let outputFrame: number | null = null
     let resizeFrame: number | null = null
     let resizeObserver: ResizeObserver | null = null
@@ -254,12 +285,10 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
 
     const updateState = (nextState: TerminalState): void => {
       if (!active) return
-      setState(nextState)
-      onStateChange(tabId, nextState, sessionId)
+      onStateChange(tabId, nextState, sessionId, Boolean(nativeSessionId))
     }
 
     updateState('starting')
-    setError(null)
     host.replaceChildren()
 
     const setPtyPaused = (paused: boolean): void => {
@@ -291,6 +320,24 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
       outputFrame ??= requestAnimationFrame(flushOutput)
     }
 
+    const restoreOutput = (): void => {
+      if (!receivedOutput && outputCache.value) {
+        terminal?.write(outputCache.value)
+        receivedOutput = true
+      }
+    }
+    const unavailable = (): void => {
+      if (!active) return
+      restoreOutput()
+      queueOutput(
+        '\r\n\u001b[90m[Process is no longer connected. Previous output is kept here.]\u001b[0m\r\n'
+      )
+      sessionExited = true
+      if (terminal) terminal.options.disableStdin = true
+      updateState('exited')
+      window.requestAnimationFrame(() => onCommandFinish(tabId))
+    }
+
     const start = async (): Promise<void> => {
       try {
         const [{ Terminal }, { FitAddon }, { WebglAddon }] = await Promise.all([
@@ -303,7 +350,7 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
 
         terminal = new Terminal({
           allowTransparency: false,
-          convertEol: false,
+          convertEol: Boolean(nativeSessionId),
           cursorBlink: true,
           cursorStyle: 'block',
           disableStdin: true,
@@ -373,6 +420,16 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
             return false
           }
 
+          if (
+            nativeSessionId &&
+            event.ctrlKey &&
+            !event.shiftKey &&
+            event.key.toLowerCase() === 'c'
+          ) {
+            interruptRef.current()
+            return false
+          }
+
           if (pastePressed) {
             // Let the browser paste event feed xterm. Reading and pasting here as well
             // causes the same clipboard contents to be submitted twice.
@@ -384,7 +441,12 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
 
         removeDataListener = terminalApi.onData((event) => {
           if (event.sessionId === sessionId) {
-            task.output(event.data)
+            if (!receivedOutput) {
+              receivedOutput = true
+              outputCache.value = ''
+            }
+            outputCache.value = (outputCache.value + event.data).slice(-512 * 1024)
+            if (!nativeSessionId) task.output(event.data)
             queueOutput(event.data)
           }
         })
@@ -400,7 +462,8 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
             }]\u001b[0m\r\n`
           )
           updateState('exited')
-          if (closeOnCommandFinish) {
+          if (nativeSessionId) void terminalApi.closeSession(sessionId)
+          if (closeOnCommandFinish || nativeSessionId) {
             window.requestAnimationFrame(() => onCommandFinish(tabId))
           }
         })
@@ -433,54 +496,69 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
           terminal.writeln(`$ ${initialCommand.trim().replace(/\r?\n/g, '\r\n')}`)
         }
 
-        if (initialCommand?.trim()) task.start()
-        await terminalApi.createSession({
-          sessionId,
-          container,
-          cwd,
-          cols: terminal.cols,
-          rows: terminal.rows,
-          initialCommand,
-          keepAliveOnCommandFinish: Boolean(initialCommand?.trim() && !closeOnCommandFinish)
-        })
+        if (initialCommand?.trim() && !nativeSessionId) task.start()
+        if (nativeSessionId) {
+          const result = await terminalApi.attachAgentSession(sessionId, nativeSessionId)
+          if (result?.status === 'unavailable') {
+            unavailable()
+            return
+          }
+        } else
+          await terminalApi.createSession({
+            sessionId,
+            container,
+            cwd,
+            cols: terminal.cols,
+            rows: terminal.rows,
+            initialCommand,
+            keepAliveOnCommandFinish: Boolean(initialCommand?.trim() && !closeOnCommandFinish)
+          })
         if (!active) {
           await terminalApi.closeSession(sessionId)
           return
         }
 
-        if (sessionExited) return
+        if (sessionExited) {
+          if (nativeSessionId) await terminalApi.closeSession(sessionId)
+          return
+        }
 
         sessionCreated = true
-        taskPoll = window.setInterval(() => {
-          if (checkingTask) return
-          checkingTask = true
-          void task
-            .check()
-            .catch((error) => {
-              console.error('Unable to read terminal task status.', error)
-            })
-            .finally(() => {
-              checkingTask = false
-            })
-        }, 500)
-        terminal.options.disableStdin = false
+        if (!nativeSessionId)
+          taskPoll = window.setInterval(() => {
+            if (checkingTask) return
+            checkingTask = true
+            void task
+              .check()
+              .catch((error) => {
+                console.error('Unable to read terminal task status.', error)
+              })
+              .finally(() => {
+                checkingTask = false
+              })
+          }, 500)
+        terminal.options.disableStdin = Boolean(nativeSessionId && !agentInteractive)
         if (ptyPaused) terminalApi.setPaused(sessionId, true)
         updateState('running')
 
         terminal.onData((data) => {
           if (sessionCreated) {
             onInput(tabId)
-            task.input(data)
+            if (!nativeSessionId) task.input(data)
             terminalApi.write(sessionId, data)
           }
         })
-        if (visibleRef.current) terminal.focus()
+        if (visibleRef.current && focusOnShowRef.current) terminal.focus()
       } catch (startError) {
         task.dispose()
-        console.error('[caught:TerminalPanel:start]', startError)
         if (!active) return
         const message = getErrorMessage(startError)
-        setError(message)
+        if (nativeSessionId && message === 'This agent process is no longer available.') {
+          unavailable()
+          return
+        }
+        console.error('[caught:TerminalPanel:start]', startError)
+        restoreOutput()
         updateState('error')
         terminal?.writeln(`\r\n\u001b[31m${message}\u001b[0m`)
       }
@@ -505,10 +583,12 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
       if (sessionCreated) void terminalApi.closeSession(sessionId)
     }
   }, [
+    nativeSessionId,
+    agentInteractive,
+    outputCache,
     closeOnCommandFinish,
     container,
     cwd,
-    generation,
     initialCommand,
     initialChatKey,
     onCommandFinish,
@@ -524,18 +604,6 @@ const TerminalSession: React.FC<TerminalSessionProps> = ({
       aria-label={label}
       hidden={!visible}
     >
-      {(state === 'exited' || state === 'error') && (
-        <div className="terminal-panel__restart">
-          <Button
-            theme="transparent"
-            size="small"
-            aria-label="Restart terminal"
-            title={error ? `Restart terminal: ${error}` : 'Restart terminal'}
-            callback={() => setGeneration((currentGeneration) => currentGeneration + 1)}
-            icon={<RefreshCw aria-hidden="true" />}
-          />
-        </div>
-      )}
       <div className="terminal-panel__surface" onPointerDown={() => terminalRef.current?.focus()}>
         <div className="terminal-panel__host" ref={hostRef} />
       </div>
@@ -557,7 +625,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const usedTabIdsRef = useRef(new Set<string>())
   const handledCommandLaunchRequestIdsRef = useRef(new Set<string>())
   const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
+  const viewedAgentTabsRef = useRef(new Set<string>())
+  const handledAgentSessionsRef = useRef(new Set<string>())
   const [workspaces, setWorkspaces] = useState(() => {
+    if (!active) return new Map<string, TerminalWorkspace>()
     const initialLocalTab = createTerminalTab(1, projectCwd ?? cwd, container)
     initialLocalTab.chatKey = chatKey
     return new Map<string, TerminalWorkspace>([
@@ -566,13 +637,93 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   })
   const workspace = workspaces.get(workspaceKey) ?? null
 
+  useLayoutEffect(() => {
+    if (active && workspace?.activeTabId) viewedAgentTabsRef.current.add(workspace.activeTabId)
+  }, [active, workspace?.activeTabId])
+
+  useEffect(() => {
+    let disposed = false
+    let polling = false
+    const poll = async () => {
+      if (polling || !terminalApi.listAgentSessions) return
+      polling = true
+      try {
+        const sessions = await terminalApi.listAgentSessions()
+        if (disposed) return
+        const pending = sessions.filter(
+          (session) => !handledAgentSessionsRef.current.has(session.id)
+        )
+        for (const session of pending) handledAgentSessionsRef.current.add(session.id)
+        setWorkspaces((current) => {
+          const next = new Map(current)
+          let changed = false
+          for (const [key, workspace] of current) {
+            const tabs = workspace.tabs.map((tab) => {
+              const source = sessions.find((source) => source.id === tab.agentSessionId)
+              if (!source || tab.agentStopScope === source.stopScope) return tab
+              changed = true
+              return { ...tab, agentStopScope: source.stopScope }
+            })
+            if (tabs.some((tab, index) => tab !== workspace.tabs[index]))
+              next.set(key, { ...workspace, tabs })
+          }
+          for (const source of pending) {
+            if (source.status === 'exited') {
+              void terminalApi.dismissAgentSession(source.id)
+              continue
+            }
+            const key = `${source.providerId}:${source.chatId}`
+            const chat = getAgentTerminalChat(key)
+            const target = `${getContainerTargetKey(source.container)}\0${chat?.projectCwd ?? chat?.cwd ?? source.cwd ?? ''}`
+            const previous = next.get(target) ?? { activeTabId: null, tabs: [] }
+            const tab: TerminalTab = {
+              id: crypto.randomUUID(),
+              outputCache: { value: '' },
+              agentSessionId: source.id,
+              chatKey: key,
+              agentStopScope: source.stopScope,
+              agentInteractive: source.interactive,
+              label: getAgentTerminalTabLabel(chat?.title ?? source.chatTitle, source.index),
+              container: source.container,
+              cwd: source.cwd,
+              initialCommand: source.command,
+              closeOnCommandFinish: true,
+              focusOnShow: false
+            }
+            next.set(target, {
+              activeTabId: previous.activeTabId ?? tab.id,
+              tabs: [...previous.tabs, tab]
+            })
+            changed = true
+          }
+          return changed ? next : current
+        })
+      } catch (error) {
+        if (!disposed) console.error('Unable to list agent terminals.', error)
+      } finally {
+        polling = false
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), 500)
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+    }
+  }, [])
+
   const handleTabInput = useCallback((tabId: string): void => {
     usedTabIdsRef.current.add(tabId)
   }, [])
 
   const handleTabStateChange = useCallback(
-    (tabId: string, state: TerminalState, sessionId: string | null): void => {
-      tabRuntimesRef.current.set(tabId, { sessionId, state })
+    (
+      tabId: string,
+      state: TerminalState,
+      sessionId: string | null,
+      agentAttached: boolean
+    ): void => {
+      tabRuntimesRef.current.set(tabId, { sessionId, state, agentAttached })
     },
     []
   )
@@ -625,6 +776,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         nextTabNumberByWorkspaceRef.current.set(commandLaunchRequest.workspaceKey, 2)
       }
       const isEmptyTab = (candidate: TerminalTab): boolean =>
+        !candidate.agentSessionId &&
         !candidate.initialCommand &&
         !candidate.closeOnCommandFinish &&
         !usedTabIdsRef.current.has(candidate.id) &&
@@ -671,12 +823,19 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   }
 
   const focusTab = (tabId: string): void => {
+    viewedAgentTabsRef.current.add(tabId)
     setWorkspaces((currentWorkspaces) => {
       const currentWorkspace = currentWorkspaces.get(workspaceKey)
-      if (!currentWorkspace || currentWorkspace.activeTabId === tabId) return currentWorkspaces
+      if (!currentWorkspace) return currentWorkspaces
 
       const nextWorkspaces = new Map(currentWorkspaces)
-      nextWorkspaces.set(workspaceKey, { ...currentWorkspace, activeTabId: tabId })
+      nextWorkspaces.set(workspaceKey, {
+        ...currentWorkspace,
+        activeTabId: tabId,
+        tabs: currentWorkspace.tabs.map((tab) =>
+          tab.id === tabId ? { ...tab, focusOnShow: true } : tab
+        )
+      })
       return nextWorkspaces
     })
   }
@@ -690,6 +849,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           (currentTab) => currentTab.id === tabId
         )
         if (closingIndex < 0) continue
+        const finished = currentWorkspace.tabs[closingIndex]
+        if (finished.agentSessionId) {
+          if (viewedAgentTabsRef.current.has(tabId)) return currentWorkspaces
+          void terminalApi.dismissAgentSession(finished.agentSessionId)
+        }
 
         const nextWorkspaces = new Map(currentWorkspaces)
         nextWorkspaces.set(currentWorkspaceKey, {
@@ -714,26 +878,36 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
     try {
       const runtime = tabRuntimesRef.current.get(tab.id)
-      if (runtime?.state === 'running' && runtime.sessionId) {
-        const processStatus = await terminalApi
-          .getProcessStatus(runtime.sessionId)
-          .catch((error) => {
-            console.error('[caught:TerminalPanel:handleCloseTab]', error)
-            return null
-          })
+      const nativeStarting =
+        tab.agentSessionId &&
+        runtime?.agentAttached !== false &&
+        (!runtime || runtime.state === 'starting')
+      if ((runtime?.state === 'running' && runtime.sessionId) || nativeStarting) {
+        const processStatus = nativeStarting
+          ? { hasActiveProcess: true, processName: null }
+          : await terminalApi.getProcessStatus(runtime!.sessionId!).catch((error) => {
+              console.error('[caught:TerminalPanel:handleCloseTab]', error)
+              return null
+            })
 
         if (
           processStatus?.hasActiveProcess &&
           !window.confirm(
             processStatus.processName
               ? `${processStatus.processName} is still running in ${tab.label}. Close it anyway?`
-              : `A process is still running in ${tab.label}. Close it anyway?`
+              : runtime?.agentAttached !== false && tab.agentStopScope === 'turn'
+                ? `This command is controlled by the agent's current turn. Stop that turn and close ${tab.label}?`
+                : `A process is still running in ${tab.label}. Close it anyway?`
           )
         ) {
           return
         }
       }
 
+      if (tab.agentSessionId) {
+        await terminalApi.stopAgentSession(tab.agentSessionId)
+        await terminalApi.dismissAgentSession(tab.agentSessionId)
+      }
       tabRuntimesRef.current.delete(tab.id)
       usedTabIdsRef.current.delete(tab.id)
       setWorkspaces((currentWorkspaces) => {
@@ -756,6 +930,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         })
         return nextWorkspaces
       })
+    } catch (error) {
+      console.error('Unable to close terminal.', error)
+      window.alert(getErrorMessage(error))
     } finally {
       closingTabsRef.current.delete(tab.id)
     }
@@ -810,6 +987,24 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         {Array.from(workspaces, ([currentWorkspaceKey, currentWorkspace]) =>
           currentWorkspace.tabs.map((tab) => (
             <TerminalSession
+              outputCache={tab.outputCache}
+              agentSessionId={tab.agentSessionId}
+              agentInteractive={tab.agentInteractive}
+              onInterrupt={() => {
+                if (!tab.agentSessionId) return
+                if (
+                  tab.agentStopScope === 'turn' &&
+                  !window.confirm(
+                    'This command is controlled by the agent’s current turn. Stop that turn?'
+                  )
+                )
+                  return
+                void terminalApi.stopAgentSession(tab.agentSessionId).catch((error) => {
+                  console.error('Unable to stop agent process.', error)
+                  window.alert(getErrorMessage(error))
+                })
+              }}
+              focusOnShow={tab.focusOnShow ?? true}
               chatKey={chatKey}
               initialChatKey={tab.chatKey ?? null}
               closeOnCommandFinish={tab.closeOnCommandFinish}

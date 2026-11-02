@@ -1,43 +1,42 @@
 # Per-chat accounts
 
-Codex and Claude chats keep a saved account selection. Selecting an account in a
-chat changes only that chat; selecting one in Settings or the new-chat screen
-changes the default for future chats. Existing chats keep their credentials,
-including while running and after restarting Sele.
+Codex and Claude chats save their account selection. A chat picker changes that chat;
+Settings and the new-chat picker change the default for future chats. Older discovered
+chats bind to the default on first encounter. Forks, including linked-chat summaries,
+inherit their source account. Native history stays shared.
 
-Native history stays shared. Discovery binds older chats to the current default
-when first encountered. Forks and linked-chat summary forks inherit their source
-chat's account. The sidebar account picker, usage limits, model catalog, and
-reauthentication use the selected chat's account.
+`ChatAccounts.ts` pools runtimes by account and environment. Retries, queued sends,
+approvals, subagents, edits, usage, and model discovery route through the saved binding.
+Missing credentials fail without using another account. Switching drains the chat's pending
+operations and stops its turn; other chats retain their sessions. Codex must receive
+`thread/closed` after unsubscribe before saving the new binding: the unsubscribe reply
+alone does not release its writer lock. A failed handoff keeps the previous binding.
 
-Provider runtimes are pooled by account and retain the existing environment
-isolation. Switching one chat releases only its old session and preserves
-monotonic UI revisions. Background retries, queued sends, approvals, subagents,
-and edits route through the saved binding. Missing credentials fail without
-falling back to a different account.
+## Credential isolation
 
-Codex app-servers use a zero inactive-thread unload delay. A chat account switch
-drains operations already opening that chat, stops its active turn, and waits for
-`thread/closed` after unsubscribing before saving the new account. The unsubscribe
-response alone does not release Codex's writer lock. Other chats keep their
-runtime and writer ownership. A failed handoff preserves the previous binding.
+Codex uses account shadow homes on Linux, macOS, and Windows. Existing
+`<CODEX_HOME>/sele/accounts/<id>` credentials are retained, and Codex owns login/refresh.
+`CodexAccountView.ts` and `CodexShadowHome.ts` prepare the selected `CODEX_HOME` with private
+file-backed credentials and links to canonical sessions, config, skills, plugins, memories,
+and writer locks. SQLite stays shared through `CODEX_SQLITE_HOME`. Authentication locks,
+model caches, and temporary files stay private; conflicting files/links fail without being
+overwritten. Discovery and updates use the canonical home.
 
-Codex's account-view helper is version 5. The outer launcher watches changes to
-unbound settings sessions; chat launchers explicitly pin credentials. The helper
-no longer stops a pinned process when the global default changes. The existing
-one-time helper setup upgrades older installations when a managed account starts.
+Windows requires Developer Mode or symbolic-link permission. No privileged helper is used;
+legacy installed helpers are left on disk. POSIX launchers track default changes for
+unbound settings sessions while chat runtimes remain pinned. Windows settings changes
+reset the unbound runtime.
 
-Run `npm run test:chat-accounts` for account routing, credential isolation, and
-SQLite upgrade/persistence checks. `node scripts/tests/test-account-limits.cjs`
-checks the picker UI; run it with the isolated GUI helper.
+Claude selects only its credential store through `CLAUDE_SECURESTORAGE_CONFIG_DIR`; chats,
+settings, plugins, and memory remain shared. Managed accounts clear inherited API/OAuth
+token overrides. The default account uses existing CLI authentication. Usage caches remain
+per account. See `ClaudeAccountStore.ts` and the root [setup guide](../README.md).
 
-With Codex installed, `node scripts/tests/test-codex-account-handoff.cjs` checks
-writer exclusion and repeated handoffs between two real app-servers sharing a
-temporary profile, including preservation of a sibling chat's ownership. It uses
-fixture history without sending an inference request or accessing user accounts.
+## Checks
 
-`node scripts/tests/test-chat-account-switch.cjs` exercises the real Electron IPC
-validators together with the actual picker, account-switch handler, usage hooks,
-and usage display. It verifies both new-chat and existing-chat account switches
-using distinct usage values, statistics replacement, and a preserved chat binding.
-Run this fixture with the isolated GUI helper as well.
+- `npm run test:chat-accounts`: routing, storage, and credential isolation.
+- `node scripts/tests/test-codex-account-handoff.cjs`: installed Codex with fixture keys/history;
+  checks shared state, writer exclusion, and repeated handoffs without inference. Set
+  `SELE_TEST_CODEX_NATIVE=1` for the shell-free launch path used on Windows.
+- `node scripts/tests/test-chat-account-switch.cjs` and `test-account-limits.cjs` in the same
+  directory: picker, IPC, usage, and saved bindings; run with [GUI isolation](README.md).

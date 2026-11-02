@@ -14,7 +14,7 @@ if (!process.versions.electron) {
             import { flushSync } from 'react-dom'
             import { AnimatePresence, MotionConfig } from 'motion/react'
             import { ChatList } from './src/renderer/src/components/ChatList'
-            import { setChatBookmarked } from './src/renderer/src/chatBookmarks'
+            import { sleepChat, wakeChat } from './src/renderer/src/chatSleep'
             import { chatTerminalActivity } from './src/renderer/src/chatTerminalActivity'
             import { Dropdown } from './src/renderer/src/components/Dropdown'
             import { SegmentedControl } from './src/renderer/src/components/SegmentedControl'
@@ -28,7 +28,7 @@ if (!process.versions.electron) {
             import './src/renderer/src/App.css'
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/components/MessageBox.css'
-            window.fixtureRowRenders=[];window.setBookmark=setChatBookmarked;window.terminalActivity=chatTerminalActivity;
+            window.fixtureRowRenders=[];window.sleepChat=sleepChat;window.wakeChat=wakeChat;window.terminalActivity=chatTerminalActivity;
             const noop = () => {}
             const stored = new Map()
             window.preferencesApi = {
@@ -227,7 +227,7 @@ if (!process.versions.electron) {
       )
       // Row subscriptions must stay local through the real React integration,
       // not just through the standalone event bus.
-      await run(`window.fixtureRowRenders=[];window.setBookmark('codex:b',true)`)
+      await run(`window.fixtureRowRenders=[];window.sleepChat('codex:b')`)
       await frames()
       assert.deepEqual(await run('[...new Set(window.fixtureRowRenders)]'), ['b'])
       await run(
@@ -236,7 +236,7 @@ if (!process.versions.electron) {
       await frames()
       assert.deepEqual(await run('[...new Set(window.fixtureRowRenders)]'), ['c'])
       await run(
-        `window.setBookmark('codex:b',false);window.terminalActivity.report('codex:c','fixture',[],false)`
+        `window.wakeChat('codex:b');window.terminalActivity.report('codex:c','fixture',[],false)`
       )
       await frames()
       // Exit positioning stays local: no stylesheet injection, no held gap, and a

@@ -6,7 +6,6 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
 import { getCodexAccountViewCommand } from './CodexAccountView'
-import { ensureCodexAccountView } from './CodexAccounts'
 import { CodexDynamicTools } from './CodexDynamicTools'
 import { registerCodexDesktopTools } from './CodexDesktopTools'
 import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
@@ -46,6 +45,7 @@ type PendingRequest = {
 type RequestOptions = {
   signal?: AbortSignal
   isExpectedError?: (error: Error) => boolean
+  requireConnection?: boolean
 }
 
 const requestTimeoutMs = 30_000
@@ -55,19 +55,20 @@ const codexResourceMemoryHigh = '2G'
 type AppServerCommand = {
   command: string
   args: string[]
+  env?: NodeJS.ProcessEnv
 }
 
-const getAppServerCommand = (
+const getAppServerCommand = async (
   binary: string,
   options: { container?: AppContainerTarget | null; accountId?: string } = {}
-): AppServerCommand => {
+): Promise<AppServerCommand> => {
   // Account handoffs must release the writer as soon as we unsubscribe, rather
   // than retaining it for Codex's default inactive-thread grace period.
   const appServerArgs = ['app-server', '-c', 'thread_unload_delay_secs=0', '--listen', 'stdio://']
-  const accountViewCommand = getCodexAccountViewCommand(
+  const accountViewCommand = await getCodexAccountViewCommand(
     binary,
     appServerArgs,
-    process.platform === 'linux' || options.container?.kind === 'container',
+    process.platform !== 'win32' || options.container?.kind === 'container',
     options.accountId
   )
   const canUseSystemd =
@@ -80,13 +81,15 @@ const getAppServerCommand = (
   if (!canUseSystemd) {
     return {
       command: accountViewCommand.file,
-      args: accountViewCommand.args
+      args: accountViewCommand.args,
+      env: accountViewCommand.env
     }
   }
 
   const resourceUnitName = `sele-codex-${process.pid}-${Date.now()}`
   return {
     command: 'systemd-run',
+    env: accountViewCommand.env,
     args: [
       '--user',
       '--pipe',
@@ -105,6 +108,7 @@ const getAppServerCommand = (
 }
 
 export class CodexAppServerClient {
+  serverVersion: string | null = null
   constructor(
     private readonly container: AppContainerTarget | null = null,
     private readonly accountId?: string,
@@ -189,6 +193,7 @@ export class CodexAppServerClient {
     params: unknown,
     options?: RequestOptions
   ): Promise<Result> => {
+    if (options?.requireConnection && !this.process) throw new Error('Codex connection is closed.')
     await this.start()
     const input = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
     if (
@@ -314,14 +319,13 @@ export class CodexAppServerClient {
 
   private initialize = async (): Promise<void> => {
     const lifecycle = this.lifecycle
-    if (this.accountId && this.accountId !== 'default') await ensureCodexAccountView(this.container)
-    const appServerCommand = getAppServerCommand(
+    const appServerCommand = await getAppServerCommand(
       this.container?.kind === 'container' ? 'codex' : getCodexExecutable(),
       { container: this.container, accountId: this.accountId }
     )
     const hostCommand = await getHostCommand(appServerCommand.command, appServerCommand.args, {
       container: this.container,
-      env: process.env
+      env: appServerCommand.env ?? process.env
     }).catch((error: unknown) => {
       throw getCodexExecutableError(error)
     })
@@ -330,7 +334,8 @@ export class CodexAppServerClient {
           app.getPath('userData'),
           [
             this.container,
-            this.accountId ?? null,
+            this.accountId ??
+              (process.platform === 'win32' ? (appServerCommand.env?.CODEX_HOME ?? null) : null),
             process.env.CODEX_HOME ?? null,
             process.env.SELE_CODEX_PATH ?? null
           ],
@@ -375,9 +380,10 @@ export class CodexAppServerClient {
 
     try {
       const initialized = await this.sendRequest<{
+        userAgent?: string
         seleRuntime?: {
           threads: Array<{
-            thread: { id: string; cwd?: string }
+            thread: { id: string; cwd?: string; ephemeral?: boolean }
             dynamicTools?: unknown
             readOnly?: boolean
           }>
@@ -394,7 +400,11 @@ export class CodexAppServerClient {
         }
       })
 
-      const restored = initialized.seleRuntime?.threads ?? []
+      this.serverVersion = /^.+?\/(\S+)/.exec(initialized.userAgent ?? '')?.[1] ?? null
+      // Older retained runtime workers may still report temporary prediction forks.
+      const restored = (initialized.seleRuntime?.threads ?? []).filter(
+        ({ thread }) => thread.ephemeral !== true
+      )
       for (const { thread, dynamicTools, readOnly } of restored) {
         this.ownedThreadIds.add(thread.id)
         this.browserSessionCwds.set(thread.id, thread.cwd ?? '')
@@ -438,20 +448,22 @@ export class CodexAppServerClient {
         pending.cleanup?.()
         this.pendingRequests.delete(id)
         reject(new Error('Request canceled.'))
-        if (method === 'userVerification/verify')
-          void this.sendRequest('userVerification/cancel', { requestId: id }).catch((error) =>
-            console.error('Unable to cancel device verification.', error)
-          )
+        if (method === 'userVerification/verify' || method === 'thread/sample')
+          void this.sendRequest(
+            method === 'thread/sample' ? 'thread/sample/cancel' : 'userVerification/cancel',
+            { requestId: id }
+          ).catch((error) => console.error(`Unable to cancel ${method}.`, error))
       }
       const timeout = setTimeout(
         () => {
           this.pendingRequests.get(id)?.cleanup?.()
           this.pendingRequests.delete(id)
           reject(new Error(`Codex app-server request timed out: ${method}`))
-          if (method === 'userVerification/verify')
-            void this.sendRequest('userVerification/cancel', { requestId: id }).catch((error) =>
-              console.error('Unable to cancel device verification.', error)
-            )
+          if (method === 'userVerification/verify' || method === 'thread/sample')
+            void this.sendRequest(
+              method === 'thread/sample' ? 'thread/sample/cancel' : 'userVerification/cancel',
+              { requestId: id }
+            ).catch((error) => console.error(`Unable to cancel ${method}.`, error))
         },
         method === 'userVerification/verify'
           ? 120_000

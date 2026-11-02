@@ -103,11 +103,11 @@ import type { AccountAuthorizationSession } from './components/AccountDialog'
 import { getChatCommitMarkerTerminalStatus } from './chatCommitMarker'
 import { type PinnedChatTextReference, type RecentChatReference } from './chatRecents'
 import {
-  getChatBookmarkKey,
-  readHideBookmarkedChats,
-  useBookmarkedChatKeys,
-  writeHideBookmarkedChats
-} from './chatBookmarks'
+  getChatSleepKey,
+  readHideSleepingChats,
+  useSleepingChats,
+  writeHideSleepingChats
+} from './chatSleep'
 import { getChatWriteAccessPresentation } from './chatWriteAccess'
 import { type ChatListGroupData } from './components/ChatListGroup'
 import { ChatSubagentList } from './components/ChatSubagentList'
@@ -453,9 +453,9 @@ export const useWorkspaceController = () => {
     useState<PinnedRecentChatReferencesByChat>(readStoredPinnedRecentChatReferences)
   const [recentlyOpenedFilesByWorkspace, setRecentlyOpenedFilesByWorkspace] =
     useState<RecentlyOpenedFilesByWorkspace>(readStoredRecentlyOpenedFiles)
-  const bookmarkedChatKeys = useBookmarkedChatKeys()
-  const [showOnlyBookmarkedChats, setShowOnlyBookmarkedChats] = useState(false)
-  const [hideBookmarkedChats, setHideBookmarkedChats] = useState(readHideBookmarkedChats)
+  const sleepingChats = useSleepingChats()
+  const [showOnlySleepingChats, setShowOnlySleepingChats] = useState(false)
+  const [hideSleepingChats, setHideSleepingChats] = useState(readHideSleepingChats)
   const [chatTurnWindow, setChatTurnWindow] = useState<ChatTurnWindow | null>(null)
   const [chatTurnPageLoadDirection, setChatTurnPageLoadDirection] =
     useState<ChatTurnPageLoadDirection | null>(null)
@@ -3442,25 +3442,24 @@ export const useWorkspaceController = () => {
     },
     [searchTerms, nativeSidebarSearchKeys]
   )
-  const isBookmarkedChat = useCallback(
-    (chat: ProviderChat): boolean =>
-      bookmarkedChatKeys.has(getChatBookmarkKey(chat.providerId, chat.id)),
-    [bookmarkedChatKeys]
+  const isSleepingChat = useCallback(
+    (chat: ProviderChat): boolean => sleepingChats.has(getChatSleepKey(chat.providerId, chat.id)),
+    [sleepingChats]
   )
   const filteredChats = useMemo(() => {
-    const bookmarkFilteredChats = showOnlyBookmarkedChats
-      ? chats.filter(isBookmarkedChat)
-      : hideBookmarkedChats
-        ? chats.filter((chat) => !isBookmarkedChat(chat))
+    const sleepFilteredChats = showOnlySleepingChats
+      ? chats.filter(isSleepingChat)
+      : hideSleepingChats
+        ? chats.filter((chat) => !isSleepingChat(chat))
         : chats
-    if (searchTerms.length === 0) return bookmarkFilteredChats
+    if (searchTerms.length === 0) return sleepFilteredChats
     const matching = new Map(
-      bookmarkFilteredChats.filter(matchesChatSearch).map((chat) => [getChatKey(chat), chat])
+      sleepFilteredChats.filter(matchesChatSearch).map((chat) => [getChatKey(chat), chat])
     )
     for (const chat of sidebarSearch.chats) {
       if (
-        (showOnlyBookmarkedChats && !isBookmarkedChat(chat)) ||
-        (!showOnlyBookmarkedChats && hideBookmarkedChats && isBookmarkedChat(chat))
+        (showOnlySleepingChats && !isSleepingChat(chat)) ||
+        (!showOnlySleepingChats && hideSleepingChats && isSleepingChat(chat))
       )
         continue
       if (!matching.has(getChatKey(chat))) matching.set(getChatKey(chat), chat)
@@ -3468,11 +3467,11 @@ export const useWorkspaceController = () => {
     return [...matching.values()]
   }, [
     chats,
-    isBookmarkedChat,
+    isSleepingChat,
     matchesChatSearch,
     searchTerms,
-    hideBookmarkedChats,
-    showOnlyBookmarkedChats,
+    hideSleepingChats,
+    showOnlySleepingChats,
     sidebarSearch.chats
   ])
   const projectRecordsByCwd = useMemo(
@@ -5979,10 +5978,10 @@ export const useWorkspaceController = () => {
     handleChatDropdownSettingChange,
     handleChatUsageDisplayChange,
     groupChatsByProject: chatGroupingPreference === 'grouped',
-    hideBookmarkedChats,
-    handleHideBookmarkedChatsChange: (hide) => {
-      setHideBookmarkedChats(hide)
-      writeHideBookmarkedChats(hide)
+    hideSleepingChats,
+    handleHideSleepingChatsChange: (hide) => {
+      setHideSleepingChats(hide)
+      writeHideSleepingChats(hide)
     },
     handleGroupChatsByProjectChange: (enabled) => {
       const preference = enabled ? 'grouped' : 'ungrouped'
@@ -6379,8 +6378,8 @@ export const useWorkspaceController = () => {
           )
       },
       importedChatGroup,
-      showOnlyBookmarkedChats,
-      handleToggleBookmarkFilter: () => setShowOnlyBookmarkedChats((current) => !current),
+      showOnlySleepingChats,
+      handleToggleSleepFilter: () => setShowOnlySleepingChats((current) => !current),
       handleImportedChat: (providerId: ProviderId, summary: ProviderChatUpdateSummary): void => {
         const chat = getChatFromUpdateSummary(providerId, summary, null, false)
         setChats((current) => mergeChats(current, [chat]))

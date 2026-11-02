@@ -108,6 +108,7 @@ import { commitAllGitChanges } from './gitCommit'
 import { summarizeGitNumstat } from './gitCommitMessage'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
 import { stageGitFileDiffPaths } from './gitFileDiff'
+import { fetchGitRemote } from './gitRemoteFetch'
 import {
   getGitCommitCounts,
   getNoUpstreamPushFailure,
@@ -786,6 +787,9 @@ const runWithGitContainer = <T>(
 const getRunGitOptions = (options: boolean | RunGitOptions): RunGitOptions =>
   typeof options === 'boolean' ? { required: options } : options
 
+// Transfers and remote hooks can take much longer than local repository probes.
+const gitRemoteOperationTimeoutMs = 10 * 60_000
+
 const getGitCommandLabel = (args: string[]): string => {
   const optionsWithValues = new Set([
     '-c',
@@ -916,17 +920,26 @@ const getGitChangesOptions = (value: unknown): AppGitChangesOptions => {
     throw new Error('Invalid Git changes options')
   }
 
-  const options = value as { container?: unknown; cwd?: unknown; source?: unknown }
+  const options = value as {
+    container?: unknown
+    cwd?: unknown
+    source?: unknown
+    fetchRemote?: unknown
+  }
   const source = options.source
 
   if (source !== 'branch' && source !== 'uncommitted') {
     throw new Error('Invalid Git changes source')
   }
+  if (options.fetchRemote != null && typeof options.fetchRemote !== 'boolean') {
+    throw new Error('Invalid Git remote fetch option')
+  }
 
   return {
     container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
-    source
+    source,
+    fetchRemote: options.fetchRemote === true
   }
 }
 
@@ -1633,7 +1646,7 @@ const deleteGitBranch = async (
     if (scope === 'remote' || scope === 'both') {
       await runGit(repositoryRoot, ['push', '--delete', remote ?? 'origin', branchName], {
         required: true,
-        timeoutMs: 120_000
+        timeoutMs: gitRemoteOperationTimeoutMs
       })
     }
   } catch (error) {
@@ -1923,7 +1936,8 @@ const parseGitPathList = (output: string): string[] =>
 
 const getGitChanges = async (
   cwd: string,
-  source: AppGitChangeSource
+  source: AppGitChangeSource,
+  fetchRemote = false
 ): Promise<AppGitChangesResult> => {
   const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'])
   if (!repositoryRoot) {
@@ -1939,6 +1953,20 @@ const getGitChanges = async (
   }
 
   const branchName = await getCurrentBranchName(repositoryRoot)
+  let remoteFetchError: string | undefined
+  if (fetchRemote) {
+    try {
+      await fetchGitRemote(
+        repositoryRoot,
+        branchName,
+        runGit,
+        JSON.stringify(gitCommandContext.getStore()?.container ?? null)
+      )
+    } catch (error) {
+      console.error('[getGitChanges:fetchRemote] Unable to fetch Git remote', error)
+      remoteFetchError = getGitErrorMessage(error)
+    }
+  }
   const { unpulledCount, unpushedCount } = await getGitCommitCounts(
     repositoryRoot,
     branchName,
@@ -1960,6 +1988,7 @@ const getGitChanges = async (
       baseRef: null,
       unpulledCount,
       unpushedCount,
+      remoteFetchError,
       ...visibleChanges
     }
   }
@@ -1972,6 +2001,7 @@ const getGitChanges = async (
       baseRef: null,
       unpulledCount,
       unpushedCount,
+      remoteFetchError,
       untrackedFilesHiddenForPerformance: false,
       files: []
     }
@@ -1989,6 +2019,7 @@ const getGitChanges = async (
     baseRef: branchBase.ref,
     unpulledCount,
     unpushedCount,
+    remoteFetchError,
     untrackedFilesHiddenForPerformance: false,
     files: parseNameStatusChanges(diff ?? '')
   }
@@ -3008,7 +3039,10 @@ const pushGitChanges = async (
   }
 
   try {
-    await runGit(repositoryRoot, args, true)
+    await runGit(repositoryRoot, args, {
+      required: true,
+      timeoutMs: gitRemoteOperationTimeoutMs
+    })
   } catch (error) {
     const message = getGitErrorMessage(error)
     if (!setUpstream && isNoUpstreamPushFailure(message)) {
@@ -3100,7 +3134,10 @@ const pullGitChanges = async (
   const args = await getGitPullArgs(repositoryRoot, strategy)
 
   try {
-    await runGit(repositoryRoot, args, true)
+    await runGit(repositoryRoot, args, {
+      required: true,
+      timeoutMs: gitRemoteOperationTimeoutMs
+    })
   } catch (error) {
     const message = getGitErrorMessage(error)
     if ((strategy == null || strategy === 'ff-only') && isDivergedPullFailure(message)) {
@@ -3295,7 +3332,7 @@ export const registerAppIpc = (): void => {
   handleLoggedIpc(appIpcChannels.getGitChanges, async (_event, value: unknown) => {
     const options = getGitChangesOptions(value)
     return runWithGitContainer(options.container, () =>
-      getGitChanges(options.cwd ?? process.cwd(), options.source)
+      getGitChanges(options.cwd ?? process.cwd(), options.source, options.fetchRemote)
     )
   })
 

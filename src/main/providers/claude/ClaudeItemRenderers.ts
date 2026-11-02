@@ -2,6 +2,12 @@ import { includeConversationTime, type ConversationTiming } from '../conversatio
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
 import { getProviderToolPresentation } from '../ToolPresentation.ts'
 import {
+  createClaudePlanState,
+  finishClaudePlanCall,
+  trackClaudePlanCall,
+  type ClaudePlanState
+} from './ClaudePlans.ts'
+import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
   type TranscriptRenderWindow
@@ -518,6 +524,7 @@ export const renderClaudeChatItems = (
   const parts: Array<{ item: ProviderChatItem } | { segment: Segment }> = []
   const skillToolIds = new Set<string>()
   const nextBlockId = createClaudeBlockIds()
+  let planState = createClaudePlanState()
   let segment = null as Segment | null
   let backgroundTurnEnded = false
 
@@ -614,6 +621,7 @@ export const renderClaudeChatItems = (
           // Streamed tool blocks render from their first event, before any input has arrived,
           // so narration preceding them is not mistaken for the turn's final message.
           const tool = createTool(blockBaseId, block)
+          planState = trackClaudePlanCall(planState, tool.toolId, block.name, block.input)
           if (isSkillToolBlock(block)) skillToolIds.add(tool.toolId)
           current.entries.push({ kind: 'working', item: tool })
         } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
@@ -645,8 +653,17 @@ export const renderClaudeChatItems = (
         const output = truncateToolOutput(getTextContent(block.content))
         const images = getToolImages(block.content)
         const hidePayload = skillToolIds.has(toolId)
+        const planResult = finishClaudePlanCall(
+          planState,
+          toolId,
+          message.tool_use_result,
+          output,
+          block.is_error === true
+        )
+        planState = planResult.state
         updateTool(current.entries, toolId, (tool) => ({
           ...tool,
+          ...(planResult.plan ? { plan: planResult.plan } : {}),
           status: 'finished',
           label: tool.icon === 'question' ? 'Asked a question' : tool.label,
           icon: images.length > 0 ? 'image-generation' : tool.icon,
@@ -756,7 +773,8 @@ export class ClaudeTranscriptProjection {
     >
     /** A background task woke a stopped or failed turn; the next main-thread reply starts anew. */
     backgroundTurnEnded: boolean
-  } = { current: null, tools: new Map(), backgroundTurnEnded: false }
+    plan: ClaudePlanState
+  } = { current: null, tools: new Map(), backgroundTurnEnded: false, plan: createClaudePlanState() }
   private counters = new Map<string, number>()
   private journal = new ProjectionJournal()
   /** Deterministic work counter for scaling tests; counts native records, including overlays. */
@@ -779,6 +797,7 @@ export class ClaudeTranscriptProjection {
     this.turnStarts = []
     this.state.current = null
     this.state.backgroundTurnEnded = false
+    this.state.plan = createClaudePlanState()
     this.counters.clear()
     this.state.tools.clear()
   }
@@ -948,6 +967,11 @@ export class ClaudeTranscriptProjection {
         } else if (block.type === 'tool_use') {
           this.demoteFinal(segment)
           const tool = createTool(getClaudeBlockBaseId(message), block)
+          this.journal.set(
+            this.state,
+            'plan',
+            trackClaudePlanCall(this.state.plan, tool.toolId, block.name, block.input)
+          )
           this.appendWorking(segment, tool)
           this.journal.mapSet(this.state.tools, tool.toolId, {
             segment,
@@ -986,8 +1010,17 @@ export class ClaudeTranscriptProjection {
         const images = getToolImages(block.content)
         const old = location.tool
         const hide = hidesToolResult(old) || location.skill
+        const planResult = finishClaudePlanCall(
+          this.state.plan,
+          toolId!,
+          message.tool_use_result,
+          output,
+          block.is_error === true
+        )
+        this.journal.set(this.state, 'plan', planResult.state)
         const tool: ProviderWorkingTool = {
           ...old,
+          ...(planResult.plan ? { plan: planResult.plan } : {}),
           status: 'finished',
           label: old.icon === 'question' ? 'Asked a question' : old.label,
           icon: images.length > 0 ? 'image-generation' : old.icon,

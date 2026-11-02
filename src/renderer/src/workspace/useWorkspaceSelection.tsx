@@ -71,6 +71,7 @@ const areSubagentSummariesEqual = (first: ProviderSubagent, second: ProviderSuba
 
 // Fallback for status changes no delegation row reports, such as a background subagent finishing.
 const subagentListPollInterval = 15000
+const gitRemoteFetchInterval = 60_000
 
 const areSubagentListsEqual = (first: ProviderSubagent[], second: ProviderSubagent[]): boolean =>
   first.length === second.length &&
@@ -1503,6 +1504,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
 
     let active = true
     const gitChangeSource: GitChangeSource = 'uncommitted'
+    let refreshTimeout: number | undefined
     const gitChangeScope: GitChangesScope = {
       sourceKey: gitAvailabilityScopeKey,
       cwd: changesCwd,
@@ -1540,41 +1542,60 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       })
     }
 
-    appApi
-      .getGitChanges({
-        container: changesContainerRef.current,
-        cwd: changesCwd,
-        source: gitChangeSource
-      })
-      .then((result) => {
-        if (!active) return
-        startTransition(() => {
-          setGitChanges(result)
-          setGitChangesScope(gitChangeScope)
+    const refresh = (): void => {
+      appApi
+        .getGitChanges({
+          container: changesContainerRef.current,
+          cwd: changesCwd,
+          source: gitChangeSource,
+          fetchRemote: true
+        })
+        .then((result) => {
+          if (!active) return
+          startTransition(() => {
+            setGitChanges(result)
+            setGitChangesScope(gitChangeScope)
+            setGitChangeLoadScope(gitChangeScope)
+            setGitChangeLoadErrorDismissed(false)
+            setGitChangeLoadError(
+              result.remoteFetchError
+                ? {
+                    scope: gitChangeScope,
+                    cwd: changesCwd,
+                    error: result.remoteFetchError,
+                    operation: 'Fetch Git remote'
+                  }
+                : null
+            )
+            if (changeSourceRef.current === 'uncommitted') {
+              setGitChangeLoadState(result.remoteFetchError ? 'error' : 'ready')
+            }
+          })
+        })
+        .catch((error) => {
+          console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
+
+          if (!active) return
+          const message = getErrorMessage(error, 'Unable to load changes.')
           setGitChangeLoadScope(gitChangeScope)
           setGitChangeLoadErrorDismissed(false)
-          setGitChangeLoadError(null)
-          if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('ready')
+          setGitChangeLoadError({
+            scope: gitChangeScope,
+            cwd: changesCwd,
+            error: message,
+            operation: 'Load Git changes'
+          })
+          if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('error')
         })
-      })
-      .catch((error) => {
-        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
-
-        if (!active) return
-        const message = getErrorMessage(error, 'Unable to load changes.')
-        setGitChangeLoadScope(gitChangeScope)
-        setGitChangeLoadErrorDismissed(false)
-        setGitChangeLoadError({
-          scope: gitChangeScope,
-          cwd: changesCwd,
-          error: message,
-          operation: 'Load Git changes'
+        .finally(() => {
+          if (active) refreshTimeout = window.setTimeout(refresh, gitRemoteFetchInterval)
         })
-        if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('error')
-      })
+    }
+    refresh()
 
     return () => {
       active = false
+      window.clearTimeout(refreshTimeout)
     }
   }, [
     changesCwd,
@@ -1582,7 +1603,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     gitAvailabilityChangeId,
     gitAvailabilityScopeKey,
     gitAvailableForCurrentSource,
-    gitChangeLoadRequest
+    gitChangeLoadRequest,
+    changesContainerKey
   ])
   useEffect(() => {
     let active = true

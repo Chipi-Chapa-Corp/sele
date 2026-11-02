@@ -7,6 +7,7 @@ import {
   type SetStateAction,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -52,6 +53,11 @@ export type DropdownMenuAction = {
   disabled?: boolean
   icon?: ReactNode
   title?: string
+  /** Adds a chevron beside the action that drops this content down below it. */
+  panel?: {
+    ariaLabel: string
+    content: (close: () => void) => ReactNode
+  }
 }
 
 type DropdownAppearance = 'glass' | 'inline' | 'splitAction'
@@ -154,6 +160,10 @@ export const Dropdown = <TValue extends string>({
   const menuRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const pointerActivatedIndexRef = useRef<number | null>(null)
+  const actionPanelToggleRef = useRef<HTMLButtonElement>(null)
+  const actionPanelRef = useRef<HTMLDivElement>(null)
+  const [openActionPanelId, setOpenActionPanelId] = useState<string | null>(null)
+  const [actionPanelStyle, setActionPanelStyle] = useState<CSSProperties>()
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [menuStyle, setMenuStyle] = useState<DropdownMenuStyle | null>(null)
@@ -332,6 +342,37 @@ export const Dropdown = <TValue extends string>({
     }
   }, [menuOnly, menuOpen])
 
+  const actionWithOpenPanel = menuOpen
+    ? menuActions.find((action) => action.panel && action.id === openActionPanelId)
+    : undefined
+  const visibleActionPanelId = actionWithOpenPanel?.id
+
+  useLayoutEffect(() => {
+    if (!visibleActionPanelId) return
+    const toggle = actionPanelToggleRef.current?.getBoundingClientRect()
+    const panel = actionPanelRef.current
+    if (!toggle || !panel) return
+
+    const viewportInset = 9.6
+    const panelOffset = 4.8
+    const below = toggle.bottom + panelOffset
+    const fitsBelow = below + panel.offsetHeight <= window.innerHeight - viewportInset
+    setActionPanelStyle({
+      left: toCssRem(
+        Math.max(
+          viewportInset,
+          Math.min(
+            toggle.right - panel.offsetWidth,
+            window.innerWidth - panel.offsetWidth - viewportInset
+          )
+        )
+      ),
+      top: toCssRem(
+        fitsBelow ? below : Math.max(viewportInset, toggle.top - panelOffset - panel.offsetHeight)
+      )
+    })
+  }, [visibleActionPanelId])
+
   const getEnabledIndex = (index: number): number => {
     if (enabledIndexes.length === 0) return -1
     if (enabledIndexes.includes(index)) return index
@@ -416,9 +457,17 @@ export const Dropdown = <TValue extends string>({
     setMenuPlacement(menuPosition.placement)
     setMenuStyle(menuPosition.style)
     setSearchQuery('')
+    setOpenActionPanelId(null)
     updateActiveIndex(getEnabledIndex(index))
     setOpen(true)
     onOpen?.()
+  }
+
+  const closeMenuAndFocusTrigger = (): void => {
+    setOpen(false)
+    setSearchQuery('')
+    setMenuStyle(null)
+    buttonRef.current?.focus({ preventScroll: true })
   }
 
   const selectOption = (option: DropdownOption<TValue>): void => {
@@ -436,10 +485,7 @@ export const Dropdown = <TValue extends string>({
   const selectMenuAction = (action: DropdownMenuAction): void => {
     if (action.disabled) return
 
-    setOpen(false)
-    setSearchQuery('')
-    setMenuStyle(null)
-    buttonRef.current?.focus({ preventScroll: true })
+    closeMenuAndFocusTrigger()
     void action.callback()
   }
 
@@ -739,26 +785,55 @@ export const Dropdown = <TValue extends string>({
       )}
       {menuActions.length > 0 && (
         <div className="ui-dropdown__actions" role="presentation">
-          {menuActions.map((action) => (
-            <button
-              className="ui-dropdown__action"
-              disabled={action.disabled}
-              key={action.id}
-              title={action.title}
-              type="button"
-              onBlur={handleActionBlur}
-              onClick={() => selectMenuAction(action)}
-              onKeyDown={handleActionKeyDown}
-              onMouseDown={(event) => event.preventDefault()}
-            >
-              {action.icon && (
-                <span className="ui-dropdown__action-icon" aria-hidden="true">
-                  {action.icon}
-                </span>
-              )}
-              <span className="ui-dropdown__action-label">{action.label}</span>
-            </button>
-          ))}
+          {menuActions.map((action) => {
+            const actionButton = (
+              <button
+                className="ui-dropdown__action"
+                disabled={action.disabled}
+                key={action.id}
+                title={action.title}
+                type="button"
+                onBlur={handleActionBlur}
+                onClick={() => selectMenuAction(action)}
+                onKeyDown={handleActionKeyDown}
+                onMouseDown={(event) => event.preventDefault()}
+              >
+                {action.icon && (
+                  <span className="ui-dropdown__action-icon" aria-hidden="true">
+                    {action.icon}
+                  </span>
+                )}
+                <span className="ui-dropdown__action-label">{action.label}</span>
+              </button>
+            )
+            if (!action.panel) return actionButton
+
+            const panelOpen = openActionPanelId === action.id
+            return (
+              <div className="ui-dropdown__action-row" key={action.id}>
+                {actionButton}
+                <button
+                  ref={panelOpen ? actionPanelToggleRef : undefined}
+                  className="ui-dropdown__action-toggle"
+                  aria-expanded={panelOpen}
+                  aria-label={action.panel.ariaLabel}
+                  disabled={action.disabled}
+                  title={action.panel.ariaLabel}
+                  type="button"
+                  onBlur={handleActionBlur}
+                  onClick={() => {
+                    // Focus may be inside the panel that this click removes.
+                    if (panelOpen) buttonRef.current?.focus({ preventScroll: true })
+                    setOpenActionPanelId(panelOpen ? null : action.id)
+                  }}
+                  onKeyDown={handleActionKeyDown}
+                  onMouseDown={(event) => event.preventDefault()}
+                >
+                  <ChevronDown aria-hidden="true" />
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
       {menuActions.length > 0 && flattenedOptions.length > 0 && (
@@ -804,6 +879,28 @@ export const Dropdown = <TValue extends string>({
         style={menuStyle ?? undefined}
       >
         {menuSurface}
+        {actionWithOpenPanel?.panel && (
+          // A sibling of the menu: its scrolling and animated transform would clip and
+          // offset a nested fixed panel. It stays in menuRef so the menu remains open.
+          <MenuSurface
+            ref={actionPanelRef}
+            className="ui-dropdown__action-panel"
+            role="group"
+            aria-label={actionWithOpenPanel.panel.ariaLabel}
+            style={actionPanelStyle}
+            onBlur={(event) => {
+              // Clicks outside close through pointerdown. Without a target, the window blurred.
+              if (event.relatedTarget) handleActionBlur(event)
+            }}
+            onKeyDown={handleActionKeyDown}
+            onMouseDown={(event) => {
+              // Keep focus in the menu when pressing the panel's non-focusable areas.
+              if (!(event.target instanceof HTMLInputElement)) event.preventDefault()
+            }}
+          >
+            {actionWithOpenPanel.panel.content(closeMenuAndFocusTrigger)}
+          </MenuSurface>
+        )}
       </div>
     )
   ) : null

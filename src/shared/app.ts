@@ -346,6 +346,7 @@ export type AppSourceAvailability = {
 export type AppGitChangesOptions = AppContainerOptions & {
   cwd?: string | null
   source: AppGitChangeSource
+  fetchRemote?: boolean
 }
 
 export type AppGitBranchesOptions = AppContainerOptions & {
@@ -405,6 +406,7 @@ export type AppGitChangesResult = {
   baseRef: string | null
   unpulledCount: number
   unpushedCount: number
+  remoteFetchError?: string
   untrackedFilesHiddenForPerformance: boolean
   files: AppGitFileChange[]
 }

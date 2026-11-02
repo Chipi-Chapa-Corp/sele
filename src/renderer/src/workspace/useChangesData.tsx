@@ -159,25 +159,29 @@ export function useChangesData(dependencies: ChangesDataDependencies) {
           ? gitChangeLoadState
           : 'loading'
   const visibleGitChangeLoadError =
-    changesLoadState !== 'error' || !changesCwd
-      ? null
-      : patchChangeSourceSelected && patchSourcePatches.length > 0
-        ? patchFilterErrorMatches
-          ? uncommittedPatchFilterError
-          : {
-              scope: null,
-              cwd: changesCwd,
-              error: 'Unable to filter Git changes.',
-              operation: 'Filter Git changes'
-            }
-        : gitChangeLoadErrorMatchesCurrentSource
-          ? gitChangeLoadError
-          : {
-              scope: null,
-              cwd: changesCwd,
-              error: 'Unable to load changes.',
-              operation: 'Load Git changes'
-            }
+    changesCwd &&
+    gitChangeLoadError?.operation === 'Fetch Git remote' &&
+    isGitChangesScope(gitChangeLoadError.scope, gitAvailabilityScopeKey, changesCwd, 'uncommitted')
+      ? gitChangeLoadError
+      : changesLoadState !== 'error' || !changesCwd
+        ? null
+        : patchChangeSourceSelected && patchSourcePatches.length > 0
+          ? patchFilterErrorMatches
+            ? uncommittedPatchFilterError
+            : {
+                scope: null,
+                cwd: changesCwd,
+                error: 'Unable to filter Git changes.',
+                operation: 'Filter Git changes'
+              }
+          : gitChangeLoadErrorMatchesCurrentSource
+            ? gitChangeLoadError
+            : {
+                scope: null,
+                cwd: changesCwd,
+                error: 'Unable to load changes.',
+                operation: 'Load Git changes'
+              }
   const displayedGitChangeLoadError = gitChangeLoadErrorDismissed ? null : visibleGitChangeLoadError
   const fileTreeLoadMatchesCurrentCwd = isFileTreeScope(
     fileTreeLoadScope,

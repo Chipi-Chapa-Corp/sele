@@ -2,6 +2,7 @@ import { UsageIndicator, type ChatContextUsage } from './UsageIndicator'
 import { captureMessageFlight } from '../motion/messageFlight'
 import { composerMentionsEqual, getComposerMentionAtCaret } from '../composerMention'
 import { ComposerPlaceholder } from './ComposerPlaceholder'
+import { useComposerFocus } from '../useComposerFocus'
 import {
   type CSSProperties,
   type Dispatch,
@@ -18,10 +19,12 @@ import {
 import { createPortal } from 'react-dom'
 import { FileIcon as SymbolsFileIcon } from './SymbolIcons'
 import {
+  ArrowRightToLine,
   ArrowUp,
   BadgeCheck,
   Blocks,
   CornerDownRight,
+  CornerDownLeft,
   FileLock,
   Folder,
   FolderPen,
@@ -768,6 +771,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     null
   )
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  useComposerFocus(textareaRef, draftScopeKey, autoFocus)
   const textareaWrapRef = useRef<HTMLDivElement>(null)
   const mentionMenuRef = useRef<HTMLDivElement>(null)
   const attachmentDragDepthRef = useRef(0)
@@ -1802,16 +1806,6 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
   }, [editing, quoteRequest, setMessage])
 
   useEffect(() => {
-    if (!autoFocus) return
-
-    const animationFrame = window.requestAnimationFrame(() => {
-      textareaRef.current?.focus({ preventScroll: true })
-    })
-
-    return () => window.cancelAnimationFrame(animationFrame)
-  }, [autoFocus])
-
-  useEffect(() => {
     let pressed = false
     const updateControlPressed = (next: boolean): void => {
       if (pressed === next) return
@@ -1842,8 +1836,11 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
     return () => window.cancelAnimationFrame(frame)
   }, [editing, selectedReview])
 
-  const submitMessage = (activeMode: ProviderActiveSendMode = activePrimaryMode): void => {
-    const nextMessage = message.trim()
+  const submitMessage = (
+    activeMode: ProviderActiveSendMode = activePrimaryMode,
+    content: string = message
+  ): void => {
+    const nextMessage = content.trim()
     const typedSkillInputs = getSelectedSkillInputs(
       nextMessage,
       isComposerCacheCurrent(
@@ -2380,6 +2377,12 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
         setMessage(visiblePromptSuggestion.text)
         return
       }
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        dismissPromptSuggestion()
+        submitMessage(activePrimaryMode, visiblePromptSuggestion.text)
+        return
+      }
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
@@ -2884,8 +2887,37 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
               document.body
             )}
           {visiblePromptSuggestion && (
-            <div className="message-box__prompt-suggestion" aria-hidden="true">
-              {visiblePromptSuggestion.text} <kbd>Tab</kbd>
+            <div className="message-box__prompt-suggestion">
+              <button
+                type="button"
+                className="message-box__suggestion-key"
+                tabIndex={-1}
+                aria-label="Accept suggestion into draft (Tab)"
+                title="Accept into draft (Tab)"
+                onClick={() => {
+                  dismissPromptSuggestion()
+                  setMessage(visiblePromptSuggestion.text)
+                  textareaRef.current?.focus({ preventScroll: true })
+                }}
+              >
+                <ArrowRightToLine aria-hidden="true" strokeWidth={1.75} />
+              </button>
+              <span className="message-box__suggestion-text" aria-hidden="true">
+                {visiblePromptSuggestion.text}
+              </span>
+              <button
+                type="button"
+                className="message-box__suggestion-key"
+                tabIndex={-1}
+                aria-label="Send suggestion immediately (Enter)"
+                title="Send immediately (Enter)"
+                onClick={() => {
+                  dismissPromptSuggestion()
+                  submitMessage(activePrimaryMode, visiblePromptSuggestion.text)
+                }}
+              >
+                <CornerDownLeft aria-hidden="true" strokeWidth={1.75} />
+              </button>
             </div>
           )}
           <textarea
@@ -2899,7 +2931,7 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
             aria-autocomplete={visiblePromptSuggestion ? 'inline' : 'list'}
             aria-description={
               visiblePromptSuggestion
-                ? `Suggested next prompt: ${visiblePromptSuggestion.text}. Press Tab to accept or Escape to dismiss.`
+                ? `Suggested next prompt: ${visiblePromptSuggestion.text}. Press Tab to accept into draft, Enter to send immediately, or Escape to dismiss.`
                 : undefined
             }
             aria-controls={mentionMenuOpen ? mentionListboxId : undefined}

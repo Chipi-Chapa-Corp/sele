@@ -1,4 +1,19 @@
 import type { AppContainerTarget } from './app'
+import type { ProviderId } from './provider'
+
+export type AgentTerminalSession = {
+  id: string
+  chatId: string
+  providerId: ProviderId
+  chatTitle: string
+  index: number
+  command: string
+  cwd: string | null
+  container: AppContainerTarget | null
+  status: 'running' | 'exited'
+  interactive: boolean
+  stopScope: 'process' | 'turn'
+}
 
 export type TerminalCreateOptions = {
   sessionId: string
@@ -43,7 +58,15 @@ export type TerminalProcessStatus = {
   processName: string | null
 }
 
+export type TerminalAttachResult = {
+  status: 'attached' | 'exited' | 'unavailable'
+}
+
 export type TerminalRendererApi = {
+  listAgentSessions: () => Promise<AgentTerminalSession[]>
+  attachAgentSession: (sessionId: string, agentSessionId: string) => Promise<TerminalAttachResult>
+  stopAgentSession: (agentSessionId: string) => Promise<void>
+  dismissAgentSession: (agentSessionId: string) => Promise<void>
   createSession: (options: TerminalCreateOptions) => Promise<TerminalSession>
   runCommand: (options: TerminalRunCommandOptions) => Promise<TerminalRunCommandResult>
   write: (sessionId: string, data: string) => void
@@ -56,6 +79,10 @@ export type TerminalRendererApi = {
 }
 
 export const terminalIpcChannels = {
+  listAgentSessions: 'terminal:list-agent-sessions',
+  attachAgentSession: 'terminal:attach-agent-session',
+  stopAgentSession: 'terminal:stop-agent-session',
+  dismissAgentSession: 'terminal:dismiss-agent-session',
   createSession: 'terminal:create-session',
   runCommand: 'terminal:run-command',
   write: 'terminal:write',

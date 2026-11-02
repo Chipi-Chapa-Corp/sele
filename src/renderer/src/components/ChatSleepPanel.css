@@ -1,0 +1,42 @@
+.chat-sleep-panel {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0 0.2rem;
+}
+
+.chat-sleep-panel__status {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.chat-sleep-panel__presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.chat-sleep-panel__presets .ui-button {
+  width: 100%;
+}
+
+.chat-sleep-panel__custom {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.chat-sleep-panel__custom .ui-input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height-small);
+}
+
+.chat-sleep-panel__custom .ui-input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+.chat-sleep-panel__custom .ui-button {
+  flex: none;
+}

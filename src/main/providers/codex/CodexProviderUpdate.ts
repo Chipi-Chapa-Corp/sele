@@ -3,7 +3,6 @@ import type { AppContainerTarget } from '../../../shared/app'
 import type { ProviderUpdateAvailability } from '../../../shared/provider'
 import { getHostCommand } from '../../hostProcess'
 import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
-import { getCodexAccountViewCommand } from './CodexAccountView'
 
 type CommandResult = {
   stdout: string
@@ -37,12 +36,8 @@ const runCommand = async (
   timeout: number,
   options: CodexProviderUpdateOptions = {}
 ): Promise<CommandResult> => {
-  const accountViewCommand = getCodexAccountViewCommand(
-    file,
-    args,
-    process.platform === 'linux' || options.container?.kind === 'container'
-  )
-  const hostCommand = await getHostCommand(accountViewCommand.file, accountViewCommand.args, {
+  // Installation and updates belong to the canonical home, not an account shadow.
+  const hostCommand = await getHostCommand(file, args, {
     container: options.container,
     env: options.env
   })

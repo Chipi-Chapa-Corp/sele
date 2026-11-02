@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { ArrowRight, Check, ChevronUp, Minus } from 'lucide-react'
 import { CompactMarkdown } from './CompactMarkdown'
 import './ChatPlan.css'
+import type { ProviderPlanItem } from '../../../shared/provider'
 
 const seenPlansStorageKey = 'sele:seen-chat-plans:v1'
 const maxStoredSeenPlans = 500
@@ -41,10 +42,7 @@ const writeSeenPlanSignatures = (signatures: Record<string, string>): void => {
   }
 }
 
-export type ChatPlanItem = {
-  status: 'pending' | 'in_progress' | 'completed'
-  step: string
-}
+export type ChatPlanItem = ProviderPlanItem
 
 export type ChatPlanData = {
   contextKey: string

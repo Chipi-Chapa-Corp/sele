@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { getLatestChatPlan } from '../../../renderer/src/chatPlans.ts'
+import { unloadWorkingItemPayload } from '../workingStepLazy.ts'
 import {
   ClaudeTranscriptProjection,
   isClaudeInternalUserMessage,
@@ -27,6 +29,247 @@ const firstTool = (items) =>
         )
       : []
   )[0]
+
+const planCall = (id, name, input) => ({
+  type: 'assistant',
+  uuid: `call-${id}`,
+  session_id: 'session',
+  parent_tool_use_id: null,
+  message: { content: [{ type: 'tool_use', id, name, input }] }
+})
+const planResult = (id, value, content = 'Done', failed = false) => ({
+  type: 'user',
+  uuid: `result-${id}`,
+  session_id: 'session',
+  parent_tool_use_id: null,
+  tool_use_result: value,
+  message: { content: [{ type: 'tool_result', tool_use_id: id, content, is_error: failed }] }
+})
+
+test('tool discovery and background task controls have readable labels without protocol disclosures', () => {
+  for (const [name, input, label, hidden] of [
+    ['ToolSearch', { query: 'select:TaskStop', max_results: 1 }, 'Searched available tools', true],
+    ['TaskStop', { task_id: 'background-1' }, 'Stopped background task', true],
+    ['TaskOutput', { task_id: 'background-1' }, 'Read background task output', false]
+  ]) {
+    const source = [userPrompt, planCall('tool', name, input)]
+    const options = { active: true, stopped: false }
+    const projection = new ClaudeTranscriptProjection()
+    for (const complete of [false, true]) {
+      const records = complete
+        ? [...source, planResult('tool', { message: 'private-protocol' }, 'command output')]
+        : source
+      const items = projection.read(records, [], options).items
+      assert.deepEqual(firstTool(items), firstTool(renderClaudeChatItems(records, options)))
+      const tool = firstTool(items)
+      assert.equal(tool.label, label)
+      assert.equal(getLatestChatPlan(items, 'claude:session'), null)
+      if (hidden) {
+        assert.equal(tool.compact, true)
+        assert.equal(tool.rawInput, null)
+        assert.equal(tool.rawOutput, null)
+        assert.equal(tool.stdout, null)
+      } else if (complete) assert.equal(tool.stdout, 'command output')
+    }
+  }
+})
+
+test('Claude task checklists reach Plan through incremental, persisted and unloaded views', () => {
+  const options = { active: true, stopped: false }
+  const projection = new ClaudeTranscriptProjection()
+  let source = [userPrompt]
+  const steps = [
+    [
+      planCall('create-a', 'TaskCreate', {
+        subject: 'Inspect code',
+        description: 'private-description'
+      }),
+      planResult('create-a', { task: { id: '7', subject: 'Inspect code' } }),
+      [{ step: 'Inspect code', status: 'pending' }]
+    ],
+    [
+      planCall('create-b', 'TaskCreate', { subject: 'Verify fix' }),
+      planResult('create-b', undefined, 'Task #12 created successfully: Verify fix'),
+      [
+        { step: 'Inspect code', status: 'pending' },
+        { step: 'Verify fix', status: 'pending' }
+      ]
+    ],
+    [
+      planCall('update-a', 'TaskUpdate', { taskId: '7', status: 'completed' }),
+      planResult('update-a', { success: true }),
+      [
+        { step: 'Inspect code', status: 'completed' },
+        { step: 'Verify fix', status: 'pending' }
+      ]
+    ],
+    [
+      planCall('update-b', 'TaskUpdate', {
+        taskId: '12',
+        status: 'in_progress',
+        subject: 'Run checks'
+      }),
+      planResult('update-b', { success: true }),
+      [
+        { step: 'Inspect code', status: 'completed' },
+        { step: 'Run checks', status: 'in_progress' }
+      ]
+    ],
+    [
+      planCall('delete-a', 'TaskUpdate', { taskId: '7', status: 'deleted' }),
+      planResult('delete-a', { success: true }),
+      [{ step: 'Run checks', status: 'in_progress' }]
+    ],
+    [planCall('clear', 'TaskList', {}), planResult('clear', { tasks: [] }), null]
+  ]
+  for (const [call, result, expected] of steps) {
+    const previous = structuredClone(projection.read(source, [], options))
+    const overlaid = projection.read(source, [call, result], options)
+    assert.deepEqual(
+      projection.read(source, [], options),
+      previous,
+      'partial task updates roll back'
+    )
+    const next = [...source, call, result]
+    projection.acceptSource(source, next, source.length)
+    source = next
+    const persisted = projection.read(source, [], options)
+    assert.deepEqual(persisted, overlaid)
+    for (const items of [
+      persisted.items,
+      renderClaudeChatItems(source, options),
+      renderClaudeChatItems(source, { ...options, turnWindow: { startIndex: 0, limit: 1 } }),
+      persisted.items.map((item) =>
+        item.type === 'working'
+          ? { ...item, items: item.items.map(unloadWorkingItemPayload) }
+          : item
+      )
+    ]) {
+      assert.deepEqual(getLatestChatPlan(items, 'claude:session')?.items ?? null, expected)
+      assert.doesNotMatch(JSON.stringify(items), /private-description/)
+    }
+  }
+})
+
+test('Claude plan reads restore state and failed mutations leave the plan intact', () => {
+  const restored = [{ step: 'Recovered step', status: 'in_progress' }]
+  for (const [name, output, text] of [
+    [
+      'TaskList',
+      { tasks: [{ id: '42', subject: 'Recovered step', status: 'in_progress' }] },
+      'Done'
+    ],
+    ['TaskList', undefined, '#42 [in_progress] Recovered step'],
+    ['TaskGet', { task: { id: '42', subject: 'Recovered step', status: 'in_progress' } }, 'Done'],
+    ['TaskGet', undefined, 'Task #42: Recovered step\nStatus: in_progress']
+  ]) {
+    const source = [
+      userPrompt,
+      planCall('restore', name, { taskId: '42' }),
+      planResult('restore', output, text)
+    ]
+    for (const [value, failed] of [
+      [{ success: false }, false],
+      [undefined, true]
+    ]) {
+      const records = [
+        ...source,
+        planCall('fail', 'TaskUpdate', { taskId: '42', status: 'completed' }),
+        planResult('fail', value, 'Failed', failed)
+      ]
+      const options = { active: false, stopped: false }
+      for (const items of [
+        renderClaudeChatItems(records, options),
+        new ClaudeTranscriptProjection().read(records, [], options).items
+      ]) {
+        assert.deepEqual(getLatestChatPlan(items, 'claude:session').items, restored)
+      }
+    }
+  }
+})
+
+test('parallel task results select the newest checklist snapshot even when calls finish out of order', () => {
+  const options = { active: true, stopped: false }
+  const source = [
+    userPrompt,
+    planCall('a', 'TaskCreate', { subject: 'First step' }),
+    planCall('b', 'TaskCreate', { subject: 'Second step' }),
+    planResult('b', { task: { id: '2', subject: 'Second step' } }),
+    planResult('a', { task: { id: '1', subject: 'First step' } })
+  ]
+  const projection = new ClaudeTranscriptProjection()
+  for (const items of [
+    renderClaudeChatItems(source, options),
+    projection.read(source, [], options).items
+  ]) {
+    assert.deepEqual(getLatestChatPlan(items, 'claude:session').items, [
+      { step: 'Second step', status: 'pending' },
+      { step: 'First step', status: 'pending' }
+    ])
+  }
+  const nextTurn = [
+    ...source,
+    { ...userPrompt, uuid: 'next-turn' },
+    planCall('complete', 'TaskUpdate', { taskId: '1', status: 'completed' }),
+    planResult('complete', { success: true })
+  ]
+  projection.acceptSource(source, nextTurn, source.length)
+  const projected = projection.read(nextTurn, [], options).items
+  assert.deepEqual(
+    getLatestChatPlan(projected, 'claude:session').items,
+    getLatestChatPlan(renderClaudeChatItems(nextTurn, options), 'claude:session').items
+  )
+  assert.equal(getLatestChatPlan(projected, 'claude:session').items[1].status, 'completed')
+})
+
+test('legacy TodoWrite displays and clears Plan without exposing its JSON or creating a goal', () => {
+  const options = { active: false, stopped: false }
+  const source = [
+    userPrompt,
+    planCall('todo', 'TodoWrite', {
+      todos: [{ content: 'Implement fix', status: 'in_progress', activeForm: 'Implementing fix' }]
+    }),
+    planResult('todo', undefined)
+  ]
+  const projection = new ClaudeTranscriptProjection()
+  assert.deepEqual(
+    getLatestChatPlan(projection.read(source, [], options).items, 'claude:session').items,
+    [{ step: 'Implement fix', status: 'in_progress' }]
+  )
+  for (const input of [{ todos: [] }, { todos: [{ content: 'Invalid', status: 'unknown' }] }]) {
+    const records = [
+      ...source,
+      planCall('clear', 'TodoWrite', input),
+      planResult('clear', undefined)
+    ]
+    for (const items of [
+      renderClaudeChatItems(records, options),
+      projection.read(records, [], options).items
+    ]) {
+      assert.equal(Boolean(getLatestChatPlan(items, 'claude:session')), input.todos.length > 0)
+      assert.equal(firstTool(items).rawInput, null)
+    }
+  }
+})
+
+test('Codex update_plan remains readable by the shared Plan extractor', () => {
+  const tool = {
+    ...firstTool(
+      renderClaudeChatItems(
+        [
+          planCall('update_plan', 'unknown', {
+            plan: [{ step: 'Existing Codex plan', status: 'completed' }]
+          })
+        ],
+        { active: false, stopped: false }
+      )
+    )
+  }
+  const items = [{ type: 'working', items: [tool] }]
+  assert.deepEqual(getLatestChatPlan(items, 'codex:session').items, [
+    { step: 'Existing Codex plan', status: 'completed' }
+  ])
+})
 
 test('Claude apps share readable actions and keep payloads hidden after live and persisted results', () => {
   for (const [name, label] of [

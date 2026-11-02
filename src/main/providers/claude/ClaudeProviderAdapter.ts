@@ -1,4 +1,6 @@
 import { PendingMessageEdits } from '../PendingMessageEdits'
+import { createClaudeTerminalSessions } from './ClaudeTerminalSessions'
+import { createAgentTerminalOutputReader } from '../../agentTerminalOutput'
 import { createProviderElicitation, getProviderElicitationResult } from '../ProviderElicitation'
 import { ClaudeLiveTokenUsage } from './ClaudeLiveTokenUsage.ts'
 import { encodeClaudeHistory, historyMessageId } from '../NativeHistoryImport'
@@ -236,6 +238,7 @@ type ClaudeSessionState = {
   queryStartupRevision: number
   backgroundTaskIds: Set<string>
   terminalTaskIds: Set<string>
+  terminals?: ReturnType<typeof createClaudeTerminalSessions>
   subagentTaskStatuses: Map<string, ProviderSubagent['status']>
   waitingForSessionIdle: boolean
   /** A prompt was sent and Claude has not started answering it yet. */
@@ -2765,6 +2768,30 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.browser = browser
       state.input = input
       state.query = control
+      state.terminals = createClaudeTerminalSessions({
+        chatId: state.id,
+        chatTitle: this.getTitle(state),
+        cwd: state.cwd,
+        container: state.container,
+        stop: (taskId) => control.stopTask(taskId),
+        interrupt: async () => {
+          if (state.query !== control) throw new Error('This Claude turn is no longer available.')
+          const previousStopped = state.stopped
+          const previousPaused = state.queuedMessagesPaused
+          state.stopped = true
+          state.queuedMessagesPaused = state.queuedMessages.length > 0
+          this.rejectPendingRequests(state)
+          try {
+            await control.interrupt()
+          } catch (error) {
+            state.stopped = previousStopped
+            state.queuedMessagesPaused = previousPaused
+            throw error
+          }
+          this.queueUpdate(state, false)
+        },
+        readOutputFile: (file) => createAgentTerminalOutputReader(file, state.container)
+      })
       state.queryReadOnly = queryReadOnly
       state.queryModel = getClaudeModel(state.options)
       state.queryPromptSuggestions = state.options?.promptSuggestions === true
@@ -2781,6 +2808,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.promptSuggestionCloseTimer = undefined
     state.resultSettling = false
     const control = state.query
+    state.terminals?.dispose()
+    state.terminals = undefined
     state.browser?.close()
     state.browser = null
     if (!control) return
@@ -3167,6 +3196,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     // The SDK forwards active_goal at runtime but omits it from Query's SDKMessage union.
     event: SDKMessage | SDKActiveGoalMessage
   ): Promise<boolean> => {
+    state.terminals?.consume(event)
     if (event.type === 'prompt_suggestion') {
       if (
         event.session_id !== state.id ||

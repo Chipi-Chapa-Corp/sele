@@ -499,6 +499,11 @@ const providerApi: ProviderRendererApi = {
 }
 
 const terminalApi: TerminalRendererApi = {
+  listAgentSessions: () => ipcRenderer.invoke(terminalIpcChannels.listAgentSessions),
+  attachAgentSession: (sessionId, sourceId) =>
+    ipcRenderer.invoke(terminalIpcChannels.attachAgentSession, sessionId, sourceId),
+  stopAgentSession: (id) => ipcRenderer.invoke(terminalIpcChannels.stopAgentSession, id),
+  dismissAgentSession: (id) => ipcRenderer.invoke(terminalIpcChannels.dismissAgentSession, id),
   createSession: (options) => ipcRenderer.invoke(terminalIpcChannels.createSession, options),
   runCommand: (options) => ipcRenderer.invoke(terminalIpcChannels.runCommand, options),
   write: (sessionId, data) => ipcRenderer.send(terminalIpcChannels.write, sessionId, data),

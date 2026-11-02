@@ -44,7 +44,11 @@ const thread = (id, parentThreadId = null) => ({
   turns: []
 })
 const setup = () => {
-  const adapter = vm.runInNewContext(code, { ...subagents, console })
+  const adapter = vm.runInNewContext(code, {
+    ...subagents,
+    console,
+    getThreadId: (params) => (typeof params.threadId === 'string' ? params.threadId : null)
+  })
   const scheduled = []
   Object.assign(adapter, {
     threads: new Map([['root', thread('root')]]),

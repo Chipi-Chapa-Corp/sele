@@ -22,7 +22,7 @@ export const isRecoverableCodexStopError = (error: unknown): boolean =>
 export const parseCodexAccountsOutput = (stdout: string): ProviderAccountConfiguration => {
   const fields = stdout.split('\0')
   const platform = fields[0] ?? 'Unknown'
-  if (platform !== 'Linux') {
+  if (!['Linux', 'Darwin', 'Windows'].includes(platform)) {
     return {
       available: false,
       unavailableMessage: `Accounts configuration is not available on ${getPlatformLabel(platform)}`,

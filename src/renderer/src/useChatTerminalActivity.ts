@@ -4,6 +4,7 @@ import { chatTerminalActivity } from './chatTerminalActivity'
 import { createChatTerminalPoller } from './chatTerminalPolling'
 import { preferences } from './preferences'
 import { providerApi } from './providerApi'
+import { rememberAgentTerminalChats } from './agentTerminalChats'
 
 const storageKey = 'sele:terminal-chat-unread:v1'
 
@@ -22,6 +23,7 @@ export const useChatTerminalActivity = (
 ): void => {
   const chatsRef = useRef(chats)
   chatsRef.current = chats
+  useEffect(() => rememberAgentTerminalChats(chats), [chats])
   useEffect(() => {
     const raw = preferences.getItem(storageKey)
     let stored: unknown = []

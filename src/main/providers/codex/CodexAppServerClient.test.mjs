@@ -285,3 +285,65 @@ test('shutdown cancels a scheduled reconnect', async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(children.length, 1)
 })
+
+test('reports the negotiated CLI version for optional prediction capabilities', async (t) => {
+  const { client } = fixture(t, { initializeResult: { userAgent: 'codex_cli_rs/0.166.0 (Linux)' } })
+  await client.request('model/list')
+  assert.equal(client.serverVersion, '0.166.0')
+})
+
+test('canceling a thread sample sends its actual wire request ID to sample/cancel', async (t) => {
+  const { client, children } = fixture(t)
+  await client.request('model/list')
+  const child = children[0]
+  child.autoReply = false
+  const abort = new AbortController()
+  const pending = client.request(
+    'thread/sample',
+    { threadId: 'parent', expectedTurnId: 'source' },
+    { signal: abort.signal }
+  )
+  const rejected = assert.rejects(pending, /canceled/)
+  await tick()
+  const sample = child.requests.at(-1)
+  child.autoReply = true
+  abort.abort()
+  await rejected
+  await tick()
+  assert.equal(child.requests.at(-1).method, 'thread/sample/cancel')
+  assert.equal(child.requests.at(-1).params.requestId, sample.id)
+  assert.equal(client.pendingRequests.size, 0)
+  assert.equal(getEventListeners(abort.signal, 'abort').length, 0)
+})
+
+test('temporary prediction cleanup cannot restart a disposed app-server', async (t) => {
+  const { client, children } = fixture(t)
+  await client.request('model/list')
+  client.dispose()
+  await assert.rejects(
+    client.request('thread/unsubscribe', { threadId: 'temporary' }, { requireConnection: true }),
+    /connection is closed/
+  )
+  assert.equal(children.length, 1)
+})
+
+test('reattachment ignores ephemeral prediction forks reported by older runtime workers', async (t) => {
+  const { client } = fixture(t, {
+    initializeResult: {
+      seleRuntime: {
+        threads: [
+          { thread: { id: 'user-chat', cwd: '/fixture', ephemeral: false } },
+          { thread: { id: 'prediction-fork', cwd: '/fixture', ephemeral: true } }
+        ]
+      }
+    }
+  })
+  const restored = []
+  client.onNotification((notification) => {
+    if (notification.method === 'sele/runtime/restored')
+      restored.push(...notification.params.threadIds)
+  })
+  await client.request('model/list')
+  assert.deepEqual(restored, ['user-chat'])
+  assert.equal(client.ownedThreadIds.has('prediction-fork'), false)
+})

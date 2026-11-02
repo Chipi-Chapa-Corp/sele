@@ -91,7 +91,8 @@ const harness = () => {
     AsyncMessageQueue: class {
       close() {}
     },
-    randomUUID
+    randomUUID,
+    createClaudeTerminalSessions: () => ({ consume() {}, dispose() {} })
   })
   vm.runInContext(code, context)
   const instance = new context.Harness()
