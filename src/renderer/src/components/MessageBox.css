@@ -646,7 +646,7 @@
 }
 
 .message-box__textarea-wrap {
-  --prompt-suggestion-key-width: 1.65em;
+  --prompt-suggestion-key-width: 2.4em;
   --prompt-suggestion-gap: 0.4em;
   display: grid;
   position: relative;
@@ -688,7 +688,8 @@
   height: 1.4em;
   padding: 0;
   border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
-  border-bottom-width: 2px;
+  border-bottom-width: 3px;
+  border-bottom-color: color-mix(in srgb, currentColor 45%, transparent);
   border-radius: 0.3em;
   background: color-mix(in srgb, currentColor 6%, transparent);
   color: inherit;
@@ -702,9 +703,8 @@
   background: color-mix(in srgb, currentColor 14%, transparent);
 }
 
-.message-box__suggestion-key svg {
-  width: 1em;
-  height: 1em;
+.message-box__suggestion-key > span {
+  font-size: 0.75em;
 }
 
 .message-box__textarea-wrap:has(.message-box__prompt-suggestion) textarea {

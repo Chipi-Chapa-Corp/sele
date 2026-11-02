@@ -178,6 +178,12 @@ if (!process.versions.electron) {
       assert.equal(await run('input.value'), '')
       assert.equal(await run('window.sent ?? null'), null)
       assert.equal(await run('input.getAttribute("aria-autocomplete")'), 'inline')
+      assert.deepEqual(
+        await run(
+          `Array.from(document.querySelectorAll('.message-box__suggestion-key'), button => button.textContent)`
+        ),
+        ['Tab', 'Enter']
+      )
       const layout = await run(`(() => {
         const ghost = document.querySelector('.message-box__prompt-suggestion').getBoundingClientRect();
         const box = input.getBoundingClientRect();

@@ -19,12 +19,10 @@ import {
 import { createPortal } from 'react-dom'
 import { FileIcon as SymbolsFileIcon } from './SymbolIcons'
 import {
-  ArrowRightToLine,
   ArrowUp,
   BadgeCheck,
   Blocks,
   CornerDownRight,
-  CornerDownLeft,
   FileLock,
   Folder,
   FolderPen,
@@ -2894,13 +2892,14 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 tabIndex={-1}
                 aria-label="Accept suggestion into draft (Tab)"
                 title="Accept into draft (Tab)"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   dismissPromptSuggestion()
                   setMessage(visiblePromptSuggestion.text)
                   textareaRef.current?.focus({ preventScroll: true })
                 }}
               >
-                <ArrowRightToLine aria-hidden="true" strokeWidth={1.75} />
+                <span>Tab</span>
               </button>
               <span className="message-box__suggestion-text" aria-hidden="true">
                 {visiblePromptSuggestion.text}
@@ -2911,12 +2910,13 @@ export const MessageBox: React.FC<MessageBoxProps> = ({
                 tabIndex={-1}
                 aria-label="Send suggestion immediately (Enter)"
                 title="Send immediately (Enter)"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   dismissPromptSuggestion()
                   submitMessage(activePrimaryMode, visiblePromptSuggestion.text)
                 }}
               >
-                <CornerDownLeft aria-hidden="true" strokeWidth={1.75} />
+                <span>Enter</span>
               </button>
             </div>
           )}
