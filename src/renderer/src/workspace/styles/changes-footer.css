@@ -2,6 +2,23 @@
   padding-right: var(--changes-sidebar-x);
 }
 
+.changes-sidebar__footer :is(.ui-button, .ui-button-group) {
+  max-width: 100%;
+}
+
+.changes-sidebar__footer .ui-button:not(.ui-button--icon-only) {
+  padding-block: 0.3rem;
+  white-space: normal;
+}
+
+.changes-sidebar__footer .ui-button__label {
+  display: block;
+  text-align: start;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .changes-sidebar__input-row {
   display: flex;
   min-width: 0;
@@ -39,6 +56,16 @@
   align-self: stretch;
 }
 
+@container changes-sidebar (max-width: 18rem) {
+  .changes-sidebar__commit-row--with-mode {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .changes-sidebar__commit-row--with-mode > .ui-button:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
 .changes-sidebar__sync-row {
   display: grid;
   min-width: 0;
@@ -56,6 +83,7 @@
 .changes-sidebar__sync-label {
   display: inline-flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.3rem;
 }

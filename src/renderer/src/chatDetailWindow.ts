@@ -358,8 +358,14 @@ export const mergeWorkingStepPage = (
     [...tailItems].filter(([index]) => index >= tailStartIndex && index < totalCount)
   )
 
+  // A details request can outlive the live completion update. Load its content without
+  // allowing its older lifecycle to revive or replace an already finished step.
+  const status =
+    currentStep.status === 'working' || currentStep.status === 'queued'
+      ? page.status
+      : currentStep.status
   return createSegmentedWorkingStep(
-    { ...currentStep, status: page.status },
+    { ...currentStep, status },
     [
       ...getSegmentsFromIndexedItems(boundedHistoryItems, 'history'),
       ...getSegmentsFromIndexedItems(boundedTailItems, 'tail')

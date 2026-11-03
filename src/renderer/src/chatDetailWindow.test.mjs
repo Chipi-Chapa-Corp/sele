@@ -4,6 +4,7 @@ import {
   getLoadedChatTurnWindow,
   retainLoadedChatDetailTurnWindow,
   mergeChatDetailTurnPage,
+  mergeWorkingStepPage,
   preserveOptimisticChatDetail,
   refreshRetainedChatDetailTurnWindow,
   shouldPreserveOptimisticTurnUntilUserMessage
@@ -19,6 +20,47 @@ const detail = (items, extra = {}) => ({
   itemsStartTurnIndex: 0,
   turnCount: 1,
   ...extra
+})
+
+test('a delayed activity page cannot revive a finished working step', () => {
+  const activity = { type: 'message', id: 'activity', content: 'Inspecting the layout' }
+  const page = {
+    workingStepId: 'working',
+    status: 'working',
+    items: [activity],
+    startIndex: 0,
+    totalCount: 1
+  }
+  for (const status of ['worked', 'stopped', 'failed']) {
+    // Completion arrives while a details request made during active work is pending.
+    const completed = {
+      type: 'working',
+      id: 'working',
+      status,
+      startedAt: 1000,
+      completedAt: 2000,
+      items: [],
+      itemsLoaded: false,
+      itemCount: 1
+    }
+    const loaded = mergeWorkingStepPage(completed, page, 50, 100)
+    assert.equal(loaded.status, status)
+    assert.equal(loaded.completedAt, 2000)
+    assert.deepEqual(loaded.items, [activity], 'the requested activity still loads')
+    assert.equal(loaded.itemsLoaded, true)
+    assert.equal(completed.itemsLoaded, false, 'the completed snapshot stays immutable')
+  }
+})
+
+test('an activity page can still report completion for an active working step', () => {
+  const active = { type: 'working', id: 'working', status: 'working', items: [] }
+  const loaded = mergeWorkingStepPage(
+    active,
+    { workingStepId: 'working', status: 'worked', items: [], startIndex: 0, totalCount: 0 },
+    50,
+    100
+  )
+  assert.equal(loaded.status, 'worked')
 })
 
 test('preserves optimistic turns for every provider until its user message arrives', () => {
