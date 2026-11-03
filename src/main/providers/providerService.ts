@@ -52,7 +52,9 @@ import type {
   ProviderUserInputResponse,
   ProviderUsageOptions,
   ProviderWorkingItem,
-  ProviderWorkingStep
+  ProviderWorkingStep,
+  ProviderStartChatOptions,
+  ProviderLimitResetTarget
 } from '../../shared/provider'
 import {
   getChatContainers,
@@ -348,6 +350,11 @@ const claudeAccountAdapter = (account: string): ClaudeProviderAdapter => {
   return adapter
 }
 
+const withFailureRetries = (adapter: ProviderAdapter): ProviderAdapter =>
+  withProviderNetworkRetries(adapter, (chatId, prompt, options, isCurrent) =>
+    queueLimitResetMessage(adapter.id, chatId, prompt, options, isCurrent)
+  )
+
 const accountRuntimes = {
   codex: new ChatAccounts(codexAdapter, {
     metadata: getChatMetadata,
@@ -356,24 +363,22 @@ const accountRuntimes = {
     selected: async (container) =>
       (await getCodexAccounts(container)).accounts.find((account) => account.active)?.id ??
       'default',
-    create: (account) =>
-      withLiveChatPermissions(withProviderNetworkRetries(codexAccountAdapter(account)))
+    create: (account) => withLiveChatPermissions(withFailureRetries(codexAccountAdapter(account)))
   }),
   claude: new ChatAccounts(claudeAdapter, {
     metadata: getChatMetadata,
     save: setChatAccount,
     bindListed: bindChatAccounts,
     selected: (container) => claudeAccounts.getSelectedId(container),
-    create: (account) =>
-      withLiveChatPermissions(withProviderNetworkRetries(claudeAccountAdapter(account)))
+    create: (account) => withLiveChatPermissions(withFailureRetries(claudeAccountAdapter(account)))
   })
 }
 
 const nativeAdapters: Record<ProviderId, ProviderAdapter> = {
   codex: accountRuntimes.codex.adapter,
   claude: accountRuntimes.claude.adapter,
-  copilot: withLiveChatPermissions(withProviderNetworkRetries(new CopilotProviderAdapter())),
-  'opencode-v2': withLiveChatPermissions(withProviderNetworkRetries(openCodeAdapter))
+  copilot: withLiveChatPermissions(withFailureRetries(new CopilotProviderAdapter())),
+  'opencode-v2': withLiveChatPermissions(withFailureRetries(openCodeAdapter))
 }
 
 export const importedConversations = new ImportedConversations(
@@ -905,6 +910,37 @@ const limitResetQueue = new LimitResetQueue(
     }
   })
 )
+
+const queueLimitResetMessage = async (
+  providerId: ProviderId,
+  target: ProviderLimitResetTarget,
+  message: string,
+  options: ProviderStartChatOptions,
+  isCurrent: () => boolean = () => true
+): Promise<void> => {
+  const chatId = typeof target === 'string' ? target : undefined
+  const detail = chatId ? await providerApi.getChat(providerId, chatId) : null
+  if (detail?.writeAccess === 'readOnly') throw new Error('This chat is read-only.')
+  const container = detail?.container ?? options.container
+  const accountId = chatId
+    ? (detail?.accountId ?? undefined)
+    : (await providerApi.getAccounts(providerId, { container })).accounts.find(
+        (account) => account.active
+      )?.id
+  const source = { chatId, container, accountId }
+  const usage = await adapters[providerId].getUsage({ ...source, forceRefresh: true })
+  const models = await adapters[providerId].getModels(source)
+  await limitResetQueue.add(
+    providerId,
+    target,
+    message,
+    { ...options, container },
+    usage.rateLimits,
+    models.find((model) => model.id === options.model)?.usageScope,
+    accountId,
+    isCurrent
+  )
+}
 
 export const startLimitResetQueue = (): void => limitResetQueue.start()
 
@@ -1442,29 +1478,8 @@ export const providerApi: ProviderApi = {
       adapters[providerId].sendActiveChatMessage(chatId, message, mode, options)
     ).then((detail) => applyMetadataToDetail(detail, providerId)),
   getLimitResetMessages: (providerId, chatId) => limitResetQueue.list(providerId, chatId),
-  addLimitResetMessage: async (providerId, target, message, options) => {
-    const chatId = typeof target === 'string' ? target : undefined
-    const detail = chatId ? await providerApi.getChat(providerId, chatId) : null
-    if (detail?.writeAccess === 'readOnly') throw new Error('This chat is read-only.')
-    const container = detail?.container ?? options.container
-    const accountId = chatId
-      ? (detail?.accountId ?? undefined)
-      : (await providerApi.getAccounts(providerId, { container })).accounts.find(
-          (account) => account.active
-        )?.id
-    const source = { chatId, container, accountId }
-    const usage = await adapters[providerId].getUsage({ ...source, forceRefresh: true })
-    const models = await adapters[providerId].getModels(source)
-    await limitResetQueue.add(
-      providerId,
-      target,
-      message,
-      { ...options, container },
-      usage.rateLimits,
-      models.find((model) => model.id === options.model)?.usageScope,
-      accountId
-    )
-  },
+  addLimitResetMessage: (providerId, target, message, options) =>
+    queueLimitResetMessage(providerId, target, message, options),
   deleteLimitResetMessage: (providerId, target, messageId) =>
     limitResetQueue.remove(providerId, target, messageId, async (entry) => {
       if (!entry.chatId || !uncommittedResetHandoffs.has(entry.id)) return

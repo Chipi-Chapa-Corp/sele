@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { GitCommitHorizontal, MessageSquare, Sparkles, X } from 'lucide-react'
 import { Button, type ButtonDropdownAction } from '../../components/Button'
-import { Input } from '../../components/Input'
+import { Textarea } from '../../components/Textarea'
 import { AnimatedStatusIcon, GitSyncCountsLabel } from '../../components/AppStatusStates'
 import { useSwitchSettledDisabled } from '../../useSwitchSettledDisabled'
 
@@ -74,8 +74,8 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
         <div className="changes-sidebar__input-row">
           <label className="changes-sidebar__commit-message">
             <span className="sr-only">{commitInputLabel}</span>
-            <Input
-              type="text"
+            <Textarea
+              rows={1}
               value={commitInput}
               placeholder={commitInputLabel}
               disabled={commitMessageGenerationInProgress || projectCommitInProgress}
@@ -90,7 +90,14 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
                 setCommitInput(event.target.value)
               }}
               onKeyDown={(event) => {
-                if (showManualCommit && event.key === 'Enter' && !commitDisabled) {
+                if (
+                  showManualCommit &&
+                  event.key === 'Enter' &&
+                  !event.shiftKey &&
+                  !event.nativeEvent.isComposing &&
+                  !commitDisabled
+                ) {
+                  event.preventDefault()
                   void handleManualCommitChangedFiles()
                 }
               }}

@@ -894,6 +894,7 @@ export type ProviderWorkingStep = {
   type: 'working'
   id: string
   status: 'working' | 'worked' | 'stopped' | 'failed' | 'queued'
+  /** Account rate, quota or billing limits; request size and execution budgets are ordinary failures. */
   failureReason?: 'rateLimit' | 'authentication'
   failureMessage?: string
   items: ProviderWorkingItem[]
@@ -1154,6 +1155,8 @@ export type ProviderTurnOptions = {
   /** Request native next-prompt predictions when supported by the provider. */
   promptSuggestions?: boolean
   networkRetry?: NetworkRetrySettings
+  /** Queue this prompt after a confirmed usage-limit failure; omitted when disabled. */
+  usageResetContinuation?: { prompt: string }
   additionalDirectories?: string[]
   agentMode?: ProviderAgentMode
   approvalPolicy: ProviderApprovalPolicy

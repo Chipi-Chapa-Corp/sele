@@ -130,6 +130,20 @@ database from existing OpenCode data. The original database is untouched. Existi
 `OPENCODE_DB` overrides are respected. Custom v1 plugins need v2 implementations; expired
 credentials or unsupported remote MCP OAuth credentials may require sign-in again.
 
+## GitHub pull requests
+
+In the Git sidebar, choose **Pull requests** to browse PRs for the project's GitHub remote.
+Use the state selector to include open, merged, closed, and draft PRs. When there is more
+than one page, use the arrows or enter a page number and press Enter. Reload refreshes the
+current page. GitHub search makes the first 1,000 matching PRs available.
+
+Use the globe button on a row to open a PR in Sele's browser, or the external-link button
+to use your default browser. Open icons are green, merged purple, closed red, and drafts gray.
+
+Install GitHub CLI (`gh`) and run `gh auth login` on the machine hosting the project,
+including inside its container or SSH environment. Sele uses the GitHub `origin` remote,
+then `upstream`, or the only remaining GitHub repository. This view currently supports github.com.
+
 ## Development
 
 See the [repository guide](docs/README.md) for the code layout and focused

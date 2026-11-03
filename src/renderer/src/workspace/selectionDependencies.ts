@@ -110,6 +110,9 @@ export type WorkspaceSelectionDependencies = {
   selectedChatUpdatedAtRef: React.RefObject<number | null>
   setChatDetail: React.Dispatch<React.SetStateAction<ProviderChatDetail | null>>
   setChatLoadState: React.Dispatch<React.SetStateAction<LoadState>>
+  setChatLoadError: React.Dispatch<
+    React.SetStateAction<{ chatKey: string; message: string } | null>
+  >
   markChatSeenAt: (providerId: ProviderId, chatId: string, seenUpdatedAt: number) => void
   chatLoadRequest: number
   chatInitialLayoutKeyRef: React.RefObject<string | null>

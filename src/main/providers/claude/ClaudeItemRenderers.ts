@@ -1,4 +1,5 @@
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
+import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
 import { getProviderToolPresentation } from '../ToolPresentation.ts'
 import {
@@ -84,7 +85,7 @@ type Segment = {
   id: string
   entries: ProviderConversationEntry[]
   failed: boolean
-  failureReason?: 'authentication'
+  failureReason?: 'authentication' | 'rateLimit'
   failureMessage?: string
   stopped?: boolean
 }
@@ -285,6 +286,16 @@ const getTextContent = (value: unknown): string | null => {
     .join('\n')
   return text || null
 }
+
+const getClaudeFailureReason = (message: ClaudeTranscriptMessage): Segment['failureReason'] =>
+  isClaudeAuthenticationFailure(message)
+    ? 'authentication'
+    : isProviderUsageLimitError({
+          code: message.error,
+          message: getTextContent(getMessageRecord(message.message)?.content)
+        })
+      ? 'rateLimit'
+      : undefined
 
 const getToolImages = (value: unknown): ProviderToolImage[] => {
   if (!Array.isArray(value)) return []
@@ -590,12 +601,12 @@ export const renderClaudeChatItems = (
     if (message.type === 'assistant') {
       const current = ensureSegment(message.uuid)
       current.timing = includeClaudeMessageTime(current.timing, message)
-      if (isClaudeAuthenticationFailure(message)) {
+      if (message.error || message.failed) {
         current.failed = true
-        current.failureReason = 'authentication'
+        current.failureReason = getClaudeFailureReason(message)
         current.failureMessage =
           getTextContent(getMessageRecord(message.message)?.content) ||
-          'Claude authentication failed.'
+          `Claude request failed (${message.error || 'unknown error'}).`
         current.entries.push({
           kind: 'working',
           item: { type: 'message', id: message.uuid, content: current.failureMessage }
@@ -690,7 +701,11 @@ export const renderClaudeChatItems = (
         if (message.failed) {
           const current = ensureSegment(message.uuid)
           current.failed = true
-          if (content && !current.failureReason) current.failureMessage = content
+          if (content && !current.failureReason) {
+            current.failureMessage = content
+            if (isProviderUsageLimitError({ code: message.error, message: content }))
+              current.failureReason = 'rateLimit'
+          }
         }
         if (content) {
           ensureSegment(message.uuid).entries.push({
@@ -743,7 +758,7 @@ type ProjectedClaudeSegment = {
   timing?: ConversationTiming
   id: string
   failed: boolean
-  failureReason?: 'authentication'
+  failureReason?: 'authentication' | 'rateLimit'
   failureMessage?: string
   stopped?: boolean
   groups: ProviderWorkingItem[]
@@ -935,15 +950,15 @@ export class ClaudeTranscriptProjection {
     if (message.type === 'assistant') {
       const segment = this.ensureSegment(message.uuid)
       this.journal.set(segment, 'timing', includeClaudeMessageTime(segment.timing, message))
-      if (isClaudeAuthenticationFailure(message)) {
+      if (message.error || message.failed) {
         this.demoteFinal(segment)
         this.journal.set(segment, 'failed', true)
-        this.journal.set(segment, 'failureReason', 'authentication')
+        this.journal.set(segment, 'failureReason', getClaudeFailureReason(message))
         this.journal.set(
           segment,
           'failureMessage',
           getTextContent(getMessageRecord(message.message)?.content) ||
-            'Claude authentication failed.'
+            `Claude request failed (${message.error || 'unknown error'}).`
         )
         this.appendWorking(segment, {
           type: 'message',
@@ -1068,8 +1083,11 @@ export class ClaudeTranscriptProjection {
         if (message.failed) {
           const segment = this.ensureSegment(message.uuid)
           this.journal.set(segment, 'failed', true)
-          if (content && !segment.failureReason)
+          if (content && !segment.failureReason) {
             this.journal.set(segment, 'failureMessage', content)
+            if (isProviderUsageLimitError({ code: message.error, message: content }))
+              this.journal.set(segment, 'failureReason', 'rateLimit')
+          }
         }
         if (content) {
           const segment = this.ensureSegment(message.uuid)

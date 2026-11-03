@@ -1,3 +1,4 @@
+import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import type { ProviderChatTurnWindow } from '../ProviderAdapter'
 import { getCodexTurnOutcome } from './CodexTurnOutcome.ts'
 import { isImageSizingMetadata } from '../imageSizingMetadata.ts'
@@ -1827,9 +1828,7 @@ const getTurnErrorText = (turn: CodexTurn): string | null => {
   return details.length > 0 ? details.join('\n') : null
 }
 
-const isRateLimitFailure = (turn: CodexTurn): boolean =>
-  turn.error?.codexErrorInfo === 'usageLimitExceeded' ||
-  turn.error?.codexErrorInfo === 'rateLimitExceeded'
+const isRateLimitFailure = (turn: CodexTurn): boolean => isProviderUsageLimitError(turn.error)
 
 const toMilliseconds = (seconds: number | null | undefined): number | null =>
   typeof seconds === 'number' && Number.isFinite(seconds) ? seconds * 1_000 : null

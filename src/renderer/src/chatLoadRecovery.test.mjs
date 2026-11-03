@@ -90,6 +90,13 @@ const setup = (providerId, initial = null) => {
     setChatLoadState: (value) => {
       state.loadState = value
     },
+    setChatLoadError: (value) => {
+      state.loadError = value
+    },
+    getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
+    getErrorMessage: (error, fallback) =>
+      error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim() ||
+      fallback,
     startTransition: (fn) => fn(),
     reuseChatSnapshotItems,
     isChatDetailSnapshotStale: (next, current) =>
@@ -200,6 +207,31 @@ test('failed provider refresh keeps saved history read-only and reports the fail
   assert.equal(h.state.loadState, 'error')
   assert.equal(h.state.detail.historyPreview, true)
   assert.equal(h.state.detail.writeAccess, 'checking')
+  assert.equal(h.state.loadError.chatKey, 'claude:chat')
+  assert.equal(h.state.loadError.message, 'Provider offline')
+})
+
+test('an uncached load preserves the actual error and retry clears it before loading', async () => {
+  const h = setup('codex')
+  h.startLoad()
+  h.reject(new Error("Error invoking remote method 'provider:get-chat': Error: Account missing"))
+  await settle()
+  assert.equal(h.state.loadError.chatKey, 'codex:chat')
+  assert.equal(h.state.loadError.message, 'Account missing')
+  h.context.providerApi.getChat = async () => detail(1)
+  h.startLoad()
+  assert.equal(h.state.loadError, null)
+  await settle()
+  assert.equal(h.state.loadState, 'ready')
+})
+
+test('a failed request for a closed chat cannot publish its error into the next chat', async () => {
+  const h = setup('codex')
+  const cleanup = h.startLoad()
+  cleanup()
+  h.reject(new Error('Old account missing'))
+  await settle()
+  assert.equal(h.state.loadError, null)
 })
 
 test('RAM history and disabling the chat cache bypass SQLite, while disk failure permits a normal open', async () => {
@@ -321,7 +353,8 @@ test('cached selection schedules its matching transcript as one view update', ()
     'markSelectedChatSeen',
     'setSelectedChat',
     'markChatSeenAt',
-    'setChatLoadRequest'
+    'setChatLoadRequest',
+    'setManuallyUnreadChatKeys'
   ])
     context[name] = () => {}
   vm.runInContext(selectCode, context)

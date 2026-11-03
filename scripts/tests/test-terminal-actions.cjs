@@ -360,6 +360,49 @@ if (!process.versions.electron) {
         assert.equal(geometry.bar, 14, JSON.stringify(geometry))
         assert.ok(geometry.slider <= geometry.bar, JSON.stringify(geometry))
         assert.ok(geometry.screen >= geometry.host - 32, 'Terminal text must use the sidebar width')
+        // A terminal only draws whole rows; the remaining space must keep the panel's color.
+        const assertTerminalBackground = async () => {
+          const sample = await run(`(() => {
+            const host = document.querySelector('.terminal-panel__session--active .terminal-panel__host')
+            const viewport = host.querySelector('.xterm-viewport').getBoundingClientRect()
+            const screen = host.querySelector('.xterm-screen').getBoundingClientRect()
+            return {
+              x: Math.floor(viewport.left + 32),
+              y: Math.floor((screen.bottom + viewport.bottom) / 2),
+              gap: viewport.bottom - screen.bottom,
+              background: getComputedStyle(document.querySelector('.terminal-panel__workspace')).backgroundColor
+            }
+          })()`)
+          assert.ok(sample.gap >= 2, `Fixture must leave space below the last row: ${sample.gap}`)
+          const pixel = (
+            await window.webContents.capturePage({
+              x: sample.x,
+              y: sample.y,
+              width: 1,
+              height: 1
+            })
+          ).toBitmap()
+          const expected = sample.background.match(/\d+/g).slice(0, 3).map(Number)
+          assert.deepEqual(
+            [pixel[2], pixel[1], pixel[0]],
+            expected,
+            'Space below the last terminal row must match the terminal background'
+          )
+        }
+        await assertTerminalBackground()
+        await run(`document.documentElement.dataset.colorScheme = 'light'`)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        await assertTerminalBackground()
+        await run(`document.documentElement.dataset.colorScheme = 'dark'`)
+        // Sample during the switch, when a whole-panel opacity animation would blink.
+        for (const target of ['window.previousTab', tab(2)]) {
+          const opacity = await run(`(async () => {
+            ${target}.click()
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+            return getComputedStyle(document.querySelector('.terminal-panel')).opacity
+          })()`)
+          assert.equal(Number(opacity), 1, 'Switching terminal tabs must keep the panel opaque')
+        }
         if (process.env.SELE_TERMINAL_STYLE_SCREENSHOT) {
           await fs.writeFile(
             process.env.SELE_TERMINAL_STYLE_SCREENSHOT,

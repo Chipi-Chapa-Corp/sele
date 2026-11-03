@@ -68,7 +68,6 @@ export function ConversationMessagesContent(
     chatMediaStartIndex,
     chatMediaTotalCount,
     chatLoadState,
-    chatHistoryPreview,
     chatKnown,
     chatSearchContentRef,
     chatTurnPageLoadDirection,
@@ -360,12 +359,13 @@ export function ConversationMessagesContent(
     </DeferredChatTurn>
   ))
   if (workingPlaceholderStep) {
+    // Provider confirmation replaces step IDs while this conversation keeps working.
     renderedConversation.splice(
       firstPendingTurnIndex < 0 ? renderedConversation.length : firstPendingTurnIndex,
       0,
       <ChatWorkingPlaceholder
         item={workingPlaceholderStep}
-        key={`working-placeholder:${workingPlaceholderStep.id}`}
+        key={`working-placeholder:${mountKey}`}
       />
     )
   }
@@ -484,18 +484,6 @@ export function ConversationMessagesContent(
             <div className="chat-detail__messages-footer" />
           </div>
         </div>
-        {!activeSubagentChatView && chatHistoryPreview && chatLoadState === 'error' && (
-          <div className="chat-detail__history-preview" role="status">
-            <span>
-              {chatLoadState === 'error'
-                ? 'Unable to refresh. Showing saved messages.'
-                : 'Refreshing messages…'}
-            </span>
-            {chatLoadState === 'error' && (
-              <Button label="Retry" callback={() => loadChatTurnPage('latest')} theme="secondary" />
-            )}
-          </div>
-        )}
         {(activeSubagentChatView
           ? activeSubagentChatView.loadState === 'loading' && subagentVisibleChatItems.length === 0
           : !chatKnown && chatLoadState === 'loading' && visibleChatItems.length === 0) && (
@@ -506,9 +494,6 @@ export function ConversationMessagesContent(
                 : `loader:${selectedChatKey}`
             }
           />
-        )}
-        {!activeSubagentChatView && chatLoadState === 'error' && visibleChatItems.length === 0 && (
-          <ConversationMessagesError label="Unable to load messages." />
         )}
         {!activeSubagentChatView &&
           !editingMessage &&

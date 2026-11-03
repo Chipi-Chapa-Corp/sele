@@ -77,7 +77,7 @@
   height: 0.1rem;
   border-radius: 49.95rem;
   background: var(--accent);
-  content: '';
+  content: "";
   pointer-events: none;
 }
 
@@ -109,6 +109,14 @@
 
 .changes-sidebar__recent-item--pinnable .changes-sidebar__recent-row {
   padding-right: 2.5rem;
+}
+
+.changes-sidebar__recent-item:has(.changes-sidebar__recent-actions > :nth-child(2)):is(
+    :hover,
+    :has(:focus-visible)
+  )
+  .changes-sidebar__recent-row {
+  padding-right: calc(2 * var(--control-height-small) + 1.3rem);
 }
 
 .changes-sidebar__recent-item--pinned {
@@ -306,6 +314,11 @@ button.changes-sidebar__recent-row:not(:disabled) {
 }
 
 @media (pointer: coarse) {
+  .changes-sidebar__recent-item:has(.changes-sidebar__recent-actions > :nth-child(2))
+    .changes-sidebar__recent-row {
+    padding-right: calc(2 * var(--control-height-small) + 1.3rem);
+  }
+
   .changes-sidebar__recent-actions,
   .changes-sidebar__recent-group-header .ui-button {
     opacity: 1;

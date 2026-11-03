@@ -843,6 +843,7 @@ export const Dropdown = <TValue extends string>({
         className="ui-dropdown__listbox"
         id={listboxId}
         role="listbox"
+        aria-multiselectable={selectedValues ? true : undefined}
         aria-label={menuOnly ? ariaLabel : undefined}
         aria-labelledby={menuOnly ? undefined : buttonId}
       >

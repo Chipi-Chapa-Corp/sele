@@ -154,6 +154,36 @@ const detach = async (transport) => {
   connections.delete(transport)
 }
 
+test('an immediate provider startup failure preserves its actionable error across retries', async () => {
+  const profile = join(directory, 'startup-failure')
+  const message = 'This chat account is no longer available. Select another account for this chat.'
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const failing = {
+      file: process.execPath,
+      args: ['-e', `process.stderr.write(${JSON.stringify(message)}); process.exit(1)`],
+      env: process.env
+    }
+    let transport
+    try {
+      transport = await connectCodexRuntime(profile, 'missing-account', failing)
+    } catch (error) {
+      assert.equal(error.message, message)
+      continue
+    }
+    // If attachment wins the startup race, the same error must reach the RPC client.
+    connections.add(transport)
+    let stderr = ''
+    transport.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    await once(transport, 'close')
+    assert.equal(stderr.trim(), message)
+    connections.delete(transport)
+  }
+  const client = rpc(await connectRuntime(profile, 'missing-account'))
+  assert.ok((await client.initialize()).pid, 'a later valid launch ignores the old failure')
+})
+
 test('a hard frontend crash leaves the same provider executing the accepted turn exactly once', async () => {
   const profile = join(directory, 'crash'),
     finishFile = join(directory, 'finished')

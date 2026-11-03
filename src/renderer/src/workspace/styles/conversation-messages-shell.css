@@ -6,21 +6,6 @@
   flex: 1;
 }
 
-.chat-detail__history-preview {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.75rem;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.65rem;
-  border-radius: 0.5rem;
-  background: var(--control-surface);
-  color: var(--quiet);
-  font-size: 0.8rem;
-}
-
 .chat-detail__messages {
   width: 100%;
   height: round(down, 100%, var(--chat-layout-pixel, 1px));

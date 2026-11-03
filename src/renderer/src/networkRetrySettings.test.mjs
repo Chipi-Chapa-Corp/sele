@@ -139,3 +139,29 @@ test('legacy usage selections migrate to the new independent toggles', () => {
     )
   }
 })
+
+test('automatic usage reset continuation defaults on, persists opt-outs, and supports project overrides', () => {
+  const { settings, stored } = setup()
+  assert.equal(settings.readStoredAppSettings().chat.continueOnUsageReset, true)
+  for (const enabled of [true, false]) {
+    const defaults = settings.readStoredAppSettings()
+    settings.writeStoredAppSettings({
+      ...defaults,
+      chat: { ...defaults.chat, continueOnUsageReset: enabled }
+    })
+    assert.equal(settings.readStoredAppSettings().chat.continueOnUsageReset, enabled)
+    settings.writeStoredAppProjectSettings({
+      '/workspace': { chat: { continueOnUsageReset: !enabled } }
+    })
+    const effective = settings.resolveAppSettings(
+      settings.readStoredAppSettings(),
+      settings.readStoredAppProjectSettings()['/workspace']
+    )
+    assert.equal(effective.chat.continueOnUsageReset, !enabled)
+  }
+  stored.set(
+    settings.appSettingsStorageKey,
+    JSON.stringify({ chat: { continueOnUsageReset: 'true' } })
+  )
+  assert.equal(settings.readStoredAppSettings().chat.continueOnUsageReset, true)
+})

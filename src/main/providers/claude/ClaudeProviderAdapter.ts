@@ -1,3 +1,4 @@
+import { isProviderUsageLimitError } from '../../../shared/providerErrors'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createClaudeTerminalSessions } from './ClaudeTerminalSessions'
 import { createAgentTerminalOutputReader } from '../../agentTerminalOutput'
@@ -2520,7 +2521,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.messages = messages
       state.historyPagination = missingScheduledHistory ? undefined : page.pagination
       state.goal = page.goal ?? null
-      state.failed = isClaudeAuthenticationFailure(
+      state.failed = getClaudeTurnOutcome(messages) === 'failed'
+      const authenticationFailed = isClaudeAuthenticationFailure(
         messages.findLast(
           (message) =>
             !message.parent_tool_use_id &&
@@ -2529,7 +2531,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         ) ?? { type: 'system' }
       )
       const sourceKey = getContainerTargetKey(state.container)
-      if (state.failed && !this.authenticatedSources.has(sourceKey)) {
+      if (authenticationFailed && !this.authenticatedSources.has(sourceKey)) {
         this.authenticationFailures.add(sourceKey)
         for (const other of this.states.values()) {
           if (getContainerTargetKey(other.container) === sourceKey) {
@@ -2623,14 +2625,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.historyPagination = page.pagination
     if (page.goal !== undefined && page.metadata.lastModified >= (state.goalUpdatedAt ?? 0))
       state.goal = page.goal
-    state.failed = isClaudeAuthenticationFailure(
-      page.messages.findLast(
-        (message) =>
-          !message.parent_tool_use_id &&
-          (message.type === 'assistant' ||
-            (message.type === 'user' && !isClaudeInternalUserMessage(message)))
-      ) ?? { type: 'system' }
-    )
+    state.failed = getClaudeTurnOutcome(page.messages) === 'failed'
     state.metadata = {
       ...state.metadata,
       ...Object.fromEntries(
@@ -3004,6 +2999,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       if (state.query !== control) return
       state.failed = true
       state.active = false
+      state.queuedMessagesPaused = true
       const content = error instanceof Error ? error.message : String(error)
       this.addTranscriptMessage(state, {
         type: 'system',
@@ -3011,6 +3007,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         session_id: state.id,
         message: { content },
         parent_tool_use_id: null,
+        error: isProviderUsageLimitError(error) ? 'rate_limit' : undefined,
         failed: true
       })
       this.emitUpdate(state, true)
@@ -3020,6 +3017,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           state.active = false
           state.failed = !state.stopped
           if (state.failed) {
+            state.queuedMessagesPaused = true
             this.addTranscriptMessage(state, {
               type: 'system',
               uuid: randomUUID(),
@@ -3283,6 +3281,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         this.emitUpdate(state, true)
         return true
       }
+      if (message.type === 'assistant' && !message.parent_tool_use_id && message.error) {
+        state.failed = true
+        state.active = false
+        state.queuedMessagesPaused = true
+        this.emitUpdate(state, true)
+        return true
+      }
       this.queueUpdate(state)
       return false
     }
@@ -3387,6 +3392,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const resultError = getClaudeResultError(event)
     state.failed = !wasStopped && !wasInterrupted && resultError !== null
     if (state.failed) {
+      state.queuedMessagesPaused = true
       // API failures can use subtype "success" with is_error=true and the error in result.
       const reason = event.subtype === 'success' ? 'api_error' : event.subtype
       const errors = 'errors' in event ? event.errors : [event.result]
@@ -3396,6 +3402,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         uuid: event.uuid,
         session_id: event.session_id,
         message: { content: resultError },
+        error: reason,
         parent_tool_use_id: null,
         failed: true
       })

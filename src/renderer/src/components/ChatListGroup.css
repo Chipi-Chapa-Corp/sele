@@ -113,7 +113,27 @@
 }
 
 .chat-list-group__toggle-content--project {
+  gap: 0.35rem;
   padding-left: 1.4rem;
+}
+
+.chat-list-group__toggle-content--project .chat-list-group__title {
+  flex: 0 1 auto;
+}
+
+.chat-list-group__working-icon {
+  display: inline-flex;
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--quiet);
+}
+
+.chat-list-group__working-icon svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .chat-list-group__project-icon-button {

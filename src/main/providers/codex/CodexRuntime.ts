@@ -156,6 +156,18 @@ export const connectCodexRuntime = async (
     }
     const script = join(directory, 'runtime.cjs')
     await writeFile(script, runtimeSource, { mode: 0o600 })
+    const startupErrorPath = join(directory, 'startup-error.txt')
+    await unlink(startupErrorPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+    })
+    const startupFailure = async (fallback: string): Promise<Error> => {
+      try {
+        return new Error((await readFile(startupErrorPath, 'utf8')).trim() || fallback)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        return new Error(fallback)
+      }
+    }
     const log = await open(join(directory, 'runtime.log'), 'a', 0o600)
     let worker: ReturnType<typeof spawn>
     try {
@@ -175,12 +187,12 @@ export const connectCodexRuntime = async (
     worker.stdin!.on('error', (error) => {
       launchError = error
     })
-    worker.stdin!.end(JSON.stringify({ endpointPath, token, command }) + '\n')
+    worker.stdin!.end(JSON.stringify({ endpointPath, token, command, startupErrorPath }) + '\n')
     worker.unref()
     while (Date.now() < deadline) {
       if (launchError) throw launchError
       if (worker.exitCode !== null)
-        throw new Error('Codex runtime exited during startup. See its runtime.log.')
+        throw await startupFailure('Codex runtime exited during startup. See its runtime.log.')
       try {
         return await reconnect()
       } catch (error) {
@@ -188,7 +200,7 @@ export const connectCodexRuntime = async (
       }
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
-    throw new Error('Codex runtime did not become ready. See its runtime.log.')
+    throw await startupFailure('Codex runtime did not become ready. See its runtime.log.')
   } finally {
     await lock.close()
     await unlink(lockPath)

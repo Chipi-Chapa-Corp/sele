@@ -72,8 +72,21 @@ export function SidebarProviderAccount({
         container: JSON.parse(sourceKey)[1],
         chatId: JSON.parse(sourceKey)[2] ?? undefined
       })
-      .then((configuration) => {
+      .then(async (configuration) => {
         if (!active) return
+        if (
+          configuration.available &&
+          !configuration.accounts.some((account) => account.active) &&
+          configuration.accounts.some((account) => account.id === 'default')
+        ) {
+          await onSelect('default')
+          if (!active) return
+          configuration = await providerApi.getAccounts(providerId, {
+            container: JSON.parse(sourceKey)[1],
+            chatId: JSON.parse(sourceKey)[2] ?? undefined
+          })
+          if (!active) return
+        }
         setConfigurations((current) => ({ ...current, [sourceKey]: configuration }))
       })
       .catch((reason: unknown) => {

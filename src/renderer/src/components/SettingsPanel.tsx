@@ -1280,12 +1280,19 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
         </section>
         <section
           className="settings-dialog__section"
-          aria-labelledby="settings-chat-network-retries"
+          aria-labelledby="settings-chat-failure-retries"
         >
-          <h2 className="settings-dialog__section-heading" id="settings-chat-network-retries">
-            Network Retries
+          <h2 className="settings-dialog__section-heading" id="settings-chat-failure-retries">
+            Failure Retries
           </h2>
           <div className="settings-dialog__section-cards">
+            {renderChatBooleanSettingField({
+              key: 'continueOnUsageReset',
+              id: 'settings-chat-continue-on-usage-reset',
+              label: 'Continue on usage reset',
+              description:
+                'Automatically queue the Continue prompt for the provider’s next known usage reset.'
+            })}
             {(
               [
                 {
@@ -1344,7 +1351,7 @@ export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode 
                 htmlFor="settings-chat-continue-prompt"
               >
                 <h3>Continue prompt</h3>
-                <p>Sent as a new message when Continue is selected on a stopped turn.</p>
+                <p>Sent when Continue is selected or automatically after a usage limit resets.</p>
               </label>
               {renderProjectSettingAction(chatContinuePromptPath, 'Continue prompt')}
               <textarea

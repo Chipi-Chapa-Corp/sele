@@ -129,7 +129,6 @@ import { useLinkedChatOpener } from './LinkedChatOpener'
 import { chatMediaId } from '../chatMedia'
 import { ReviewCommentsButton } from './ReviewCommentsButton'
 import { RateLimitResetButton } from './RateLimitResetButton'
-import { ContinueOnLimitResetButton } from './ContinueOnLimitResetButton'
 import { TableLightbox } from './TableLightbox'
 import { ToolDiff } from './ToolDiff'
 import './ChatDetailItem.css'
@@ -175,8 +174,6 @@ type ChatDetailItemProps = {
   onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
   onToggleMessagePinned?: (message: ProviderMessage, turnIndex: number, pinned: boolean) => void
   onContinueStoppedTurn?: (workingStepId: string, prompt: string) => Promise<void> | void
-  onQueueLimitReset?: (prompt: string) => Promise<void>
-  limitResetsAt?: number | null
   onRetryStoppedTurn?: (message: ProviderMessage) => Promise<void> | void
   onManageAccounts?: () => void
   onReauthenticate?: () => void
@@ -282,8 +279,6 @@ const areChatDetailItemPropsEqual = (
   first.onOpenFileLink === second.onOpenFileLink &&
   first.onToggleMessagePinned === second.onToggleMessagePinned &&
   first.onContinueStoppedTurn === second.onContinueStoppedTurn &&
-  first.onQueueLimitReset === second.onQueueLimitReset &&
-  first.limitResetsAt === second.limitResetsAt &&
   first.onRetryStoppedTurn === second.onRetryStoppedTurn &&
   first.onManageAccounts === second.onManageAccounts &&
   first.onReauthenticate === second.onReauthenticate &&
@@ -1729,11 +1724,10 @@ const ToolSequence: React.FC<{
   )
 }
 
-const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
+const WorkingPlaceholderLabel: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
   const [placeholder] = useState(() =>
     item.items.length === 0 ? 'Working…' : getRandomPlaceholderOption()
   )
-  const [animation] = useState(getRandomWorkingMarkAnimation)
   const labelRef = useRef<HTMLSpanElement>(null)
   const reduced = useReducedMotionPreference()
 
@@ -1755,6 +1749,12 @@ const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ ite
     return () => window.clearInterval(timer)
   }, [placeholder, reduced])
 
+  return <span ref={labelRef}>{placeholder}</span>
+}
+
+const WorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => {
+  const [animation] = useState(getRandomWorkingMarkAnimation)
+
   return (
     <div
       className="chat-detail__tool-read chat-detail__tool-read--active chat-detail__tool-placeholder"
@@ -1765,16 +1765,14 @@ const RandomWorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ ite
         <WorkingMark animation={animation} />
       </span>
       <span className="chat-detail__tool-label">
-        <span ref={labelRef}>{placeholder}</span>
+        {/* New activity changes the phrase without restarting the mark or timer.
+            Provider ID handoffs keep the existing phrase and its reveal. */}
+        <WorkingPlaceholderLabel key={item.itemCount ?? item.items.length} item={item} />
         <WorkingElapsedTime item={item} />
       </span>
     </div>
   )
 }
-
-const WorkingPlaceholder: React.FC<{ item: ProviderWorkingStep }> = ({ item }) => (
-  <RandomWorkingPlaceholder key={`${item.id}:${item.itemCount ?? item.items.length}`} item={item} />
-)
 
 const getActiveToolIds = (item: ProviderWorkingStep): Set<string> => {
   const activeToolIds = new Set<string>()
@@ -1865,8 +1863,6 @@ const WorkingStep: React.FC<{
   item: ProviderWorkingStep
   cwd?: string | null
   onContinue?: () => Promise<void> | void
-  onQueueLimitReset?: () => Promise<void>
-  limitResetsAt?: number | null
   onLoad?: (startIndex?: number) => Promise<void> | void
   onLoadItem?: (itemId: string) => Promise<void> | void
   onLoadToolPage?: (workingItemId: string, startIndex: number) => Promise<void> | void
@@ -1896,8 +1892,6 @@ const WorkingStep: React.FC<{
   item,
   cwd,
   onContinue,
-  onQueueLimitReset,
-  limitResetsAt,
   onLoad,
   onLoadItem,
   onLoadToolPage,
@@ -1989,7 +1983,9 @@ const WorkingStep: React.FC<{
       : item.status === 'stopped'
         ? 'Stopped'
         : item.status === 'failed'
-          ? 'Failed'
+          ? item.failureReason === 'rateLimit'
+            ? 'Usage limit reached'
+            : 'Failed'
           : item.status === 'worked'
             ? progressDisclosureTarget?.status === 'working'
               ? 'Work so far'
@@ -1999,7 +1995,7 @@ const WorkingStep: React.FC<{
     item.status === 'failed'
       ? failureMessage ||
         (item.failureReason === 'rateLimit'
-          ? 'Rate limit exceeded.'
+          ? 'The provider’s rate or usage limit has been reached.'
           : 'The provider did not supply a failure reason.')
       : null
   const heading = (
@@ -2108,16 +2104,6 @@ const WorkingStep: React.FC<{
             pendingLabel="Continuing.."
           />
         )}
-        {item.status === 'failed' &&
-          item.failureReason === 'rateLimit' &&
-          onQueueLimitReset &&
-          limitResetsAt != null && (
-            <ContinueOnLimitResetButton
-              disabled={continueDisabled}
-              resetsAt={limitResetsAt}
-              onQueue={onQueueLimitReset}
-            />
-          )}
         {rateLimitResetMessage && (
           <span className="chat-detail__working-action-status" role="status">
             {rateLimitResetMessage}
@@ -2433,8 +2419,6 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
   onOpenFileLink,
   onToggleMessagePinned,
   onContinueStoppedTurn,
-  onQueueLimitReset,
-  limitResetsAt,
   onRetryStoppedTurn,
   onManageAccounts,
   onReauthenticate,
@@ -2709,10 +2693,6 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = ({
           ? () => onContinueStoppedTurn(item.id, continuePrompt.trim())
           : undefined
       }
-      onQueueLimitReset={
-        onQueueLimitReset ? () => onQueueLimitReset(continuePrompt.trim()) : undefined
-      }
-      limitResetsAt={limitResetsAt}
       onOpenFileLink={onOpenFileLink}
       onRetry={
         retryMessage && onRetryStoppedTurn ? () => onRetryStoppedTurn(retryMessage) : undefined

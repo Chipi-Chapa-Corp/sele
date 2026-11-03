@@ -72,6 +72,8 @@ const appApi: AppApi = {
     ipcRenderer.invoke(appIpcChannels.getContainerSuggestions, options),
   getSourceAvailability: (options) =>
     ipcRenderer.invoke(appIpcChannels.getSourceAvailability, options),
+  getGitHubPullRequests: (options) =>
+    ipcRenderer.invoke(appIpcChannels.getGitHubPullRequests, options),
   getGitChanges: (options) => ipcRenderer.invoke(appIpcChannels.getGitChanges, options),
   getGitBranches: (options) => ipcRenderer.invoke(appIpcChannels.getGitBranches, options),
   switchGitBranch: (options) => ipcRenderer.invoke(appIpcChannels.switchGitBranch, options),

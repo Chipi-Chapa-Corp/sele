@@ -15,7 +15,7 @@
   display: block;
   text-align: start;
   overflow: visible;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   white-space: normal;
 }
 
@@ -32,38 +32,32 @@
   flex: 1;
 }
 
+.changes-sidebar__commit-message .ui-textarea {
+  display: block;
+  field-sizing: content;
+  max-height: min(12rem, 30vh);
+  padding-block: 0.25rem;
+  overflow-y: auto;
+  resize: none;
+}
+
 .changes-sidebar__commit-row {
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex-wrap: wrap;
   gap: 0.4rem;
 }
 
-.changes-sidebar__commit-row > :only-child {
-  grid-column: 1 / -1;
-}
-
-.changes-sidebar__commit-row--manual {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.changes-sidebar__commit-row--with-mode {
-  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+.changes-sidebar__commit-row > .ui-button {
+  width: auto;
+  flex: 1 1 max-content;
 }
 
 .changes-sidebar__commit-mode {
   width: 4.4rem;
+  flex: 0 0 4.4rem;
   align-self: stretch;
-}
-
-@container changes-sidebar (max-width: 18rem) {
-  .changes-sidebar__commit-row--with-mode {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .changes-sidebar__commit-row--with-mode > .ui-button:first-child {
-    grid-column: 1 / -1;
-  }
+  margin-inline-start: auto;
 }
 
 .changes-sidebar__sync-row {

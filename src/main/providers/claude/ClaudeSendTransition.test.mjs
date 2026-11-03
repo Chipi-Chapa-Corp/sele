@@ -244,6 +244,52 @@ test('live expired OAuth errors finish the turn and pause queued messages for re
   assert.equal(remote.queuedMessagesPaused, false)
 })
 
+test('native limit and provider failures finish only their own chat without expiring the account', async () => {
+  for (const code of [
+    'rate_limit',
+    'billing_error',
+    'overloaded',
+    'invalid_request',
+    'server_error'
+  ]) {
+    const { instance, state } = setup()
+    state.partialMessages = new Map()
+    state.active = true
+    state.failed = false
+    const pending = state.queuedMessages[0]
+    const sibling = { container: null, queuedMessagesPaused: false }
+    instance.states.set('sibling', sibling)
+    const updates = []
+    instance.reportLiveTokenUsage = () => {}
+    instance.addTranscriptMessage = () => {}
+    instance.emitUpdate = (_state, completed) => updates.push(completed)
+    instance.queueUpdate = () => {}
+    assert.equal(
+      await instance.handleQueryEvent(
+        state,
+        {},
+        {
+          type: 'assistant',
+          uuid: 'failure',
+          session_id: 'session',
+          parent_tool_use_id: null,
+          error: code,
+          message: { content: [{ type: 'text', text: 'Request rejected' }] }
+        }
+      ),
+      true,
+      code
+    )
+    assert.equal(state.failed, true, code)
+    assert.equal(state.active, false, code)
+    assert.equal(state.queuedMessagesPaused, true, code)
+    assert.equal(state.queuedMessages[0], pending, code)
+    assert.equal(instance.authenticationFailures.size, 0, code)
+    assert.equal(sibling.queuedMessagesPaused, false, code)
+    assert.deepEqual(updates, [true], code)
+  }
+})
+
 test('unauthenticated sends and retries are rejected before changing transcript or queue', async () => {
   const { instance, state } = setup()
   instance.authenticationFailures.add('host')
@@ -455,6 +501,34 @@ test('API failures with a success subtype publish their error text as a failed t
   assert.equal(state.failed, true)
   assert.equal(transcript.at(-1).failed, true)
   assert.equal(transcript.at(-1).message.content, 'Overloaded. Try again later.')
+})
+
+test('result failures preserve queued messages and the native local-budget error category', async () => {
+  const { instance, state, transcript } = setup()
+  const pending = state.queuedMessages[0]
+  state.active = true
+  const control = { getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }) }
+  state.query = control
+  instance.queueUpdate = () => {}
+  instance.refreshSessionMetadata = async () => {}
+  assert.equal(
+    await instance.handleQueryEvent(
+      state,
+      control,
+      successfulResult({
+        subtype: 'error_max_budget_usd',
+        is_error: true,
+        errors: ['Local usage limit reached']
+      })
+    ),
+    true
+  )
+  assert.equal(state.active, false)
+  assert.equal(state.failed, true)
+  assert.equal(state.queuedMessagesPaused, true)
+  assert.equal(state.queuedMessages[0], pending)
+  assert.equal(transcript.at(-1).error, 'error_max_budget_usd')
+  assert.equal(transcript.at(-1).message.content, 'Local usage limit reached')
 })
 
 for (const outcome of ['success', 'api-error', 'error-result', 'disconnect']) {

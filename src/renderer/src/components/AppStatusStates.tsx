@@ -145,20 +145,21 @@ export const ChatCommitMarkerItem: React.FC<{
   )
 }
 
-export const ChangesSidebarGitState: React.FC<{ active: boolean; label: string }> = ({
-  active,
-  label
-}) => (
+export const ChangesSidebarGitState: React.FC<{
+  active: boolean
+  label: string
+  Icon?: LucideIcon
+}> = ({ active, label, Icon = GitBranch }) => (
   <div className="changes-sidebar__git-state" role="status">
     {active ? (
       <AnimatedStatusIcon
-        Icon={GitBranch}
+        Icon={Icon}
         active
         className="changes-sidebar__git-state-icon"
         size={72}
       />
     ) : (
-      <GitBranch className="changes-sidebar__git-state-icon" aria-hidden="true" />
+      <Icon className="changes-sidebar__git-state-icon" aria-hidden="true" />
     )}
     <span className="sr-only">{label}</span>
   </div>

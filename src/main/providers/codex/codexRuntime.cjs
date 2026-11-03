@@ -14,6 +14,10 @@ function startRuntime(config) {
   let idleTimer = null
   let stopping = false
   let stderr = ''
+  const recordStartupError = (message) => {
+    if (!initialized && config.startupErrorPath)
+      fs.writeFileSync(config.startupErrorPath, message, { mode: 0o600 })
+  }
   const requests = new Map()
   const approvals = new Map()
   const threads = new Map()
@@ -217,10 +221,15 @@ function startRuntime(config) {
     })
     child.stdin.on('error', stop)
     child.on('error', (error) => {
+      recordStartupError(error.message)
       console.error('Codex runtime could not start the provider.', error.message)
       stop()
     })
     child.on('close', (code) => {
+      if (stderr.trim() || !stopping)
+        recordStartupError(
+          stderr.trim() || `Codex app-server exited with code ${code ?? 'unknown'}`
+        )
       if (!stopping) console.error('Codex provider stopped.', { code, stderr })
       stop()
     })

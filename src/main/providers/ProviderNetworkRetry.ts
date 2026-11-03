@@ -1,3 +1,4 @@
+import { isProviderUsageLimitError } from '../../shared/providerErrors.ts'
 import type {
   ProviderChatDetail,
   ProviderTurnOptions,
@@ -14,6 +15,7 @@ export const networkRetryPrompt =
 
 export const isTransientProviderFailure = (message: string): boolean => {
   if (
+    isProviderUsageLimitError(message) ||
     /\b(?:401|403|429)\b|rate[ _-]?limit|usage[ _-]?limit|quota|insufficient (?:balance|credits)|unauthori[sz]ed|authentication|invalid api key|permission denied|certificate|ENOTFOUND/i.test(
       message
     )
@@ -28,34 +30,51 @@ type RetryState = {
   options?: ProviderTurnOptions
   attempt: number
   policy: NetworkRetrySettings
+  usageResetStepId?: string
   failedStepId?: string
   failedDetail?: ProviderChatDetail
   lastPresentedRevision?: number
   timer?: ReturnType<typeof setTimeout>
 }
 
-const getFailedStep = (detail: ProviderChatDetail): ProviderWorkingStep | undefined => {
+const getTerminalFailedStep = (detail: ProviderChatDetail): ProviderWorkingStep | undefined => {
   if (
     (detail.status !== 'error' && detail.status !== null) ||
     (detail.writeAccess !== undefined && detail.writeAccess !== 'writable') ||
     detail.pendingApproval ||
-    detail.pendingUserInput ||
-    detail.items.some((item) => item.type === 'pendingMessage')
+    detail.pendingUserInput
   )
     return undefined
   const lastTurnItem = detail.items.findLast(
     (item) => item.type === 'working' || (item.type === 'message' && item.role === 'user')
   )
-  return lastTurnItem?.type === 'working' &&
-    lastTurnItem.status === 'failed' &&
-    lastTurnItem.failureReason !== 'rateLimit' &&
-    isTransientProviderFailure(lastTurnItem.failureMessage ?? '')
+  return lastTurnItem?.type === 'working' && lastTurnItem.status === 'failed'
     ? lastTurnItem
     : undefined
 }
 
+const getFailedStep = (detail: ProviderChatDetail): ProviderWorkingStep | undefined => {
+  if (detail.items.some((item) => item.type === 'pendingMessage')) return undefined
+  const step = getTerminalFailedStep(detail)
+  return step &&
+    step.failureReason === undefined &&
+    isTransientProviderFailure(step.failureMessage ?? '')
+    ? step
+    : undefined
+}
+
+export type QueueUsageResetContinuation = (
+  chatId: string,
+  prompt: string,
+  options: ProviderTurnOptions,
+  isCurrent: () => boolean
+) => Promise<void>
+
 /** Retry only confirmed terminal turns, never an ambiguous failed message submission. */
-export const withProviderNetworkRetries = (adapter: ProviderAdapter): ProviderAdapter => {
+export const withProviderNetworkRetries = (
+  adapter: ProviderAdapter,
+  queueUsageResetContinuation?: QueueUsageResetContinuation
+): ProviderAdapter => {
   const states = new Map<string, RetryState>()
   const revisionOffsets = new Map<string, number>()
   const listeners = new Set<Parameters<ProviderAdapter['onChatUpdated']>[0]>()
@@ -159,6 +178,38 @@ export const withProviderNetworkRetries = (adapter: ProviderAdapter): ProviderAd
   const unsubscribe = adapter.onChatUpdated((detail, metadata) => {
     const state = states.get(detail.id)
     if (state) {
+      const terminalFailure = getTerminalFailedStep(detail)
+      const usageFailure =
+        terminalFailure?.failureReason === 'rateLimit' ? terminalFailure : undefined
+      const options = state.options
+      const prompt = options?.usageResetContinuation?.prompt.trim()
+      if (state.usageResetStepId && !usageFailure) cancel(detail.id)
+      else if (
+        metadata?.turnCompleted &&
+        usageFailure &&
+        options &&
+        prompt &&
+        queueUsageResetContinuation
+      ) {
+        if (!state.usageResetStepId) {
+          if (state.timer) clearTimeout(state.timer)
+          state.timer = undefined
+          state.usageResetStepId = usageFailure.id
+          const isCurrent = (): boolean => !disposed && states.get(detail.id) === state
+          void queueUsageResetContinuation(detail.id, prompt, options, isCurrent)
+            .catch((error) =>
+              console.error(
+                '[ProviderNetworkRetry] Unable to queue usage reset continuation',
+                error
+              )
+            )
+            .finally(() => {
+              if (isCurrent()) cancel(detail.id)
+            })
+        }
+        publish(detail, metadata)
+        return
+      }
       if (getFailedStep(detail)) state.failedDetail = detail
       if (state.timer && !getFailedStep(detail)) cancel(detail.id)
       else if (metadata?.turnCompleted) {
@@ -224,6 +275,17 @@ export const withProviderNetworkRetries = (adapter: ProviderAdapter): ProviderAd
         listeners.delete(listener)
       }
     },
+    enqueueLimitResetMessage: adapter.enqueueLimitResetMessage
+      ? async (id, message, messageId, options, commit) => {
+          begin(id, options)
+          try {
+            await adapter.enqueueLimitResetMessage!(id, message, messageId, options, commit)
+          } catch (error) {
+            cancel(id)
+            throw error
+          }
+        }
+      : undefined,
     getChats: async (options) => {
       const page = await adapter.getChats(options)
       return {

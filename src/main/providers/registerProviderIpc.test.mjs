@@ -1088,3 +1088,37 @@ test('subagent IPC forwards cursor navigation and retains the provider paging me
     /Invalid subagent history cursor/
   )
 })
+
+test('chat IPC preserves the configured reset continuation and rejects malformed prompts', async () => {
+  const h = setup()
+  const received = []
+  h.harness.continueChat = async (_provider, _chat, _message, options) => {
+    received.push(options.usageResetContinuation)
+    return { id: 'chat', revision: 1, items: [] }
+  }
+  const handler = h.harness.handlers.get(channels.continueChatSummary)
+  const options = { model: 'fixture', approvalPolicy: 'never', sandboxMode: 'workspace-write' }
+  for (const provider of ['codex', 'claude', 'copilot', 'opencode-v2']) {
+    await handler({}, provider, 'chat', 'task', {
+      ...options,
+      usageResetContinuation: { prompt: '  Finish the task.  ' }
+    })
+    assert.equal(received.at(-1).prompt, 'Finish the task.')
+    await handler({}, provider, 'chat', 'task', options)
+    assert.equal(received.at(-1), undefined)
+    for (const usageResetContinuation of [
+      true,
+      null,
+      [],
+      {},
+      { prompt: '' },
+      { prompt: ' ' },
+      { prompt: 1 }
+    ]) {
+      await assert.rejects(
+        handler({}, provider, 'chat', 'task', { ...options, usageResetContinuation }),
+        /Invalid usage reset continuation/
+      )
+    }
+  }
+})

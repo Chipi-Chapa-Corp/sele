@@ -178,3 +178,37 @@ test('cancelling a failed handoff removes its local pending copy before forgetti
   })
   assert.equal(f.entries.size, 0)
 })
+
+test('an automatic continuation canceled while waiting on an outbox write is not persisted', async () => {
+  const f = fixture()
+  let finish
+  const blocked = new Promise((resolve) => {
+    finish = resolve
+  })
+  const put = f.backend.put
+  f.backend.put = async (entry) => {
+    if (entry.content === 'first') await blocked
+    await put(entry)
+  }
+  const queue = f.create()
+  let current = true
+  const first = queue.add('codex', 'chat', 'first', options, [limit()])
+  const stale = queue.add(
+    'codex',
+    'chat',
+    'stale continuation',
+    options,
+    [limit()],
+    undefined,
+    'saved',
+    () => current
+  )
+  current = false
+  finish()
+  await Promise.all([first, stale])
+  assert.deepEqual(
+    (await queue.list('codex', 'chat')).map((entry) => entry.content),
+    ['first']
+  )
+  await queue.close()
+})

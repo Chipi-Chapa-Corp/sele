@@ -17,6 +17,21 @@ if (!process.versions.electron) {
             import {createRoot} from 'react-dom/client'
             import {flushSync} from 'react-dom'
             import {renderRootChatTurn} from './src/renderer/src/workspace/chatTurnRendering'
+            import {renderSettingsPanel} from './src/renderer/src/components/SettingsPanel'
+            import {readStoredAppSettings,writeStoredAppSettings} from './src/renderer/src/settings'
+            import {LimitResetQueueMessages} from './src/renderer/src/components/LimitResetQueueMessages'
+            import './src/renderer/src/App.css'
+            import './src/renderer/src/assets/main.css'
+            import './src/renderer/src/workspace/styles/settings-sections.css'
+            import './src/renderer/src/workspace/styles/settings-controls.css'
+            const stored = new Map()
+            window.preferencesApi = {
+              getItem:key=>({ok:true,value:stored.get(key)??null}),
+              setItem:(key,value)=>{stored.set(key,value);return {ok:true,value:null}},
+              removeItem:key=>{stored.delete(key);return {ok:true,value:null}}
+            }
+            window.settings=readStoredAppSettings()
+            window.queueEntries=[]
             const root = createRoot(document.getElementById('root'))
             const noop = () => {}
             window.calls = []
@@ -32,17 +47,30 @@ if (!process.versions.electron) {
               pinnedChatMessageIds:new Set(), stoppedTurnRetryMessages:new Map(), canRetryStoppedTurns:false,
               continuePrompt:'  Keep working.  ', availableRateLimitResets:0,
               onContinueStoppedTurn:async (id,prompt) => window.calls.push(['now',id,prompt]),
-              onQueueLimitReset:async prompt => {
-                window.calls.push(['queue',prompt])
-                if(window.delay) await new Promise(resolve => window.finishQueue = resolve)
-                if(window.fail) throw new Error('Queue unavailable')
-              },
-              limitResetsAt:Date.now() + 7200000
+
             }
             window.renderFixture = (changes={}, step={}) => {
               Object.assign(inputs,changes)
               inputs.visibleChatItems = [{...item,...step}]
-              flushSync(() => root.render(<div key={inputs.motionChatKey}>{renderRootChatTurn(inputs,0,{id:'turn',items:inputs.visibleChatItems})}</div>))
+              const props = {
+                settingsTab:'chat',settingsPanelSettings:window.settings,
+                getSettingsFieldClassName:(...classes)=>['settings-dialog__field',...classes].join(' '),
+                renderProjectSettingAction:()=>null,isScopedSettingControlDisabled:()=>false,
+                forceAccessOptions:[],forceReviewOptions:[],forceModelOptions:[],forceReasoningOptions:[],forceSpeedOptions:[],
+                handleChatDropdownPreferenceChange:(key,enabled)=>{
+                  writeStoredAppSettings({...window.settings,chat:{...window.settings.chat,[key]:enabled}})
+                  window.settings=readStoredAppSettings();window.renderFixture()
+                },
+                handleChatDropdownSettingChange:noop,handleNetworkRetrySettingChange:noop,
+                handleContinuePromptChange:noop,handleLinkedChatSummaryPromptChange:noop
+              }
+              flushSync(() => root.render(<main style={{padding:20,display:'grid',gridTemplateColumns:'600px 420px',gap:24}}>
+                <div id="settings" style={{height:860,overflow:'auto'}}>{renderSettingsPanel(props)}</div>
+                <div key={inputs.motionChatKey}>
+                  {renderRootChatTurn(inputs,0,{id:'turn',items:inputs.visibleChatItems})}
+                  <LimitResetQueueMessages providerId="claude" target="chat"/>
+                </div>
+              </main>))
             }
             window.renderFixture()
           `
@@ -69,7 +97,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script>'
+        '<link rel="stylesheet" href="fixture.css"><div id="root"></div><script>window.queueEntries=[];window.providerApi={getLimitResetMessages:async()=>window.queueEntries,deleteLimitResetMessage:async()=>{}}</script><script src="fixture.js"></script>'
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
@@ -95,6 +123,8 @@ if (!process.versions.electron) {
   app.whenReady().then(async () => {
     try {
       const win = new BrowserWindow({
+        width: 1100,
+        height: 940,
         show: false,
         webPreferences: { backgroundThrottling: false }
       })
@@ -104,53 +134,53 @@ if (!process.versions.electron) {
           throw new Error(source + ': ' + error.message)
         })
       const settle = () => run('new Promise(resolve => setTimeout(resolve,40))')
-      const timedButton = `document.querySelector('[aria-label^="Continue in " ]')`
+      const timedButton = `document.querySelector('[aria-label^="Continue in "]')`
       const continueButton = `document.querySelector('[aria-label="Continue failed turn"]')`
+      const toggle = `document.querySelector('[aria-labelledby="settings-chat-continue-on-usage-reset"]')`
       await settle()
-      assert.equal(await run(`${timedButton}.textContent`), 'Continue in 2h')
-      assert.equal(await run(`Boolean(${continueButton})`), true)
-
-      // The timed action queues the configured continuation without sending it now.
-      await run(`window.delay=true;${timedButton}.click();${timedButton}.click()`)
-      await settle()
-      assert.deepEqual(await run('window.calls'), [['queue', 'Keep working.']])
-      assert.equal(await run(`${timedButton}.disabled`), true)
-      await run('window.delay=false;window.finishQueue()')
-      await settle()
-      assert.match(
-        await run('document.body.textContent'),
-        /Continuation added to the On Limit Reset queue/
-      )
-
-      await run(`window.fail=true;${timedButton}.click()`)
-      await settle()
-      assert.match(await run('document.body.textContent'), /Queue unavailable/)
-      assert.equal(await run(`${timedButton}.disabled`), false)
-
-      // A new reset updates the memoized row. The button disappears at its deadline
-      // without another chat update or waiting for the 30-second relative-date tick.
-      await run('renderFixture({limitResetsAt:Date.now()+250})')
-      assert.equal(await run(`Boolean(${timedButton})`), true)
-      await run('new Promise(resolve => setTimeout(resolve,400))')
       assert.equal(await run(timedButton), null)
       assert.equal(await run(`Boolean(${continueButton})`), true)
+      assert.equal(await run(`${toggle}.checked`), true)
+      assert.match(await run('document.body.textContent'), /Failure Retries/)
+      assert.doesNotMatch(await run('document.body.textContent'), /Network Retries/)
+      await run(`${toggle}.click()`)
+      await settle()
+      assert.equal(await run(`${toggle}.checked`), false)
+      assert.equal(await run('window.settings.chat.continueOnUsageReset'), false)
+      await run('window.renderFixture()')
+      assert.equal(await run(`${toggle}.checked`), false)
+
+      // A failure no longer offers the timed action; the ordinary Continue action still works.
       await run(`${continueButton}.click()`)
       await settle()
-      assert.deepEqual(await run('window.calls.at(-1)'), ['now', 'failed', 'Keep working.'])
+      assert.deepEqual(await run('window.calls'), [['now', 'failed', 'Keep working.']])
+      assert.equal(await run(timedButton), null)
 
-      // Fresh rows cover unknown reset times, unrelated failures, and disabled chats.
-      await run('renderFixture({motionChatKey:"unknown",limitResetsAt:null})')
-      assert.equal(await run(timedButton), null)
+      // Backend-created continuations appear in the existing reset queue.
       await run(
-        'renderFixture({motionChatKey:"ordinary",limitResetsAt:Date.now()+60000},{failureReason:undefined})'
+        `window.queueEntries=[{id:'auto',content:'Keep working.',createdAt:Date.now(),resetsAt:Date.now()+7200000,error:null}];window.dispatchEvent(new Event('sele-limit-reset-queue-changed'))`
+      )
+      await settle()
+      assert.match(
+        await run(`document.querySelector('[aria-label="On Limit Reset queue"]').textContent`),
+        /Keep working\./
       )
       assert.equal(await run(timedButton), null)
-      await run('renderFixture({motionChatKey:"disabled",stoppedTurnActionDisabled:true})')
-      assert.equal(await run(`${timedButton}.disabled`), true)
+
       await run(
-        'renderFixture({motionChatKey:"blank",stoppedTurnActionDisabled:false,continuePrompt:"  "})'
+        'document.querySelector("#settings-chat-failure-retries").scrollIntoView({block:"center"})'
       )
-      assert.equal(await run(`${timedButton}.disabled`), true)
+      if (process.env.SELE_FAILURE_RETRIES_SCREENSHOT) {
+        win.showInactive()
+        await run('new Promise(resolve => setTimeout(resolve,250))')
+        await fs.writeFile(
+          process.env.SELE_FAILURE_RETRIES_SCREENSHOT,
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
+      await run(`${toggle}.click()`)
+      await settle()
+      assert.equal(await run('window.settings.chat.continueOnUsageReset'), true)
       console.log('Continue on limit reset checks passed.')
       app.exit(0)
     } catch (error) {

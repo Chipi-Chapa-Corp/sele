@@ -1086,6 +1086,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     promptSuggestions?: unknown
     additionalDirectories?: unknown
     networkRetry?: unknown
+    usageResetContinuation?: unknown
     agentMode?: unknown
     approvalPolicy?: unknown
     approvalsReviewer?: unknown
@@ -1115,6 +1116,20 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
     ) {
       throw new Error('Invalid network retry settings')
     }
+  }
+  let usageResetContinuation: ProviderTurnOptions['usageResetContinuation']
+  if (options.usageResetContinuation !== undefined) {
+    const value = options.usageResetContinuation
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      !('prompt' in value) ||
+      typeof value.prompt !== 'string' ||
+      !value.prompt.trim()
+    )
+      throw new Error('Invalid usage reset continuation')
+    usageResetContinuation = { prompt: value.prompt.trim() }
   }
   const agentMode = options.agentMode
   if (agentMode != null && !isProviderAgentMode(agentMode)) {
@@ -1186,6 +1201,7 @@ const requireTurnOptions = (value: unknown): ProviderTurnOptions | undefined => 
       : { promptSuggestions: requireBoolean(options.promptSuggestions) }),
     additionalDirectories,
     ...(networkRetry ? { networkRetry } : {}),
+    ...(usageResetContinuation ? { usageResetContinuation } : {}),
     ...(agentMode == null ? {} : { agentMode }),
     approvalPolicy,
     approvalsReviewer,

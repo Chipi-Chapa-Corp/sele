@@ -1,3 +1,5 @@
+import { appGitHubPullRequestStates } from '../shared/app'
+import { listGitHubPullRequests } from './githubPullRequests'
 import { bufferedCommands } from './BufferedCommandWorker'
 import { prepareMessageAttachments } from './messageAttachments'
 import { getVideoMimeType } from '../shared/video'
@@ -28,6 +30,7 @@ import type {
   AppGitCommitAction,
   AppGitCommitOptions,
   AppGitBranchesOptions,
+  AppGitHubPullRequestsOptions,
   AppGitBranchesResult,
   AppGitDeleteBranchOptions,
   AppGitDeleteBranchResult,
@@ -1122,6 +1125,31 @@ const getGitBranchesOptions = (value: unknown): AppGitBranchesOptions => {
       optional: true
     }),
     cwd: getDefaultPath((value as { cwd?: unknown }).cwd)
+  }
+}
+
+const getGitHubPullRequestsOptions = (value: unknown): AppGitHubPullRequestsOptions => {
+  const options = getGitBranchesOptions(value)
+  const { page, states } = (value as { page?: unknown; states?: unknown } | null) ?? {}
+  if (
+    page !== undefined &&
+    (typeof page !== 'number' || !Number.isSafeInteger(page) || page < 1 || page > 50)
+  ) {
+    throw new Error('Invalid GitHub pull request page')
+  }
+  if (
+    states !== undefined &&
+    (!Array.isArray(states) ||
+      states.length > 4 ||
+      states.some((state) => !appGitHubPullRequestStates.includes(state)) ||
+      new Set(states).size !== states.length)
+  ) {
+    throw new Error('Invalid GitHub pull request states')
+  }
+  return {
+    ...options,
+    page: page as number | undefined,
+    states: states as AppGitHubPullRequestsOptions['states']
   }
 }
 
@@ -3333,6 +3361,42 @@ export const registerAppIpc = (): void => {
     const options = getGitChangesOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitChanges(options.cwd ?? process.cwd(), options.source, options.fetchRemote)
+    )
+  })
+
+  handleLoggedIpc(appIpcChannels.getGitHubPullRequests, async (_event, value: unknown) => {
+    const options = getGitHubPullRequestsOptions(value)
+    const cwd = options.cwd ?? process.cwd()
+    return runWithGitContainer(options.container, () =>
+      listGitHubPullRequests(cwd, options, runGit, async (args) => {
+        const command = await getHostCommand('gh', args, {
+          cwd,
+          container: options.container,
+          env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_PAGER: 'cat' }
+        }).catch((cause: unknown) => {
+          throw new Error(
+            'GitHub CLI was not found. Install gh on the machine hosting this project and run gh auth login.',
+            { cause }
+          )
+        })
+        const { error, stdout, stderr } = await bufferedCommands.run(command, {
+          timeout: 30_000,
+          maxBuffer: 2 * 1024 * 1024
+        })
+        if (error) {
+          const detail = stderr.trim() || error.message
+          const hint =
+            error.code === 'ENOENT'
+              ? 'Install GitHub CLI and run gh auth login on the machine hosting this project.'
+              : error.code === 4 || /gh auth login|not logged|authentication/i.test(detail)
+                ? 'Run gh auth login on the machine hosting this project.'
+                : ''
+          throw new Error(
+            ['Unable to load GitHub pull requests.', hint, detail].filter(Boolean).join('\n')
+          )
+        }
+        return stdout
+      })
     )
   })
 

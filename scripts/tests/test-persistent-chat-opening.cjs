@@ -55,11 +55,12 @@ if (!process.versions.electron) {
           import {createRoot} from 'react-dom/client'
           import './src/renderer/src/assets/main.css'
           const noop=()=>{};
-          const chats=['first','second','unknown','empty'].map(id=>({id,providerId:'codex',createdAt:1,updatedAt:999,
+          const chats=['first','second','unknown','empty','fallback','no-default'].map(id=>({id,providerId:'codex',createdAt:1,updatedAt:999,
             title:'Cached '+id,preview:'Saved answer',cwd:'/fixture',cwdKind:'directory',projectCwd:null,
             branchName:null,worktreeBaseBranchName:null,container:null,status:null,pinned:false,sidebarOrder:null,
             done:false,seenUpdatedAt:2,purpose:null,lastTurnOutcome:null,pendingApproval:null}));
-          window.pending={};window.sends=0;window.discovery=0;
+          window.pending={};window.sends=0;window.discovery=0;window.chatReads={};window.accountSelections=[];
+          window.defaultSelected=false;
           // A navigation transition may retain the old screen for a frame.
           // Inspect the first paint selecting the destination, with its provider held.
           window.openChatBeforePaint=id=>new Promise((resolve,reject)=>{const start=performance.now();
@@ -88,15 +89,20 @@ if (!process.versions.electron) {
             getChats:()=>new Promise(resolve=>{window.discovery++;window.finishDiscovery=()=>resolve({chats,nextCursor:null,conversationViews:[]})}),
             continueChat:()=>{window.sends++;throw new Error('Unexpected send from cached preview')},
             getCachedChat:(...args)=>window.fixtureNative.cached(...args),
-            getChat:(_provider,id)=>new Promise((resolve,reject)=>{window.pending[id]={resolve,reject}}),
+            getChat:(_provider,id)=>new Promise((resolve,reject)=>{window.chatReads[id]=(window.chatReads[id]||0)+1;window.pending[id]={resolve,reject}}),
             markChatSeen:(_provider,id,seenUpdatedAt)=>({...chats.find(chat=>chat.id===id),seenUpdatedAt}),
             getModels:()=>[{id:'fixture',label:'Fixture',isDefault:true,supportedReasoningEfforts:[],defaultReasoningEffort:'medium'}],
-            getAccounts:()=>({available:true,unavailableMessage:null,accounts:[{id:'fixture',active:true}]}),
+            getAccounts:(_provider,options)=>({available:true,unavailableMessage:null,
+              accounts:options?.chatId==='fallback'
+                ?[{id:'default',displayName:'Default Account',active:window.defaultSelected}]
+                :options?.chatId==='no-default'?[{id:'alternate',active:false}]:[{id:'fixture',active:true}]}),
+            useAccount:(_provider,id,options)=>{window.accountSelections.push({id,chatId:options?.chatId});
+              window.defaultSelected=true;return {available:true,unavailableMessage:null,accounts:[{id,active:true}]};},
             getUsage:()=>usage,getDefaultCwd:()=>'/fixture',getWindowState:()=>({isMaximized:false}),getAppUpdate:()=>null,
             getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
             getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
             getSkills:()=>[],getApps:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],
-            getChatTerminalTasks:()=>[],getLimitResetMessages:()=>[],getUpdateAvailability:()=>null
+            getChatTerminalTasks:()=>[],listAgentSessions:()=>[],getLimitResetMessages:()=>[],getUpdateAvailability:()=>null
           };
           const api=new Proxy({}, {get:(_target,name)=>name.startsWith('on')?()=>noop:(...args)=>Promise.resolve(defaults[name]?.(...args)??null)});
           Object.assign(window,{appApi:api,providerApi:api,terminalApi:api,browserApi:api});
@@ -159,7 +165,7 @@ if (!process.versions.electron) {
     let code = 0
     const backend = require(path.join(directory, 'backend.cjs'))
     try {
-      const headers = ['first', 'second', 'empty'].map((id) => ({
+      const headers = ['first', 'second', 'empty', 'fallback', 'no-default'].map((id) => ({
         providerId: 'codex',
         id,
         createdAt: 1,
@@ -241,7 +247,7 @@ if (!process.versions.electron) {
       const run = (source) => win.webContents.executeJavaScript(source)
       const ready = (condition) =>
         run(
-          `new Promise((resolve,reject)=>{const deadline=performance.now()+8000;function check(){if(${condition})return resolve();if(performance.now()>deadline)return reject(new Error('Timed out: '+${JSON.stringify(condition)}));requestAnimationFrame(check)}check()})`
+          `new Promise((resolve,reject)=>{const deadline=performance.now()+8000;function check(){if(${condition})return resolve();if(performance.now()>deadline)return reject(new Error('Timed out: '+${JSON.stringify(condition)}+'; reads='+JSON.stringify(window.chatReads)+'; selections='+JSON.stringify(window.accountSelections)+'; composer='+document.querySelector('.chat-panel__composer')?.textContent));requestAnimationFrame(check)}check()})`
         )
       await ready(`document.querySelector('[data-chat-id="first"] .chat-list-item__main')`)
       assert.equal(
@@ -319,8 +325,21 @@ if (!process.versions.electron) {
       )
       await run(`setDraft();pending.second.reject(new Error('Fixture provider offline'))`)
       await ready(
-        `document.querySelector('.chat-detail__history-preview')?.textContent.includes('Unable to refresh')`
+        `document.querySelector('.chat-panel__composer [aria-label="Request error"]')?.textContent.includes('Fixture provider offline')`
       )
+      assert.equal(await run(`document.querySelector('.chat-detail__history-preview')`), null)
+      assert.equal(
+        await run(`document.querySelectorAll('[aria-label="Request error"]').length`),
+        1,
+        'saved history uses the shared bottom request error without duplicate notices'
+      )
+      if (process.env.SELE_ERROR_SCREENSHOT) {
+        await fs.mkdir(path.dirname(process.env.SELE_ERROR_SCREENSHOT), { recursive: true })
+        await fs.writeFile(
+          process.env.SELE_ERROR_SCREENSHOT,
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
       await run(
         `document.querySelector('.chat-panel__composer form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))`
       )
@@ -333,15 +352,25 @@ if (!process.versions.electron) {
         `document.querySelector('.chat-panel__composer [aria-label="Send message"]').disabled`
       )
       await run(
-        `document.querySelector('.chat-detail__history-preview button').click();window.retry=pending.second;void 0`
+        `document.querySelector('.chat-panel__composer [aria-label="Request error"] button').click()`
       )
-      await run(`retry.resolve(fresh('second'))`)
+      await ready(`window.chatReads.second === 2`)
+      await run(`pending.second.reject(new Error('Fixture retry failed'))`)
+      await ready(
+        `document.querySelector('.chat-panel__composer [aria-label="Request error"]')?.textContent.includes('Fixture retry failed')`
+      )
+      await run(
+        `document.querySelector('.chat-panel__composer [aria-label="Request error"] button').click()`
+      )
+      await ready(`window.chatReads.second === 3`)
+      await run(`pending.second.resolve(fresh('second'))`)
       await ready(
         `document.getElementById('chat-search-content')?.textContent.includes('Fresh authoritative second')`
       )
       await ready(
         `!document.querySelector('.chat-panel__composer [aria-label="Send message"]').disabled`
       )
+      assert.equal(await run(`document.querySelector('[aria-label="Request error"]')`), null)
       const emptyOpen = await run(`openChat('empty')`)
       assert.equal(emptyOpen.loader, false, 'a known empty conversation is ready, not loading')
       await run(`finishDiscovery()`)
@@ -349,6 +378,19 @@ if (!process.versions.electron) {
       const unknownOpen = await run(`openChatBeforePaint('unknown')`)
       assert.equal(unknownOpen.loader, false, 'the loader is delayed past fast openings')
       await ready(`document.querySelector('[aria-label="Loading messages"]')`)
+      await run(`pending.unknown.reject(new Error('Fixture uncached load failed'))`)
+      await ready(
+        `document.querySelector('.chat-panel__composer [aria-label="Request error"]')?.textContent.includes('Fixture uncached load failed')`
+      )
+      assert.equal(
+        await run(`document.querySelector('.chat-detail__messages-status[role="alert"]')`),
+        null,
+        'uncached failures use the same bottom banner'
+      )
+      await run(
+        `document.querySelector('.chat-panel__composer [aria-label="Request error"] button').click()`
+      )
+      await ready(`window.chatReads.unknown === 2`)
       await run(`pending.unknown.resolve(fresh('unknown'))`)
       await ready(
         `document.getElementById('chat-search-content')?.textContent.includes('Fresh authoritative unknown')`
@@ -361,8 +403,36 @@ if (!process.versions.electron) {
         'processing establishes the view even with the recent-chat cache disabled'
       )
       assert.match(processedOpen.text, /Fresh authoritative unknown/)
+      await run(`openChat('fallback')`)
+      await ready(`window.defaultSelected && window.chatReads.fallback >= 2`)
+      assert.deepEqual(await run('window.accountSelections'), [
+        { id: 'default', chatId: 'fallback' }
+      ])
+      await run(`pending.fallback.resolve(fresh('fallback'))`)
+      await ready(
+        `document.getElementById('chat-search-content')?.textContent.includes('Fresh authoritative fallback')`
+      )
+      await run('setDraft()')
+      await ready(
+        `!document.querySelector('.chat-panel__composer [aria-label="Send message"]').disabled`
+      )
+      assert.equal(await run(`document.querySelector('[aria-label="Request error"]')`), null)
+      await run(`openChat('no-default')`)
+      await ready(`window.pending['no-default']`)
+      await run(`pending['no-default'].reject(new Error('Fixture no account available'))`)
+      await ready(
+        `document.querySelector('.chat-panel__composer [aria-label="Request error"]')?.textContent.includes('Fixture no account available')`
+      )
+      assert.equal(await run('window.accountSelections.length'), 1, 'no fallback without Default')
+      await run(`openChat('first')`)
+      await ready(`!document.querySelector('[aria-label="Request error"]')`)
       assert.deepEqual(
-        errors.filter((error) => !error.includes('Fixture provider offline')),
+        errors.filter(
+          (error) =>
+            !/Fixture (?:provider offline|retry failed|uncached load failed|no account available)/.test(
+              error
+            )
+        ),
         []
       )
       console.log(

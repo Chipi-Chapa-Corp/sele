@@ -59,7 +59,8 @@ if (!process.versions.electron) {
               captureMessageFlight(document.getElementById('composer'),'Look at this','codex:chat')
               window.showConversation([{type:'message',role:'user',id:'optimistic:1:user',
                 content:'Look at this',createdAt:Date.now(),attachments:[{
-                  kind:'image',name:'Attached image',path:'/fixture/attached.png',dataUrl:window.pixel}]}])
+                  kind:'image',name:'Attached image',path:'/fixture/attached.png',dataUrl:window.pixel}]},
+                {type:'working',id:'optimistic:1:working',status:'working',items:[]}])
             }
             window.showConversation()
           `
@@ -145,6 +146,8 @@ if (!process.versions.electron) {
         run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
       await run(`send();window.row=document.querySelector('[data-chat-message-id]');
         window.turn=document.querySelector('[data-chat-turn-id]');
+        window.placeholder=document.querySelector('.chat-detail__tool-placeholder');
+        window.workingMark=placeholder.querySelector('svg');
         window.attachment=document.querySelector('.chat-detail__generated-image-thumbnail img')`)
       assert.equal(
         await run('Boolean(attachment) && attachment.src===pixel'),
@@ -162,6 +165,12 @@ if (!process.versions.electron) {
         true,
         'provider confirmation preserves the turn, message and attached image before paint'
       )
+      assert.equal(
+        await run(`placeholder===document.querySelector('.chat-detail__tool-placeholder') &&
+        workingMark===placeholder.querySelector('svg')`),
+        true,
+        'provider confirmation preserves the working placeholder and animated mark'
+      )
       await run('resolveImages()')
       await frames()
       assert.equal(
@@ -177,8 +186,29 @@ if (!process.versions.electron) {
         'confirmed row remains visible after landing'
       )
       assert.equal(await run('document.querySelector(".message-flight")'), null)
+      await run(`window.workingLabel=placeholder.querySelector('.chat-detail__tool-label > span');
+        window.workingText=workingLabel.textContent;
+        showConversation([...current.items,{type:'working',id:'native-working',status:'working',items:[]}])`)
+      assert.equal(
+        await run(`placeholder===document.querySelector('.chat-detail__tool-placeholder') &&
+        workingMark===placeholder.querySelector('svg') &&
+        workingLabel===placeholder.querySelector('.chat-detail__tool-label > span') &&
+        workingLabel.textContent===workingText && workingText.length>0`),
+        true,
+        'the first provider working step preserves the mark and does not restart the label reveal'
+      )
+      for (const itemCount of [1, 2, 3]) {
+        await run(`showConversation([current.items[0],{...current.items[1],itemCount:${itemCount},
+          items:[{type:'message',id:'activity-${itemCount}',role:'assistant',content:'Thinking'}]}])`)
+        assert.equal(
+          await run(`placeholder===document.querySelector('.chat-detail__tool-placeholder') &&
+          workingMark===placeholder.querySelector('svg')`),
+          true,
+          'new activity preserves the placeholder and its running animation'
+        )
+      }
       await run(
-        `showConversation([...current.items,{id:'answer',type:'message',role:'assistant',content:'![Result](/fixture/result.png)'}]);resolveImages()`
+        `showConversation([current.items[0],{id:'answer',type:'message',role:'assistant',content:'![Result](/fixture/result.png)'}]);resolveImages()`
       )
       await frames()
       await run(
@@ -217,7 +247,7 @@ if (!process.versions.electron) {
       )
       assert.deepEqual(errors, [])
       console.log(
-        'Message continuity passed: delayed attachments, canonical IDs, turn/message/image DOM, send landing, Activity media reconnect'
+        'Message continuity passed: delayed attachments, canonical IDs, turn/message/image DOM, send landing, working placeholder continuity, Activity media reconnect'
       )
       win.destroy()
       app.exit(0)

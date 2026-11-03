@@ -91,3 +91,8 @@
 .terminal-panel__host .xterm {
   padding: 0;
 }
+
+/* xterm's viewport extends below its whole-row renderer and defaults to black. */
+.terminal-panel__host .xterm-viewport {
+  background-color: var(--control-surface);
+}

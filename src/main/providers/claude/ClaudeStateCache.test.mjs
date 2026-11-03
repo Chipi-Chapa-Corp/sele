@@ -1,3 +1,4 @@
+import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -73,6 +74,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
   let queryCreations = 0
   const context = vm.createContext({
     isClaudeAuthenticationFailure,
+    isProviderUsageLimitError,
     isClaudeInternalUserMessage,
     ClaudeTranscriptProjection,
     getClaudeTurnOutcome,
@@ -211,6 +213,24 @@ test('reopened authentication failures restore the error state until a later rea
     assert.equal(state.failed, messages.length === 2)
     assert.equal(instance.authenticationFailures.has('host'), messages.length === 2)
     assert.deepEqual(state.messages, messages)
+    instance.dispose()
+  }
+})
+
+test('reopened provider and quota failures restore the error state without blocking the account', async () => {
+  for (const code of ['rate_limit', 'billing_error', 'overloaded', 'invalid_request']) {
+    const error = {
+      type: 'assistant',
+      uuid: 'error',
+      session_id: 'chat',
+      parent_tool_use_id: null,
+      error: code,
+      message: { content: 'Request rejected' }
+    }
+    const { instance } = makeHarness({ records: () => [record('chat'), error] })
+    const state = await instance.ensureState('chat')
+    assert.equal(state.failed, true, code)
+    assert.equal(instance.authenticationFailures.size, 0, code)
     instance.dispose()
   }
 })

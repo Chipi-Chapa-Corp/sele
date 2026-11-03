@@ -1,4 +1,3 @@
-import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ITheme, Terminal as XtermTerminal } from '@xterm/xterm'
 import { Plus, Terminal as TerminalIcon, X } from 'lucide-react'
@@ -933,11 +932,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     }
   }
 
-  const motionPanelRef = useRef<HTMLElement>(null)
-  useFeedbackMotion(motionPanelRef, workspace?.activeTabId, 'panel')
-
   return (
-    <section ref={motionPanelRef} className="terminal-panel" aria-label="Terminal">
+    <section className="terminal-panel" aria-label="Terminal">
       <div className="terminal-panel__toolbar">
         <SegmentedControl
           aria-label="Terminal tabs"

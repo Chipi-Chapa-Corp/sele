@@ -1,3 +1,4 @@
+import { useGitHubPullRequests } from './workspace/useGitHubPullRequests'
 import { useChatTerminalActivity } from './useChatTerminalActivity'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../shared/noProject'
 import { chatTerminalActivity } from './chatTerminalActivity'
@@ -140,13 +141,8 @@ import type { MessageBoxQuoteRequest } from './components/MessageBox'
 import type { TerminalCommandLaunchRequest } from './components/TerminalPanel'
 import { appApi } from './appApi'
 import { shouldDisableRateLimitReset } from './accountRateLimits'
-import { nextLimitReset } from '../../shared/limitReset'
 import { browserApi } from './browserApi'
-import {
-  mapPreservingIdentity,
-  mergeChatMetadata,
-  mergeSeenUpdatedAt
-} from './chatMetadata'
+import { mapPreservingIdentity, mergeChatMetadata, mergeSeenUpdatedAt } from './chatMetadata'
 import {
   readStoredCollapsedProjectGroups,
   writeStoredCollapsedProjectGroups
@@ -456,8 +452,7 @@ export const useWorkspaceController = () => {
   const [recentlyOpenedFilesByWorkspace, setRecentlyOpenedFilesByWorkspace] =
     useState<RecentlyOpenedFilesByWorkspace>(readStoredRecentlyOpenedFiles)
   const sleepingChats = useSleepingChats()
-  const [manuallyUnreadChatKeys, setManuallyUnreadChatKeys] =
-    useState(readManuallyUnreadChats)
+  const [manuallyUnreadChatKeys, setManuallyUnreadChatKeys] = useState(readManuallyUnreadChats)
   useEffect(() => writeManuallyUnreadChats(manuallyUnreadChatKeys), [manuallyUnreadChatKeys])
   const [chatSidebarTabs, setChatSidebarTabs] = useState(readChatSidebarTabs)
   const [chatSidebarFilter, setChatSidebarFilter] = useState(readChatSidebarFilter)
@@ -479,6 +474,10 @@ export const useWorkspaceController = () => {
   }, [])
   const [extractedChatPlan, setExtractedChatPlan] = useState<ChatPlanData | null>(null)
   const [chatLoadState, setChatLoadState] = useState<LoadState>('ready')
+  const [chatLoadError, setChatLoadError] = useState<{
+    chatKey: string
+    message: string
+  } | null>(null)
   const [chatLoadRequest, setChatLoadRequest] = useState(0)
   const [committedChatUpdate, setCommittedChatUpdate] = useState<CommittedChatUpdate | null>(null)
   const [sendState, setSendState] = useState<SendState>('idle')
@@ -754,6 +753,7 @@ export const useWorkspaceController = () => {
   >({})
   const changeSource = getFixedChangeSource()
   const [storedChangesPaneView, setChangesPaneView] = useState<ChangesPaneView>('git')
+  const [gitPaneView, setGitPaneView] = useState<'changes' | 'pull-requests'>('changes')
   const changesPaneView =
     noProject && (storedChangesPaneView === 'git' || storedChangesPaneView === 'files')
       ? 'recents'
@@ -2720,9 +2720,9 @@ export const useWorkspaceController = () => {
       const appliedDetail = reuseChatSnapshotItems(
         currentDetail,
         shouldPreserveOptimisticTurnUntilUserMessage(providerId) &&
-        isActiveChatStatus(detail.status) &&
-        currentDetail?.id === detail.id &&
-        (options.select || selectedChatKeyRef.current === detailKey)
+          isActiveChatStatus(detail.status) &&
+          currentDetail?.id === detail.id &&
+          (options.select || selectedChatKeyRef.current === detailKey)
           ? preserveOptimisticChatDetail(currentDetail, detail)
           : detail
       )
@@ -2958,28 +2958,23 @@ export const useWorkspaceController = () => {
     [applyChatMetadata, applySeenUpdatedAt]
   )
 
-  const markSelectedChatSeen = useCallback(
-    (): void => {
-      if (!selectedChat) return
+  const markSelectedChatSeen = useCallback((): void => {
+    if (!selectedChat) return
 
-      const chatKey = getChatKey(selectedChat)
-      const cacheEntry = recentChatCacheRef.current.get(chatKey)
-      markChatSeenAt(
-        selectedChat.providerId,
-        selectedChat.id,
-        Math.max(
-          Date.now(),
-          selectedChat.updatedAt,
-          chatDetailRef.current?.id === selectedChat.id
-            ? (chatDetailRef.current.updatedAt ?? 0)
-            : 0,
-          selectedChatUpdatedAtRef.current ?? 0,
-          cacheEntry?.updatedAt ?? 0
-        )
+    const chatKey = getChatKey(selectedChat)
+    const cacheEntry = recentChatCacheRef.current.get(chatKey)
+    markChatSeenAt(
+      selectedChat.providerId,
+      selectedChat.id,
+      Math.max(
+        Date.now(),
+        selectedChat.updatedAt,
+        chatDetailRef.current?.id === selectedChat.id ? (chatDetailRef.current.updatedAt ?? 0) : 0,
+        selectedChatUpdatedAtRef.current ?? 0,
+        cacheEntry?.updatedAt ?? 0
       )
-    },
-    [markChatSeenAt, selectedChat]
-  )
+    )
+  }, [markChatSeenAt, selectedChat])
 
   const applyViewedChatDetail = useCallback(
     (
@@ -3308,6 +3303,7 @@ export const useWorkspaceController = () => {
     selectedChatUpdatedAtRef,
     setChatDetail,
     setChatLoadState,
+    setChatLoadError,
     markChatSeenAt,
     chatLoadRequest,
     chatInitialLayoutKeyRef,
@@ -3537,6 +3533,11 @@ export const useWorkspaceController = () => {
           },
     [doneProjectFilterValue, unfilteredDoneChatGroup]
   )
+  const gitHubPullRequests = useGitHubPullRequests({
+    active: changesPaneView === 'git' && gitPaneView === 'pull-requests',
+    cwd: changesProjectCwd ?? changesCwd,
+    container: changesContainer
+  })
   const messageBoxNotesCwd = selectedChat ? changesProjectCwd : newSessionCwd
   const messageBoxNotesVisible = Boolean(selectedChat) || newChatOpen
   const messageBoxNotesGroup = useMemo(
@@ -5057,14 +5058,18 @@ export const useWorkspaceController = () => {
     (Boolean(selectedChat) && chatDetail?.authenticationRequired === true)
   const chatOpenedElsewhere = chatWriteAccess.openedElsewhere
   const chatLegacyHistoryReadOnly = chatWriteAccess.legacyHistory
-  const requestErrorVisible = chatDetail?.writeAccess === 'readOnly' || sendState === 'error'
-  const requestErrorSummary = chatLegacyHistoryReadOnly
-    ? 'This legacy Codex chat is available read-only.'
-    : chatOpenedElsewhere
-      ? chatOpenElsewhereMessage
-      : sendState === 'error' && sendError
-        ? sendError
-        : 'Unable to complete request.'
+  const chatLoadFailed = chatLoadState === 'error' && chatLoadError?.chatKey === selectedChatKey
+  const requestErrorVisible =
+    chatLoadFailed || chatDetail?.writeAccess === 'readOnly' || sendState === 'error'
+  const requestErrorSummary = chatLoadFailed
+    ? chatLoadError.message
+    : chatLegacyHistoryReadOnly
+      ? 'This legacy Codex chat is available read-only.'
+      : chatOpenedElsewhere
+        ? chatOpenElsewhereMessage
+        : sendState === 'error' && sendError
+          ? sendError
+          : 'Unable to complete request.'
 
   const handleSendFailure = useCallback((error: unknown, fallback: string): void => {
     setSendError(getErrorMessage(error, fallback))
@@ -5099,7 +5104,7 @@ export const useWorkspaceController = () => {
     })
   }, [selectedChat, changesContainer, newSessionProvider])
 
-  const handleRetryChatWriteAccess = (): void => {
+  const handleRetryChatLoad = (): void => {
     if (!selectedChat) return
     setChatLoadState('loading')
     setChatLoadRequest((currentRequest) => currentRequest + 1)
@@ -5889,6 +5894,21 @@ export const useWorkspaceController = () => {
   // Only the group holding the selected chat receives the subagent list, so other groups keep
   // their memoized rows.
   const selectedSubagentChatOpen = Boolean(activeSubagentChatView)
+  const workingProjectCwds = useMemo(() => {
+    const cwds = new Set<string | null>()
+    for (const chat of chats) {
+      if (chat.imported) continue
+      const key = getChatKey(chat)
+      if (
+        chat.status === 'active' ||
+        committingChatKeys.has(key) ||
+        workingSubagentChatKeys.has(key)
+      ) {
+        cwds.add(getChatProjectCwd(chat))
+      }
+    }
+    return cwds
+  }, [chats, committingChatKeys, workingSubagentChatKeys])
   const renderSidebarChatGroup = useCallback(
     (group: ChatListGroupData, contentId: string, layoutOrder?: string): React.ReactElement => {
       const holdsSelectedChat = Boolean(
@@ -5898,7 +5918,9 @@ export const useWorkspaceController = () => {
           )
       )
       return renderChatGroup(
-        group,
+        group.kind === 'cwd'
+          ? { ...group, hasWorkingChat: workingProjectCwds.has(group.cwd) }
+          : group,
         contentId,
         holdsSelectedChat ? selectedChatSubagentList : null,
         holdsSelectedChat && selectedSubagentChatOpen,
@@ -5911,6 +5933,7 @@ export const useWorkspaceController = () => {
       selectedChatKey,
       selectedChatSubagentList,
       selectedSubagentChatOpen,
+      workingProjectCwds,
       workingSubagentChatKeys
     ]
   )
@@ -6145,13 +6168,6 @@ export const useWorkspaceController = () => {
     motionChatKey: selectedChatKey,
     authenticationRequired,
     availableRateLimitResets: accountUsage?.rateLimitResetCredits?.availableCount ?? 0,
-    limitResetsAt:
-      nextLimitReset(
-        accountUsage?.rateLimits.filter((limit) => limit.usedPercent >= 100) ?? [],
-        Date.now(),
-        selectedEffectiveModel?.usageScope
-      )?.resetsAt ?? null,
-    onQueueLimitReset: handleQueueLimitReset,
     canEditOwnMessages,
     continuePrompt: effectiveAppSettings.chat.continuePrompt,
     stoppedTurnActionDisabled,
@@ -6430,7 +6446,6 @@ export const useWorkspaceController = () => {
     conversationMessages: {
       visible: Boolean(selectedChat),
       chatKnown: Boolean(selectedChat && conversationViews.has(selectedChat)),
-      chatHistoryPreview: chatDetail?.historyPreview === true,
       cachedChatKeys: Array.from(recentChatCacheRef.current.keys()),
       chatAutoScrollEnabledRef,
       scrollChatContentToBottom,
@@ -6520,7 +6535,8 @@ export const useWorkspaceController = () => {
       handleOpenAttachment,
       handleOpenFileLink,
       handleReasoningEffortChange,
-      handleRetryChatWriteAccess,
+      handleRetryChatLoad,
+      chatLoadFailed,
       handleResolveApproval,
       handleRunAction,
       handleSandboxModeChange,
@@ -6611,6 +6627,9 @@ export const useWorkspaceController = () => {
       worktreeCreationState
     },
     changesHeader: {
+      gitHubPullRequests,
+      gitPaneView,
+      setGitPaneView,
       noProject,
       activeSidebarLoadState,
       activeTreeFolderPaths,
@@ -6646,6 +6665,9 @@ export const useWorkspaceController = () => {
       treeToggleLabel
     },
     changesContent: {
+      gitHubPullRequests,
+      gitPaneView,
+      handleOpenBrowserRequest,
       terminalChatKey: selectedChat ? getChatKey(selectedChat) : null,
       browserOpenRequest,
       browserOpened,
@@ -6688,7 +6710,7 @@ export const useWorkspaceController = () => {
       visibleGitChangeLoadError
     },
     changesFooter: {
-      visible: changesPaneView === 'git',
+      visible: changesPaneView === 'git' && gitPaneView === 'changes',
       commitActionLabels,
       commitDisabled,
       commitInput,

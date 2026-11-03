@@ -353,6 +353,31 @@ export type AppGitBranchesOptions = AppContainerOptions & {
   cwd?: string | null
 }
 
+export const appGitHubPullRequestStates = ['open', 'merged', 'closed', 'draft'] as const
+export type AppGitHubPullRequestState = (typeof appGitHubPullRequestStates)[number]
+
+export type AppGitHubPullRequestsOptions = AppGitBranchesOptions & {
+  page?: number
+  states?: readonly AppGitHubPullRequestState[]
+}
+
+export type AppGitHubPullRequest = {
+  number: number
+  title: string
+  url: string
+  isDraft: boolean
+  state: AppGitHubPullRequestState
+  author: string | null
+}
+
+export type AppGitHubPullRequestsResult = {
+  repository: string
+  pullRequests: AppGitHubPullRequest[]
+  totalCount: number
+  page: number
+  pageCount: number
+}
+
 export type AppGitSwitchBranchOptions = AppGitBranchesOptions & {
   branchName: string
   create?: boolean
@@ -587,6 +612,9 @@ export type AppApi = {
   selectSshIdentityFile: () => Promise<string | null>
   getContainerSuggestions: (options?: AppContainerOptions) => Promise<AppContainerSuggestion[]>
   getSourceAvailability: (options?: AppSourceAvailabilityOptions) => Promise<AppSourceAvailability>
+  getGitHubPullRequests: (
+    options: AppGitHubPullRequestsOptions
+  ) => Promise<AppGitHubPullRequestsResult>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
   switchGitBranch: (options: AppGitSwitchBranchOptions) => Promise<AppGitBranchesResult>
@@ -667,6 +695,7 @@ export const appIpcChannels = {
   selectSshIdentityFile: 'app:select-ssh-identity-file',
   getContainerSuggestions: 'app:get-container-suggestions',
   getSourceAvailability: 'app:get-source-availability',
+  getGitHubPullRequests: 'app:get-github-pull-requests',
   getGitChanges: 'app:get-git-changes',
   getGitBranches: 'app:get-git-branches',
   switchGitBranch: 'app:switch-git-branch',

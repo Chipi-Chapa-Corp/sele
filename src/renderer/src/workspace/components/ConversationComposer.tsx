@@ -52,6 +52,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     chatHasPendingSteeringMessage,
     chatOpenedElsewhere,
     chatLegacyHistoryReadOnly,
+    chatLoadFailed,
     containerOptions,
     cwdNotesByGroup,
     editingMessage,
@@ -78,7 +79,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     handleOpenAttachment,
     handleOpenFileLink,
     handleReasoningEffortChange,
-    handleRetryChatWriteAccess,
+    handleRetryChatLoad,
     handleResolveApproval,
     handleRunAction,
     handleSandboxModeChange,
@@ -200,9 +201,9 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
         )}
         {!activeSubagentChatView && !authenticationRequired && requestErrorVisible && (
           <RequestErrorBanner message={requestErrorSummary}>
-            {chatOpenedElsewhere ? (
+            {chatOpenedElsewhere || chatLoadFailed ? (
               <Button
-                callback={handleRetryChatWriteAccess}
+                callback={handleRetryChatLoad}
                 label={<span>Retry</span>}
                 size="small"
                 theme="transparent"

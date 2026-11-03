@@ -3109,7 +3109,8 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     } catch (error) {
       failed = true
       state.failed = true
-      state.failureMessage = getOpenCodeErrorMessage(error)
+      state.failureMessage =
+        getOpenCodeUsageLimitMessage('session.error', { error }) ?? getOpenCodeErrorMessage(error)
       if (!state.queuedMessages.includes(pending)) state.queuedMessages.unshift(pending)
       void this.completeTurn(state)
       console.error('Unable to send queued OpenCode message', error)

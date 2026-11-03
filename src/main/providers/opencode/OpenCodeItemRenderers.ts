@@ -1,3 +1,4 @@
+import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { isDefaultOpenCodeTitle } from './OpenCodeChatTitle.ts'
 import { getProviderToolPresentation } from '../ToolPresentation.ts'
@@ -64,6 +65,7 @@ export const getOpenCodeErrorMessage = (error: unknown): string => {
   const errorRecord = isRecord(error) ? error : null
   const errorData = isRecord(errorRecord?.data) ? errorRecord.data : null
   const message =
+    getString(error) ??
     getString(errorData?.message) ??
     getString(errorRecord?.message) ??
     getString(errorRecord?.name) ??
@@ -99,33 +101,7 @@ export const getOpenCodeTurnOutcome = (
   return null
 }
 
-const openCodeRateLimitMarkers = [
-  'gousagelimiterror',
-  'freeusagelimiterror',
-  'usage limit',
-  'rate limit',
-  'rate_limit',
-  'free usage exceeded',
-  'insufficient balance',
-  'subscription required'
-]
-
-export const isOpenCodeRateLimitError = (error: unknown): boolean => {
-  const candidates: unknown[] = [error]
-  if (isRecord(error)) {
-    if (error.statusCode === 429 || (isRecord(error.data) && error.data.statusCode === 429)) {
-      return true
-    }
-    candidates.push(error.data, error.message, error.name)
-    if (isRecord(error.data)) candidates.push(error.data.message)
-  }
-  return candidates.some((candidate) => {
-    if (typeof candidate !== 'string' || !candidate.trim()) return false
-    const normalized = candidate.toLocaleLowerCase()
-    if (/\b429\b/.test(normalized)) return true
-    return openCodeRateLimitMarkers.some((marker) => normalized.includes(marker))
-  })
-}
+export const isOpenCodeRateLimitError = isProviderUsageLimitError
 
 const getArgument = (input: unknown, ...keys: string[]): string | null => {
   if (!isRecord(input)) return null
@@ -372,7 +348,10 @@ export const renderOpenCodeChatItems = (
         failed,
         stopped
       },
-      ...(failed && current.rateLimited ? { failureReason: 'rateLimit' as const } : {}),
+      ...(failed &&
+      (current.rateLimited || (isLast && isProviderUsageLimitError(options.failureMessage)))
+        ? { failureReason: 'rateLimit' as const }
+        : {}),
       ...(failed && (current.failureMessage || (isLast && options.failureMessage))
         ? { failureMessage: current.failureMessage || options.failureMessage }
         : {})

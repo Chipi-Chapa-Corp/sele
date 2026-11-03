@@ -119,9 +119,11 @@ export class LimitResetQueue {
     options: ProviderStartChatOptions,
     limits: ProviderAccountRateLimit[],
     usageScope?: string,
-    accountId?: string
+    accountId?: string,
+    isCurrent: () => boolean = () => true
   ): Promise<void> =>
     this.serial(async () => {
+      if (!isCurrent()) return
       content = content.trim()
       if (!content) throw new Error('Cannot queue an empty message')
       const createdAt = this.now()

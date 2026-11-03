@@ -34,8 +34,8 @@
   display: grid;
   min-width: 0;
   grid-template-areas:
-    'title actions'
-    'copy copy';
+    "title actions"
+    "copy copy";
   grid-template-columns: minmax(11rem, 1fr) auto;
   align-items: center;
   gap: 0.15rem 0.6rem;
@@ -55,9 +55,9 @@
 @container changes-sidebar (max-width: 26.875rem) {
   .changes-sidebar__performance-warning-content {
     grid-template-areas:
-      'title'
-      'copy'
-      'actions';
+      "title"
+      "copy"
+      "actions";
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -101,4 +101,20 @@
   height: 3.4rem;
   color: color-mix(in srgb, var(--quiet) 50%, transparent);
   stroke-width: 1.45;
+}
+
+.changes-sidebar__pull-request-icon[data-state="open"] {
+  color: var(--success);
+}
+
+.changes-sidebar__pull-request-icon[data-state="merged"] {
+  color: var(--pull-request-merged);
+}
+
+.changes-sidebar__pull-request-icon[data-state="closed"] {
+  color: var(--error);
+}
+
+.changes-sidebar__pull-request-icon[data-state="draft"] {
+  color: var(--muted);
 }

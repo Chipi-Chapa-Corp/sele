@@ -1,5 +1,5 @@
-import { useAccountUsageState } from './useAccountUsageState'
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
+import { useAccountUsageState } from './useAccountUsageState'
 import { reuseChatSnapshotItems } from '../chatSnapshotItems'
 import {
   getSubagentPageNavigationEpoch,
@@ -136,6 +136,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     selectedChatUpdatedAtRef,
     setChatDetail,
     setChatLoadState,
+    setChatLoadError,
     markChatSeenAt,
     chatLoadRequest,
     chatInitialLayoutKeyRef,
@@ -1060,6 +1061,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
 
     let active = true
     let providerFinished = false
+    setChatLoadError(null)
 
     // The SQLite preview and authoritative read run independently. A slow disk
     // reply must never replace RAM history, a live update, or the provider reply.
@@ -1143,6 +1145,12 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         // Cached history or a live update may already have supplied this chat. A failed
         // background read must not discard it or leave an error over usable messages.
         if (chatDetailRef.current?.id === selectedChatId) {
+          if (chatDetailRef.current.historyPreview) {
+            setChatLoadError({
+              chatKey: getChatKey(selectedChat!),
+              message: getErrorMessage(error, 'Unable to load messages.')
+            })
+          }
           startTransition(() =>
             setChatLoadState(chatDetailRef.current?.historyPreview ? 'error' : 'ready')
           )
@@ -1150,6 +1158,10 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
         }
         chatDetailRef.current = null
         setChatDetail(null)
+        setChatLoadError({
+          chatKey: getChatKey(selectedChat!),
+          message: getErrorMessage(error, 'Unable to load messages.')
+        })
         setChatLoadState('error')
       })
 

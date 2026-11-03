@@ -52,6 +52,31 @@ Copilot checks command/objective APIs; unsupported runtimes keep ordinary chat. 
 command-reservation API is isolated in `CopilotGoals.ts`. Cancel invokes native `/goal off`,
 leaving a paused recoverable objective; AI credits are not token usage.
 
+## Provider errors
+
+All four providers classify account rate, quota, and billing allowance failures as
+`failureReason: 'rateLimit'`, displayed as **Usage limit reached** with the provider's
+original error details and available reset/continuation controls. Classification uses
+native error codes and HTTP status before falling back to error messages. Ordinary
+assistant text and tool output are not classification inputs. Request context, output,
+and execution-budget limits remain ordinary failures.
+
+`src/shared/providerErrors.ts` owns limit detection for transcript rendering, OpenCode's
+live retry loop, and the automatic network retry guard. Usage limits and authentication
+failures never enter Sele's network retry flow. Claude native assistant errors end their
+turn as failures and preserve pending messages; only authentication errors lock the account.
+
+Settings → Chat → **Failure Retries** includes **Continue on usage reset** (on by default,
+with project overrides). When enabled for a submitted turn, its first confirmed usage-limit
+failure adds the configured Continue prompt to the durable **On Limit Reset** queue. The
+provider must report a future reset time. Duplicate terminal events do not add more prompts;
+a Stop or new send during reset lookup cancels the pending insertion. Continuations retain
+the turn's model, permissions, container and account, without resending attachments or review
+requests. Outbox delivery rearms this policy for subsequent turns. Failed turns no longer
+show a **Continue in …** button; queued prompts remain visible and removable in the queue.
+
+Run `npm run test:provider-errors` for cross-provider classification and retry regressions.
+
 ## Checks
 
 `npm run test:provider-interactions` covers validation and widget ownership/CSP.

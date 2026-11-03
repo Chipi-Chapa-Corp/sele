@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { LimitResetQueue } from './LimitResetQueue.ts'
 import { getChatItems } from './codex/CodexItemRenderers.ts'
 import { renderClaudeChatItems } from './claude/ClaudeItemRenderers.ts'
 import { renderCopilotChatItems } from './copilot/CopilotItemRenderers.ts'
@@ -28,7 +29,7 @@ const options = {
   review: { id: 'review' }
 }
 
-const fixture = (t, providerId = 'codex') => {
+const fixture = (t, providerId = 'codex', queueUsageResetContinuation) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   let listener
   let revision = 0
@@ -63,6 +64,10 @@ const fixture = (t, providerId = 'codex') => {
     sendActiveChatMessage: async () => {
       throw new Error('unexpected active send')
     },
+    enqueueLimitResetMessage: async (id, message, messageId, settings, commit) => {
+      await commit()
+      await native.continueChat(id, message, settings)
+    },
     getChat: async () => current,
     getChatWindow: async () => current,
     getChats: async () => ({ chats: [{ id: 'chat', status: current.status }], nextCursor: null }),
@@ -72,7 +77,7 @@ const fixture = (t, providerId = 'codex') => {
     },
     dispose: () => {}
   }
-  const adapter = withProviderNetworkRetries(native)
+  const adapter = withProviderNetworkRetries(native, queueUsageResetContinuation)
   adapter.onChatUpdated((detail, metadata) => updates.push({ detail, metadata }))
   t.after(() => adapter.dispose())
   const fail = (
@@ -570,4 +575,212 @@ test('zero retry attempts disables automatic retries', async (t) => {
   t.mock.timers.tick(60000)
   await flush()
   assert.equal(calls.length, 1)
+})
+
+test('typed authentication and usage failures never retry ambiguous network messages', async (t) => {
+  const { adapter, calls, emit } = fixture(t)
+  for (const failureReason of ['authentication', 'rateLimit']) {
+    await adapter.continueChat('chat', 'continue', options)
+    const before = calls.length
+    emit(
+      {
+        id: 'chat',
+        status: 'error',
+        items: [
+          {
+            type: 'working',
+            id: failureReason,
+            status: 'failed',
+            failureReason,
+            failureMessage: 'Connection error: fetch failed',
+            items: []
+          }
+        ]
+      },
+      true
+    )
+    t.mock.timers.tick(60_000)
+    await flush()
+    assert.equal(calls.length, before, failureReason)
+    assert.equal((await adapter.getChat('chat')).status, 'error')
+  }
+})
+
+const usageFailure = {
+  id: 'chat',
+  status: 'error',
+  items: [
+    {
+      type: 'working',
+      id: 'limited-turn',
+      status: 'failed',
+      failureReason: 'rateLimit',
+      failureMessage: 'Usage limit reached',
+      items: []
+    }
+  ]
+}
+
+for (const providerId of ['codex', 'claude', 'copilot', 'opencode-v2']) {
+  test(`${providerId} automatically persists one continuation until reset, even with pending messages`, async (t) => {
+    const stored = new Map()
+    const delivered = []
+    let now = 1_800_000_000_000
+    const queue = new LimitResetQueue(
+      {
+        list: async () => structuredClone([...stored.values()]),
+        put: async (entry) => {
+          stored.set(entry.id, structuredClone(entry))
+        },
+        remove: async (id) => {
+          stored.delete(id)
+        }
+      },
+      async (entry) => {
+        delivered.push(entry)
+      },
+      () => now
+    )
+    t.after(() => queue.close())
+    let queued = 0
+    const { adapter, calls, emit, updates } = fixture(
+      t,
+      providerId,
+      async (id, prompt, settings, isCurrent) => {
+        queued++
+        await queue.add(
+          providerId,
+          id,
+          prompt,
+          settings,
+          [
+            {
+              id: 'weekly',
+              label: providerId,
+              kind: 'primary',
+              usedPercent: 100,
+              resetsAt: now + 10_000,
+              windowMinutes: 10080
+            }
+          ],
+          undefined,
+          'saved-account',
+          isCurrent
+        )
+      }
+    )
+    const settings = {
+      ...options,
+      usageResetContinuation: { prompt: '  Finish the original task.  ' },
+      networkRetry: { count: 0, delaySeconds: 2 }
+    }
+    await adapter.continueChat('chat', 'task', settings)
+    const detail = {
+      ...usageFailure,
+      items: [
+        ...usageFailure.items,
+        { type: 'pendingMessage', id: 'pending', content: 'Next task' }
+      ]
+    }
+    emit(detail) // Partial failures are not terminal.
+    assert.equal(queued, 0)
+    emit(detail, true)
+    emit(detail, true) // Duplicate terminal reconciliation must not add a second prompt.
+    await flush()
+    const entries = await queue.list(providerId, 'chat')
+    assert.equal(queued, 1)
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].content, 'Finish the original task.')
+    assert.equal(updates.at(-1).detail.status, 'error')
+    assert.equal(calls.length, 1, 'no immediate provider continuation')
+    await queue.tick()
+    assert.equal(delivered.length, 0)
+    now += 10_000
+    await queue.tick()
+    assert.equal(delivered.length, 1)
+    assert.equal(delivered[0].accountId, 'saved-account')
+    assert.equal(delivered[0].options.model, settings.model)
+    for (const field of ['files', 'images', 'skills', 'review'])
+      assert.equal(delivered[0].options[field], undefined)
+    assert.equal(
+      delivered[0].options.usageResetContinuation.prompt,
+      settings.usageResetContinuation.prompt
+    )
+  })
+}
+
+test('usage reset continuation is opt-in and excludes non-limit and read-only failures', async (t) => {
+  const queued = []
+  const { adapter, emit } = fixture(t, 'claude', async (...args) => {
+    queued.push(args)
+  })
+  await adapter.continueChat('chat', 'task', options)
+  emit(usageFailure, true)
+  await flush()
+  assert.equal(queued.length, 0)
+  for (const detail of [
+    { ...usageFailure, writeAccess: 'readOnly' },
+    { ...usageFailure, status: 'active' },
+    { ...usageFailure, items: [{ ...usageFailure.items[0], failureReason: 'authentication' }] },
+    {
+      ...usageFailure,
+      items: [
+        { ...usageFailure.items[0], failureReason: undefined, failureMessage: 'Invalid request' }
+      ]
+    }
+  ]) {
+    await adapter.continueChat('chat', 'task', {
+      ...options,
+      usageResetContinuation: { prompt: 'Continue' }
+    })
+    emit(detail, true)
+    await flush()
+  }
+  assert.equal(queued.length, 0)
+})
+
+for (const cancel of ['stop', 'new message', 'dispose']) {
+  test(`a pending reset lookup cannot queue a stale continuation after ${cancel}`, async (t) => {
+    let finish
+    let inserted = 0
+    const { adapter, emit } = fixture(t, 'codex', async (_id, _prompt, _options, isCurrent) => {
+      await new Promise((resolve) => {
+        finish = resolve
+      })
+      if (isCurrent()) inserted++
+    })
+    await adapter.continueChat('chat', 'task', {
+      ...options,
+      usageResetContinuation: { prompt: 'Continue' }
+    })
+    emit(usageFailure, true)
+    if (cancel === 'stop') await adapter.stopChat('chat')
+    else if (cancel === 'new message') await adapter.continueChat('chat', 'new task', options)
+    else adapter.dispose()
+    finish()
+    await flush()
+    assert.equal(inserted, 0)
+  })
+}
+
+test('outbox delivery rearms the policy for a later usage-limit failure', async (t) => {
+  const queued = []
+  const { adapter, emit } = fixture(t, 'codex', async (id, prompt) => {
+    queued.push([id, prompt])
+  })
+  const settings = { ...options, usageResetContinuation: { prompt: 'Continue' } }
+  await adapter.continueChat('chat', 'task', settings)
+  emit(usageFailure, true)
+  await flush()
+  let committed = false
+  await adapter.enqueueLimitResetMessage('chat', 'Continue', 'outbox-id', settings, async () => {
+    committed = true
+  })
+  assert.equal(committed, true)
+  emit({ ...usageFailure, items: [{ ...usageFailure.items[0], id: 'next-limit' }] }, true)
+  await flush()
+  assert.deepEqual(queued, [
+    ['chat', 'Continue'],
+    ['chat', 'Continue']
+  ])
 })

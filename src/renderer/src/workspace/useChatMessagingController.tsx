@@ -349,6 +349,11 @@ export function useChatMessagingController(dependencies: ChatMessagingController
 
       return {
         ...remainingOptions,
+        usageResetContinuation:
+          effectiveAppSettings.chat.continueOnUsageReset &&
+          effectiveAppSettings.chat.continuePrompt.trim()
+            ? { prompt: effectiveAppSettings.chat.continuePrompt.trim() }
+            : undefined,
         networkRetry: {
           count: effectiveAppSettings.chat.networkRetryCount,
           delaySeconds: effectiveAppSettings.chat.networkRetryDelaySeconds
@@ -361,7 +366,9 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     [
       models,
       effectiveAppSettings.chat.networkRetryCount,
-      effectiveAppSettings.chat.networkRetryDelaySeconds
+      effectiveAppSettings.chat.networkRetryDelaySeconds,
+      effectiveAppSettings.chat.continueOnUsageReset,
+      effectiveAppSettings.chat.continuePrompt
     ]
   )
   const currentProject = changesProjectCwd ? projectRecordsByCwd.get(changesProjectCwd) : undefined

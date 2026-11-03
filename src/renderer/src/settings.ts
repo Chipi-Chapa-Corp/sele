@@ -200,6 +200,7 @@ export type AppSettings = {
     continuePrompt: string
     /** Summary request for linked chats whose provider has no readable native compaction. */
     linkedChatSummaryPrompt: string
+    continueOnUsageReset: boolean
     networkRetryCount: number
     networkRetryDelaySeconds: number
     recentChatCacheLimit: number
@@ -407,6 +408,7 @@ export const defaultAppSettings: AppSettings = {
   chat: {
     continuePrompt: defaultStoppedTurnContinuePrompt,
     linkedChatSummaryPrompt: defaultLinkedChatSummaryPrompt,
+    continueOnUsageReset: true,
     networkRetryCount: defaultNetworkRetrySettings.count,
     networkRetryDelaySeconds: defaultNetworkRetrySettings.delaySeconds,
     recentChatCacheLimit: 10,
@@ -552,6 +554,7 @@ const getStoredChatBoolean = (
   chat: Record<string, unknown>,
   key:
     | keyof AppChatProgressSettings
+    | 'continueOnUsageReset'
     | 'presets'
     | 'promptSuggestions'
     | 'enableActions'
@@ -658,6 +661,7 @@ const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSet
   }
 
   const booleanKeys = [
+    'continueOnUsageReset',
     'presets',
     'promptSuggestions',
     'hidePlans',
@@ -1153,6 +1157,7 @@ export const readStoredAppSettings = (): AppSettings => {
           typeof chat.linkedChatSummaryPrompt === 'string'
             ? chat.linkedChatSummaryPrompt
             : defaultAppSettings.chat.linkedChatSummaryPrompt,
+        continueOnUsageReset: getStoredChatBoolean(chat, 'continueOnUsageReset'),
         networkRetryCount: normalizeNetworkRetryCount(chat.networkRetryCount),
         networkRetryDelaySeconds: normalizeNetworkRetryDelaySeconds(chat.networkRetryDelaySeconds),
         recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
@@ -1464,6 +1469,8 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     if (Object.keys(storedAppearance).length > 0) storedSettings.appearance = storedAppearance
 
     const storedChat: Partial<AppSettings['chat']> = {}
+    if (settings.chat.continueOnUsageReset !== defaultAppSettings.chat.continueOnUsageReset)
+      storedChat.continueOnUsageReset = settings.chat.continueOnUsageReset
     const networkRetryCount = normalizeNetworkRetryCount(settings.chat.networkRetryCount)
     const networkRetryDelaySeconds = normalizeNetworkRetryDelaySeconds(
       settings.chat.networkRetryDelaySeconds

@@ -3,6 +3,7 @@ import { useFeedbackMotion } from '../../motion/useFeedbackMotion'
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { X } from 'lucide-react'
+import { GitHubPullRequests } from '../../components/GitHubPullRequests'
 import { BrowserPanel } from '../../components/BrowserPanel'
 import { Button } from '../../components/Button'
 import { RecentReferencesList } from '../../components/RecentReferencesList'
@@ -48,6 +49,9 @@ const RepositoryFilesTree = memo(function RepositoryFilesTree({
 
 export function ChangesContent(props: ChangesContentProps): ReactElement {
   const {
+    gitPaneView,
+    gitHubPullRequests,
+    handleOpenBrowserRequest,
     browserOpenRequest,
     browserOpened,
     browserWorkspaceKey,
@@ -91,6 +95,9 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
 
   const panelRef = useRef<HTMLDivElement>(null)
   useFeedbackMotion(panelRef, changesPaneView, 'panel')
+  const showingPullRequests = changesPaneView === 'git' && gitPaneView === 'pull-requests'
+  const showingFileContent =
+    changesPaneView !== 'terminal' && changesPaneView !== 'browser' && !showingPullRequests
 
   return (
     <div
@@ -101,7 +108,15 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
           : ''
       }`}
     >
-      {changesPaneView !== 'terminal' && changesPaneView !== 'browser' && (
+      {showingPullRequests && (
+        <GitHubPullRequests
+          key={JSON.stringify([changesContainer ?? null, changesProjectCwd ?? changesCwd])}
+          state={gitHubPullRequests}
+          browserEnabled={effectiveAppSettings.browser.enabled}
+          onOpenBrowser={handleOpenBrowserRequest}
+        />
+      )}
+      {showingFileContent && (
         <div className="changes-sidebar__content">
           {changesPaneView === 'recents' ? (
             displayedRecentChatReferences.pinnedReferences.length > 0 ||

@@ -3,7 +3,9 @@ import type { WorkspaceController } from '../../useWorkspaceController'
 import {
   Files,
   GitBranch,
-  Globe2,
+  Globe,
+  GitCommitHorizontal,
+  GitPullRequestArrow,
   History,
   ListChevronsDownUp,
   ListChevronsUpDown,
@@ -12,6 +14,7 @@ import {
   Terminal,
   X
 } from 'lucide-react'
+import { GitHubPullRequestControls } from '../../components/GitHubPullRequestControls'
 import { BranchSwitcher } from '../../components/BranchSwitcher'
 import { Button } from '../../components/Button'
 import { SegmentedControl } from '../../components/SegmentedControl'
@@ -21,6 +24,9 @@ type ChangesHeaderProps = WorkspaceController['changesHeader']
 
 export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
   const {
+    gitPaneView,
+    gitHubPullRequests,
+    setGitPaneView,
     noProject,
     activeSidebarLoadState,
     activeTreeFolderPaths,
@@ -103,7 +109,7 @@ export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
                     label: null,
                     ariaLabel: 'Browser',
                     title: 'Browser',
-                    icon: <Globe2 aria-hidden="true" />
+                    icon: <Globe aria-hidden="true" />
                   }
                 ]
               : [])
@@ -135,7 +141,35 @@ export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
           <div className="changes-sidebar__settings-slot">{renderSettingsButton()}</div>
         </div>
       </div>
-      {(changesPaneView === 'git' || changesPaneView === 'files') && (
+      {changesPaneView === 'git' && (
+        <SegmentedControl
+          aria-label="Git view"
+          className="changes-sidebar__view-toggle"
+          options={[
+            {
+              value: 'changes',
+              label: null,
+              ariaLabel: 'Changes',
+              title: 'Changes',
+              icon: <GitCommitHorizontal aria-hidden="true" />
+            },
+            {
+              value: 'pull-requests',
+              label: null,
+              ariaLabel: 'Pull requests',
+              title: 'Pull requests',
+              icon: <GitPullRequestArrow aria-hidden="true" />
+            }
+          ]}
+          value={gitPaneView}
+          onChange={setGitPaneView}
+        />
+      )}
+      {changesPaneView === 'git' && gitPaneView === 'pull-requests' && (
+        <GitHubPullRequestControls state={gitHubPullRequests} disabled={!changesCwd} />
+      )}
+      {((changesPaneView === 'git' && gitPaneView === 'changes') ||
+        changesPaneView === 'files') && (
         <div className="changes-sidebar__controls changes-sidebar__controls--files">
           <label className="sr-only" htmlFor="changes-branch">
             Branch

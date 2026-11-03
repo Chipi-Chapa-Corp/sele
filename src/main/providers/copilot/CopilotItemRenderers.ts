@@ -1,3 +1,4 @@
+import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { getTranscriptRecordChange } from '../transcriptProjection/recordChanges.ts'
 import { getProviderToolPresentation } from '../ToolPresentation.ts'
@@ -55,6 +56,7 @@ type Segment = {
   entries: ProviderConversationEntry[]
   failed: boolean
   failureMessage?: string
+  failureReason?: 'rateLimit'
   stopped?: boolean
 }
 
@@ -567,6 +569,9 @@ export const renderCopilotChatItems = (
         (isLast && options.active) ||
         failed ||
         stopped,
+      ...(failed && currentSegment.failureReason
+        ? { failureReason: currentSegment.failureReason }
+        : {}),
       ...(failed && currentSegment.failureMessage
         ? { failureMessage: currentSegment.failureMessage }
         : {})
@@ -753,6 +758,7 @@ export const renderCopilotChatItems = (
       const currentSegment = ensureSegment(event.id)
       currentSegment.failed = true
       currentSegment.failureMessage = event.data.message
+      currentSegment.failureReason = isProviderUsageLimitError(event.data) ? 'rateLimit' : undefined
       appendWorkingItem(currentSegment, {
         type: 'message',
         id: event.id,

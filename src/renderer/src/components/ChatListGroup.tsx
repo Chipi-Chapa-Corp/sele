@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ChevronUp,
   FolderKanban,
+  LoaderCircle,
   MessageSquare,
   PinOff,
   SquarePen
@@ -37,6 +38,7 @@ export type ChatListGroupData = {
   cwd: string | null
   label: string
   projectName?: string | null
+  hasWorkingChat?: boolean
   chats: ProviderChat[]
   kind: 'pinned' | 'cwd' | 'active' | 'done' | 'imported'
 }
@@ -107,6 +109,7 @@ export const areChatListGroupPropsEqual = (
       before.label !== after.label ||
       before.kind !== after.kind ||
       before.projectName !== after.projectName ||
+      before.hasWorkingChat !== after.hasWorkingChat ||
       before.chats.length !== after.chats.length ||
       (before.chats !== after.chats &&
         before.chats.some((chat, index) => chat !== after.chats[index])))
@@ -133,6 +136,19 @@ export const areChatListGroupPropsEqual = (
       return false
   }
   return true
+}
+
+function ProjectWorkingIndicator() {
+  return (
+    <span
+      className="chat-list-group__working-icon"
+      role="img"
+      aria-label="Chat in progress"
+      title="Chat in progress"
+    >
+      <LoaderCircle className="app-loading-spinner" size={16} aria-hidden="true" />
+    </span>
+  )
 }
 
 export const ChatListGroup = memo(function ChatListGroup({
@@ -209,6 +225,7 @@ export const ChatListGroup = memo(function ChatListGroup({
         className={`ui-disclosure-toggle__content${projectLike ? ' chat-list-group__toggle-content--project' : ''}`}
       >
         <span className="chat-list-group__title">{groupLabel}</span>
+        {group.kind === 'cwd' && group.hasWorkingChat && <ProjectWorkingIndicator />}
       </span>
     </>
   )
