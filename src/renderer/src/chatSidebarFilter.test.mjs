@@ -18,7 +18,7 @@ const readChat = {
   done: false
 }
 
-test('selected tab defaults to all chats and survives restarts independently of visibility', () => {
+test('selected tab defaults to active chats and survives restarts independently of visibility', () => {
   const stored = new Map()
   globalThis.window = {
     preferencesApi: {
@@ -30,83 +30,91 @@ test('selected tab defaults to all chats and survives restarts independently of 
     }
   }
   try {
-    assert.equal(readChatSidebarFilter(), 'all')
-    for (const filter of ['attention', 'sleeping', 'working', 'all']) {
+    assert.equal(readChatSidebarFilter(), 'active')
+    for (const filter of ['active', 'sleeping', 'working', 'all']) {
       writeChatSidebarFilter(filter)
       // A fresh initialization reads the saved preference.
       assert.equal(readChatSidebarFilter(), filter)
     }
     writeChatSidebarFilter('working')
-    writeChatSidebarTabs({ all: true, attention: false, sleeping: false, working: false })
+    writeChatSidebarTabs({ all: true, active: false, sleeping: false, working: false })
     assert.equal(readChatSidebarFilter(), 'working')
     stored.set('sele:chat-sidebar-filter:v1', 'unknown-tab')
-    assert.equal(readChatSidebarFilter(), 'all')
+    assert.equal(readChatSidebarFilter(), 'active')
   } finally {
     delete globalThis.window
   }
 })
 
-test('sleeping chats stay in their own tab even when unread, failed, or active', () => {
-  for (const status of [null, 'active', 'error', 'waitingOnUserInput']) {
-    const chat = { ...readChat, status, seenUpdatedAt: 0, lastTurnOutcome: 'failed' }
-    for (const filter of ['all', 'attention', 'working']) {
-      assert.equal(matchesChatSidebarFilter(chat, filter, { sleeping: true }), false)
+test('all chats includes sleeping and working chats with any tab visibility', () => {
+  for (const sleeping of [false, true]) {
+    for (const working of [false, true]) {
+      for (const showSleeping of [false, true]) {
+        for (const showWorking of [false, true]) {
+          const tabs = { all: true, active: true, sleeping: showSleeping, working: showWorking }
+          assert.equal(matchesChatSidebarFilter(readChat, 'all', { sleeping, working, tabs }), true)
+        }
+      }
     }
-    assert.equal(matchesChatSidebarFilter(chat, 'sleeping', { sleeping: true }), true)
-    assert.equal(matchesChatSidebarFilter(chat, 'sleeping'), false)
   }
 })
 
-test('attention includes unread chats, questions, approvals, and failures', () => {
-  assert.equal(matchesChatSidebarFilter(readChat, 'attention'), false)
+test('active chats excludes only categories with enabled tabs', () => {
+  for (const sleeping of [false, true]) {
+    for (const working of [false, true]) {
+      for (const showSleeping of [false, true]) {
+        for (const showWorking of [false, true]) {
+          const tabs = { all: true, active: true, sleeping: showSleeping, working: showWorking }
+          const expected = !(sleeping && showSleeping) && !(working && showWorking)
+          assert.equal(
+            matchesChatSidebarFilter(readChat, 'active', { sleeping, working, tabs }),
+            expected
+          )
+          assert.equal(
+            matchesChatSidebarFilter({ ...readChat, status: working ? 'active' : null }, 'active', {
+              sleeping,
+              tabs
+            }),
+            expected
+          )
+        }
+      }
+    }
+  }
+})
+
+test('active chats includes read chats, questions, approvals, failures, and stopped chats', () => {
   for (const change of [
-    { seenUpdatedAt: 9 },
+    {},
+    { seenUpdatedAt: 0 },
     { status: 'waitingOnUserInput' },
     { status: 'waitingOnApproval' },
     { pendingApproval: {} },
     { status: 'error' },
-    { lastTurnOutcome: 'failed' }
+    { lastTurnOutcome: 'failed' },
+    { lastTurnOutcome: 'stopped' }
   ]) {
-    assert.equal(matchesChatSidebarFilter({ ...readChat, ...change }, 'attention'), true)
+    assert.equal(matchesChatSidebarFilter({ ...readChat, ...change }, 'active'), true)
   }
-  assert.equal(
-    matchesChatSidebarFilter({ ...readChat, seenUpdatedAt: 0 }, 'attention', { selected: true }),
-    true
-  )
-  assert.equal(
-    matchesChatSidebarFilter({ ...readChat, seenUpdatedAt: 0, done: true }, 'attention'),
-    false
-  )
-  assert.equal(
-    matchesChatSidebarFilter(readChat, 'attention', { latestCommitFinishedAt: 11 }),
-    true
-  )
-  assert.equal(
-    matchesChatSidebarFilter({ ...readChat, lastTurnOutcome: 'stopped' }, 'attention'),
-    false
-  )
 })
 
-test('working includes active chats and ongoing child or commit work', () => {
+test('sleeping and working tabs include their category even when categories overlap', () => {
+  assert.equal(matchesChatSidebarFilter(readChat, 'sleeping'), false)
+  assert.equal(matchesChatSidebarFilter(readChat, 'sleeping', { sleeping: true }), true)
   assert.equal(matchesChatSidebarFilter(readChat, 'working'), false)
   assert.equal(matchesChatSidebarFilter({ ...readChat, status: 'active' }, 'working'), true)
   assert.equal(matchesChatSidebarFilter(readChat, 'working', { working: true }), true)
-  assert.equal(matchesChatSidebarFilter(readChat, 'all'), true)
-})
-
-test('opening an unread chat keeps it available until selection changes or it is marked done', () => {
-  const unread = { ...readChat, seenUpdatedAt: 0 }
-  assert.equal(matchesChatSidebarFilter(unread, 'attention'), true)
-  assert.equal(matchesChatSidebarFilter(readChat, 'attention', { selected: true }), true)
-  assert.equal(matchesChatSidebarFilter(readChat, 'attention'), false)
   assert.equal(
-    matchesChatSidebarFilter({ ...readChat, done: true }, 'attention', { selected: true }),
-    false
+    matchesChatSidebarFilter(readChat, 'sleeping', { sleeping: true, working: true }),
+    true
   )
-  assert.equal(matchesChatSidebarFilter(readChat, 'attention', { manuallyUnread: true }), true)
+  assert.equal(
+    matchesChatSidebarFilter({ ...readChat, status: 'active' }, 'working', { sleeping: true }),
+    true
+  )
 })
 
-test('manual unread markers survive reload and automatic seen timestamps', () => {
+test('manual unread markers survive reload', () => {
   let stored = null
   globalThis.window = {
     preferencesApi: {
@@ -125,12 +133,6 @@ test('manual unread markers survive reload and automatic seen timestamps', () =>
     assert.equal(readManuallyUnreadChats().size, 0)
     writeManuallyUnreadChats(new Set(['codex:chat', 'claude:chat']))
     assert.deepEqual([...readManuallyUnreadChats()], ['codex:chat', 'claude:chat'])
-    assert.equal(
-      matchesChatSidebarFilter({ ...readChat, seenUpdatedAt: 100 }, 'attention', {
-        manuallyUnread: true
-      }),
-      true
-    )
     writeManuallyUnreadChats(new Set())
     assert.equal(readManuallyUnreadChats().size, 0)
   } finally {
@@ -150,20 +152,46 @@ test('tab visibility persists and disabled tabs are preserved and invalid values
     }
   }
   try {
-    const defaults = { all: true, attention: true, sleeping: true, working: true }
+    const defaults = { all: true, active: true, sleeping: true, working: true }
     assert.deepEqual(readChatSidebarTabs(), defaults)
     const tabs = { ...defaults, all: false, sleeping: false }
     writeChatSidebarTabs(tabs)
     assert.deepEqual(readChatSidebarTabs(), tabs)
-    stored = JSON.stringify({ all: false, attention: false, sleeping: false, working: false })
+    stored = JSON.stringify({ all: false, active: false, sleeping: false, working: false })
     assert.deepEqual(readChatSidebarTabs(), {
       all: false,
-      attention: false,
+      active: false,
       sleeping: false,
       working: false
     })
-    stored = JSON.stringify({ all: 'false', attention: false })
-    assert.deepEqual(readChatSidebarTabs(), { ...defaults, attention: false })
+    stored = JSON.stringify({ all: 'false', active: false })
+    assert.deepEqual(readChatSidebarTabs(), { ...defaults, active: false })
+  } finally {
+    delete globalThis.window
+  }
+})
+
+test('legacy attention selection and visibility migrate to active chats', () => {
+  const stored = new Map([
+    ['sele:chat-sidebar-filter:v1', 'attention'],
+    [
+      'sele:chat-sidebar-tabs:v1',
+      JSON.stringify({ all: true, attention: false, sleeping: true, working: true })
+    ]
+  ])
+  globalThis.window = {
+    preferencesApi: { getItem: (key) => ({ ok: true, value: stored.get(key) ?? null }) }
+  }
+  try {
+    assert.equal(readChatSidebarFilter(), 'active')
+    assert.deepEqual(readChatSidebarTabs(), {
+      all: true,
+      active: false,
+      sleeping: true,
+      working: true
+    })
+    stored.set('sele:chat-sidebar-tabs:v1', JSON.stringify({ active: true, attention: false }))
+    assert.equal(readChatSidebarTabs().active, true)
   } finally {
     delete globalThis.window
   }

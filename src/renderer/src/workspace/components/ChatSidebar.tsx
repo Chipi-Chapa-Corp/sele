@@ -16,7 +16,7 @@ import {
   MessagesSquare,
   MessageSquare,
   MessageSquareDashed,
-  MessageSquareWarning,
+  MessageSquareText,
   Search,
   SquarePen,
   X
@@ -28,7 +28,7 @@ import { SegmentedControl } from '../../components/SegmentedControl'
 
 const filterIcons = {
   all: MessagesSquare,
-  attention: MessageSquareWarning,
+  active: MessageSquareText,
   sleeping: MessageSquareDashed,
   working: BotMessageSquare
 }
@@ -221,8 +221,8 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
               ? 'No matching chats.'
               : chatSidebarFilter === 'sleeping'
                 ? 'No sleeping chats.'
-                : chatSidebarFilter === 'attention'
-                  ? 'No chats need attention.'
+                : chatSidebarFilter === 'active'
+                  ? 'No active chats.'
                   : chatSidebarFilter === 'working'
                     ? 'No chats in progress.'
                     : 'No chats found.'}

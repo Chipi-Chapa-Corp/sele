@@ -3443,20 +3443,16 @@ export const useWorkspaceController = () => {
       const key = getChatKey(chat)
       return matchesChatSidebarFilter(chat, activeChatSidebarFilter, {
         sleeping: isSleepingChat(chat),
-        selected: key === selectedChatKey,
-        manuallyUnread: manuallyUnreadChatKeys.has(key),
         working: committingChatKeys.has(key) || workingSubagentChatKeys.has(key),
-        latestCommitFinishedAt: latestCommitFinishedAtByChatKey.get(key) ?? 0
+        tabs: chatSidebarTabs
       })
     },
     [
       activeChatSidebarFilter,
       isSleepingChat,
-      selectedChatKey,
-      manuallyUnreadChatKeys,
+      chatSidebarTabs,
       committingChatKeys,
-      workingSubagentChatKeys,
-      latestCommitFinishedAtByChatKey
+      workingSubagentChatKeys
     ]
   )
   const filteredChats = useMemo(() => {

@@ -2,11 +2,15 @@ import type { ProviderChat } from '../../shared/provider'
 import { preferences } from './preferences.ts'
 
 export const chatSidebarFilters = [
-  { value: 'all', label: 'All chats', description: 'All chats, excluding sleeping chats.' },
   {
-    value: 'attention',
-    label: 'Needs attention',
-    description: 'Unread chats, questions, approvals, and failures.'
+    value: 'all',
+    label: 'All chats',
+    description: 'All chats, including sleeping and working chats.'
+  },
+  {
+    value: 'active',
+    label: 'Active chats',
+    description: 'Exclude sleeping and working chats when their tabs are enabled.'
   },
   { value: 'sleeping', label: 'Sleeping chats', description: 'Chats that are sleeping.' },
   { value: 'working', label: 'Working chats', description: 'Chats that are in progress.' }
@@ -16,11 +20,12 @@ export type ChatSidebarFilter = (typeof chatSidebarFilters)[number]['value']
 export type ChatSidebarTabs = Record<ChatSidebarFilter, boolean>
 const storageKey = 'sele:chat-sidebar-tabs:v1'
 const selectedFilterStorageKey = 'sele:chat-sidebar-filter:v1'
-const defaultTabs: ChatSidebarTabs = { all: true, attention: true, sleeping: true, working: true }
+const defaultTabs: ChatSidebarTabs = { all: true, active: true, sleeping: true, working: true }
 
 export const readChatSidebarFilter = (): ChatSidebarFilter => {
-  const stored = preferences.getItem(selectedFilterStorageKey)
-  return chatSidebarFilters.find(({ value }) => value === stored)?.value ?? 'all'
+  const saved = preferences.getItem(selectedFilterStorageKey)
+  const stored = saved === 'attention' ? 'active' : saved
+  return chatSidebarFilters.find(({ value }) => value === stored)?.value ?? 'active'
 }
 
 export const writeChatSidebarFilter = (filter: ChatSidebarFilter): void => {
@@ -32,6 +37,9 @@ export const readChatSidebarTabs = (): ChatSidebarTabs => {
     const stored: unknown = JSON.parse(preferences.getItem(storageKey) ?? 'null')
     if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return defaultTabs
     const tabs = { ...defaultTabs }
+    if (!('active' in stored) && 'attention' in stored && typeof stored.attention === 'boolean') {
+      tabs.active = stored.attention
+    }
     for (const { value } of chatSidebarFilters) {
       if (typeof stored[value] === 'boolean') tabs[value] = stored[value]
     }
@@ -47,34 +55,13 @@ export const writeChatSidebarTabs = (tabs: ChatSidebarTabs): void => {
 }
 
 export const matchesChatSidebarFilter = (
-  chat: Pick<
-    ProviderChat,
-    'status' | 'lastTurnOutcome' | 'pendingApproval' | 'updatedAt' | 'seenUpdatedAt' | 'done'
-  >,
+  chat: Pick<ProviderChat, 'status'>,
   filter: ChatSidebarFilter,
-  {
-    sleeping = false,
-    selected = false,
-    manuallyUnread = false,
-    working = false,
-    latestCommitFinishedAt = 0
-  } = {}
+  { sleeping = false, working = false, tabs = defaultTabs } = {}
 ): boolean => {
+  if (filter === 'all') return true
   if (filter === 'sleeping') return sleeping
-  if (sleeping) return false
-  if (filter === 'working') return chat.status === 'active' || working
-  if (filter === 'attention') {
-    return (
-      chat.status === 'waitingOnUserInput' ||
-      chat.status === 'waitingOnApproval' ||
-      Boolean(chat.pendingApproval) ||
-      chat.status === 'error' ||
-      chat.lastTurnOutcome === 'failed' ||
-      (!chat.done &&
-        (selected ||
-          manuallyUnread ||
-          Math.max(chat.updatedAt, latestCommitFinishedAt) > (chat.seenUpdatedAt ?? 0)))
-    )
-  }
-  return true
+  const isWorking = chat.status === 'active' || working
+  if (filter === 'working') return isWorking
+  return (!tabs.sleeping || !sleeping) && (!tabs.working || !isWorking)
 }
