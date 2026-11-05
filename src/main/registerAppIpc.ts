@@ -1,11 +1,18 @@
+import { watchWorkspace, publishWorkspace } from './workspaceEvents'
 import { appGitHubPullRequestStates } from '../shared/app'
-import { listGitHubPullRequests } from './githubPullRequests'
+import {
+  getGitHubPullRequest,
+  listGitHubPullRequests,
+  getGitHubPullRequestChanges,
+  submitGitHubPullRequestReview,
+  gitHubPullRequestReviewSchema
+} from './githubPullRequests'
 import { bufferedCommands } from './BufferedCommandWorker'
 import { prepareMessageAttachments } from './messageAttachments'
 import { getVideoMimeType } from '../shared/video'
 import { copyVideoFile } from './videoClipboard'
 import { writeClipboardImage } from './imageClipboard'
-import { diagnosticLog, handleLoggedIpc } from './logging'
+import { diagnosticLog, handleLoggedIpc, handleClientRequest } from './logging'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -31,6 +38,7 @@ import type {
   AppGitCommitOptions,
   AppGitBranchesOptions,
   AppGitHubPullRequestsOptions,
+  AppGitHubPullRequestOptions,
   AppGitBranchesResult,
   AppGitDeleteBranchOptions,
   AppGitDeleteBranchResult,
@@ -787,6 +795,48 @@ const runWithGitContainer = <T>(
   run: () => Promise<T>
 ): Promise<T> => gitCommandContext.run({ container }, run)
 
+const runGitHub = async (
+  cwd: string,
+  container: AppContainerTarget | null | undefined,
+  args: string[],
+  input?: string
+): Promise<string> => {
+  const command = await getHostCommand('gh', args, {
+    cwd,
+    container,
+    env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_PAGER: 'cat' }
+  }).catch((cause: unknown) => {
+    throw new Error(
+      'GitHub CLI was not found. Install gh on the machine hosting this project and run gh auth login.',
+      { cause }
+    )
+  })
+  const { error, stdout, stderr } = await bufferedCommands.run(command, {
+    input,
+    timeout: 30_000,
+    maxBuffer: 2 * 1024 * 1024
+  })
+  if (error) {
+    const detail = stderr.trim() || error.message
+    const hint =
+      error.code === 'ENOENT'
+        ? 'Install GitHub CLI and run gh auth login on the machine hosting this project.'
+        : error.code === 4 || /gh auth login|not logged|authentication/i.test(detail)
+          ? 'Run gh auth login on the machine hosting this project.'
+          : ''
+    throw new Error(
+      [
+        input === undefined
+          ? 'Unable to load GitHub pull requests.'
+          : 'Unable to post GitHub pull request review.',
+        hint,
+        detail
+      ].filter(Boolean).join('\n')
+    )
+  }
+  return stdout
+}
+
 const getRunGitOptions = (options: boolean | RunGitOptions): RunGitOptions =>
   typeof options === 'boolean' ? { required: options } : options
 
@@ -1130,7 +1180,8 @@ const getGitBranchesOptions = (value: unknown): AppGitBranchesOptions => {
 
 const getGitHubPullRequestsOptions = (value: unknown): AppGitHubPullRequestsOptions => {
   const options = getGitBranchesOptions(value)
-  const { page, states } = (value as { page?: unknown; states?: unknown } | null) ?? {}
+  const { page, states, search } =
+    (value as { page?: unknown; states?: unknown; search?: unknown } | null) ?? {}
   if (
     page !== undefined &&
     (typeof page !== 'number' || !Number.isSafeInteger(page) || page < 1 || page > 50)
@@ -1146,11 +1197,28 @@ const getGitHubPullRequestsOptions = (value: unknown): AppGitHubPullRequestsOpti
   ) {
     throw new Error('Invalid GitHub pull request states')
   }
+  if (
+    search !== undefined &&
+    (typeof search !== 'string' || search.length > 256 || search.includes('\0'))
+  ) {
+    throw new Error('Invalid GitHub pull request search')
+  }
   return {
     ...options,
     page: page as number | undefined,
-    states: states as AppGitHubPullRequestsOptions['states']
+    states: states as AppGitHubPullRequestsOptions['states'],
+    search: search as string | undefined
   }
+}
+
+const getGitHubPullRequestOptions = (value: unknown): AppGitHubPullRequestOptions => {
+  const options = getGitBranchesOptions(value)
+  const { number, repository } = (value as { number?: unknown; repository?: unknown } | null) ?? {}
+  if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1)
+    throw new Error('Invalid GitHub pull request number')
+  if (typeof repository !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repository))
+    throw new Error('Invalid GitHub repository')
+  return { ...options, number, repository }
 }
 
 const getGitSwitchBranchOptions = (value: unknown): AppGitSwitchBranchOptions => {
@@ -3214,17 +3282,22 @@ export const registerAppIpc = (): void => {
 
   handleLoggedIpc(appIpcChannels.getInstalledFontFamilies, getInstalledFontFamilies)
 
-  handleLoggedIpc(appIpcChannels.getDefaultCwd, () => process.cwd())
+  handleClientRequest(appIpcChannels.getDefaultCwd, () => process.cwd())
 
-  handleLoggedIpc(appIpcChannels.getProjects, () => getStoredProjects())
-  handleLoggedIpc(appIpcChannels.getDeletedProjectCwds, () => getStoredDeletedProjectCwds())
-  handleLoggedIpc(appIpcChannels.deleteProject, (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getProjects, (event) => {
+    watchWorkspace(event.sender)
+    return getStoredProjects()
+  })
+  handleClientRequest(appIpcChannels.getDeletedProjectCwds, () => getStoredDeletedProjectCwds())
+  handleClientRequest(appIpcChannels.deleteProject, async (_event, value: unknown) => {
     const cwd = getOptionalCwd(value)
     if (!cwd) throw new Error('Invalid project cwd')
-    return deleteStoredProject(cwd)
+    const result = await deleteStoredProject(cwd)
+    publishWorkspace()
+    return result
   })
 
-  handleLoggedIpc(appIpcChannels.addProject, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.addProject, async (_event, value: unknown) => {
     const options = getAddProjectOptions(value)
     const cwds = [options.cwd, ...(options.additionalCwds ?? [])]
     const cwdStats = await Promise.all(
@@ -3253,32 +3326,40 @@ export const registerAppIpc = (): void => {
       pendingProjectIconSelections.delete(options.iconSelectionId)
     }
 
+    publishWorkspace()
     return project
   })
 
-  handleLoggedIpc(appIpcChannels.setProjectOrder, (_event, value: unknown) =>
-    setStoredProjectOrder(getProjectOrderCwds(value))
-  )
+  handleClientRequest(appIpcChannels.setProjectOrder, async (_event, value: unknown) => {
+    const result = await setStoredProjectOrder(getProjectOrderCwds(value))
+    publishWorkspace()
+    return result
+  })
 
-  handleLoggedIpc(appIpcChannels.getSshEnvironments, () => getStoredSshEnvironments())
+  handleClientRequest(appIpcChannels.getSshEnvironments, () => getStoredSshEnvironments())
 
-  handleLoggedIpc(appIpcChannels.createSshEnvironment, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.createSshEnvironment, async (_event, value: unknown) => {
     const options = getCreateSshEnvironmentOptions(value)
     await validateSshIdentityFile(options.identityFile)
 
-    return createStoredSshEnvironment(options)
+    const result = await createStoredSshEnvironment(options)
+    publishWorkspace()
+    return result
   })
 
-  handleLoggedIpc(appIpcChannels.updateSshEnvironment, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.updateSshEnvironment, async (_event, value: unknown) => {
     const options = getUpdateSshEnvironmentOptions(value)
     await validateSshIdentityFile(options.identityFile)
 
-    return updateStoredSshEnvironment(options)
+    const result = await updateStoredSshEnvironment(options)
+    publishWorkspace()
+    return result
   })
 
-  handleLoggedIpc(appIpcChannels.deleteSshEnvironment, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.deleteSshEnvironment, async (_event, value: unknown) => {
     const options = getDeleteSshEnvironmentOptions(value)
     await deleteStoredSshEnvironment(options.id)
+    publishWorkspace()
   })
 
   handleLoggedIpc(appIpcChannels.selectSshIdentityFile, async (event) => {
@@ -3294,11 +3375,11 @@ export const registerAppIpc = (): void => {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
-  handleLoggedIpc(appIpcChannels.getContainerSuggestions, (_event, value: unknown) =>
+  handleClientRequest(appIpcChannels.getContainerSuggestions, (_event, value: unknown) =>
     getContainerSuggestions(getSourceAvailabilityOptions(value))
   )
 
-  handleLoggedIpc(appIpcChannels.getSourceAvailability, (_event, value: unknown) =>
+  handleClientRequest(appIpcChannels.getSourceAvailability, (_event, value: unknown) =>
     getSourceAvailability(getSourceAvailabilityOptions(value))
   )
 
@@ -3357,57 +3438,62 @@ export const registerAppIpc = (): void => {
     return { action, always } satisfies AppExternalLinkResult
   })
 
-  handleLoggedIpc(appIpcChannels.getGitChanges, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getGitChanges, async (_event, value: unknown) => {
     const options = getGitChangesOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitChanges(options.cwd ?? process.cwd(), options.source, options.fetchRemote)
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getGitHubPullRequests, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getGitHubPullRequests, async (_event, value: unknown) => {
     const options = getGitHubPullRequestsOptions(value)
     const cwd = options.cwd ?? process.cwd()
     return runWithGitContainer(options.container, () =>
-      listGitHubPullRequests(cwd, options, runGit, async (args) => {
-        const command = await getHostCommand('gh', args, {
-          cwd,
-          container: options.container,
-          env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_PAGER: 'cat' }
-        }).catch((cause: unknown) => {
-          throw new Error(
-            'GitHub CLI was not found. Install gh on the machine hosting this project and run gh auth login.',
-            { cause }
-          )
-        })
-        const { error, stdout, stderr } = await bufferedCommands.run(command, {
-          timeout: 30_000,
-          maxBuffer: 2 * 1024 * 1024
-        })
-        if (error) {
-          const detail = stderr.trim() || error.message
-          const hint =
-            error.code === 'ENOENT'
-              ? 'Install GitHub CLI and run gh auth login on the machine hosting this project.'
-              : error.code === 4 || /gh auth login|not logged|authentication/i.test(detail)
-                ? 'Run gh auth login on the machine hosting this project.'
-                : ''
-          throw new Error(
-            ['Unable to load GitHub pull requests.', hint, detail].filter(Boolean).join('\n')
-          )
-        }
-        return stdout
-      })
+      listGitHubPullRequests(cwd, options, runGit, (args) =>
+        runGitHub(cwd, options.container, args)
+      )
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getGitBranches, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getGitHubPullRequest, async (_event, value: unknown) => {
+    const options = getGitHubPullRequestOptions(value)
+    const cwd = options.cwd ?? process.cwd()
+    return runWithGitContainer(options.container, () =>
+      getGitHubPullRequest(cwd, options, runGit, (args) => runGitHub(cwd, options.container, args))
+    )
+  })
+
+  handleClientRequest(appIpcChannels.getGitHubPullRequestChanges, async (_event, value: unknown) => {
+    const options = getGitHubPullRequestOptions(value)
+    const cwd = options.cwd ?? process.cwd()
+    return runWithGitContainer(options.container, () =>
+      getGitHubPullRequestChanges(cwd, options, runGit, (args) =>
+        runGitHub(cwd, options.container, args)
+      )
+    )
+  })
+
+  handleClientRequest(appIpcChannels.submitGitHubPullRequestReview, async (_event, value: unknown) => {
+    const options = {
+      ...getGitHubPullRequestOptions(value),
+      ...gitHubPullRequestReviewSchema.parse(value)
+    }
+    const cwd = options.cwd ?? process.cwd()
+    return runWithGitContainer(options.container, () =>
+      submitGitHubPullRequestReview(cwd, options, runGit, (args, input) =>
+        runGitHub(cwd, options.container, args, input)
+      )
+    )
+  })
+
+  handleClientRequest(appIpcChannels.getGitBranches, async (_event, value: unknown) => {
     const options = getGitBranchesOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitBranches(options.cwd ?? process.cwd())
     )
   })
 
-  handleLoggedIpc(appIpcChannels.switchGitBranch, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.switchGitBranch, async (_event, value: unknown) => {
     const options = getGitSwitchBranchOptions(value)
     return runWithGitContainer(options.container, () =>
       switchGitBranch(options.cwd ?? process.cwd(), options.branchName, Boolean(options.create))
@@ -3462,28 +3548,28 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  handleLoggedIpc(appIpcChannels.createGitWorktree, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.createGitWorktree, async (_event, value: unknown) => {
     const options = getGitCreateWorktreeOptions(value)
     return runWithGitContainer(options.container, () =>
       createGitWorktree(options.cwd ?? process.cwd(), options.name)
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getFileTree, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getFileTree, async (_event, value: unknown) => {
     const options = getFileTreeOptions(value)
     return runWithGitContainer(options.container, async () =>
       createFileTreeResult(await readFileTreePaths(options.cwd ?? process.cwd()))
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getFileTreeListing, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getFileTreeListing, async (_event, value: unknown) => {
     const options = getFileTreeOptions(value)
     return runWithGitContainer(options.container, async () =>
       createFileTreeListing(await readFileTreePaths(options.cwd ?? process.cwd()))
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getFileContents, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getFileContents, async (_event, value: unknown) => {
     const options = getFileContentsOptions(value)
     return runWithGitContainer(options.container, () =>
       readFileContents(options.cwd ?? process.cwd(), options.path)
@@ -3514,7 +3600,7 @@ export const registerAppIpc = (): void => {
     return runWithGitContainer(options.container, () => showFileInFolder(options))
   })
 
-  handleLoggedIpc(appIpcChannels.writeFileContents, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.writeFileContents, async (_event, value: unknown) => {
     const options = getWriteFileContentsOptions(value)
     return runWithGitContainer(options.container, () =>
       writeEditableFile(
@@ -3526,42 +3612,45 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getRecentGitCommitMessages, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getRecentGitCommitMessages, async (_event, value: unknown) => {
     const options = getGitRecentCommitMessagesOptions(value)
     return runWithGitContainer(options.container, () =>
       getRecentGitCommitMessages(options.cwd ?? process.cwd(), options.limit ?? 3)
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getUncommittedGitDiff, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getUncommittedGitDiff, async (_event, value: unknown) => {
     const options = getGitDiffOptions(value)
     return runWithGitContainer(options.container, () =>
       getUncommittedGitDiff(options.cwd ?? process.cwd())
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getGitCommitMessageContext, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getGitCommitMessageContext, async (_event, value: unknown) => {
     const options = getGitDiffOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitCommitMessageContext(options.cwd ?? process.cwd())
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getGitFileDiff, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getGitFileDiff, async (_event, value: unknown) => {
     const options = getGitFileDiffOptions(value)
     return runWithGitContainer(options.container, () =>
       getGitFileDiff(options.cwd ?? process.cwd(), options.path, options.previousPath)
     )
   })
 
-  handleLoggedIpc(appIpcChannels.getUncommittedGitPatchChanges, async (_event, value: unknown) => {
-    const options = getGitUncommittedPatchChangesOptions(value)
-    return runWithGitContainer(options.container, () =>
-      getUncommittedGitPatchChanges(options.cwd ?? process.cwd(), options.patches)
-    )
-  })
+  handleClientRequest(
+    appIpcChannels.getUncommittedGitPatchChanges,
+    async (_event, value: unknown) => {
+      const options = getGitUncommittedPatchChangesOptions(value)
+      return runWithGitContainer(options.container, () =>
+        getUncommittedGitPatchChanges(options.cwd ?? process.cwd(), options.patches)
+      )
+    }
+  )
 
-  handleLoggedIpc(appIpcChannels.commitGitChanges, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.commitGitChanges, async (_event, value: unknown) => {
     const options = getGitCommitOptions(value)
     return runWithGitContainer(options.container, () =>
       commitGitChanges(
@@ -3573,14 +3662,14 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  handleLoggedIpc(appIpcChannels.pullGitChanges, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.pullGitChanges, async (_event, value: unknown) => {
     const options = getGitSyncOptions(value)
     return runWithGitContainer(options.container, () =>
       pullGitChanges(options.cwd ?? process.cwd(), options.strategy, options.rememberStrategy)
     )
   })
 
-  handleLoggedIpc(appIpcChannels.pushGitChanges, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.pushGitChanges, async (_event, value: unknown) => {
     const options = getGitSyncOptions(value)
     return runWithGitContainer(options.container, () =>
       pushGitChanges(
@@ -3612,7 +3701,7 @@ export const registerAppIpc = (): void => {
     return result.filePaths[0] ?? null
   })
 
-  handleLoggedIpc(appIpcChannels.getProjectIcon, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getProjectIcon, async (_event, value: unknown) => {
     const options = getProjectIconOptions(value)
     return getAppProjectIcon(options.cwd ?? null)
   })
@@ -3641,6 +3730,7 @@ export const registerAppIpc = (): void => {
     const copiedPath = await copyProjectIcon(sourcePath)
     if (options.persist !== false) {
       await setStoredProjectIcon(options.cwd ?? null, copiedPath)
+      publishWorkspace()
       return getAppProjectIcon(options.cwd ?? null)
     }
 
@@ -3654,7 +3744,7 @@ export const registerAppIpc = (): void => {
     }
   })
 
-  handleLoggedIpc(
+  handleClientRequest(
     appIpcChannels.prepareMessageAttachments,
     async (_event, attachments: unknown, value: unknown) => {
       if (value != null && (typeof value !== 'object' || Array.isArray(value))) {
@@ -3733,7 +3823,7 @@ export const registerAppIpc = (): void => {
     } satisfies AppSelectedImage
   })
 
-  handleLoggedIpc(appIpcChannels.getLocalVideo, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getLocalVideo, async (_event, value: unknown) => {
     const options = getLocalMediaOptions(value)
     return runWithGitContainer(options.container, () =>
       getLocalMedia(options.cwd ?? null, options.path, options.relativeTo, 'video')
@@ -3748,7 +3838,7 @@ export const registerAppIpc = (): void => {
     await copyVideoFile(basename(options.path), Buffer.from(video.data))
   })
 
-  handleLoggedIpc(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
+  handleClientRequest(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
     const options = getLocalMediaOptions(value)
     return runWithGitContainer(options.container, () =>
       getLocalMedia(options.cwd ?? null, options.path, options.relativeTo)

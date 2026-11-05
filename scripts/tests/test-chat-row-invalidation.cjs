@@ -59,10 +59,14 @@ if (!process.versions.electron) {
             setup(build) {
               build.onLoad({ filter: /[/\\]ChatDetailItem\.tsx$/ }, async ({ path: filename }) => {
                 const source = await fs.readFile(filename, 'utf8')
-                const needle = 'const messageRef = useRef<HTMLDivElement>(null)'
+                const needle =
+                  'const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = (props) => {'
                 assert.equal(source.split(needle).length, 2)
                 return {
-                  contents: source.replace(needle, 'window.rowRenders.push(item.id);' + needle),
+                  contents: source.replace(
+                    needle,
+                    needle + 'window.rowRenders.push(props.item.id);'
+                  ),
                   loader: 'tsx'
                 }
               })

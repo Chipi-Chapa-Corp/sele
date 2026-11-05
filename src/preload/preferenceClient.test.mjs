@@ -119,3 +119,31 @@ test('rejected transport promises are handled and initialization failure preserv
   assert.equal((await failed.initialize()).ok, false)
   assert.equal(failed.setItem('sele:a', 'reset').ok, false)
 })
+
+test('host changes update live snapshots and notify without echoing writes', async () => {
+  let publish
+  const notifications=[]
+  const client=createPreferenceClient({initialize:async()=>({ok:true,value:{'sele:preset':'old'}}),write:()=>assert.fail('remote changes must not write back'),commit:()=>ok,subscribe:listener=>{publish=listener}})
+  await client.initialize()
+  client.onChanged(changes=>notifications.push(changes))
+  publish({'sele:preset':'new','sele:setting':'shared'})
+  assert.equal(client.getItem('sele:preset').value,'new')
+  publish({'sele:preset':'new'})
+  assert.equal(notifications.length,1)
+  publish({'sele:preset':null})
+  assert.equal(client.getItem('sele:preset').value,null)
+})
+
+test('an in-flight local write replays the latest authoritative broadcast after acknowledgment', async () => {
+  let publish
+  const request=deferred()
+  const client=createPreferenceClient({initialize:async()=>({ok:true,value:{}}),write:()=>request.promise,commit:()=>ok,subscribe:listener=>{publish=listener}})
+  await client.initialize()
+  client.setItem('sele:setting','local')
+  publish({'sele:setting':'local'})
+  publish({'sele:setting':'newer host edit'})
+  assert.equal(client.getItem('sele:setting').value,'local')
+  request.resolve(ok)
+  await client.flush()
+  assert.equal(client.getItem('sele:setting').value,'newer host edit')
+})

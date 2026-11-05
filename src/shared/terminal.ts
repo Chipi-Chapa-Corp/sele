@@ -13,6 +13,9 @@ export type AgentTerminalSession = {
   status: 'running' | 'exited'
   interactive: boolean
   stopScope: 'process' | 'turn'
+  workspaceKey?: string
+  workspaceLabel?: string
+  closeOnCommandFinish?: boolean
 }
 
 export type TerminalCreateOptions = {
@@ -22,7 +25,13 @@ export type TerminalCreateOptions = {
   cols: number
   rows: number
   initialCommand?: string | null
+  /** Scrollback to replay before the new shell's output; never sent to stdin. */
+  initialOutput?: string
   keepAliveOnCommandFinish?: boolean
+  workspaceKey?: string
+  chatKey?: string | null
+  label?: string
+  closeOnCommandFinish?: boolean
 }
 
 export type TerminalRunCommandOptions = {

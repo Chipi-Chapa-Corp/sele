@@ -161,3 +161,5 @@
     transform: rotate(360deg);
   }
 }
+
+.browser-panel__tabs-scroll { display: contents; }

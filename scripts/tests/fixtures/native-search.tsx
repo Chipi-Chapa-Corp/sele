@@ -33,12 +33,15 @@ fixture.providerApi = {
 function Fixture() {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(true)
+  const [revision, setRevision] = useState(0)
   const sidebar = useSidebarSearch(query, [null], open)
   fixture.setQuery = (value) => flushSync(() => setQuery(value))
   fixture.setOpen = (value) => flushSync(() => setOpen(value))
+  fixture.refresh = () => flushSync(() => setRevision((value) => value + 1))
   fixture.sidebar = sidebar
   return (
     <main>
+      <output>{revision}</output>
       <input
         aria-label="Search conversations"
         value={query}

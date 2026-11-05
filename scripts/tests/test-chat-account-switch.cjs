@@ -19,7 +19,7 @@ if (!process.versions.electron) {
         selection.indexOf('  const latestAssistantMessage =')
       )
       const controller = await fs.readFile(
-        path.join(project, 'src/renderer/src/useWorkspaceController.tsx'),
+        path.join(project, 'src/renderer/src/workspace/features/useWorkspaceProviderAccounts.tsx'),
         'utf8'
       )
       const switchHandler = controller.slice(
@@ -36,6 +36,7 @@ if (!process.versions.electron) {
           import {SidebarProviderAccount} from './src/renderer/src/workspace/components/SidebarProviderAccount'
           import {UsageIndicator} from './src/renderer/src/components/UsageIndicator'
           import {providerApi} from './src/renderer/src/providerApi'
+          import {useAccountUsageState} from './src/renderer/src/workspace/useAccountUsageState'
           import {mergeAccountUsage,getErrorMessage} from './src/renderer/src/workspace/chatControllerUtils'
           import {normalizeContainerTarget} from './src/renderer/src/containerSelection'
           import './src/renderer/src/App.css'
@@ -47,13 +48,12 @@ if (!process.versions.electron) {
             const changesContainer=null,changesContainerKey='host',usageProviderId='codex'
             const usageProviderAvailable=true,usageProviderAvailabilityReady=true
             const [providerAccountRevision,setProviderAccountRevision]=useState(0)
-            const [accountUsage,setAccountUsage]=useState(null)
-            const [accountUsageState,setAccountUsageState]=useState('loading')
-            const [accountUsageError,setAccountUsageError]=useState(null)
             const [providerAccountUpdatingId,setProviderAccountUpdatingId]=useState(null)
             const setProviderAccountsError=()=>{},setChats=()=>{},setChatDetail=()=>{}
             const setProviderModelsRevision=()=>{},setChatLoadRequest=()=>{}
             const applyProviderAccountConfiguration=()=>{}
+            const providerState={providerAccountUpdatingId,setProviderAccountUpdatingId,setProviderAccountsError,setProviderModelsRevision,setProviderAccountRevision}
+            const chatState={setChats,setSelectedChat,setChatDetail,setChatLoadRequest}
             ${usageHooks}
             ${switchHandler}
             window.openFixtureChat=()=>setSelectedChat({id:'saved-chat',accountId:'default'})
@@ -82,6 +82,7 @@ if (!process.versions.electron) {
       const serviceExports = [
         'getChatUpdateSummary',
         'getProviderCachedChat',
+        'startLimitResetQueue',
         'getProviderConversationViews',
         'getProviderKnownChats',
         'beginProviderConversationRead',
@@ -110,7 +111,7 @@ if (!process.versions.electron) {
               }))
               build.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path: modulePath }) => ({
                 contents: modulePath.endsWith('logging')
-                  ? `import {ipcMain} from 'electron';export const handleLoggedIpc=(channel,handler)=>ipcMain.handle(channel,handler);export const logDiagnostic=()=>{};`
+                  ? `import {ipcMain} from 'electron';export const handleLoggedIpc=(channel,handler)=>ipcMain.handle(channel,handler);export const handleClientRequest=handleLoggedIpc;export const logDiagnostic=()=>{};`
                   : `export const providerApi={onChatUpdated:()=>()=>{},getAccounts:(...args)=>globalThis.accountFixture.getAccounts(...args),useAccount:(...args)=>globalThis.accountFixture.useAccount(...args),getUsage:(...args)=>globalThis.accountFixture.getUsage(...args)};${serviceExports.map((name) => `export const ${name}=()=>{};`).join('')}`
               }))
             }

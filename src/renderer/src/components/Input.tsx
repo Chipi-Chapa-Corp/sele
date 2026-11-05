@@ -18,7 +18,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           const window = document.defaultView
 
           cancelFocusRetryRef.current?.()
-          if (window) {
+          if (window && !window.matchMedia('(pointer: coarse)').matches) {
             // Electron can show DOM focus while keyboard focus remains in another view.
             window.focus()
             const frame = window.requestAnimationFrame(() => {

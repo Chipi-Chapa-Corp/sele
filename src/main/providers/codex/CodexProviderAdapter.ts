@@ -1531,8 +1531,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private getThreadContainer = (
     threadId: string,
     options?: { container?: AppContainerTarget | null }
-  ): AppContainerTarget | null =>
-    options?.container ?? this.threadContainers.get(threadId) ?? this.getCurrentContainer()
+  ): AppContainerTarget | null => {
+    const known = this.threadContainers.get(threadId)
+    // Several discovered environments may see the same mounted native history.
+    // A listing must not move a thread away from Sele's existing writer.
+    if (
+      this.threadContainers.has(threadId) &&
+      this.clients.get(getContainerTargetKey(known))?.ownsThread(threadId)
+    )
+      return known ?? null
+    return options?.container ?? known ?? this.getCurrentContainer()
+  }
 
   private rememberThreadContainer = (
     threadId: string,
@@ -2259,6 +2268,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> =>
     this.runWithContainer(options.container, () => this.getChatsInContext(options))
 
+  recoverRuntime = (options: ProviderSourceOptions = {}): Promise<void> =>
+    this.runWithContainer(options.container, () => this.client.recoverRuntime())
+
   getChatTerminalTasks = async (
     chatId: string,
     options: ProviderSourceOptions = {}
@@ -2344,7 +2356,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const chats = await Promise.all(
       rootThreads.map(async (thread) => {
         const namedThread = this.withResolvedThreadName(thread, threadNames.get(thread.id) ?? null)
-        this.rememberThreadContainer(namedThread.id)
+        if (!this.threadContainers.has(namedThread.id)) this.rememberThreadContainer(namedThread.id)
         // Listing metadata has no turn outcome. Read only the latest native turn shell;
         // never hydrate or resume sidebar conversations just to draw their status dots.
         const latestTurn = await this.getSidebarTurnSummary(namedThread)
@@ -2374,7 +2386,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
           done: false,
           seenUpdatedAt: null,
           purpose: null,
-          container: this.getCurrentContainer()
+          container: this.threadContainers.has(namedThread.id)
+            ? (this.threadContainers.get(namedThread.id) ?? null)
+            : this.getCurrentContainer()
         }
       })
     )
@@ -2863,7 +2877,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           this.scheduleChatUpdated(chatId)
       })
       await this.goals.read(thread.id, (method, params) => this.client.request(method, params))
-      await this.pendingMessageRestores.get(chatId)
+      await this.startPendingMessageRestore(this.threads.get(chatId) ?? thread)
       this.scheduleQueueDrain(chatId)
     } else {
       await Promise.all([
@@ -3036,10 +3050,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
         limit: rendererChatUpdateTurnLimit
       })
     }
-    // Queue actions must see messages restored from the previous run, ahead of new ones.
-    await this.pendingMessageRestores.get(chatId)
     const thread = this.threads.get(chatId)
     if (!thread) throw new Error('Unable to load chat')
+    // Queue actions must see restored messages, retrying a previous failed durable read.
+    await this.startPendingMessageRestore(thread)
     return thread
   }
 
@@ -4483,7 +4497,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
   dispose = (): void => {
     // Record the final live lists, then keep them: the teardown below clears them in memory.
     for (const threadId of this.threads.keys()) this.persistPendingMessages(threadId)
-    void this.pendingMessageStore.close()
+    void this.pendingMessageStore.close().catch((error: unknown) => {
+      console.error('Unable to flush pending Codex messages during disposal.', error)
+    })
     this.pendingMessageRestores.clear()
     this.chatUpdatedTimers.forEach((timer) => clearTimeout(timer))
     this.chatUpdatedTimers.clear()
@@ -6478,17 +6494,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
     ])
   }
 
-  private startPendingMessageRestore = (thread: CodexThread): void => {
-    if (isCodexSubagentThread(thread) || this.pendingMessageRestores.has(thread.id)) return
-    this.pendingMessageRestores.set(
-      thread.id,
-      this.pendingMessageStore
-        .restore(thread.id)
-        .then((stored) => this.applyRestoredPendingMessages(thread.id, stored))
-        .catch((error: unknown) => {
-          console.error(`Unable to restore pending Codex messages for ${thread.id}.`, error)
-        })
-    )
+  private startPendingMessageRestore = (thread: CodexThread): Promise<void> => {
+    if (isCodexSubagentThread(thread)) return Promise.resolve()
+    const existing = this.pendingMessageRestores.get(thread.id)
+    if (existing) return existing
+    const restoring = this.pendingMessageStore
+      .restore(thread.id)
+      .then((stored) => this.applyRestoredPendingMessages(thread.id, stored))
+    this.pendingMessageRestores.set(thread.id, restoring)
+    // Cache ingestion starts this in the background; send/open callers await the original
+    // rejection. Remove failed attempts so a later admission can retry the durable queue.
+    void restoring.catch((error: unknown) => {
+      if (this.pendingMessageRestores.get(thread.id) === restoring)
+        this.pendingMessageRestores.delete(thread.id)
+      console.error(`Unable to restore pending Codex messages for ${thread.id}.`, error)
+    })
+    return restoring
   }
 
   /**
@@ -7735,7 +7756,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
         // Rehydrate from the still-running provider rather than replaying deltas
         // or turn/start requests that could duplicate accepted work.
         void this.getChat(threadId, { container })
-          .then(() => {
+          .then(async () => {
+            await this.getChatTerminalTasks(threadId, { container })
             this.emitChatUpdated(threadId)
           })
           .catch((error: unknown) => {

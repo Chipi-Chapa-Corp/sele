@@ -1,3 +1,4 @@
+import { onPreferencesChanged } from '../preferences'
 import {
   type CSSProperties,
   type ReactNode,
@@ -13,6 +14,7 @@ import { Check, ChevronDown, ChevronRight, Pencil, Save, Settings2, Trash2 } fro
 import { MenuPageTransition } from '../motion/MenuPageTransition'
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { toCssRem } from '../cssUnits'
+import { useCompactLayout } from '../useCompactLayout'
 import type { DropdownOption } from './Dropdown'
 import { ChatConfigSectionHeader } from './ChatConfigSectionHeader'
 import { Input } from './Input'
@@ -124,6 +126,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   getPresetDetails,
   onPresetChange
 }) => {
+  const compact = useCompactLayout()
   const reactId = useId().replace(/:/g, '')
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -134,15 +137,21 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   const [modelSearchQuery, setModelSearchQuery] = useState('')
   const [configuring, setConfiguring] = useState(false)
   const [presets, setPresets] = useState<MessageBoxSelection[]>([])
+  useEffect(
+    () =>
+      onPreferencesChanged((keys) => {
+        if (keys.has(`sele:chat-presets:v1:${providerId}`)) setPresets(readChatPresets(providerId))
+      }),
+    [providerId]
+  )
   const [editingPreset, setEditingPreset] = useState<MessageBoxSelection | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const labelRef = useRef<HTMLSpanElement>(null)
   useFeedbackMotion(labelRef, `${modelLabel}:${reasoningLabel}`)
   const menuId = `${id}-${reactId}-menu`
   const menuOpen = open && sections.length > 0
-  const activeSection = sections.find((section) => section.id === activeSectionId) ?? null
   const showingPresets = presetsEnabled && presets.length > 0 && !configuring
-  const showingColumns = presetsEnabled && !showingPresets
+  const showingColumns = presetsEnabled && !showingPresets && !compact
   const questionsSection = sections.find((section) => section.id === 'questions')
   const configurationSections = (['model', 'reasoning', 'access', 'speed'] as const).flatMap(
     (sectionId): ChatConfigSection[] => {
@@ -169,6 +178,10 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       ]
     }
   )
+  const activeSection =
+    (compact ? configurationSections : sections).find(
+      (section) => section.id === activeSectionId
+    ) ?? null
   const currentPresetSaved = presets.some((preset) => selectionsEqual(preset, selection))
   const normalizedModelSearchQuery = modelSearchQuery.trim().toLocaleLowerCase()
   const getVisibleSectionGroups = (section: ChatConfigSection): readonly ChatConfigOptionGroup[] =>
@@ -288,6 +301,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === 'Escape') {
       event.preventDefault()
+      event.stopPropagation()
       closeMenu()
       buttonRef.current?.focus({ preventScroll: true })
       return
@@ -299,6 +313,10 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       event.target !== modelSearchInputRef.current
     ) {
       event.preventDefault()
+      if (compact) {
+        closeMenu()
+        return
+      }
       setActiveSectionId(null)
       setModelSearchQuery('')
       if (!activeSection) {
@@ -327,7 +345,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
         </div>
       ) : (
         <div className="message-box__chat-config-option-groups">
-          {sections.map((section) => (
+          {(compact ? configurationSections : sections).map((section) => (
             <button
               className="message-box__chat-config-section-button"
               disabled={section.disabled}
@@ -396,6 +414,10 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           {presets.length > 0 && (
             <ChatConfigSectionHeader
               onBack={() => {
+                if (compact) {
+                  closeMenu()
+                  return
+                }
                 setConfiguring(false)
                 setEditingPreset(null)
                 setSaveError(null)
@@ -460,7 +482,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
                       ))}
                   </span>
                 </span>
-                {details.selected && (
+                {details.selected && !compact && (
                   <Check className="message-box__chat-config-check" aria-hidden="true" />
                 )}
               </button>
@@ -591,7 +613,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
                           <span className="message-box__chat-config-option-label">
                             {option.menuLabel ?? option.label}
                           </span>
-                          {selected && (
+                          {selected && !compact && (
                             <Check className="message-box__chat-config-check" aria-hidden="true" />
                           )}
                         </span>
@@ -611,7 +633,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
                             {option.menuLabel ?? option.label}
                           </span>
                         </span>
-                        {selected && (
+                        {selected && !compact && (
                           <Check className="message-box__chat-config-check" aria-hidden="true" />
                         )}
                       </>
@@ -656,6 +678,10 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
             <ChatConfigSectionHeader
               modelError={section.id === 'model' ? modelsError : null}
               onBack={() => {
+                if (compact) {
+                  closeMenu()
+                  return
+                }
                 setActiveSectionId(null)
                 setModelSearchQuery('')
                 focusFirstMenuButton()

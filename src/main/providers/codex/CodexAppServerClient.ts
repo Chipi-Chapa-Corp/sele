@@ -8,6 +8,7 @@ import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
 import { getCodexAccountViewCommand } from './CodexAccountView'
 import { CodexDynamicTools } from './CodexDynamicTools'
 import { registerCodexDesktopTools } from './CodexDesktopTools'
+import { registerCodexBrowserTools } from './CodexBrowserTools'
 import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
 
 type RpcError = {
@@ -115,11 +116,22 @@ export class CodexAppServerClient {
     private readonly persistent = false
   ) {
     if (!container) this.desktopTools = registerCodexDesktopTools(this.dynamicTools)
+    // Local dev containers can use the scoped Browser pane without receiving
+    // host desktop/Chrome access or depending on a plugin's JS runtime.
+    if (
+      !container ||
+      container.kind === 'host' ||
+      container.tool === 'distrobox' ||
+      container.tool === 'toolbox'
+    )
+      this.browserTools = registerCodexBrowserTools(this.dynamicTools)
   }
   private desktopTools: ReturnType<typeof registerCodexDesktopTools> | null = null
+  private browserTools: ReturnType<typeof registerCodexBrowserTools> = null
 
   private process: CodexProcess | null = null
   private startPromise: Promise<void> | null = null
+  private runtimeRecovery: Promise<void> | null = null
   private lifecycle = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectDelay = 250
@@ -283,6 +295,7 @@ export class CodexAppServerClient {
     this.reconnectTimer = null
     this.recoveryThreadIds.clear()
     this.desktopTools?.close()
+    this.browserTools?.close()
     this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
@@ -305,7 +318,30 @@ export class CodexAppServerClient {
     await closed
   }
 
+  /** Discovery may reattach, but must not launch accounts that have no surviving worker. */
+  recoverRuntime = (): Promise<void> => {
+    if (this.startPromise) return this.startPromise
+    if (this.runtimeRecovery) return this.runtimeRecovery
+    if (!this.persistent) return Promise.resolve()
+    const lifecycle = this.lifecycle
+    const recovery = this.initialize(true)
+      .then(() => {
+        if (this.lifecycle === lifecycle && this.process) this.startPromise = Promise.resolve()
+      })
+      .catch((error: unknown) => {
+        if (this.lifecycle !== lifecycle) return
+        if (!['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException)?.code ?? ''))
+          throw error
+      })
+      .finally(() => {
+        if (this.runtimeRecovery === recovery) this.runtimeRecovery = null
+      })
+    this.runtimeRecovery = recovery
+    return recovery
+  }
+
   private start = async (): Promise<void> => {
+    await this.runtimeRecovery
     if (!this.startPromise) {
       const startPromise = this.initialize().catch((error: unknown) => {
         if (this.startPromise === startPromise) this.startPromise = null
@@ -317,7 +353,7 @@ export class CodexAppServerClient {
     return this.startPromise
   }
 
-  private initialize = async (): Promise<void> => {
+  private initialize = async (existingOnly = false): Promise<void> => {
     const lifecycle = this.lifecycle
     const appServerCommand = await getAppServerCommand(
       this.container?.kind === 'container' ? 'codex' : getCodexExecutable(),
@@ -339,7 +375,7 @@ export class CodexAppServerClient {
             process.env.CODEX_HOME ?? null,
             process.env.SELE_CODEX_PATH ?? null
           ],
-          hostCommand
+          existingOnly ? null : hostCommand
         )
       : spawn(hostCommand.file, hostCommand.args, {
           env: hostCommand.env,
@@ -602,6 +638,7 @@ export class CodexAppServerClient {
     if (this.persistent)
       for (const threadId of this.ownedThreadIds) this.recoveryThreadIds.add(threadId)
     this.desktopTools?.close()
+    this.browserTools?.close()
     this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)

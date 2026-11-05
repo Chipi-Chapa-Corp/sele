@@ -4,6 +4,8 @@ import { registerMcpApps } from './mcpApps/registerMcpApps'
 import { getProviderMcpApp } from './providers/providerService'
 import { stopPtys } from './pty'
 import { registerPreferences } from './registerPreferences'
+import { registerChatSleep } from './registerChatSleep'
+import { registerLocalAccess, stopLocalAccess } from './registerLocalAccess'
 import { registerAppUpdate } from './appUpdate'
 import './logging'
 import { startBrowserUseBridge } from './providers/codex/CodexBrowserBridge'
@@ -340,6 +342,7 @@ const startApp = (): void => {
     .whenReady()
     .then(async () => {
       await registerPreferences()
+      registerChatSleep()
       startModelPricingRefresh()
       registerVisualizationProtocol()
       registerMcpApps(getProviderMcpApp)
@@ -356,6 +359,7 @@ const startApp = (): void => {
       registerProviderIpc()
       registerChatArchiveIpc()
       registerTerminalIpc()
+      await registerLocalAccess()
 
       app.on('browser-window-created', (_, window) => {
         optimizer.watchWindowShortcuts(window)
@@ -391,10 +395,11 @@ app.on('before-quit', (event) => {
   finishingQuit = true
   beginProviderIpcShutdown()
   disposeTerminalSessions()
-  void disposeProviderAdapters()
-    .then(stopPtys)
-    .then(stopModelPricingRefresh)
-    .then(flushTokenUsage)
+  void stopLocalAccess()
+    .finally(disposeProviderAdapters)
+    .finally(stopPtys)
+    .finally(stopModelPricingRefresh)
+    .finally(flushTokenUsage)
     .finally(() => bufferedCommands.dispose())
     .catch((error: unknown) => {
       console.error('Unable to finish shutdown.', error)

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { getContainerTargetKey } from '../../containerTarget.ts'
 import { CodexDynamicTools } from './CodexDynamicTools.ts'
 
 const extract = (file, className, names, globals = {}) => {
@@ -24,6 +25,41 @@ const extract = (file, className, names, globals = {}) => {
     globals
   )
 }
+
+test('runtime recovery refreshes chat and terminal state without a chat selection', async () => {
+  const remote = { kind: 'container', tool: 'ssh', name: 'remote' }
+  const calls = []
+  const adapter = extract(
+    './CodexProviderAdapter.ts',
+    'CodexProviderAdapter',
+    ['handleNotification'],
+    {
+      getThreadId: (params) => params.threadId ?? null
+    }
+  )
+  Object.assign(adapter, {
+    getCurrentContainer: () => remote,
+    rememberThreadContainer: (id, container) => calls.push(['source', id, container]),
+    getChat: async (id, options) => {
+      calls.push(['chat', id, options.container])
+    },
+    getChatTerminalTasks: async (id, options) => {
+      calls.push(['terminals', id, options.container])
+    },
+    emitChatUpdated: (id) => calls.push(['publish', id])
+  })
+  adapter.handleNotification({
+    method: 'sele/runtime/restored',
+    params: { threadIds: ['running'] }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(calls, [
+    ['source', 'running', remote],
+    ['chat', 'running', remote],
+    ['terminals', 'running', remote],
+    ['publish', 'running']
+  ])
+})
 
 for (const [locallyOwned, externallyOwned] of [
   [false, true],
@@ -311,4 +347,28 @@ test('switching an active chat stops it and waits for an outstanding ownership c
   assert.equal(released, false)
   closed()
   await release
+})
+
+test('an owned writer wins over stale discovery metadata without crossing containers', () => {
+  const adapter = extract(
+    './CodexProviderAdapter.ts',
+    'CodexProviderAdapter',
+    ['getThreadContainer'],
+    { getContainerTargetKey }
+  )
+  const remote = { kind: 'container', tool: 'toolbox', name: 'dev' }
+  Object.assign(adapter, {
+    threadContainers: new Map([
+      ['host-chat', null],
+      ['remote-chat', remote]
+    ]),
+    clients: new Map([
+      ['host', { ownsThread: (id) => id === 'host-chat' }],
+      ['toolbox:dev', { ownsThread: (id) => id === 'remote-chat' }]
+    ]),
+    getCurrentContainer: () => remote
+  })
+  assert.equal(adapter.getThreadContainer('host-chat', { container: remote }), null)
+  assert.equal(adapter.getThreadContainer('remote-chat', { container: { kind: 'host' } }), remote)
+  assert.equal(adapter.getThreadContainer('unowned', { container: { kind: 'host' } }).kind, 'host')
 })

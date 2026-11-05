@@ -18,15 +18,20 @@ const bundled = await build({
     {
       name: 'isolate-provider-ipc',
       setup(build) {
-        build.onResolve({ filter: /^(\.\/providerService|\.\.\/logging)$/ }, (args) => ({
-          path: args.path,
-          namespace: 'test'
-        }))
+        build.onResolve(
+          { filter: /^(\.\/providerService|\.\/chatMetadataEvents|\.\.\/logging)$/ },
+          (args) => ({
+            path: args.path,
+            namespace: 'test'
+          })
+        )
         build.onLoad({ filter: /.*/, namespace: 'test' }, ({ path }) => ({
-          contents: path.endsWith('logging')
-            ? `export const handleLoggedIpc = (channel, handler) => globalThis.harness.handlers.set(channel, handler);
+          contents: path.endsWith('chatMetadataEvents')
+            ? 'export const onChatMetadataChanged = listener => { globalThis.harness.publishMetadata = listener };'
+            : path.endsWith('logging')
+              ? `export const handleClientRequest = (channel, handler) => globalThis.harness.handlers.set(channel, handler);
              export const logDiagnostic = (...args) => globalThis.harness.logs.push(args);`
-            : `export const startLimitResetQueue = () => {};
+              : `export const startLimitResetQueue = () => {};
              export const providerApi = {
                beginPendingMessageEdit: (...args) => globalThis.harness.beginPendingMessageEdit(...args),
                cancelPendingMessageEdit: (...args) => globalThis.harness.cancelPendingMessageEdit(...args),
@@ -60,7 +65,7 @@ const bundled = await build({
              export const beginProviderConversationRead = async () => ({key:'fixture',current:()=>true});
              export const saveProviderConversationView = async (...args) => globalThis.harness.persistView?.(...args) ?? globalThis.harness.savedViews?.push(args);
              export const saveProviderChatHistory = (...args) => globalThis.harness.savedHistory?.push(args);
-             export const getChatUpdateSummary = () => {};
+             export const getChatUpdateSummary = detail => ({id:detail.id,revision:detail.revision,status:detail.status,title:detail.title});
              export const getProviderChatCursorWindow = () => {};
              export const getProviderChatItemWindow = () => {};
              export const getProviderSubagentItemWindow = (...args) => globalThis.harness.getSubagent(args[0], args[1], args[2]);
@@ -132,8 +137,40 @@ const setup = () => {
       callback()
     })
   }
-  return { harness, module, sent, timers, emit, publish, expire, contents }
+  return { harness, module, sent, timers, emit, publish, expire, contents, ipcMain }
 }
+
+test('desktop and LAN clients have independent viewed chats and acknowledgements', () => {
+  const h = setup()
+  const remoteSent = []
+  const remote = Object.assign(new EventEmitter(), {
+    id: -1,
+    isDestroyed: () => false,
+    send: (channel, event) => remoteSent.push({ channel, event })
+  })
+  const emit = (channel, ...args) => h.ipcMain.emit(channel, { sender: remote }, ...args)
+  emit(channels.chatUpdatesReady)
+  emit(channels.viewedChatChanged, 'claude', 'second-chat')
+  h.publish(1)
+  assert.equal(h.sent[0].event.detail.id, 'first-chat')
+  assert.equal(remoteSent[0].event.detail, null)
+  emit(channels.chatUpdateAcknowledged, remoteSent[0].event.sequence, false)
+  h.harness.publish({
+    providerId: 'claude',
+    chatId: 'second-chat',
+    turnCompleted: true,
+    summary: { id: 'second-chat', status: null },
+    detail: { id: 'second-chat', revision: 1, status: null, items: [] }
+  })
+  assert.equal(remoteSent[1].event.detail.id, 'second-chat')
+  assert.equal(h.sent.length, 1, 'remote ack must not acknowledge the desktop update')
+  h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, true)
+  assert.equal(h.sent[1].event.chatId, 'second-chat')
+  assert.equal(h.sent[1].event.detail, null)
+  remote.emit('destroyed')
+  h.publish(2)
+  assert.equal(remoteSent.length, 2, 'disconnected remote clients must be released')
+})
 
 test('first-chat updates and completion arrive normally when acknowledged', () => {
   const h = setup()
@@ -1121,4 +1158,61 @@ test('chat IPC preserves the configured reset continuation and rejects malformed
       )
     }
   }
+})
+
+test('idle metadata updates reach desktop and LAN, and survive stale provider snapshots', () => {
+  const h = setup()
+  const remoteSent = []
+  const remote = Object.assign(new EventEmitter(), {
+    id: -7,
+    isDestroyed: () => false,
+    send: (channel, event) => remoteSent.push({ channel, event })
+  })
+  h.ipcMain.emit(channels.chatUpdatesReady, { sender: remote })
+  const metadata = [
+    {
+      id: 'first-chat',
+      pinned: true,
+      done: true,
+      doneAt: 123,
+      sidebarOrder: 2,
+      seenUpdatedAt: 100,
+      purpose: null,
+      container: null
+    }
+  ]
+  h.harness.publishMetadata(metadata)
+  assert.equal(h.sent[0].channel, channels.chatMetadataUpdated)
+  assert.equal(remoteSent[0].channel, channels.chatMetadataUpdated)
+  assert.equal(h.sent[0].event, metadata)
+  assert.equal(remoteSent[0].event, metadata)
+  h.publish(1)
+  assert.equal(h.sent[1].event.summary.done, true)
+  assert.equal(h.sent[1].event.detail.pinned, true)
+  h.ipcMain.emit(channels.chatUpdatesStopped, { sender: remote })
+  h.harness.publishMetadata([{ ...metadata[0], done: false }])
+  assert.equal(remoteSent.length, 2, 'stopped clients receive no metadata')
+  assert.equal(h.sent.at(-1).event[0].done, false)
+})
+
+test('queued provider updates use the newest metadata when acknowledged later', () => {
+  const h = setup()
+  h.publish(1)
+  h.publish(2)
+  h.harness.publishMetadata([
+    {
+      id: 'first-chat',
+      pinned: false,
+      done: true,
+      doneAt: 100,
+      sidebarOrder: null,
+      seenUpdatedAt: null,
+      purpose: null,
+      container: null
+    }
+  ])
+  h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, false)
+  assert.equal(h.sent.at(-1).channel, channels.chatUpdated)
+  assert.equal(h.sent.at(-1).event.summary.done, true)
+  assert.equal(h.sent.at(-1).event.detail.done, true)
 })

@@ -1,16 +1,19 @@
+import { publishWorkspace } from '../workspaceEvents'
 import type { ProviderConnectInput } from '../../shared/providerConnections'
 import { normalizeNetworkRetrySettings, type NetworkRetrySettings } from '../../shared/networkRetry'
-import { handleLoggedIpc, logDiagnostic } from '../logging'
+import { handleClientRequest, logDiagnostic } from '../logging'
+import { onClientMessage, type RendererClient } from '../clientIpc'
 import { setChatUpdateInterest } from './chatUpdateInterest'
+import { onChatMetadataChanged } from './chatMetadataEvents'
 import type { ProviderConfigValue } from '../../shared/provider'
 import { isDeepStrictEqual } from 'node:util'
 import { extname, isAbsolute } from 'node:path'
-import { BrowserWindow, ipcMain, type WebContents } from 'electron'
 import type {
   ProviderApprovalDecision,
   ProviderActiveSendMode,
   ProviderAccountUsage,
   ProviderChatDetail,
+  ProviderChatMetadata,
   ProviderChatDetailUpdate,
   ProviderChatListOptions,
   ProviderChatPage,
@@ -116,15 +119,23 @@ type ChatUpdateDeliveryState = {
   latestRevisionByChatKey: Map<string, number>
 }
 
-const chatUpdateDeliveryByWebContentsId = new Map<number, ChatUpdateDeliveryState>()
+const withWorkspaceUpdate = async <T>(operation: Promise<T>): Promise<T> => {
+  const result = await operation
+  publishWorkspace()
+  return result
+}
+
+const chatUpdateDeliveryByClientId = new Map<number, ChatUpdateDeliveryState>()
+const chatUpdateClients = new Map<number, RendererClient>()
 let nextChatUpdateSequence = 1
 let providerIpcShuttingDown = false
 
 export const beginProviderIpcShutdown = (): void => {
   providerIpcShuttingDown = true
-  chatUpdateDeliveryByWebContentsId.forEach((_, id) => setChatUpdateInterest(id, null))
-  chatUpdateDeliveryByWebContentsId.forEach(clearChatAcknowledgmentTimer)
-  chatUpdateDeliveryByWebContentsId.clear()
+  chatUpdateDeliveryByClientId.forEach((_, id) => setChatUpdateInterest(id, null))
+  chatUpdateDeliveryByClientId.forEach(clearChatAcknowledgmentTimer)
+  chatUpdateDeliveryByClientId.clear()
+  chatUpdateClients.clear()
 }
 
 const getErrorMessage = (error: unknown): string =>
@@ -232,8 +243,8 @@ const getChatDetailContainingWorkingStep = async (
   return getProviderChatItemWindow(providerId, chatId, workingStepId, 1)
 }
 
-const getChatUpdateDeliveryState = (webContents: WebContents): ChatUpdateDeliveryState => {
-  const existingState = chatUpdateDeliveryByWebContentsId.get(webContents.id)
+const getChatUpdateDeliveryState = (client: RendererClient): ChatUpdateDeliveryState => {
+  const existingState = chatUpdateDeliveryByClientId.get(client.id)
   if (existingState) return existingState
 
   const state: ChatUpdateDeliveryState = {
@@ -245,11 +256,13 @@ const getChatUpdateDeliveryState = (webContents: WebContents): ChatUpdateDeliver
     pendingByChatKey: new Map(),
     latestRevisionByChatKey: new Map()
   }
-  chatUpdateDeliveryByWebContentsId.set(webContents.id, state)
-  webContents.once('destroyed', () => {
+  chatUpdateDeliveryByClientId.set(client.id, state)
+  chatUpdateClients.set(client.id, client)
+  client.once('destroyed', () => {
     clearChatAcknowledgmentTimer(state)
-    setChatUpdateInterest(webContents.id, null)
-    chatUpdateDeliveryByWebContentsId.delete(webContents.id)
+    setChatUpdateInterest(client.id, null)
+    chatUpdateDeliveryByClientId.delete(client.id)
+    chatUpdateClients.delete(client.id)
   })
   return state
 }
@@ -259,21 +272,18 @@ const clearChatAcknowledgmentTimer = (state: ChatUpdateDeliveryState): void => {
   state.acknowledgmentTimer = null
 }
 
-const watchChatAcknowledgment = (
-  webContents: WebContents,
-  state: ChatUpdateDeliveryState
-): void => {
+const watchChatAcknowledgment = (client: RendererClient, state: ChatUpdateDeliveryState): void => {
   if (state.acknowledgmentTimer !== null || !state.inFlightUpdate) return
   const sequence = state.inFlightUpdate.sequence
   state.acknowledgmentTimer = setTimeout(() => {
     state.acknowledgmentTimer = null
-    if (webContents.isDestroyed() || state.inFlightUpdate?.sequence !== sequence) return
+    if (client.isDestroyed() || state.inFlightUpdate?.sequence !== sequence) return
     if (state.pendingByChatKey.size === 0) return
     // Record delivery state only, never message/tool content. This distinguishes a renderer
     // acknowledgment stall from a provider that has stopped producing updates.
     logDiagnostic('warn', 'chat-update-delivery', {
       reason: 'renderer-acknowledgment-overdue',
-      windowId: webContents.id,
+      windowId: client.id,
       sequence,
       inFlightChatKey: state.inFlightUpdate.chatKey,
       inFlightRevision: state.inFlightUpdate.detail?.revision ?? null,
@@ -299,18 +309,42 @@ const watchChatAcknowledgment = (
     })
     state.acknowledgedDetail = null
     state.inFlightUpdate = null
-    sendNextChatUpdate(webContents, state)
+    sendNextChatUpdate(client, state)
   }, 2_000)
   state.acknowledgmentTimer.unref?.()
 }
 
+// Metadata can change while an older SDK snapshot waits for renderer acknowledgement.
+// Apply it at delivery time so a delayed snapshot cannot undo an idle-client update.
+const latestMetadata = new Map<string, ProviderChatMetadata>()
+const withLatestMetadata = (update: QueuedWindowChatUpdate): QueuedWindowChatUpdate => {
+  const metadata = latestMetadata.get(update.chatId)
+  if (!metadata) return update
+  const merge = <
+    T extends { accountId?: string | null; container?: ProviderChatMetadata['container'] }
+  >(
+    value: T
+  ): T => ({
+    ...value,
+    ...metadata,
+    accountId: metadata.accountId ?? value.accountId,
+    container: metadata.container ?? value.container ?? null
+  })
+  return {
+    ...update,
+    summary: merge(update.summary),
+    detail: update.detail ? merge(update.detail) : null
+  }
+}
+
 const sendChatUpdate = (
-  webContents: WebContents,
+  client: RendererClient,
   state: ChatUpdateDeliveryState,
   update: QueuedWindowChatUpdate
 ): void => {
-  if (webContents.isDestroyed() || !state.ready || state.inFlightUpdate !== null) return
+  if (client.isDestroyed() || !state.ready || state.inFlightUpdate !== null) return
 
+  update = withLatestMetadata(update)
   const sequence = nextChatUpdateSequence
   nextChatUpdateSequence =
     nextChatUpdateSequence >= Number.MAX_SAFE_INTEGER ? 1 : nextChatUpdateSequence + 1
@@ -327,15 +361,15 @@ const sendChatUpdate = (
     detail: rendererDetail,
     update: { ...update, detail: rendererDetail }
   }
-  webContents.send(providerIpcChannels.chatUpdated, {
+  client.send(providerIpcChannels.chatUpdated, {
     ...update,
     detail: detailUpdate,
     sequence
   } satisfies ProviderWindowChatUpdatedEvent)
-  watchChatAcknowledgment(webContents, state)
+  watchChatAcknowledgment(client, state)
 }
 
-const sendNextChatUpdate = (webContents: WebContents, state: ChatUpdateDeliveryState): void => {
+const sendNextChatUpdate = (client: RendererClient, state: ChatUpdateDeliveryState): void => {
   if (!state.ready || state.inFlightUpdate !== null || state.pendingByChatKey.size === 0) return
 
   const preferredChatKey =
@@ -346,16 +380,16 @@ const sendNextChatUpdate = (webContents: WebContents, state: ChatUpdateDeliveryS
 
   const update = state.pendingByChatKey.get(preferredChatKey)
   state.pendingByChatKey.delete(preferredChatKey)
-  if (update) sendChatUpdate(webContents, state, update)
+  if (update) sendChatUpdate(client, state, update)
 }
 
 const queueChatUpdateForWindow = (
-  webContents: WebContents,
+  client: RendererClient,
   event: ProviderChatUpdatedEvent
 ): void => {
-  if (webContents.isDestroyed()) return
+  if (client.isDestroyed()) return
 
-  const state = getChatUpdateDeliveryState(webContents)
+  const state = getChatUpdateDeliveryState(client)
   const chatKey = getProviderChatKey(event.providerId, event.chatId)
   const latestRevision = state.latestRevisionByChatKey.get(chatKey)
   if (latestRevision !== undefined && event.detail.revision <= latestRevision) return
@@ -378,11 +412,11 @@ const queueChatUpdateForWindow = (
 
   if (!state.ready || state.inFlightUpdate !== null) {
     state.pendingByChatKey.set(chatKey, update)
-    watchChatAcknowledgment(webContents, state)
+    watchChatAcknowledgment(client, state)
     return
   }
 
-  sendChatUpdate(webContents, state, update)
+  sendChatUpdate(client, state, update)
 }
 
 const requireProviderId = (value: unknown): ProviderId => {
@@ -1247,21 +1281,28 @@ const requireOneShotOptions = (value: unknown): ProviderOneShotOptions | undefin
 }
 
 export const registerProviderIpc = (): void => {
+  onChatMetadataChanged((metadata) => {
+    metadata.forEach((value) => latestMetadata.set(value.id, value))
+    chatUpdateClients.forEach((client) => {
+      if (!client.isDestroyed() && chatUpdateDeliveryByClientId.get(client.id)?.ready)
+        client.send(providerIpcChannels.chatMetadataUpdated, metadata)
+    })
+  })
   startLimitResetQueue()
   providerApi.onChatUpdated((event) => {
-    BrowserWindow.getAllWindows().forEach((window) => {
-      queueChatUpdateForWindow(window.webContents, event)
+    chatUpdateClients.forEach((client) => {
+      queueChatUpdateForWindow(client, event)
     })
   })
 
-  ipcMain.on(providerIpcChannels.chatUpdatesReady, (event) => {
+  onClientMessage(providerIpcChannels.chatUpdatesReady, (event) => {
     const state = getChatUpdateDeliveryState(event.sender)
     state.ready = true
     setChatUpdateInterest(event.sender.id, state.viewedChatKey)
     sendNextChatUpdate(event.sender, state)
   })
 
-  ipcMain.on(providerIpcChannels.chatUpdatesStopped, (event) => {
+  onClientMessage(providerIpcChannels.chatUpdatesStopped, (event) => {
     const state = getChatUpdateDeliveryState(event.sender)
     state.ready = false
     setChatUpdateInterest(event.sender.id, null)
@@ -1271,7 +1312,7 @@ export const registerProviderIpc = (): void => {
     state.pendingByChatKey.clear()
   })
 
-  ipcMain.on(
+  onClientMessage(
     providerIpcChannels.viewedChatChanged,
     (event, providerIdValue: unknown, chatIdValue: unknown) => {
       const state = getChatUpdateDeliveryState(event.sender)
@@ -1303,7 +1344,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  ipcMain.on(
+  onClientMessage(
     providerIpcChannels.chatUpdateAcknowledged,
     (event, sequenceValue: unknown, detailAppliedValue: unknown) => {
       if (
@@ -1338,39 +1379,41 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(providerIpcChannels.login, (_, providerId: unknown, options: unknown) =>
+  handleClientRequest(providerIpcChannels.login, (_, providerId: unknown, options: unknown) =>
     providerApi.login(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.reauthenticateAccount,
     (_, providerId: unknown, options: unknown) =>
-      providerApi.reauthenticateAccount(
+      withWorkspaceUpdate(providerApi.reauthenticateAccount(
         requireProviderId(providerId),
         requireSourceOptions(options)
-      )
+      ))
   )
 
-  handleLoggedIpc(providerIpcChannels.getAccounts, (_, providerId: unknown, options: unknown) =>
+  handleClientRequest(providerIpcChannels.getAccounts, (_, providerId: unknown, options: unknown) =>
     providerApi.getAccounts(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  handleLoggedIpc(providerIpcChannels.createAccount, (_, providerId: unknown, options: unknown) =>
-    providerApi.createAccount(requireProviderId(providerId), requireSourceOptions(options))
+  handleClientRequest(
+    providerIpcChannels.createAccount,
+    (_, providerId: unknown, options: unknown) =>
+      withWorkspaceUpdate(providerApi.createAccount(requireProviderId(providerId), requireSourceOptions(options)))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.completeAccountCreation,
     (_, providerId: unknown, accountId: unknown, loginId: unknown, options: unknown) =>
-      providerApi.completeAccountCreation(
+      withWorkspaceUpdate(providerApi.completeAccountCreation(
         requireProviderId(providerId),
         requireProviderResourceString(accountId, 'account ID', 128),
         requireOptionalProviderResourceString(loginId, 'login ID', 128),
         requireSourceOptions(options)
-      )
+      ))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.cancelAccountCreation,
     (_, providerId: unknown, accountId: unknown, loginId: unknown, options: unknown) =>
       providerApi.cancelAccountCreation(
@@ -1381,7 +1424,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.submitAccountLoginCode,
     (_, providerId: unknown, loginId: unknown, code: unknown, options: unknown) =>
       providerApi.submitAccountLoginCode(
@@ -1392,27 +1435,27 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.useAccount,
     (_, providerId: unknown, accountId: unknown, options: unknown) =>
-      providerApi.useAccount(
+      withWorkspaceUpdate(providerApi.useAccount(
         requireProviderId(providerId),
         requireProviderResourceString(accountId, 'account ID', 128),
         requireSourceOptions(options)
-      )
+      ))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.deleteAccount,
     (_, providerId: unknown, accountId: unknown, options: unknown) =>
-      providerApi.deleteAccount(
+      withWorkspaceUpdate(providerApi.deleteAccount(
         requireProviderId(providerId),
         requireProviderResourceString(accountId, 'account ID', 128),
         requireSourceOptions(options)
-      )
+      ))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getUpdateAvailability,
     (_, providerId: unknown, options: unknown) =>
       providerApi.getUpdateAvailability(
@@ -1421,7 +1464,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getProviderUpdateImpact,
     (_, providerId: unknown, options: unknown) =>
       providerApi.getProviderUpdateImpact(
@@ -1430,27 +1473,34 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(providerIpcChannels.updateProvider, (_, providerId: unknown, options: unknown) =>
-    providerApi.updateProvider(requireProviderId(providerId), requireProviderUpdateOptions(options))
+  handleClientRequest(
+    providerIpcChannels.updateProvider,
+    (_, providerId: unknown, options: unknown) =>
+      providerApi.updateProvider(
+        requireProviderId(providerId),
+        requireProviderUpdateOptions(options)
+      )
   )
 
-  handleLoggedIpc(providerIpcChannels.getApprovalModes, (_, providerId: unknown) =>
+  handleClientRequest(providerIpcChannels.getApprovalModes, (_, providerId: unknown) =>
     providerApi.getApprovalModes(requireProviderId(providerId))
   )
 
-  handleLoggedIpc(providerIpcChannels.getSandboxModes, (_, providerId: unknown) =>
+  handleClientRequest(providerIpcChannels.getSandboxModes, (_, providerId: unknown) =>
     providerApi.getSandboxModes(requireProviderId(providerId))
   )
 
-  handleLoggedIpc(providerIpcChannels.getAgentModes, (_, providerId: unknown, options: unknown) =>
-    providerApi.getAgentModes(requireProviderId(providerId), requireSourceOptions(options))
+  handleClientRequest(
+    providerIpcChannels.getAgentModes,
+    (_, providerId: unknown, options: unknown) =>
+      providerApi.getAgentModes(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  handleLoggedIpc(providerIpcChannels.getModels, (_, providerId: unknown, options: unknown) =>
+  handleClientRequest(providerIpcChannels.getModels, (_, providerId: unknown, options: unknown) =>
     providerApi.getModels(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getSkills,
     (_, providerId: unknown, cwd: unknown, options: unknown) =>
       providerApi.getSkills(
@@ -1460,10 +1510,12 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(providerIpcChannels.getConnections, (_, providerId: unknown, options: unknown) =>
-    providerApi.getConnections(requireProviderId(providerId), requireSourceOptions(options))
+  handleClientRequest(
+    providerIpcChannels.getConnections,
+    (_, providerId: unknown, options: unknown) =>
+      providerApi.getConnections(requireProviderId(providerId), requireSourceOptions(options))
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.connectProvider,
     (_, providerId: unknown, input: unknown, options: unknown) =>
       providerApi.connectProvider(
@@ -1472,7 +1524,7 @@ export const registerProviderIpc = (): void => {
         requireSourceOptions(options)
       )
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getConnectionAttempt,
     (_, providerId: unknown, attemptId: unknown, options: unknown) =>
       providerApi.getConnectionAttempt(
@@ -1481,17 +1533,17 @@ export const registerProviderIpc = (): void => {
         requireSourceOptions(options)
       )
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.completeConnection,
     (_, providerId: unknown, attemptId: unknown, code: unknown, options: unknown) =>
-      providerApi.completeConnection(
+      withWorkspaceUpdate(providerApi.completeConnection(
         requireProviderId(providerId),
         requireConnectionString(attemptId),
         requireConnectionString(code),
         requireSourceOptions(options)
-      )
+      ))
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.cancelConnection,
     (_, providerId: unknown, attemptId: unknown, options: unknown) =>
       providerApi.cancelConnection(
@@ -1500,20 +1552,20 @@ export const registerProviderIpc = (): void => {
         requireSourceOptions(options)
       )
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.deleteConnection,
     (_, providerId: unknown, credentialId: unknown, options: unknown) =>
-      providerApi.deleteConnection(
+      withWorkspaceUpdate(providerApi.deleteConnection(
         requireProviderId(providerId),
         requireConnectionString(credentialId),
         requireSourceOptions(options)
-      )
+      ))
   )
 
-  handleLoggedIpc(providerIpcChannels.getConfig, (_, providerId: unknown, options: unknown) =>
+  handleClientRequest(providerIpcChannels.getConfig, (_, providerId: unknown, options: unknown) =>
     providerApi.getConfig(requireProviderId(providerId), requireSourceOptions(options))
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setConfigValue,
     (_, providerId: unknown, name: unknown, path: unknown, value: unknown, options: unknown) => {
       if (
@@ -1525,69 +1577,69 @@ export const registerProviderIpc = (): void => {
       )
         throw new Error('Invalid setting path')
       // The adapter validates values against the schema before writing.
-      return providerApi.setConfigValue(
+      return withWorkspaceUpdate(providerApi.setConfigValue(
         requireProviderId(providerId),
         name,
         path,
         value as ProviderConfigValue,
         requireSourceOptions(options)
-      )
+      ))
     }
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setConfigFeature,
     (_, providerId: unknown, name: unknown, enabled: unknown, options: unknown) => {
       if (typeof name !== 'string' || !/^[a-z][a-z0-9_]*$/.test(name))
         throw new Error('Invalid feature name')
-      return providerApi.setConfigFeature(
+      return withWorkspaceUpdate(providerApi.setConfigFeature(
         requireProviderId(providerId),
         name,
         requireBoolean(enabled),
         requireSourceOptions(options)
-      )
+      ))
     }
   )
 
-  handleLoggedIpc(providerIpcChannels.getApps, (_, providerId: unknown, options: unknown) =>
+  handleClientRequest(providerIpcChannels.getApps, (_, providerId: unknown, options: unknown) =>
     providerApi.getApps(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setSkillEnabled,
     (_, providerId: unknown, path: unknown, enabled: unknown, cwd: unknown, options: unknown) =>
-      providerApi.setSkillEnabled(
+      withWorkspaceUpdate(providerApi.setSkillEnabled(
         requireProviderId(providerId),
         requireProviderSkillPath(path),
         requireBoolean(enabled),
         requireOptionalCwd(cwd),
         requireProviderResourceUpdateOptions(options)
-      )
+      ))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setSkillsEnabled,
     (_, providerId: unknown, paths: unknown, enabled: unknown, cwd: unknown, options: unknown) =>
-      providerApi.setSkillsEnabled(
+      withWorkspaceUpdate(providerApi.setSkillsEnabled(
         requireProviderId(providerId),
         requireProviderSkillPaths(paths),
         requireBoolean(enabled),
         requireOptionalCwd(cwd),
         requireProviderResourceUpdateOptions(options)
-      )
+      ))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setAppEnabled,
     (_, providerId: unknown, appId: unknown, enabled: unknown, options: unknown) =>
-      providerApi.setAppEnabled(
+      withWorkspaceUpdate(providerApi.setAppEnabled(
         requireProviderId(providerId),
         requireProviderAppId(appId),
         requireBoolean(enabled),
         requireProviderResourceUpdateOptions(options)
-      )
+      ))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getTokenUsage,
     (_, providerId: unknown, chatId: unknown, options: unknown) =>
       providerApi.getTokenUsage(
@@ -1597,7 +1649,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) => {
+  handleClientRequest(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredOptions = requireUsageOptions(options)
     return runShutdownTolerantProviderRead(
@@ -1606,22 +1658,26 @@ export const registerProviderIpc = (): void => {
     )
   })
 
-  handleLoggedIpc(providerIpcChannels.resetRateLimits, (_, providerId: unknown, options: unknown) =>
-    providerApi.resetRateLimits(requireProviderId(providerId), requireSourceOptions(options))
+  handleClientRequest(
+    providerIpcChannels.resetRateLimits,
+    (_, providerId: unknown, options: unknown) =>
+      providerApi.resetRateLimits(requireProviderId(providerId), requireSourceOptions(options))
   )
 
-  handleLoggedIpc(providerIpcChannels.getChatContainers, () => providerApi.getChatContainers())
-  handleLoggedIpc(
+  handleClientRequest(providerIpcChannels.getChatContainers, () => providerApi.getChatContainers())
+  handleClientRequest(
     providerIpcChannels.getChatTerminalTasks,
     (_, providerId: unknown, chatId: unknown) =>
       providerApi.getChatTerminalTasks(requireProviderId(providerId), requireChatId(chatId))
   )
 
-  handleLoggedIpc(providerIpcChannels.getKnownChats, (_, providerId: unknown, options: unknown) =>
-    getProviderKnownChats(requireProviderId(providerId), requireChatListOptions(options))
+  handleClientRequest(
+    providerIpcChannels.getKnownChats,
+    (_, providerId: unknown, options: unknown) =>
+      getProviderKnownChats(requireProviderId(providerId), requireChatListOptions(options))
   )
 
-  handleLoggedIpc(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) => {
+  handleClientRequest(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredOptions = requireChatListOptions(options)
     return runShutdownTolerantProviderRead(async () => {
@@ -1631,7 +1687,7 @@ export const registerProviderIpc = (): void => {
     }, getEmptyProviderChatPage)
   })
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getCachedChat,
     (_, providerId: unknown, chatId: unknown, options: unknown) =>
       getProviderCachedChat(
@@ -1644,31 +1700,34 @@ export const registerProviderIpc = (): void => {
       })
   )
 
-  handleLoggedIpc(providerIpcChannels.getChat, async (_, providerId: unknown, chatId: unknown) => {
-    const requiredProviderId = requireProviderId(providerId)
-    const requiredChatId = requireChatId(chatId)
-    const historyRead = await beginProviderChatHistoryRead(requiredProviderId, requiredChatId)
-    const viewScope = await beginProviderConversationRead(requiredProviderId, requiredChatId)
-    const detail = await getRendererChatDetail(() =>
-      // Codex getChat includes the opening-time writer check and already reads a bounded
-      // cursor page. History-only reads deliberately do not acquire/probe writer access.
-      requiredProviderId === 'codex'
-        ? providerApi.getChat(requiredProviderId, requiredChatId)
-        : getProviderChatWindow(requiredProviderId, requiredChatId, {
-            startIndex: null,
-            limit: rendererChatTurnPageSize
-          })
-    )
-    saveProviderChatHistory(historyRead, detail)
-    await saveProviderConversationView(viewScope, detail)
-    return detail
-  })
+  handleClientRequest(
+    providerIpcChannels.getChat,
+    async (_, providerId: unknown, chatId: unknown) => {
+      const requiredProviderId = requireProviderId(providerId)
+      const requiredChatId = requireChatId(chatId)
+      const historyRead = await beginProviderChatHistoryRead(requiredProviderId, requiredChatId)
+      const viewScope = await beginProviderConversationRead(requiredProviderId, requiredChatId)
+      const detail = await getRendererChatDetail(() =>
+        // Codex getChat includes the opening-time writer check and already reads a bounded
+        // cursor page. History-only reads deliberately do not acquire/probe writer access.
+        requiredProviderId === 'codex'
+          ? providerApi.getChat(requiredProviderId, requiredChatId)
+          : getProviderChatWindow(requiredProviderId, requiredChatId, {
+              startIndex: null,
+              limit: rendererChatTurnPageSize
+            })
+      )
+      saveProviderChatHistory(historyRead, detail)
+      await saveProviderConversationView(viewScope, detail)
+      return detail
+    }
+  )
 
-  handleLoggedIpc(providerIpcChannels.getSubagents, (_, providerId: unknown, chatId: unknown) =>
+  handleClientRequest(providerIpcChannels.getSubagents, (_, providerId: unknown, chatId: unknown) =>
     providerApi.getSubagents(requireProviderId(providerId), requireChatId(chatId))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getSubagent,
     async (
       _,
@@ -1735,7 +1794,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.cancelSubagent,
     (_, providerId: unknown, chatId: unknown, subagentId: unknown) =>
       providerApi.cancelSubagent(
@@ -1745,7 +1804,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.sendSubagentMessage,
     (_, providerId: unknown, chatId: unknown, subagentId: unknown, message: unknown) =>
       providerApi.sendSubagentMessage(
@@ -1756,7 +1815,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getChatWorkingStepPage,
     async (
       _,
@@ -1786,7 +1845,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getChatWorkingItem,
     async (
       _,
@@ -1818,7 +1877,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getChatWorkingToolPage,
     async (
       _,
@@ -1850,7 +1909,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getChatTurnPage,
     async (
       _,
@@ -1892,7 +1951,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getChatTurnCursorPage,
     async (
       _,
@@ -1930,7 +1989,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getChatTurnPageForItem,
     async (
       _,
@@ -1957,7 +2016,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setChatGoal,
     (_, providerId: unknown, chatId: unknown, objective: unknown) => {
       if (objective !== null && typeof objective !== 'string')
@@ -1970,7 +2029,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setChatTitle,
     (_, providerId: unknown, chatId: unknown, title: unknown) =>
       getRendererChatDetail(() =>
@@ -1982,7 +2041,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.generateOneShot,
     (_, providerId: unknown, message: unknown, options: unknown) =>
       providerApi.generateOneShot(
@@ -1992,13 +2051,13 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.cancelOneShot,
     (_, providerId: unknown, generationId: unknown) =>
       providerApi.cancelOneShot(requireProviderId(providerId), requireGenerationId(generationId))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.startChat,
     (_, providerId: unknown, message: unknown, options: unknown, purpose: unknown) =>
       getRendererChatDetail(() =>
@@ -2011,7 +2070,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.continueChat,
     (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) =>
       getRendererChatDetail(() =>
@@ -2024,7 +2083,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.continueChatSummary,
     async (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) => {
       const detail = await providerApi.continueChat(
@@ -2037,7 +2096,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.continueChatInFork,
     (
       _,
@@ -2058,7 +2117,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.forkChat,
     (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
       getRendererChatDetail(() =>
@@ -2070,7 +2129,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.sendActiveChatMessage,
     (_, providerId: unknown, chatId: unknown, message: unknown, mode: unknown, options: unknown) =>
       getRendererChatDetail(() =>
@@ -2084,7 +2143,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.sendActiveChatMessageSummary,
     async (
       _,
@@ -2105,7 +2164,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.getLimitResetMessages,
     (_, providerId: unknown, chatId: unknown) =>
       providerApi.getLimitResetMessages(
@@ -2113,7 +2172,7 @@ export const registerProviderIpc = (): void => {
         requireLimitResetTarget(chatId)
       )
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.addLimitResetMessage,
     (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) => {
       const turnOptions = requireStartChatOptions(options)
@@ -2128,7 +2187,7 @@ export const registerProviderIpc = (): void => {
       )
     }
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.deleteLimitResetMessage,
     (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
       providerApi.deleteLimitResetMessage(
@@ -2138,7 +2197,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.deletePendingMessage,
     (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
       getRendererChatDetail(() =>
@@ -2167,7 +2226,7 @@ export const registerProviderIpc = (): void => {
   const forgetPendingEdit = (ownerId: number, editId: string): void => {
     pendingEdits.get(ownerId)?.delete(editId)
   }
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.beginPendingMessageEdit,
     async (event, provider: unknown, chat: unknown, message: unknown, token: unknown) => {
       const providerId = requireProviderId(provider)
@@ -2229,7 +2288,7 @@ export const registerProviderIpc = (): void => {
       }
     }
   )
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.cancelPendingMessageEdit,
     async (event, provider: unknown, chat: unknown, message: unknown, token: unknown) => {
       const editId = requireMessageId(token)
@@ -2246,7 +2305,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.editPendingMessage,
     (
       event,
@@ -2274,7 +2333,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.steerPendingMessage,
     (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
       getRendererChatDetail(() =>
@@ -2286,7 +2345,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.interruptPendingMessage,
     (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
       getRendererChatDetail(() =>
@@ -2298,7 +2357,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.editMessage,
     (
       _,
@@ -2319,13 +2378,13 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(providerIpcChannels.compactChat, (_, providerId: unknown, chatId: unknown) =>
+  handleClientRequest(providerIpcChannels.compactChat, (_, providerId: unknown, chatId: unknown) =>
     getRendererChatDetail(() =>
       providerApi.compactChat(requireProviderId(providerId), requireChatId(chatId))
     )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.prepareLinkedChatContext,
     (_, providerId: unknown, chatId: unknown, options: unknown) =>
       providerApi.prepareLinkedChatContext(
@@ -2335,17 +2394,17 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(providerIpcChannels.cancelLinkedChatContext, (_, operationId: unknown) =>
+  handleClientRequest(providerIpcChannels.cancelLinkedChatContext, (_, operationId: unknown) =>
     providerApi.cancelLinkedChatContext(requireLinkedChatOperationId(operationId))
   )
 
-  handleLoggedIpc(providerIpcChannels.stopChat, (_, providerId: unknown, chatId: unknown) =>
+  handleClientRequest(providerIpcChannels.stopChat, (_, providerId: unknown, chatId: unknown) =>
     getRendererChatDetail(() =>
       providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))
     )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.updateChatPermissions,
     (_, providerId: unknown, chatId: unknown, value: unknown) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -2381,7 +2440,7 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.resolveApproval,
     (_, providerId: unknown, chatId: unknown, decision: unknown) =>
       getRendererChatDetail(() =>
@@ -2393,7 +2452,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.resolveUserInput,
     (
       _,
@@ -2414,7 +2473,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.markChatDone,
     (_, providerId: unknown, chatId: unknown, done: unknown) =>
       providerApi.markChatDone(
@@ -2424,25 +2483,28 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(providerIpcChannels.markChatsDone, (_, chatIds: unknown) =>
+  handleClientRequest(providerIpcChannels.markChatsDone, (_, chatIds: unknown) =>
     providerApi.markChatsDone(requireChatIds(chatIds))
   )
 
-  handleLoggedIpc(providerIpcChannels.getCwdNotes, (_, providerId: unknown, cwd: unknown) =>
+  handleClientRequest(providerIpcChannels.getCwdNotes, (_, providerId: unknown, cwd: unknown) =>
     providerApi.getCwdNotes(requireProviderId(providerId), requireOptionalCwd(cwd))
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setCwdNotes,
-    (_, providerId: unknown, cwd: unknown, notes: unknown) =>
-      providerApi.setCwdNotes(
+    async (_, providerId: unknown, cwd: unknown, notes: unknown) => {
+      const result = await providerApi.setCwdNotes(
         requireProviderId(providerId),
         requireOptionalCwd(cwd),
         requireCwdNotes(notes)
       )
+      publishWorkspace()
+      return result
+    }
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.markChatSeen,
     (_, providerId: unknown, chatId: unknown, seenUpdatedAt: unknown) =>
       providerApi.markChatSeen(
@@ -2452,7 +2514,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(
+  handleClientRequest(
     providerIpcChannels.setChatPinned,
     (_, providerId: unknown, chatId: unknown, pinned: unknown) =>
       providerApi.setChatPinned(
@@ -2462,7 +2524,7 @@ export const registerProviderIpc = (): void => {
       )
   )
 
-  handleLoggedIpc(providerIpcChannels.setChatOrder, (_, chatIds: unknown) =>
+  handleClientRequest(providerIpcChannels.setChatOrder, (_, chatIds: unknown) =>
     providerApi.setChatOrder(requireChatIds(chatIds))
   )
 }

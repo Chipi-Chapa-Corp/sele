@@ -3,7 +3,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { buildChatConversationModel } from '../chatConversationModel'
 import { extendChatCursorWindow, type ChatCursorWindow } from '../chatCursorWindow'
-import { getRecentChatReferences, type PinnedChatTextReference } from '../chatRecents'
+import { type PinnedChatTextReference } from '../chatRecents'
+import { useRecentChatReferences } from './useRecentChatReferences'
 import { providerApi } from '../providerApi'
 import { getDisplayedRecentChatReferences } from '../recentReferencePins'
 import { getDisplayedRecentlyOpenedFiles } from '../recentlyOpenedFiles'
@@ -165,9 +166,10 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     : recentChatReferencePageMatches
       ? (recentChatReferencePage?.items ?? visibleChatItems)
       : visibleChatItems
-  const extractedRecentChatReferences = useMemo(
-    () => getRecentChatReferences(recentChatReferenceItems, recentsMessageLimit),
-    [recentChatReferenceItems, recentsMessageLimit]
+  const extractedRecentChatReferences = useRecentChatReferences(
+    recentChatReferenceItems,
+    recentsMessageLimit,
+    selectedChatKey
   )
   const currentChatDetailIncludesLatest = Boolean(
     selectedChatKey &&

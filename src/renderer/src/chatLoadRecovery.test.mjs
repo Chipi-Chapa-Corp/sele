@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import vm from 'node:vm'
 import test from 'node:test'
+import vm from 'node:vm'
 import ts from 'typescript'
+import {
+  createWorkspaceTestContext,
+  readWorkspaceControllerSource
+} from '../../../scripts/tests/helpers/workspace-controller.mjs'
 import { asChatPreview, chatPreviewSourceKey } from '../../shared/chatPreview.ts'
 import { reuseChatSnapshotItems } from './chatSnapshotItems.ts'
 
@@ -10,7 +14,9 @@ import { reuseChatSnapshotItems } from './chatSnapshotItems.ts'
 const extract = (path, predicate) => {
   const source = ts.createSourceFile(
     path,
-    readFileSync(new URL(path, import.meta.url), 'utf8'),
+    path === './useWorkspaceController.tsx'
+      ? readWorkspaceControllerSource()
+      : readFileSync(new URL(path, import.meta.url), 'utf8'),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TSX
@@ -52,6 +58,58 @@ const summaryCode = extract(
     ts.isVariableDeclaration(node.parent) &&
     node.parent.name.getText(source) === 'applyChatSummary'
 )
+const streamCode = extract(
+  './useWorkspaceController.tsx',
+  (node, source) =>
+    ts.isCallExpression(node) &&
+    node.expression.getText(source) === 'useEffect' &&
+    node.arguments[0]?.getText(source).includes('providerApi.onChatUpdated')
+)
+
+test('background summaries yield to input without delaying transport acknowledgement', () => {
+  const observed = []
+  let listener
+  let background = false
+  const context = createWorkspaceTestContext({
+    providerApi: {
+      onChatUpdated: (callback) => {
+        listener = callback
+        return () => {}
+      },
+      acknowledgeChatUpdate: (sequence, detailApplied) =>
+        observed.push(['ack', sequence, detailApplied, background])
+    },
+    startTransition: (callback) => {
+      background = true
+      try {
+        callback()
+      } finally {
+        background = false
+      }
+    },
+    getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
+    selectedChatKeyRef: { current: 'codex:selected' },
+    chatTerminalActivity: { requestProbe: () => {} },
+    applyChatSummary: (providerId, summary) =>
+      observed.push(['summary', providerId, summary.id, background]),
+    scopedCommitActivitiesRef: { current: {} },
+    changesCwdRef: { current: null }
+  })
+  vm.runInContext(streamCode, context)
+  context.callback()
+  listener({
+    providerId: 'codex',
+    chatId: 'background',
+    sequence: 7,
+    detail: null,
+    summary: { id: 'background', status: 'active' },
+    turnCompleted: false
+  })
+  assert.deepEqual(observed, [
+    ['summary', 'codex', 'background', true],
+    ['ack', 7, false, false]
+  ])
+})
 const readCacheCode = extract(
   './useWorkspaceController.tsx',
   (node, source) =>
@@ -74,7 +132,7 @@ const setup = (providerId, initial = null) => {
   })
   const state = { detail: initial, loadState: initial ? 'ready' : 'loading', errors: [], seen: [] }
   const key = `${providerId}:chat`
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     selectedProviderId: providerId,
     selectedChat: { providerId, id: 'chat', container: null },
     effectiveAppSettings: { chat: { recentChatCacheLimit: 10 } },
@@ -318,7 +376,7 @@ test('cached selection schedules its matching transcript as one view update', ()
   const cached = detail()
   const state = { selected: null, detail: null, loadState: 'ready' }
   const transitions = []
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     selectedChat: null,
     chatLoadState: 'ready',
     chatDetail: null,
@@ -435,7 +493,7 @@ test('background summaries preserve messages and changed sidebar stamps still op
   }
   const openingView = { ...savedPreview(), items: cached.items.slice(-1) }
   const entries = new Map([['codex:chat', { detail: cached, updatedAt: 1 }]])
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     recentChatCacheRef: { current: entries },
     recentChatCacheLimitRef: { current: 10 },
     selectedChatKeyRef: { current: null },

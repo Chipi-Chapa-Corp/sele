@@ -5,6 +5,8 @@ type WorkspaceShellProps = WorkspaceController['layout'] & {
   chatSidebar: ReactNode
   conversation: ReactNode
   changesSidebar: ReactNode
+  mobileSidebarOpen?: boolean
+  mobileBackdrop?: ReactNode
 }
 
 export function WorkspaceShell(props: WorkspaceShellProps): ReactElement {
@@ -28,7 +30,17 @@ export function WorkspaceShell(props: WorkspaceShellProps): ReactElement {
       ref={panelsRef}
       style={panelsStyle}
     >
-      <div className="chat__sidebar-panel" data-panel="true" id="sidebar">
+      {props.mobileBackdrop}
+      <div
+        className="chat__sidebar-panel"
+        data-panel="true"
+        id="sidebar"
+        data-mobile-sidebar={props.mobileSidebarOpen !== undefined ? '' : undefined}
+        role={props.mobileSidebarOpen ? 'dialog' : undefined}
+        aria-modal={props.mobileSidebarOpen || undefined}
+        aria-label={props.mobileSidebarOpen ? 'Chats' : undefined}
+        inert={props.mobileSidebarOpen === false}
+      >
         {chatSidebar}
       </div>
       <div

@@ -70,6 +70,28 @@ const findAutomaticUsage = (node) => {
 }
 findAutomaticUsage(selectionSource)
 
+const usageUtilities = ts.createSourceFile(
+  'chatControllerUtils.tsx',
+  readFileSync(
+    new URL('../../../renderer/src/workspace/chatControllerUtils.tsx', import.meta.url),
+    'utf8'
+  ),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX
+)
+let mergeUsage
+const findMergeUsage = (node) => {
+  if (ts.isVariableDeclaration(node) && node.name.getText(usageUtilities) === 'mergeAccountUsage')
+    mergeUsage = node.initializer.getText(usageUtilities)
+  ts.forEachChild(node, findMergeUsage)
+}
+findMergeUsage(usageUtilities)
+assert.ok(
+  mergeUsage,
+  'execute the real account usage merge after the authentication state refactor'
+)
+
 for (const automatic of [true, false]) {
   for (const stale of [true, false]) {
     test(`${automatic ? 'automatic new-chat' : 'manual'} usage signals reauthentication immediately${stale ? ' but ignores an old account result' : ''}`, async () => {
@@ -95,8 +117,10 @@ for (const automatic of [true, false]) {
             return { authenticationRequired: true, errors: ['Expired credentials'] }
           }
         },
-        setUsageAuthentication: (value) => authentication.push(value),
-        setAccountUsage: () => {},
+        setAccountUsage: (update) => {
+          const usage = typeof update === 'function' ? update(null) : update
+          authentication.push({ required: usage?.authenticationRequired === true, scope })
+        },
         setAccountUsageState: () => {},
         setAccountUsageError: () => {},
         queueMicrotask,
@@ -104,7 +128,8 @@ for (const automatic of [true, false]) {
       })
       vm.runInContext(
         ts.transpileModule(
-          `globalThis.run = ${automatic ? automaticUsageEffect : refreshCallback}`,
+          `const mergeAccountUsage = ${mergeUsage};
+          globalThis.run = ${automatic ? automaticUsageEffect : refreshCallback}`,
           {
             compilerOptions: { target: ts.ScriptTarget.ES2022 }
           }

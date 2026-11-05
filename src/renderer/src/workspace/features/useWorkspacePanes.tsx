@@ -1,0 +1,46 @@
+import { useRef, useState } from 'react'
+import { useChatPaneLayout } from '../../useChatPaneLayout'
+import { getFixedChangeSource, type ChangesPaneView } from '../controllerTypes'
+import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
+
+type WorkspacePanesDependencies = {
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+}
+
+export function useWorkspacePanes({ settings }: WorkspacePanesDependencies) {
+  const changeSource = getFixedChangeSource()
+
+  const [storedChangesPaneView, setChangesPaneView] = useState<ChangesPaneView>('git')
+
+  const [gitPaneView, setGitPaneView] = useState<'changes' | 'pull-requests'>('changes')
+
+  const changesPaneView =
+    settings.noProject && (storedChangesPaneView === 'git' || storedChangesPaneView === 'files')
+      ? 'recents'
+      : storedChangesPaneView
+
+  const [changesSidebarExpanded, setChangesSidebarExpanded] = useState(false)
+
+  const { changesResizeHandleRef, handleStartChatResize, panelsRef, panelsStyle, resizeHandleRef } =
+    useChatPaneLayout(changesSidebarExpanded)
+
+  const changeSourceRef = useRef(changeSource)
+
+  const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
+  return {
+    changeSource,
+    setChangesPaneView,
+    gitPaneView,
+    setGitPaneView,
+    changesPaneView,
+    changesSidebarExpanded,
+    setChangesSidebarExpanded,
+    changesResizeHandleRef,
+    handleStartChatResize,
+    panelsRef,
+    panelsStyle,
+    resizeHandleRef,
+    changeSourceRef,
+    lastNonTerminalChangesPaneViewRef
+  }
+}

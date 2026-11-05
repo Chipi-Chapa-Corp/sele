@@ -23,6 +23,7 @@ function startRuntime(config) {
   const threads = new Map()
   const temporaryThreads = new Map()
   const active = new Set()
+  const backgroundTerminals = new Map()
   const completedTurns = new Set()
   const send = (socket, message) => {
     if (socket && !socket.destroyed) {
@@ -48,7 +49,7 @@ function startRuntime(config) {
   }
   const scheduleIdle = () => {
     clearTimeout(idleTimer)
-    if (!client && !active.size && !approvals.size && !requests.size)
+    if (!client && !active.size && !backgroundTerminals.size && !approvals.size && !requests.size)
       idleTimer = setTimeout(stop, config.idleTimeoutMs ?? 300_000)
   }
   const releaseTemporaryThread = (threadId) => {
@@ -88,6 +89,16 @@ function startRuntime(config) {
   }
   const observe = (message) => {
     const params = message.params ?? {}
+    if (
+      ['item/started', 'item/completed'].includes(message.method) &&
+      params.item?.type === 'commandExecution' &&
+      params.item.processId
+    ) {
+      const key = `${params.threadId}:${params.item.processId}`
+      if (params.item.exitCode != null || ['failed', 'interrupted'].includes(params.item.status))
+        backgroundTerminals.delete(key)
+      else backgroundTerminals.set(key, params.threadId)
+    }
     if (message.method === 'turn/started') {
       active.add(params.threadId)
       if (temporaryThreads.has(params.threadId)) {
@@ -101,6 +112,8 @@ function startRuntime(config) {
       if (completedTurns.size > 128) completedTurns.delete(completedTurns.values().next().value)
     }
     if (message.method === 'thread/closed') {
+      for (const [key, threadId] of backgroundTerminals)
+        if (threadId === params.threadId) backgroundTerminals.delete(key)
       threads.delete(params.threadId)
       temporaryThreads.delete(params.threadId)
       active.delete(params.threadId)
@@ -261,6 +274,19 @@ function startRuntime(config) {
         requests.delete(message.id)
         clearTimeout(request.timer)
         if (!message.error) {
+          if (request.method === 'thread/backgroundTerminals/list') {
+            // A first page begins a fresh snapshot; later pages add to it.
+            if (!request.params?.cursor)
+              for (const [key, threadId] of backgroundTerminals)
+                if (threadId === request.params.threadId) backgroundTerminals.delete(key)
+            for (const terminal of message.result?.data ?? [])
+              backgroundTerminals.set(
+                `${request.params.threadId}:${terminal.processId}`,
+                request.params.threadId
+              )
+          }
+          if (request.method === 'thread/backgroundTerminals/terminate')
+            backgroundTerminals.delete(`${request.params.threadId}:${request.params.processId}`)
           if (request.method === 'initialize') {
             initialized = message.result
             // The underlying stdio transport is initialized exactly once.

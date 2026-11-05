@@ -40,6 +40,7 @@ function setup({ remote = false, readOnly = false, failQuery = false } = {}) {
       }
     },
     getBrowserAutomationService: () => ({}),
+    createClaudeTerminalSessions: () => ({ dispose: () => events.push('terminals.close') }),
     createClaudeBrowserIntegration: (_service, scope) => {
       events.push(['browser.create', scope])
       return integration
@@ -68,6 +69,7 @@ function setup({ remote = false, readOnly = false, failQuery = false } = {}) {
     backgroundTaskIds: new Set(),
     partialMessages: new Map()
   }
+  instance.getTitle = () => 'Fixture chat'
   instance.states = new Map([[state.id, state]])
   instance.stateGeneration = 1
   instance.disposed = false

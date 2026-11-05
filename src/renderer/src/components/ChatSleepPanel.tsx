@@ -1,3 +1,4 @@
+import { useCompactLayout } from '../useCompactLayout'
 import { useState } from 'react'
 import { formatSleepDuration, parseSleepDuration } from '../chatSleepStore.ts'
 import { Button } from './Button'
@@ -15,6 +16,7 @@ type ChatSleepPanelProps = {
 }
 
 export const ChatSleepPanel = ({ wakeAt, onSleep }: ChatSleepPanelProps): React.ReactElement => {
+  const compact = useCompactLayout()
   const [draft, setDraft] = useState('')
   const durationMs = parseSleepDuration(draft)
   const invalid = draft.trim().length > 0 && durationMs === null
@@ -38,7 +40,7 @@ export const ChatSleepPanel = ({ wakeAt, onSleep }: ChatSleepPanelProps): React.
       </div>
       <div className="chat-sleep-panel__custom">
         <Input
-          autoFocus
+          autoFocus={!compact}
           aria-invalid={invalid || undefined}
           aria-label="Sleep duration"
           autoComplete="off"

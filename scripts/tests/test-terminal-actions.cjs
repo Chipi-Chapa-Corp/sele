@@ -21,6 +21,18 @@ if (!process.versions.electron) {
         external: ['electron', '@lydell/node-pty', 'better-sqlite3'],
         plugins: [
           {
+            name: 'runtime-source',
+            setup(builder) {
+              builder.onResolve({ filter: /\?raw$/ }, (args) => ({
+                path: path.join(args.resolveDir, args.path.slice(0, -4)),
+                namespace: 'raw'
+              }))
+              builder.onLoad({ filter: /.*/, namespace: 'raw' }, async (args) => ({
+                contents: `export default ${JSON.stringify(await fs.readFile(args.path, 'utf8'))}`
+              }))
+            }
+          },
+          {
             name: 'current-container-fixture',
             setup(build) {
               build.onLoad({ filter: /\/database\/sshEnvironments\.ts$/ }, () => ({
@@ -84,7 +96,8 @@ if (!process.versions.electron) {
                 workspaceKey={workspaceKey} commandLaunchRequest={request} /></>
             }
             const root = createRoot(document.getElementById('root'))
-            root.render(<React.StrictMode><Fixture /></React.StrictMode>)
+            window.renderFixture = () => root.render(<React.StrictMode><Fixture /></React.StrictMode>)
+            window.renderFixture()
             const retainedOutput = {value: ''}
             const ignore = () => {}
             window.renderExpired = sourceId => root.render(<TerminalSession
@@ -131,6 +144,20 @@ if (!process.versions.electron) {
       delete environment.ELECTRON_RUN_AS_NODE
       environment.XDG_CONFIG_HOME = path.join(directory, 'config')
       environment.XDG_CACHE_HOME = path.join(directory, 'cache')
+      if (environment.SELE_TERMINAL_FIXTURE_SHELL?.endsWith('fish')) {
+        const shellDirectory = path.join(directory, 'shell')
+        await fs.mkdir(shellDirectory)
+        const fixtureShell = path.join(shellDirectory, 'fish')
+        const fish = `'${environment.SELE_TERMINAL_FIXTURE_SHELL.replace(/'/g, `'\\''`)}'`
+        await fs.writeFile(
+          fixtureShell,
+          `#!/bin/sh\nexec ${fish} --no-config --features=no-query-term "$@"\n`,
+          {
+            mode: 0o700
+          }
+        )
+        environment.SELE_TERMINAL_FIXTURE_SHELL = fixtureShell
+      }
       const result = require('node:child_process').spawnSync(
         require('electron'),
         [__filename, directory, '--no-sandbox', '--ozone-platform=x11'],
@@ -203,6 +230,9 @@ if (!process.versions.electron) {
         await waitFor('window.terminals?.length > 0')
         await run(String.raw`window.text = terminal => Array.from({length: terminal.buffer.active.length},
         (_, index) => terminal.buffer.active.getLine(index).translateToString(true)).join('\n'); undefined`)
+        // Fish can briefly run prompt helpers during startup; wait for its idle prompt before reuse.
+        await waitFor(`window.terminals[0].options.disableStdin === false &&
+          /[>$#]\\s*$/.test(window.text(window.terminals[0]).trim())`)
 
         // Auto-closing actions leave an existing empty tab available for the next action.
         const autoCloseMarker = path.join(directory, 'auto-close-empty')
@@ -416,13 +446,28 @@ if (!process.versions.electron) {
         assert.equal(await run(`document.querySelector('[aria-label="Restart terminal"]')`), null)
         window.setSize(1000, 600)
         await viewed.finish()
-        await waitFor(`window.text(window.terminals.at(-1)).includes('process exited')`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('process exited') &&
+          window.terminals.at(-1).options.disableStdin === false`)
+        assert.match(await run('window.text(window.terminals.at(-1))'), /server ready/)
+        assert.match(await run('window.text(window.terminals.at(-1))'), /\$ npm run dev/)
         await new Promise((resolve) => setTimeout(resolve, 100))
         assert.equal(
           await run(`${tab(2)} !== null`),
           true,
           'An opened tab remains after completion'
         )
+        await run(`window.confirmations = []; window.confirm = message => {
+          window.confirmations.push(message); return false
+        }; document.querySelector('[aria-label="Close ${label(2)}"]').click()`)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        assert.deepEqual(
+          await run('window.confirmations'),
+          [],
+          'Closing a completed native tab must not warn about a running process'
+        )
+        await waitFor(`${tab(2)} === null`)
+        assert.equal(stopped, 0, 'Closing completed output must not cancel a native task')
+        await run('window.confirm = () => true; undefined')
 
         sources.register('native-stopped', sourceOptions)
         await waitFor(`${tab(3)} !== null`)
@@ -460,6 +505,7 @@ if (!process.versions.electron) {
         await waitFor(`${tab(5)} === null`)
 
         const otherDirectory = path.join(directory, 'another-project')
+        await fs.mkdir(otherDirectory, { recursive: true })
         const otherKey = `toolbox:fixture${String.fromCharCode(0)}${otherDirectory}`
         const firstVisible = sources.register('native-first-visible', {
           ...sourceOptions,
@@ -666,14 +712,164 @@ if (!process.versions.electron) {
           /Error invoking remote method|terminal:attach-agent-session/
         )
         sources.available = available
+        await run('window.renderFixture(); undefined')
+        await waitFor(`document.querySelector('.terminal-panel__tabs') !== null`)
+        // Every provider's viewed output becomes a real shell without replaying its command.
+        const handoffMarker = path.join(directory, 'agent-command-must-not-replay')
+        const handoffShells = []
+        for (const providerId of ['codex', 'claude', 'copilot', 'opencode-v2']) {
+          const title = `Shell ${providerId}`
+          const label = `${title} 1`
+          handoffShells.push({ label, providerId })
+          const source = sources.register(`handoff-${providerId}`, {
+            ...sourceOptions,
+            providerId,
+            chatId: `handoff-${providerId}`,
+            chatTitle: title,
+            command: `printf AGENT_COMMAND_RERUN >> '${handoffMarker}'`
+          })
+          source.append(`AGENT_OUTPUT:${providerId}\r\n`)
+          await waitFor(`document.querySelector('[aria-label="${label}"][aria-pressed]') !== null`)
+          await run(`document.querySelector('[aria-label="${label}"][aria-pressed]').click()`)
+          await waitFor(
+            `window.text(window.terminals.at(-1)).includes('AGENT_OUTPUT:${providerId}')`
+          )
+          await run(`(async () => {
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+            window.handoffRegion = document.querySelector('[aria-label="${label}"][role="region"]')
+            document.getElementById('focus-target').focus()
+          })()`)
+          await source.finish(7)
+          await waitFor(`window.terminals.at(-1).options.disableStdin === false &&
+            window.text(window.terminals.at(-1)).includes('[process exited with code 7]')`)
+          assert.equal(
+            await run('document.activeElement.id'),
+            'focus-target',
+            'Handoff leaves focus alone'
+          )
+          assert.equal(
+            await run('window.handoffRegion.isConnected'),
+            true,
+            'Handoff keeps the same tab'
+          )
+          const output = await run('window.text(window.terminals.at(-1))')
+          assert.equal(
+            output.split(`AGENT_OUTPUT:${providerId}`).length,
+            2,
+            'Agent output is kept once'
+          )
+          assert.match(output, /\$ printf AGENT_COMMAND_RERUN/)
+          await run('window.currentShell = window.terminals.at(-1); undefined')
+          if (providerId === 'codex') {
+            await run(`window.launch("printf 'NEW_ACTION_%s\\\\n' ready", false)`)
+            await waitFor(`window.text(window.terminals.at(-1)).includes('NEW_ACTION_ready')`)
+            assert.equal(
+              await run(`window.handoffRegion.getAttribute('aria-label')`),
+              label,
+              'An untouched shell with retained output is not reused as an empty tab'
+            )
+            await run(`document.querySelector('[aria-label="Close Deploy"]').click()`)
+            await waitFor(`document.querySelector('[aria-label="Deploy"][aria-pressed]') === null`)
+            await run(`document.querySelector('[aria-label="${label}"][aria-pressed]').click()`)
+          }
+          const command = `printf 'SHELL_REPLY:%s:%s\\n' '${providerId}' "$PWD"\r`
+          await run(`window.currentShell.input(${JSON.stringify(command)}, true)`)
+          await waitFor(
+            `window.text(window.currentShell).includes(${JSON.stringify(`SHELL_REPLY:${providerId}:${directory}`)})`
+          )
+          if (providerId === 'codex') {
+            const command = `printf 'SLEEP_%s\\n' ready; sleep 30\r`
+            await run(`window.currentShell.input(${JSON.stringify(command)}, true)`)
+            await waitFor(`window.text(window.currentShell).includes('SLEEP_ready')`)
+            await run(`window.currentShell.textarea.dispatchEvent(new KeyboardEvent('keydown', {
+              key:'c', code:'KeyC', keyCode:67, ctrlKey:true, bubbles:true, cancelable:true
+            })); undefined`)
+            const afterInterrupt = `printf 'INTERRUPTED_%s\\n' successfully\r`
+            await run(`window.currentShell.input(${JSON.stringify(afterInterrupt)}, true)`)
+            await waitFor(`window.text(window.currentShell).includes('INTERRUPTED_successfully')`)
+          }
+          await assert.rejects(fs.access(handoffMarker), { code: 'ENOENT' })
+          assert.equal(stopped, 2, 'Using the shell does not cancel an agent task')
+        }
+        if (process.env.SELE_TERMINAL_HANDOFF_SCREENSHOT) {
+          await fs.writeFile(
+            process.env.SELE_TERMINAL_HANDOFF_SCREENSHOT,
+            (await window.webContents.capturePage()).toPNG()
+          )
+        }
+
+        // Recreate the renderer and its IPC attachments while the PTY owner stays alive.
+        const restartId = require('node:crypto').randomUUID()
+        const restartCommand = process.env.SELE_TERMINAL_FIXTURE_SHELL?.endsWith('fish')
+          ? `printf 'RESTART_READY:%s\\n' $fish_pid; while read -l line; printf 'RESTART_REPLY:%s\\n' "$line"; end`
+          : `printf 'RESTART_READY:%s\\n' "$$"; while IFS= read -r line; do printf 'RESTART_REPLY:%s\\n' "$line"; done`
+        const restarted = await run(`window.terminalApi.createSession({
+          sessionId: ${JSON.stringify(restartId)},
+          workspaceKey: ${JSON.stringify(`toolbox:fixture${String.fromCharCode(0)}${directory}`)},
+          chatKey: 'codex:fixture', label: 'Restored dev server',
+          cwd: ${JSON.stringify(directory)}, cols: 80, rows: 24,
+          initialCommand: ${JSON.stringify(restartCommand)}
+        })`)
+        terminal.disposeTerminalSessions()
+        await window.loadFile(path.join(directory, 'index.html'))
+        await run(String.raw`window.text = terminal => Array.from({length: terminal.buffer.active.length},
+          (_, index) => terminal.buffer.active.getLine(index).translateToString(true)).join('\n'); undefined`)
+        for (const { label, providerId } of handoffShells) {
+          await waitFor(`document.querySelector('[aria-label="${label}"][aria-pressed]') !== null`)
+          await run(`document.querySelector('[aria-label="${label}"][aria-pressed]').click()`)
+          await waitFor(
+            `window.terminals.some(t => window.text(t).includes(${JSON.stringify(`SHELL_REPLY:${providerId}:${directory}`)}) && !t.options.disableStdin)`
+          )
+          const output = await run(
+            `window.text(window.terminals.find(t => window.text(t).includes('AGENT_OUTPUT:${providerId}')))`
+          )
+          assert.equal(output.split(`AGENT_OUTPUT:${providerId}`).length, 2)
+          assert.match(output, /\[process exited with code 7\]/)
+          const command = `printf 'AFTER_RELOAD_%s\\n' '${providerId}'\r`
+          await run(
+            `window.terminals.find(t => window.text(t).includes('AGENT_OUTPUT:${providerId}')).input(${JSON.stringify(command)}, true); undefined`
+          )
+          await waitFor(
+            `window.terminals.some(t => window.text(t).includes('AFTER_RELOAD_${providerId}'))`
+          )
+        }
+        await assert.rejects(fs.access(handoffMarker), { code: 'ENOENT' })
+        // Exiting a restored shell keeps its final output and must not launch another shell.
+        await run(`window.completedShell = window.terminals.find(t => window.text(t).includes('AGENT_OUTPUT:opencode-v2'));
+          window.terminalCount = window.terminals.length; window.completedShell.input('exit\\r', true)`)
+        await waitFor(`window.text(window.completedShell).includes('[process exited with code 0]') &&
+          window.completedShell.options.disableStdin`)
+        assert.equal(await run('window.terminals.length'), await run('window.terminalCount'))
+        assert.equal(stopped, 2)
+        await waitFor(
+          `document.querySelector('[aria-label="Restored dev server"][aria-pressed]') !== null`
+        )
+        await run(
+          `document.querySelector('[aria-label="Restored dev server"][aria-pressed]').click()`
+        )
+        await waitFor(
+          `window.terminals.some(t => window.text(t).includes('RESTART_READY:${restarted.pid}'))`
+        )
+        await run(
+          `window.terminals.find(t => window.text(t).includes('RESTART_READY:${restarted.pid}')).input('still-running\\r', true); undefined`
+        )
+        await waitFor(
+          `window.terminals.some(t => window.text(t).includes('RESTART_REPLY:still-running'))`
+        )
+        await run(
+          `window.confirm = () => true; document.querySelector('[aria-label="Close Restored dev server"]').click()`
+        )
+        await waitFor(
+          `document.querySelector('[aria-label="Restored dev server"][aria-pressed]') === null`
+        )
         console.log(
-          'Terminal action UI passed: real PTYs, native process attachments, no automatic focus, unviewed auto-close, viewed retention, per-chat indexes, project ownership and StrictMode.'
+          'Terminal action UI passed: real PTYs, native process attachments, renderer restart recovery with live input, no automatic focus, unviewed auto-close, viewed retention, per-chat indexes, project ownership and StrictMode.'
         )
       } catch (error) {
         console.error(error)
         exitCode = 1
       } finally {
-        terminal.disposeTerminalSessions()
+        terminal.disposeTerminalSessions({ preserve: false })
         await terminal.stopPtys()
         window.destroy()
         app.exit(exitCode)

@@ -160,6 +160,31 @@ test('failed cancellation retains the live process', async () => {
   assert.equal(registry.status(handle.id), 'running')
 })
 
+test('restored workspace terminals forward Ctrl+C and resize while explicit close stops the shell', async () => {
+  const registry = createAgentTerminalSessions()
+  const writes = []
+  const sizes = []
+  let stopped = 0
+  const handle = registry.register('restored-workspace', {
+    ...options,
+    workspaceKey: 'host\0/project',
+    background: true,
+    write: (data) => writes.push(data),
+    resize: (...size) => sizes.push(size),
+    stop: async () => {
+      stopped++
+    }
+  })
+  await registry.write(handle.id, '\x03')
+  registry.resize(handle.id, 100, 35)
+  assert.deepEqual(writes, ['\x03'])
+  assert.deepEqual(sizes, [[100, 35]])
+  assert.equal(registry.status(handle.id), 'running')
+  assert.equal(stopped, 0)
+  await registry.stop(handle.id)
+  assert.equal(stopped, 1)
+})
+
 const claudeEvent = (type, blocks, tool_use_result) => ({
   type,
   message: { content: blocks },

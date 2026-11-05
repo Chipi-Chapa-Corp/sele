@@ -9,6 +9,7 @@ import './ChatGoalButton.css'
 import './LimitResetQueueButton.css'
 
 type LimitResetQueueButtonProps = {
+  triggerLabel?: string
   disabled?: boolean
   resetsAt: number | null
   onOpen?: () => void
@@ -16,6 +17,7 @@ type LimitResetQueueButtonProps = {
 }
 
 export const LimitResetQueueButton: React.FC<LimitResetQueueButtonProps> = ({
+  triggerLabel,
   disabled = false,
   resetsAt,
   onOpen,
@@ -74,6 +76,7 @@ export const LimitResetQueueButton: React.FC<LimitResetQueueButtonProps> = ({
         ref={buttonRef}
         theme="secondary"
         aria-label="On Limit Reset"
+        label={triggerLabel}
         title="On Limit Reset"
         aria-haspopup="dialog"
         aria-expanded={open}

@@ -26,7 +26,6 @@ export function LimitResetQueueMessages({
     let active = true
     let sequence = 0
     const refresh = async (): Promise<void> => {
-      if (!providerApi.getLimitResetMessages) return
       const request = ++sequence
       try {
         const entries = await providerApi.getLimitResetMessages(providerId, target)

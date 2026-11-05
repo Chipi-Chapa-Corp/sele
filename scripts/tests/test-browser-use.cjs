@@ -15,7 +15,7 @@ if (!process.versions.electron) {
       await build({
         stdin: {
           contents:
-            "export {registerAppIpc} from './src/main/registerAppIpc';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {startBrowserAutomationService} from './src/main/browser/BrowserAutomation';export {startBrowserUseBridge} from './src/main/providers/codex/CodexBrowserBridge';export {registerBrowserUseSession, removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
+            "export {registerAppIpc} from './src/main/registerAppIpc';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {registerCodexBrowserTools} from './src/main/providers/codex/CodexBrowserTools';export {CodexDynamicTools} from './src/main/providers/codex/CodexDynamicTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {startBrowserAutomationService} from './src/main/browser/BrowserAutomation';export {startBrowserUseBridge} from './src/main/providers/codex/CodexBrowserBridge';export {registerBrowserUseSession, removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
           resolveDir: process.cwd(),
           loader: 'ts'
         },
@@ -23,7 +23,18 @@ if (!process.versions.electron) {
         bundle: true,
         platform: 'node',
         format: 'cjs',
-        external: ['electron', 'better-sqlite3', '@anthropic-ai/claude-agent-sdk']
+        external: ['electron', 'better-sqlite3', '@anthropic-ai/claude-agent-sdk'],
+        plugins:[{
+          name:'node-worker-fixture',setup(builder){
+            builder.onResolve({filter:/\?nodeWorker$/}, async args=>{
+              const entry=path.resolve(args.resolveDir,args.path.replace(/\?nodeWorker$/,''))
+              const outfile=path.join(directory,path.basename(entry,'.ts')+'.cjs')
+              await build({entryPoints:[entry],outfile,bundle:true,platform:'node',format:'cjs',packages:'external'})
+              return {path:outfile,namespace:'native-worker'}
+            })
+            builder.onLoad({filter:/.*/,namespace:'native-worker'},args=>({contents:`import {Worker} from 'node:worker_threads';export default options=>new Worker(${JSON.stringify(args.path)},options)`}))
+          }
+        }]
       })
       await build({
         entryPoints: ['src/preload/index.ts'],
@@ -82,6 +93,8 @@ if (!process.versions.electron) {
   const {
     registerAppIpc,
     createClaudeBrowserIntegration,
+    registerCodexBrowserTools,
+    CodexDynamicTools,
     createBrowserMcpServer,
     startBrowserAutomationService,
     startBrowserUseBridge,
@@ -463,6 +476,11 @@ if (!process.versions.electron) {
       })
       await replacement.attach(remainingTab.id)
       replacement.close()
+      const { checkCodexBrowserTools } = await import('./fixtures/codex-browser-check.mjs')
+      await checkCodexBrowserTools({
+        registerCodexBrowserTools, CodexDynamicTools, registerBrowserUseSession,
+        removeBrowserUseSessions, window, url
+      })
       const run = (source) => window.webContents.executeJavaScript(source)
       const waitForSession = async (predicate) => {
         const deadline = Date.now() + 8000

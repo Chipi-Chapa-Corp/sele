@@ -35,7 +35,10 @@ if (!process.versions.electron) {
       return ts.transpile(`window.${name} = ${expression}`, { target: ts.ScriptTarget.ES2022 })
     }
     const callbacks = [
-      extract('src/renderer/src/useWorkspaceController.tsx', 'scrollChatContentToBottom'),
+      extract(
+        'src/renderer/src/workspace/features/useWorkspaceScroll.tsx',
+        'scrollChatContentToBottom'
+      ),
       extract(
         'src/renderer/src/workspace/useWorkspaceSelection.tsx',
         'applyChatLayout',
@@ -73,6 +76,8 @@ if (!process.versions.electron) {
             import {getChatDetailFromSnapshot} from './src/renderer/src/workspace/chatControllerUtils'
             Object.assign(window, layout, detail, turns, {getChatDetailFromSnapshot, extendChatCursorWindow})
             ${fs.readFileSync(path.join(__dirname, 'fixtures/chat-scroll.js'), 'utf8')}
+            const chatState=new Proxy(window,{get:(target,key)=>target[key],set:(target,key,value)=>{target[key]=value;return true}})
+            const viewportState=chatState
             ${callbacks}
           `,
           resolveDir: root,

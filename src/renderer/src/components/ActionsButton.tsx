@@ -48,6 +48,7 @@ import { Textarea } from './Textarea'
 import './ActionsButton.css'
 
 type ActionsButtonProps = {
+  triggerLabel?: string
   actions: AppAction[]
   disabled?: boolean
   label: string
@@ -155,6 +156,7 @@ const renderActionMenuLabel = (action: AppAction): ReactNode => (
 )
 
 export const ActionsButton = ({
+  triggerLabel,
   actions,
   disabled = false,
   label,
@@ -539,7 +541,7 @@ export const ActionsButton = ({
         dropdownPlacement="top"
         callback={handlePrimaryAction}
         icon={primaryAction ? renderActionIcon(primaryAction.icon) : <Plus aria-hidden="true" />}
-        label={showLabel && primaryAction ? primaryAction.name : null}
+        label={triggerLabel ?? (showLabel && primaryAction ? primaryAction.name : null)}
       />
       {dialog && createPortal(dialog, document.body)}
     </span>

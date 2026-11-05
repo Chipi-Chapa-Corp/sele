@@ -11,10 +11,6 @@ export function DesktopAutomationSettings(): React.ReactElement {
   const [directory, setDirectory] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
-    if (!api()) {
-      setError('Restart Sele to enable desktop connections.')
-      return
-    }
     const refresh = (): void => {
       void api()
         .getState()

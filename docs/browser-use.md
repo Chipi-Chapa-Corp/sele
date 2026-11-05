@@ -6,7 +6,7 @@ input is serialized per window and restores host focus/selection, including afte
 
 | Provider | Embedded browser integration |
 | --- | --- |
-| Codex | Native `iab` transport; requires a compatible installed runtime and Browser Use/unified computer tools enabled. |
+| Codex | Direct `browser` tools for local interactive chats, including Distrobox/Toolbox. Optional native `iab` transport also supports compatible Browser Use plugins. |
 | Claude | `Claude_Browser` MCP tools through the Agent SDK. |
 | Copilot | `Sele_Browser` over authenticated localhost HTTP MCP. |
 | OpenCode | Ephemeral `sele_browser_*` plugin routes trusted runtime session context to scoped MCP endpoints. |
@@ -16,6 +16,10 @@ and remote/container sessions do not receive host capabilities. Provider permiss
 still applies. Stop, disposal, or replacement revokes the owning capability; expired element
 references cannot be reused. Global/project workspaces share tabs, with exclusive debugger
 leases; chat workspaces isolate sessions.
+
+Codex's direct Browser pane tools also work in local Distrobox/Toolbox chats and do not
+require `js_repl` or browser plugins. This does not grant those chats native desktop or
+attached Chrome access. SSH, Docker, and Podman chats do not receive the direct tools.
 
 ## Code boundaries
 

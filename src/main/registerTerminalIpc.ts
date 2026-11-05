@@ -1,9 +1,9 @@
-import { handleLoggedIpc } from './logging'
+import { handleClientRequest } from './logging'
+import { onClientMessage, type ClientEvent, type RendererClient } from './clientIpc'
 import { spawn as spawnChildProcess } from 'node:child_process'
 import { userInfo } from 'node:os'
 import { basename, isAbsolute } from 'node:path'
-import { app, ipcMain } from 'electron'
-import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
+import { app } from 'electron'
 import { spawnPty } from './pty'
 import type { IDisposable, IPty } from '@lydell/node-pty'
 import type {
@@ -18,6 +18,12 @@ import { terminalIpcChannels } from '../shared/terminal'
 import { requireContainerTarget } from './containerTarget'
 import { getHostCommand, getHostTerminalCommand } from './hostProcess'
 import { agentTerminalSessions } from './agentTerminalSessions'
+import {
+  connectPersistentTerminal,
+  listPersistentTerminalIds,
+  type PersistentTerminal
+} from './persistentTerminal'
+import { providerIds, type ProviderId } from '../shared/provider'
 
 const minimumColumns = 2
 const maximumColumns = 500
@@ -33,8 +39,8 @@ const fishTerminalIntegration = [
 
 type ManagedTerminalSession = {
   id: string
-  owner: WebContents
-  pty: IPty
+  owner: RendererClient
+  pty: IPty | PersistentTerminal
   outputChunks: string[]
   outputCharacters: number
   outputTimer: NodeJS.Timeout | null
@@ -47,7 +53,7 @@ type ManagedTerminalSession = {
 const sessions = new Map<string, ManagedTerminalSession>()
 const agentAttachments = new Map<
   string,
-  { owner: WebContents; sourceId: string; detach: () => void }
+  { owner: RendererClient; sourceId: string; detach: () => void }
 >()
 const observedOwners = new Set<number>()
 
@@ -70,7 +76,12 @@ const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> 
     cols?: unknown
     rows?: unknown
     initialCommand?: unknown
+    initialOutput?: unknown
     keepAliveOnCommandFinish?: unknown
+    workspaceKey?: unknown
+    chatKey?: unknown
+    label?: unknown
+    closeOnCommandFinish?: unknown
     container?: unknown
   }
   const cwd = input.cwd == null ? app.getPath('home') : input.cwd
@@ -101,7 +112,13 @@ const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> 
     cols: getDimension(input.cols, minimumColumns, maximumColumns, 'columns'),
     rows: getDimension(input.rows, minimumRows, maximumRows, 'rows'),
     initialCommand,
-    keepAliveOnCommandFinish: Boolean(input.keepAliveOnCommandFinish)
+    initialOutput:
+      typeof input.initialOutput === 'string' ? input.initialOutput.slice(-512 * 1024) : undefined,
+    keepAliveOnCommandFinish: Boolean(input.keepAliveOnCommandFinish),
+    workspaceKey: typeof input.workspaceKey === 'string' ? input.workspaceKey : undefined,
+    chatKey: typeof input.chatKey === 'string' ? input.chatKey : null,
+    label: typeof input.label === 'string' ? input.label : undefined,
+    closeOnCommandFinish: Boolean(input.closeOnCommandFinish)
   }
 }
 
@@ -313,11 +330,16 @@ const disposeSession = (session: ManagedTerminalSession, killProcess: boolean): 
       // The PTY may already have exited between the lookup and cleanup.
     }
   }
+  if ('detach' in session.pty) {
+    session.pty.detach()
+    knownPersistentTerminals.delete(session.id)
+    if (!killProcess) recoveryNeeded = true
+  }
 }
 
 const disposeOwnerSessions = (ownerId: number): void => {
   for (const session of sessions.values()) {
-    if (session.owner.id === ownerId) disposeSession(session, true)
+    if (session.owner.id === ownerId) disposeSession(session, !('detach' in session.pty))
   }
   for (const [id, attachment] of agentAttachments) {
     if (attachment.owner.id !== ownerId) continue
@@ -326,7 +348,7 @@ const disposeOwnerSessions = (ownerId: number): void => {
   }
 }
 
-const observeOwner = (owner: WebContents): void => {
+const observeOwner = (owner: RendererClient): void => {
   if (observedOwners.has(owner.id)) return
   observedOwners.add(owner.id)
 
@@ -336,19 +358,13 @@ const observeOwner = (owner: WebContents): void => {
   })
 }
 
-const getOwnedSession = (
-  event: IpcMainEvent | IpcMainInvokeEvent,
-  sessionId: unknown
-): ManagedTerminalSession | null => {
+const getOwnedSession = (event: ClientEvent, sessionId: unknown): ManagedTerminalSession | null => {
   if (typeof sessionId !== 'string') return null
   const session = sessions.get(sessionId)
   return session?.owner.id === event.sender.id ? session : null
 }
 
-const createSession = async (
-  event: IpcMainInvokeEvent,
-  value: unknown
-): Promise<TerminalSession> => {
+const createSession = async (event: ClientEvent, value: unknown): Promise<TerminalSession> => {
   const options = await getCreateOptions(value)
   const baseShell = getShell()
   if (basename(baseShell.file) === 'fish') baseShell.args.push('-C', fishTerminalIntegration)
@@ -381,12 +397,25 @@ const createSession = async (
           shell
         })
       : await getHostCommand(shell.file, shell.args, { cwd, env })
-  const pty = spawnPty(hostCommand.file, hostCommand.args, {
+  const ptyOptions = {
     name: 'xterm-256color',
     cols: options.cols,
     rows: options.rows,
     cwd: hostCommand.cwd ?? app.getPath('home'),
     env: hostCommand.env ?? env
+  }
+  const persistent = event.sender.id > 0 && !!options.workspaceKey
+  if (persistent) knownPersistentTerminals.add(id)
+  const pty = await (persistent
+    ? connectPersistentTerminal(app.getPath('userData'), id, {
+        command: hostCommand,
+        options: ptyOptions,
+        metadata: { ...options, shell: basename(baseShell.file) }
+      })
+    : Promise.resolve(spawnPty(hostCommand.file, hostCommand.args, ptyOptions))
+  ).catch((error) => {
+    knownPersistentTerminals.delete(id)
+    throw error
   })
 
   const session: ManagedTerminalSession = {
@@ -420,6 +449,9 @@ const createSession = async (
       })
     }
   })
+
+  if (!persistent && options.initialOutput) queueOutput(session, options.initialOutput)
+  if ('attach' in pty) await pty.attach()
 
   return {
     id,
@@ -481,8 +513,11 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
 }
 
 export const registerTerminalIpc = (): void => {
-  handleLoggedIpc(terminalIpcChannels.listAgentSessions, () => agentTerminalSessions.list())
-  handleLoggedIpc(
+  handleClientRequest(terminalIpcChannels.listAgentSessions, async () => {
+    await recoverPersistentTerminals()
+    return agentTerminalSessions.list()
+  })
+  handleClientRequest(
     terminalIpcChannels.attachAgentSession,
     (event, sessionId: unknown, sourceId: unknown): TerminalAttachResult => {
       if (
@@ -514,18 +549,18 @@ export const registerTerminalIpc = (): void => {
       return { status: 'attached' }
     }
   )
-  handleLoggedIpc(terminalIpcChannels.stopAgentSession, (_event, id: unknown) => {
+  handleClientRequest(terminalIpcChannels.stopAgentSession, (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('Invalid agent terminal ID.')
     return agentTerminalSessions.stop(id)
   })
-  handleLoggedIpc(terminalIpcChannels.dismissAgentSession, (_event, id: unknown) => {
+  handleClientRequest(terminalIpcChannels.dismissAgentSession, (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('Invalid agent terminal ID.')
     agentTerminalSessions.dismiss(id)
   })
-  handleLoggedIpc(terminalIpcChannels.createSession, createSession)
-  handleLoggedIpc(terminalIpcChannels.runCommand, (_event, value: unknown) => runCommand(value))
+  handleClientRequest(terminalIpcChannels.createSession, createSession)
+  handleClientRequest(terminalIpcChannels.runCommand, (_event, value: unknown) => runCommand(value))
 
-  ipcMain.on(terminalIpcChannels.write, (event, sessionId: unknown, data: unknown) => {
+  onClientMessage(terminalIpcChannels.write, (event, sessionId: unknown, data: unknown) => {
     const attachment = typeof sessionId === 'string' ? agentAttachments.get(sessionId) : undefined
     if (attachment?.owner.id === event.sender.id && typeof data === 'string') {
       void agentTerminalSessions
@@ -538,9 +573,18 @@ export const registerTerminalIpc = (): void => {
     session.pty.write(data)
   })
 
-  ipcMain.on(
+  onClientMessage(
     terminalIpcChannels.resize,
     (event, sessionId: unknown, cols: unknown, rows: unknown) => {
+      const attachment = typeof sessionId === 'string' ? agentAttachments.get(sessionId) : undefined
+      if (attachment?.owner.id === event.sender.id) {
+        agentTerminalSessions.resize(
+          attachment.sourceId,
+          getDimension(cols, minimumColumns, maximumColumns, 'columns'),
+          getDimension(rows, minimumRows, maximumRows, 'rows')
+        )
+        return
+      }
       const session = getOwnedSession(event, sessionId)
       if (!session) return
 
@@ -556,7 +600,7 @@ export const registerTerminalIpc = (): void => {
     }
   )
 
-  ipcMain.on(terminalIpcChannels.setPaused, (event, sessionId: unknown, paused: unknown) => {
+  onClientMessage(terminalIpcChannels.setPaused, (event, sessionId: unknown, paused: unknown) => {
     const session = getOwnedSession(event, sessionId)
     if (!session || typeof paused !== 'boolean' || session.paused === paused) return
 
@@ -565,7 +609,7 @@ export const registerTerminalIpc = (): void => {
     else session.pty.resume()
   })
 
-  handleLoggedIpc(terminalIpcChannels.getProcessStatus, (event, sessionId: unknown) => {
+  handleClientRequest(terminalIpcChannels.getProcessStatus, async (event, sessionId: unknown) => {
     const attachment = typeof sessionId === 'string' ? agentAttachments.get(sessionId) : undefined
     if (attachment?.owner.id === event.sender.id)
       return {
@@ -573,10 +617,11 @@ export const registerTerminalIpc = (): void => {
         processName: null
       }
     const session = getOwnedSession(event, sessionId)
+    if (session && 'refreshStatus' in session.pty) await session.pty.refreshStatus()
     return session ? getProcessStatus(session) : { hasActiveProcess: false, processName: null }
   })
 
-  handleLoggedIpc(terminalIpcChannels.closeSession, (event, sessionId: unknown) => {
+  handleClientRequest(terminalIpcChannels.closeSession, (event, sessionId: unknown) => {
     const attachment = typeof sessionId === 'string' ? agentAttachments.get(sessionId) : undefined
     if (attachment?.owner.id === event.sender.id) {
       attachment.detach()
@@ -588,8 +633,76 @@ export const registerTerminalIpc = (): void => {
   })
 }
 
-export const disposeTerminalSessions = (): void => {
+export const disposeTerminalSessions = (options: { preserve?: boolean } = {}): void => {
   for (const attachment of agentAttachments.values()) attachment.detach()
   agentAttachments.clear()
-  for (const session of [...sessions.values()]) disposeSession(session, true)
+  for (const session of [...sessions.values()])
+    disposeSession(session, options.preserve === false || !('detach' in session.pty))
+  for (const terminal of recoveredPersistentTerminals.values()) {
+    if (options.preserve === false) terminal.kill()
+    terminal.detach()
+  }
+  recoveredPersistentTerminals.clear()
+}
+
+const knownPersistentTerminals = new Set<string>()
+const recoveredPersistentTerminals = new Map<string, PersistentTerminal>()
+let recovery: Promise<void> | undefined
+let recoveryNeeded = true
+const recoverPersistentTerminals = (): Promise<void> => {
+  if (recovery) return recovery
+  if (!recoveryNeeded) return Promise.resolve()
+  recoveryNeeded = false
+  recovery = (async () => {
+    for (const id of await listPersistentTerminalIds(app.getPath('userData'))) {
+      if (knownPersistentTerminals.has(id)) continue
+      knownPersistentTerminals.add(id)
+      try {
+        const terminal = await connectPersistentTerminal(app.getPath('userData'), id)
+        const metadata = terminal.metadata
+        if (!metadata.workspaceKey) {
+          terminal.detach()
+          continue
+        }
+        const separator = metadata.chatKey?.indexOf(':') ?? -1
+        const provider = metadata.chatKey?.slice(0, separator) as ProviderId
+        const handle = agentTerminalSessions.register(`workspace:${id}`, {
+          providerId: providerIds.includes(provider) ? provider : 'codex',
+          chatId: separator > 0 ? metadata.chatKey!.slice(separator + 1) : '',
+          chatTitle: metadata.label ?? 'Terminal',
+          command: metadata.initialCommand ?? '',
+          cwd: metadata.cwd ?? null,
+          container: metadata.container ?? null,
+          workspaceKey: metadata.workspaceKey,
+          workspaceLabel: metadata.label,
+          closeOnCommandFinish: metadata.closeOnCommandFinish,
+          background: true,
+          stop: () => terminal.stop(),
+          write: (data) => terminal.write(data),
+          resize: (cols, rows) => terminal.resize(cols, rows)
+        })
+        terminal.onData(handle.append)
+        terminal.onExit(({ exitCode }) => {
+          void handle.finish(exitCode)
+        })
+        recoveredPersistentTerminals.set(id, terminal)
+        await terminal.attach()
+      } catch (error) {
+        // Expired helpers are normal; discovery must never relaunch their commands.
+        if (!['ECONNREFUSED', 'ENOENT'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+          knownPersistentTerminals.delete(id)
+          recoveryNeeded = true
+          console.error('Unable to recover terminal session.', error)
+        }
+      }
+    }
+  })()
+    .catch((error) => {
+      recoveryNeeded = true
+      throw error
+    })
+    .finally(() => {
+      recovery = undefined
+    })
+  return recovery
 }

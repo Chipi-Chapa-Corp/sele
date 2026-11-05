@@ -24,7 +24,7 @@ export function GitHubPullRequestStateIcon({
 }: {
   state: AppGitHubPullRequestState
 }): React.ReactElement {
-  const Icon = icons[state]
+  const Icon = icons[state] ?? GitPullRequestArrow
   return (
     <Icon className="changes-sidebar__pull-request-icon" data-state={state} aria-hidden="true" />
   )

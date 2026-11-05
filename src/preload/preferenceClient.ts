@@ -9,6 +9,7 @@ type Transport = {
   initialize: (legacy?: PreferenceValues) => Promise<PreferenceResult>
   write: (values: PreferenceChanges) => Promise<PreferenceResult>
   commit: (values: PreferenceChanges) => PreferenceResult
+  subscribe?: (listener: (changes: PreferenceChanges) => void) => () => void
 }
 
 const success: PreferenceResult = { ok: true, value: null }
@@ -21,6 +22,25 @@ export const createPreferenceClient = (transport: Transport): PreferencesApi => 
   let writing: PreferenceChanges | null = null
   let inFlight: Promise<PreferenceResult> | null = null
   let failure: PreferenceResult | null = null
+  const changesListeners = new Set<(changes: PreferenceChanges) => void>()
+  let deferred: PreferenceChanges = {}
+  const applyChanges = (changes: PreferenceChanges): void => {
+    if (!snapshot) return
+    const applied: PreferenceChanges = {}
+    for (const [key, value] of Object.entries(changes)) {
+      // A pending local edit wins until its own write has been acknowledged.
+      if (Object.hasOwn(pending, key) || (writing && Object.hasOwn(writing, key))) {
+        deferred[key] = value
+        continue
+      }
+      if ((snapshot.get(key) ?? null) === value) continue
+      if (value === null) snapshot.delete(key)
+      else snapshot.set(key, value)
+      applied[key] = value
+    }
+    if (Object.keys(applied).length) changesListeners.forEach((listener) => listener(applied))
+  }
+  transport.subscribe?.(applyChanges)
   const listeners = new Set<(error: string) => void>()
 
   const fail = (error: unknown): PreferenceResult => {
@@ -60,6 +80,9 @@ export const createPreferenceClient = (transport: Transport): PreferencesApi => 
       .then((result) => {
         writing = null
         inFlight = null
+        const changes = deferred
+        deferred = {}
+        applyChanges(changes)
         if (result.ok) void drain()
         return result
       })
@@ -116,6 +139,12 @@ export const createPreferenceClient = (transport: Transport): PreferencesApi => 
         return result
       } catch (error) {
         return fail(error)
+      }
+    },
+    onChanged: (listener) => {
+      changesListeners.add(listener)
+      return () => {
+        changesListeners.delete(listener)
       }
     },
     onFailure: (listener) => {

@@ -84,11 +84,19 @@ if (!process.versions.electron) {
         throw new Error(`Timed out: ${condition}`)
       }
       await until('window.ready')
+      await run('window.idleSearch = sidebar; refresh()')
+      assert.equal(
+        await run('idleSearch === sidebar && idleSearch.chats === sidebar.chats'),
+        true,
+        'unrelated workspace updates must preserve idle search results'
+      )
       await run('setQuery("nee"); setQuery("need"); setQuery("needle")')
       await until('!sidebar.loading && sidebar.chats.length === 1')
       assert.equal(await run('requests.length'), 1)
       assert.equal(await run('requests[0].searchTerm'), 'needle')
       assert.equal(await run('sidebar.chats[0].preview'), 'needle')
+      await run('window.loadedSearch = sidebar; refresh()')
+      assert.equal(await run('loadedSearch === sidebar'), true, 'loaded search results stay stable')
       await run('document.querySelector("button").click()')
       await until('!sidebar.loading && sidebar.chats.length === 2')
       assert.equal(await run('requests.at(-1).cursor'), 'sidebar-next')
@@ -110,6 +118,8 @@ if (!process.versions.electron) {
       await run('setQuery("error")')
       await until('!sidebar.loading && !!sidebar.error')
       assert.equal(await run('sidebar.chats.length'), 0)
+      await run('window.closedSearch = sidebar; refresh()')
+      assert.equal(await run('closedSearch === sidebar'), true, 'closed search results stay stable')
       await run('setQuery("")')
       await until('!sidebar.loading && sidebar.chats.length === 0 && !sidebar.error')
       const before = await run('requests.length')

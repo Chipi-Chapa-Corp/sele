@@ -1,15 +1,21 @@
-import { isNoProjectChat, isNoProjectCwd } from '../../shared/noProject.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
+import {
+  createWorkspaceTestContext,
+  readWorkspaceControllerSource
+} from '../../../scripts/tests/helpers/workspace-controller.mjs'
+import { isNoProjectChat, isNoProjectCwd } from '../../shared/noProject.ts'
 
 // Run the real workspace declarations without mounting providers or starting a desktop app.
 const declaration = (path, name) => {
   const source = ts.createSourceFile(
     path,
-    readFileSync(new URL(path, import.meta.url), 'utf8'),
+    path === './useWorkspaceController.tsx'
+      ? readWorkspaceControllerSource()
+      : readFileSync(new URL(path, import.meta.url), 'utf8'),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TSX
@@ -29,7 +35,7 @@ const declaration = (path, name) => {
 }
 
 test('project choices contain only added projects, even with native, done and imported history', () => {
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     useMemo: (fn) => fn(),
     chats: [
       { cwd: '/repo', createdAt: 1 },
@@ -88,7 +94,7 @@ test('project choices contain only added projects, even with native, done and im
 test('marking an imported chat done preserves the regular new-chat project', async () => {
   const selected = { id: 'imported', providerId: 'claude', cwd: '/sele/imports/id', imported: {} }
   const opened = []
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     doneMutations: { current: { next: 0, pending: new Map() } },
     startTransition: (fn) => fn(),
     setChats: () => {},

@@ -177,7 +177,10 @@
       "linter": {
         "rules": {
           "correctness": {
-            "useExhaustiveDependencies": "warn",
+            "useExhaustiveDependencies": {
+              "level": "warn",
+              "options": { "hooks": [{ "name": "usePreferenceState", "stableResult": [1] }] }
+            },
             "useHookAtTopLevel": "error"
           }
         }
@@ -194,7 +197,10 @@
       }
     },
     {
-      "includes": ["src/renderer/src/components/SymbolIcons.tsx", "src/renderer/src/components/SymbolIcons.test.mjs"],
+      "includes": [
+        "src/renderer/src/components/SymbolIcons.tsx",
+        "src/renderer/src/components/SymbolIcons.test.mjs"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -214,7 +220,7 @@
       }
     },
     {
-      "includes": ["electron.vite.config.ts"],
+      "includes": ["electron.vite.config.ts", "capacitor.config.ts", "vite.mobile.config.ts"],
       "linter": {
         "rules": {
           "style": {

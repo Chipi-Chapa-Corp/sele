@@ -144,7 +144,7 @@ export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
       {changesPaneView === 'git' && (
         <SegmentedControl
           aria-label="Git view"
-          className="changes-sidebar__view-toggle"
+          className="changes-sidebar__view-toggle changes-sidebar__git-view-toggle"
           options={[
             {
               value: 'changes',

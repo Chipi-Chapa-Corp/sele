@@ -1,3 +1,4 @@
+import { usePreferenceState } from './usePreferenceState'
 import { useEffect, useMemo, useState } from 'react'
 import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderModel, ProviderId } from '../../shared/provider'
@@ -26,7 +27,7 @@ export function useOpenCodeProviders({
   model: string
   revision: number
 }) {
-  const [remembered, setRemembered] = useState(readOpenCodeProviderPreferences)
+  const [remembered, setRemembered] = usePreferenceState(readOpenCodeProviderPreferences)
   const [snapshot, setSnapshot] = useState<{
     sourceKey: string
     connections: ProviderConnection[]

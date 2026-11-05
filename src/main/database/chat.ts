@@ -5,6 +5,7 @@ import { isProviderChatPurpose } from '../../shared/provider'
 import { isContainerTool, normalizeContainerTarget } from '../containerTarget'
 import { getDatabase } from './sqlite'
 import { DatabaseReadCache } from './readCache'
+import { publishChatMetadataChanged } from '../providers/chatMetadataEvents'
 
 const metadataCache = new DatabaseReadCache<ProviderChatMetadata>()
 
@@ -174,6 +175,12 @@ export const getChatContainers = async (): Promise<AppContainerTarget[]> => {
   })
 }
 
+const getChangedChatMetadata = async (chatId: string): Promise<ProviderChatMetadata> => {
+  const metadata = await getChatMetadata(chatId)
+  publishChatMetadataChanged([metadata])
+  return metadata
+}
+
 export const setChatNoProject = async (chatId: string): Promise<ProviderChatMetadata> => {
   const db = await getDatabase()
   await db
@@ -182,7 +189,7 @@ export const setChatNoProject = async (chatId: string): Promise<ProviderChatMeta
     .onConflict((conflict) => conflict.column('id').doUpdateSet({ no_project: 1 }))
     .execute()
   metadataCache.invalidate(chatId)
-  return getChatMetadata(chatId)
+  return getChangedChatMetadata(chatId)
 }
 
 export const setChatDone = async (chatId: string, done = true): Promise<ProviderChatMetadata> => {
@@ -203,7 +210,7 @@ export const setChatDone = async (chatId: string, done = true): Promise<Provider
     .execute()
 
   metadataCache.invalidate(chatId)
-  return getChatMetadata(chatId)
+  return getChangedChatMetadata(chatId)
 }
 
 export const setChatPinned = async (
@@ -225,7 +232,7 @@ export const setChatPinned = async (
     .execute()
 
   metadataCache.invalidate(chatId)
-  return getChatMetadata(chatId)
+  return getChangedChatMetadata(chatId)
 }
 
 export const setChatOrder = async (chatIds: string[]): Promise<ProviderChatMetadata[]> => {
@@ -245,7 +252,9 @@ export const setChatOrder = async (chatIds: string[]): Promise<ProviderChatMetad
 
   ids.forEach((id) => metadataCache.invalidate(id))
   const metadataById = await getChatMetadataByIds(ids)
-  return ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
+  const metadata = ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
+  publishChatMetadataChanged(metadata)
+  return metadata
 }
 
 export const setChatSeen = async (
@@ -271,7 +280,7 @@ export const setChatSeen = async (
     .execute()
 
   metadataCache.invalidate(chatId)
-  return getChatMetadata(chatId)
+  return getChangedChatMetadata(chatId)
 }
 
 export const setChatPurpose = async (
@@ -291,7 +300,7 @@ export const setChatPurpose = async (
     .execute()
 
   metadataCache.invalidate(chatId)
-  return getChatMetadata(chatId)
+  return getChangedChatMetadata(chatId)
 }
 
 export const setChatContainer = async (
@@ -331,7 +340,7 @@ export const setChatContainer = async (
     .execute()
 
   metadataCache.invalidate(chatId)
-  return getChatMetadata(chatId)
+  return getChangedChatMetadata(chatId)
 }
 
 export const setChatsDone = async (
@@ -366,7 +375,9 @@ export const setChatsDone = async (
 
   ids.forEach((id) => metadataCache.invalidate(id))
   const metadataById = await getChatMetadataByIds(ids)
-  return ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
+  const metadata = ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
+  publishChatMetadataChanged(metadata)
+  return metadata
 }
 
 /** Bind only once unless the user explicitly changes this chat's account. */
@@ -438,5 +449,7 @@ export const bindChatAccounts = async (
       .execute()
   }
   unbound.forEach((id) => metadataCache.invalidate(id))
-  return getChatMetadataByIds(ids)
+  const metadata = await getChatMetadataByIds(ids)
+  publishChatMetadataChanged([...metadata.values()])
+  return metadata
 }

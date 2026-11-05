@@ -19,6 +19,10 @@ await build({
     {
       name: 'queue-fixture',
       setup(builder) {
+        builder.onResolve({ filter: /\?nodeWorker$/ }, () => ({
+          path: 'worker',
+          namespace: 'fixture'
+        }))
         builder.onResolve(
           { filter: /(?:BrowserAutomation|BrowserMcpServer|SqliteUsageReader)$/ },
           (args) => ({
@@ -28,6 +32,8 @@ await build({
         )
         builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({
           contents: {
+            worker:
+              'export default () => { throw new Error("Unexpected database worker in queue unit fixture") }',
             BrowserAutomation: 'export const getBrowserAutomationService = () => ({})',
             BrowserMcpServer: 'export const createBrowserMcpServer = async () => null',
             SqliteUsageReader: 'export class SqliteUsageReader { dispose() {} }'

@@ -133,9 +133,9 @@ credentials or unsupported remote MCP OAuth credentials may require sign-in agai
 ## GitHub pull requests
 
 In the Git sidebar, choose **Pull requests** to browse PRs for the project's GitHub remote.
-Use the state selector to include open, merged, closed, and draft PRs. When there is more
-than one page, use the arrows or enter a page number and press Enter. Reload refreshes the
-current page. GitHub search makes the first 1,000 matching PRs available.
+Use the state selector to include open, merged, closed, and draft PRs. Search by title or
+PR number below the filters. The list fetches a small window around your scroll position and renders only the
+visible rows. Offscreen pages are discarded and fetched again when you scroll back. Reload refreshes the list. GitHub search makes the first 1,000 matching PRs available.
 
 Use the globe button on a row to open a PR in Sele's browser, or the external-link button
 to use your default browser. Open icons are green, merged purple, closed red, and drafts gray.
@@ -144,12 +144,89 @@ Install GitHub CLI (`gh`) and run `gh auth login` on the machine hosting the pro
 including inside its container or SSH environment. Sele uses the GitHub `origin` remote,
 then `upstream`, or the only remaining GitHub repository. This view currently supports github.com.
 
+## Local network access
+
+In **Settings → Local network**, enable **Allow local network access**. Open the
+Android app on the same Wi-Fi, choose your computer, and approve its request in
+desktop Sele. No connection link or code is needed. Nearby discovery advertises
+only the computer’s identity and port; each approved device gets its own credential.
+The advanced **Browser access links** section also supports a phone browser.
+Keep Sele open and the computer awake. The default TCP port is **4589**; allow the
+selected port through your computer's firewall if the phone cannot connect. Guest
+Wi-Fi and access-point client isolation can prevent devices from reaching each other.
+
+Access is off by default. A connection link grants control of the host's projects,
+agents, files, Git, and terminals. HTTP and WebSocket traffic is unencrypted, so use
+this mode only on a trusted local network and do not forward its port to the internet.
+**Remove device** immediately revokes that device, including saved access after
+restart. **Reset connection links** revokes browser links independently of paired
+Android devices. Turning access off stops the server and discovery. Settings and
+approved devices persist across restarts.
+
+Phone layout, selections, and drafts stay on the client, separately for each computer. Conversations and
+agent execution remain on the computer. A disconnected client reconnects and reloads
+current state; it never automatically retries a send or other mutation. Check the
+conversation before resending a request whose connection was lost.
+
+Mobile opens on the conversation, with a slide-out sidebar for chats, New Chat, search,
+accounts, and settings. Goal, notes, actions, limits, and on-reset live in the chat’s tools menu.
+Swipe right to open the sidebar and left to close it; workspace tools
+open from the compact conversation header. The existing large-screen layout is preserved.
+Hold a chat to reveal its actions. Sleeping chats and wake timers sync with desktop,
+including sleeps saved before the phone connects. Phone file editing uses a native text area
+with the same save, diff, and review model; desktop editing keeps Monaco. Terminals include
+touch shortcuts for Escape, Tab, interruption, and command history. The Browser tab shows
+and controls the computer’s browser, including live desktop changes. Folder and identity-file
+pickers browse the host, while attachments upload from the phone. Downloads and diagnostic
+logs use Android’s Save dialog.
+
+Desktop automation, interactive MCP widgets, and archive import/export remain desktop
+features. Phone terminal sessions close on disconnect; agent-owned processes remain on the host.
+See [mobile development and testing](docs/mobile.md) for architecture and emulator checks.
+For development, `npm run dev` proxies the existing Vite renderer through the LAN
+server; reload the phone page after source changes. Packaged builds serve bundled assets.
+
+## Android APK
+
+Build an installable Android debug APK with **JDK 21**, **Android SDK platform 36**,
+and **Android SDK Build-Tools 35.0.0** installed:
+
+```bash
+npm install
+# Set JAVA_HOME to JDK 21 and ANDROID_HOME to your Android SDK directory.
+npm run build:android
+```
+
+The APK and SHA-256 checksum are written to
+`dist/sele-<version>-android-debug.apk` and the adjacent `.sha256` file. This is a
+debug-signed APK for local installation, not a Play Store release. Android 7 or newer
+is required. When building in a container whose cgroup warnings break Java tool
+version detection, set `JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport` for the build.
+
+Install the APK, enable **Settings → Local network** in desktop Sele, choose your
+computer in the Android app, and approve the request on your computer. The app
+bundles the shared UI; only the authenticated WebSocket connects to your computer.
+The approved connection and per-host drafts use Android’s private durable storage. Keep both devices on the same trusted LAN, Sele open, and the computer
+awake. Restart the updated desktop app before pairing the APK.
+
+Use **Settings → Local network → Connect to another computer** in the Android app
+to change hosts. Drafts and UI preferences stay separate for each host. The desktop
+features and limitations listed above also apply to Android.
+
+`npm run build:mobile:web` builds the shared renderer; `npm run sync:android` also
+copies it into the native project. No hosted server URL is embedded in the APK.
+
 ## Development
 
 See the [repository guide](docs/README.md) for the code layout and focused
 implementation notes.
 
 Requires Node.js 22.
+
+PR mock data lives in `scripts/tests/fixtures/githubPullRequests.ts` and is injected
+through the test harness API. Run `SELE_TEST_PR_MOCKS=1 npm run test:github-pull-requests`
+to check scrolling, filtering, and cache eviction against 100 fixture PRs. The app
+always loads pull requests through its normal GitHub API.
 
 ```bash
 npm install

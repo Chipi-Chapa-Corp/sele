@@ -19,6 +19,7 @@ import {
   MessageSquareText,
   Search,
   SquarePen,
+  Settings,
   X
 } from 'lucide-react'
 import { chatSidebarFilters, type ChatSidebarFilter } from '../../chatSidebarFilter'
@@ -36,7 +37,9 @@ import { Button } from '../../components/Button'
 import { Input } from '../../components/Input'
 import { ChatSidebarLoadingState } from '../../components/AppStatusStates'
 
-type ChatSidebarProps = WorkspaceController['chatSidebar']
+type ChatSidebarProps = WorkspaceController['chatSidebar'] & {
+  mobile?: { onClose(): void; onSettings(): void }
+}
 
 export function ChatSidebar(props: ChatSidebarProps): ReactElement {
   const {
@@ -83,6 +86,27 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
       setOpeningImport(false)
     }
   }
+  const filterTabs = Object.values(chatSidebarTabs).some(Boolean) && (
+    <SegmentedControl<ChatSidebarFilter>
+      aria-label="Filter conversations"
+      className="chat-home__filter-tabs"
+      size="small"
+      value={chatSidebarFilter}
+      onChange={handleChatSidebarFilterChange}
+      options={chatSidebarFilters
+        .filter(({ value }) => chatSidebarTabs[value])
+        .map(({ value, label, description }) => {
+          const Icon = filterIcons[value]
+          return {
+            value,
+            label: null,
+            ariaLabel: label,
+            title: description,
+            icon: <Icon aria-hidden="true" />
+          }
+        })}
+    />
+  )
   const hasVisibleGroups = Boolean(
     pinnedChatGroup || importedChatGroup || displayedActiveChatGroups.length > 0 || doneChatGroup
   )
@@ -91,7 +115,14 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     <aside className="chat-sidebar" aria-label="Recent conversations">
       <header className={`chat-home__header${searchOpen ? ' chat-home__header--searching' : ''}`}>
         {renderWindowControls('darwin')}
-        {searchOpen ? (
+        {props.mobile && !searchOpen ? (
+          <div className="mobile-sidebar-heading">
+            <div className="mobile-sidebar-heading__filters">
+              {filterTabs}
+              <Button theme={chromeControlTheme} aria-label="Close sidebar" icon={<X />} callback={props.mobile.onClose} />
+            </div>
+          </div>
+        ) : searchOpen ? (
           <>
             <label className="sr-only" htmlFor="chat-search">
               Search conversations
@@ -147,27 +178,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
                 }
               />
             </div>
-            {Object.values(chatSidebarTabs).some(Boolean) && (
-              <SegmentedControl<ChatSidebarFilter>
-                aria-label="Filter conversations"
-                className="chat-home__filter-tabs"
-                size="small"
-                value={chatSidebarFilter}
-                onChange={handleChatSidebarFilterChange}
-                options={chatSidebarFilters
-                  .filter(({ value }) => chatSidebarTabs[value])
-                  .map(({ value, label, description }) => {
-                    const Icon = filterIcons[value]
-                    return {
-                      value,
-                      label: null,
-                      ariaLabel: label,
-                      title: description,
-                      icon: <Icon aria-hidden="true" />
-                    }
-                  })}
-              />
-            )}
+            {filterTabs}
             <div className="chat-home__actions-right">
               <Button
                 theme={chromeControlTheme}
@@ -257,7 +268,23 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           />
         )}
       </div>
-      <ChatSidebarFooter providerAccount={providerAccount} usageIndicator={usageIndicator} />
+      {props.mobile ? (
+        <div className="mobile-sidebar-footer">
+          <ChatSidebarFooter
+            providerAccount={providerAccount}
+            usageIndicator={usageIndicator}
+            mobile
+          />
+          <div className="mobile-sidebar-footer__actions">
+            <Button theme={chromeControlTheme} aria-label="New chat" icon={<SquarePen />} callback={handleNewChat} />
+            <Button theme={chromeControlTheme} aria-label="New chat without a project" icon={<MessageSquare />} callback={handleNewChatNoProject} />
+            <Button theme={chromeControlTheme} aria-label="Search conversations" aria-expanded={searchOpen} icon={<Search />} callback={() => setSearchOpen(true)} />
+            <Button theme={chromeControlTheme} aria-label="Open settings" icon={<Settings />} callback={props.mobile.onSettings} />
+          </div>
+        </div>
+      ) : (
+        <ChatSidebarFooter providerAccount={providerAccount} usageIndicator={usageIndicator} />
+      )}
     </aside>
   )
 }
@@ -313,8 +340,12 @@ const ChatSidebarGroups = memo(function ChatSidebarGroups({
 
 const ChatSidebarFooter = memo(function ChatSidebarFooter({
   providerAccount,
-  usageIndicator
-}: Pick<ChatSidebarProps, 'providerAccount' | 'usageIndicator'>): ReactElement {
+  usageIndicator,
+  mobile
+}: { mobile?: boolean } & Pick<
+  ChatSidebarProps,
+  'providerAccount' | 'usageIndicator'
+>): ReactElement {
   return (
     <footer className="chat-sidebar__footer">
       <AppUpdatePrompt />
@@ -342,7 +373,7 @@ const ChatSidebarFooter = memo(function ChatSidebarFooter({
           onCreate={providerAccount.onCreate}
           onDelete={providerAccount.onDelete}
         />
-        <UsageIndicator scopeKey={providerAccount.key} {...usageIndicator} />
+        {!mobile && <UsageIndicator scopeKey={providerAccount.key} {...usageIndicator} />}
       </div>
     </footer>
   )

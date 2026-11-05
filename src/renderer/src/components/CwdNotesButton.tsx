@@ -20,6 +20,7 @@ import { Input } from './Input'
 import './CwdNotesButton.css'
 
 type CwdNotesButtonProps = {
+  triggerLabel?: string
   label: string
   notes: ProviderCwdNote[]
   onNotesChange: (notes: ProviderCwdNote[]) => void
@@ -45,7 +46,12 @@ const getNotesMenuStyle = (buttonRect: DOMRect): CSSProperties => {
   return nextMenuStyle
 }
 
-export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, onNotesChange }) => {
+export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({
+  label,
+  notes,
+  onNotesChange,
+  triggerLabel
+}) => {
   const reactId = useId().replace(/:/g, '')
   const rootRef = useRef<HTMLSpanElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -218,6 +224,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({ label, notes, on
           aria-controls={open ? menuId : undefined}
           aria-expanded={open}
           aria-label={`${label} notes`}
+          label={triggerLabel}
           title={notes.length > 0 ? `${notes.length} notes` : 'Notes'}
           callback={() => {
             if (open) closeMenu()

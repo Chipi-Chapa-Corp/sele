@@ -1,3 +1,4 @@
+import { usePreferenceState } from './usePreferenceState'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderId, ProviderUpdateAvailability } from '../../shared/provider'
@@ -40,7 +41,7 @@ export function useProviderUpdates({
     containerKey: string
     key: string
   } | null>(null)
-  const [preferences, setPreferences] = useState(readStoredProviderUpdatePreferences)
+  const [preferences, setPreferences] = usePreferenceState(readStoredProviderUpdatePreferences)
   const [revision, setRevision] = useState(0)
   const skipped = useRef(new Set<string>())
   const updating = useRef(false)

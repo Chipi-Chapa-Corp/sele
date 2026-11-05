@@ -2046,7 +2046,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.canceledOneShotGenerationTimers.clear()
     // Record the final live lists, then keep them: the states are discarded below.
     this.states.forEach((state) => this.persistPendingMessages(state))
-    void this.pendingMessageStore.close()
+    void this.pendingMessageStore.close().catch((error: unknown) => {
+      console.error('Unable to flush pending OpenCode messages during disposal.', error)
+    })
     const clients = this.disposeClients()
     this.states.clear()
     this.sessionDiscoveries.clear()

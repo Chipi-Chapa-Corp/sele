@@ -11,7 +11,7 @@ import {
 import type { RecentlyOpenedFile } from '../recentlyOpenedFiles'
 import type { PinnedRecentReference } from '../recentReferencePins'
 import { Button } from './Button'
-import { MarkdownMessage } from './ChatDetailItem'
+import { MarkdownMessage } from './MarkdownMessage'
 
 type RecentReferenceListItem = PinnedRecentReference
 type RecentReferenceFile = RecentChatFileReference | RecentlyOpenedFile

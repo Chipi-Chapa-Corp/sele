@@ -16,6 +16,7 @@ import {
   useDeferredValue,
   useContext,
   useMemo,
+  useRef,
   type DragEvent,
   type DragEventHandler,
   type ReactNode
@@ -25,6 +26,8 @@ import { noProjectGroupKey } from '../../../shared/noProject'
 import { appMaxChatsRenderedDefault } from '../performanceSettings'
 import { formatProjectLabel } from '../projectPresentation'
 import { ChatSleepActionsContext, getChatSleepKey, sleepChats, wakeChats } from '../chatSleep'
+import { useCompactLayout } from '../useCompactLayout'
+import { useHoldActions } from '../useHoldActions'
 import { Button } from './Button'
 import { BedOff } from './BedOffIcon'
 import { ChatSleepPanel } from './ChatSleepPanel'
@@ -115,6 +118,16 @@ export const areChatListGroupPropsEqual = (
         before.chats.some((chat, index) => chat !== after.chats[index])))
   )
     return false
+  // Metadata in another project leaves these collections unchanged. Avoid
+  // walking every chat just to discover that all five comparisons are false.
+  if (
+    previous.workingSubagentChatKeys === next.workingSubagentChatKeys &&
+    previous.committingChatKeys === next.committingChatKeys &&
+    previous.latestCommitFinishedAtByChatKey === next.latestCommitFinishedAtByChatKey &&
+    previous.projectNamesByCwd === next.projectNamesByCwd &&
+    previous.projectIconsByCwd === next.projectIconsByCwd
+  )
+    return true
   for (const chat of after.chats) {
     const key = `${chat.providerId}:${chat.id}`
     const cwd = chat.projectCwd ?? chat.cwd ?? ''
@@ -190,6 +203,9 @@ export const ChatListGroup = memo(function ChatListGroup({
   selectedChatChildren = null,
   selectedChatChildOpen = false
 }: ChatListGroupProps) {
+  const compact = useCompactLayout()
+  const headerRef = useRef<HTMLDivElement>(null)
+  const hold = useHoldActions(headerRef)
   const sleepAction = useContext(ChatSleepActionsContext)
   const projectLike = group.kind === 'cwd' || group.kind === 'imported'
   const noProject = group.key === noProjectGroupKey
@@ -262,13 +278,92 @@ export const ChatListGroup = memo(function ChatListGroup({
     </DisclosureToggle>
   )
 
+  const headerActions = (
+    <>
+      {group.kind === 'cwd' && (
+        <span className="chat-list-group__action">
+          <Button
+            theme={compact ? 'secondary' : 'transparent'}
+            size="small"
+            label={compact ? 'New chat' : undefined}
+            aria-label={`New chat in ${groupLabel}`}
+            title="New chat"
+            callback={() => onNewChatInCwd(group)}
+            icon={<SquarePen aria-hidden="true" />}
+          />
+          {sleepAction && (
+            <Button
+              theme={compact ? 'secondary' : 'transparent'}
+              size="small"
+              label={compact ? (sleepAction === 'wake' ? 'Wake chats' : 'Sleep chats') : undefined}
+              aria-label={sleepActionLabel}
+              title={sleepActionLabel}
+              callback={() => {
+                if (sleepAction === 'wake') {
+                  wakeChats(group.chats.map((chat) => getChatSleepKey(chat.providerId, chat.id)))
+                } else {
+                  sleepProjectChats()
+                }
+              }}
+              icon={
+                sleepAction === 'wake' ? <BedOff aria-hidden="true" /> : <Bed aria-hidden="true" />
+              }
+              dropdownLabel={`Sleep all chats in project ${groupLabel} for a set time`}
+              dropdownMenuAlign="end"
+              dropdownContent={(close) => (
+                <ChatSleepPanel
+                  wakeAt={undefined}
+                  onSleep={(durationMs) => {
+                    close()
+                    sleepProjectChats(durationMs)
+                  }}
+                />
+              )}
+            />
+          )}
+          <Button
+            theme={compact ? 'secondary' : 'transparent'}
+            size="small"
+            label={compact ? 'Mark chats done' : undefined}
+            aria-label={`Mark all ${groupLabel} chats done`}
+            title="Mark project chats done"
+            callback={() => onMarkCwdChatsDone(group)}
+            icon={<CheckCheck aria-hidden="true" />}
+          />
+        </span>
+      )}
+      {group.kind === 'pinned' && (
+        <span className="chat-list-group__action">
+          <Button
+            theme={compact ? 'secondary' : 'transparent'}
+            size="small"
+            label={compact ? 'Unpin chats' : undefined}
+            aria-label="Unpin all pinned chats"
+            title="Unpin all"
+            callback={() => onUnpinPinnedChats(group)}
+            icon={<PinOff aria-hidden="true" />}
+          />
+        </span>
+      )}
+    </>
+  )
+
   return (
     <section
       className={`chat-list-group chat-list-group--${group.kind}${open ? ' chat-list-group--open' : ''}${projectDraggable ? ' chat-list-group--project-reorderable' : ''}${projectDragging ? ' chat-list-group--project-dragging' : ''}${projectDropPosition ? ` chat-list-group--project-drop-${projectDropPosition}` : ''}`}
       data-project-group-key={projectDraggable ? group.key : undefined}
       aria-label={`${groupLabel} chats`}
     >
-      <div className="chat-list-group__header">
+      <div
+        className="chat-list-group__header"
+        ref={headerRef}
+        onPointerDown={compact ? hold.onPointerDown : undefined}
+        onPointerMove={compact ? hold.onPointerMove : undefined}
+        onPointerUp={compact ? hold.onPointerUp : undefined}
+        onPointerCancel={compact ? hold.onPointerCancel : undefined}
+        onContextMenu={compact ? hold.onContextMenu : undefined}
+        onKeyDown={compact ? hold.onKeyDown : undefined}
+      >
         {projectLike ? (
           <span className="chat-list-group__project-toggle">
             <button
@@ -292,71 +387,25 @@ export const ChatListGroup = memo(function ChatListGroup({
         ) : (
           toggle
         )}
-        {group.kind === 'cwd' && (
-          <span className="chat-list-group__action">
+        {compact && (group.kind === 'cwd' || group.kind === 'pinned') ? (
+          <span className="mobile-project-actions-anchor">
             <Button
-              theme="transparent"
-              size="small"
-              aria-label={`New chat in ${groupLabel}`}
-              title="New chat"
-              callback={() => onNewChatInCwd(group)}
-              icon={<SquarePen aria-hidden="true" />}
-            />
-            {sleepAction && (
-              <Button
-                theme="transparent"
-                size="small"
-                aria-label={sleepActionLabel}
-                title={sleepActionLabel}
-                callback={() => {
-                  if (sleepAction === 'wake') {
-                    wakeChats(group.chats.map((chat) => getChatSleepKey(chat.providerId, chat.id)))
-                  } else {
-                    sleepProjectChats()
-                  }
-                }}
-                icon={
-                  sleepAction === 'wake' ? (
-                    <BedOff aria-hidden="true" />
-                  ) : (
-                    <Bed aria-hidden="true" />
-                  )
-                }
-                dropdownLabel={`Sleep all chats in project ${groupLabel} for a set time`}
-                dropdownMenuAlign="end"
-                dropdownContent={(close) => (
-                  <ChatSleepPanel
-                    wakeAt={undefined}
-                    onSleep={(durationMs) => {
-                      close()
-                      sleepProjectChats(durationMs)
-                    }}
-                  />
-                )}
-              />
-            )}
-            <Button
-              theme="transparent"
-              size="small"
-              aria-label={`Mark all ${groupLabel} chats done`}
-              title="Mark project chats done"
-              callback={() => onMarkCwdChatsDone(group)}
-              icon={<CheckCheck aria-hidden="true" />}
+              aria-label={`Actions for ${groupLabel}`}
+              aria-hidden="true"
+              tabIndex={-1}
+              callback={() => {}}
+              menuOnly
+              dropdownOpen={hold.open}
+              onDropdownOpenChange={(open) => {
+                if (!open) hold.close()
+              }}
+              dropdownWidth={280}
+              dropdownContent={() => <div className="mobile-project-actions">{headerActions}</div>}
             />
           </span>
-        )}
-        {group.kind === 'pinned' && (
-          <span className="chat-list-group__action">
-            <Button
-              theme="transparent"
-              size="small"
-              aria-label="Unpin all pinned chats"
-              title="Unpin all"
-              callback={() => onUnpinPinnedChats(group)}
-              icon={<PinOff aria-hidden="true" />}
-            />
-          </span>
-        )}
+        ) : !compact ? (
+          headerActions
+        ) : null}
         {headerAction}
       </div>
       {open && (

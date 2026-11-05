@@ -289,14 +289,14 @@ if (!process.versions.electron) {
         }
       }
       assert.ok(artworkContrast > 0, 'the reference artwork must be visible')
-      assert.ok(
-        difference / artworkContrast < 0.25,
-        `worker drawing must match SVG geometry (relative pixel error ${difference / artworkContrast})`
-      )
       if (process.env.SELE_ART_SCREENSHOTS) {
         await fs.writeFile('/tmp/sele-art-worker.png', animatedArt.toPNG())
         await fs.writeFile('/tmp/sele-art-svg.png', staticArt.toPNG())
       }
+      assert.ok(
+        difference / artworkContrast < 0.25,
+        `worker drawing must match SVG geometry (relative pixel error ${difference / artworkContrast})`
+      )
       console.log(
         'Responsiveness checks passed:',
         JSON.stringify({

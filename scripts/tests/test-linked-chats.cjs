@@ -116,6 +116,8 @@ if (!process.versions.electron) {
   })
 } else {
   const { app, BrowserWindow } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'profile'))
+  app.disableHardwareAcceleration()
   app.whenReady().then(async () => {
     const window = new BrowserWindow({
       show: false,
@@ -127,7 +129,10 @@ if (!process.versions.electron) {
     try {
       await window.loadFile(path.join(process.argv[2], 'linked.html'))
       const screenshotPath = process.argv[3]
-      const run = (source) => window.webContents.executeJavaScript(source)
+      const run = (source) =>
+        window.webContents.executeJavaScript(source).catch((error) => {
+          throw new Error(source, { cause: error })
+        })
       const settle = () =>
         run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
       const sendDisabled = () => run(`window.control('Send message').disabled`)
@@ -218,7 +223,7 @@ if (!process.versions.electron) {
 
       // A failed summary blocks sending until it is dismissed.
       await run(
-        `window.dragChat('drop', {providerId: 'opencode', chatId: 'beta', name: 'Beta'}); window.setText('Next')`
+        `window.dragChat('drop', {providerId: 'opencode-v2', chatId: 'beta', name: 'Beta'}); window.setText('Next')`
       )
       await settle()
       await run(
@@ -279,7 +284,9 @@ if (!process.versions.electron) {
       await run(`window.renderComposer(${editMessage})`)
       await settle()
       await run(`window.click('Remove linked chat Alpha chat')`)
-      await run(`window.dragChat('drop', {providerId: 'opencode', chatId: 'delta', name: 'Delta'})`)
+      await run(
+        `window.dragChat('drop', {providerId: 'opencode-v2', chatId: 'delta', name: 'Delta'})`
+      )
       await settle()
       assert.deepEqual(await chipNames(), ['Delta'])
       await run(

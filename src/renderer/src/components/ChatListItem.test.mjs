@@ -43,7 +43,10 @@ vm.runInNewContext(result.outputFiles[0].text, {
   module,
   exports: module.exports,
   require: createRequire(import.meta.url),
-  window: { providerApi: {} },
+  window: {
+    providerApi: {},
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
+  },
   setInterval,
   clearInterval
 })

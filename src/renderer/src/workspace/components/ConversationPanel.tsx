@@ -9,6 +9,7 @@ type ConversationPanelProps = WorkspaceController['conversationPanel'] & {
   emptyState: ReactNode
   plan: ReactNode
   composer: ReactNode
+  inert?: boolean
 }
 
 export function ConversationPanel(props: ConversationPanelProps): ReactElement {
@@ -26,7 +27,7 @@ export function ConversationPanel(props: ConversationPanelProps): ReactElement {
   } = props
 
   return (
-    <div className="chat__detail-panel" data-panel="true" id="detail">
+    <div className="chat__detail-panel" data-panel="true" id="detail" inert={props.inert}>
       {header}
       <section
         className={`chat-panel${selectedChat ? ' chat-panel--selected' : ' chat-panel--empty'}${newChatOpen ? ' chat-panel--new' : ''}`}

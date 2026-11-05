@@ -1,10 +1,17 @@
 import { createKeyedSubscriptions } from './keyedSubscriptions.ts'
-
-export const chatSleepStorageKey = 'sele:sleeping-chats:v1'
-export const legacyChatBookmarksStorageKey = 'sele:bookmarked-chats:v1'
+import {
+  chatSleepStorageKey,
+  legacyChatBookmarksStorageKey,
+  type ChatSleepChange,
+  type ChatWakeAt
+} from '../../shared/chatSleep.ts'
+export {
+  chatSleepStorageKey,
+  legacyChatBookmarksStorageKey,
+  type ChatWakeAt
+} from '../../shared/chatSleep.ts'
 
 /** Wake time in epoch milliseconds, or null when only a manual wake ends the sleep. */
-export type ChatWakeAt = number | null
 
 type ChatSleepStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
@@ -13,6 +20,7 @@ type ChatSleepStoreOptions = {
   now?: () => number
   setTimer?: (callback: () => void, delayMs: number) => unknown
   clearTimer?: (timer: unknown) => void
+  onChange?: (changes: ChatSleepChange[]) => void
 }
 
 const minuteMs = 60_000
@@ -81,17 +89,28 @@ export const createChatSleepStore = ({
   storage,
   now = Date.now,
   setTimer = (callback, delayMs) => setTimeout(callback, delayMs),
-  clearTimer = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>)
+  clearTimer = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+  onChange
 }: ChatSleepStoreOptions) => {
   const subscriptions = createKeyedSubscriptions<string>()
   let chats: ReadonlyMap<string, ChatWakeAt> = new Map()
   let loaded = false
   let timer: unknown = null
 
-  const write = (next: ReadonlyMap<string, ChatWakeAt>): void => {
+  const write = (next: ReadonlyMap<string, ChatWakeAt>, publish = true): void => {
     try {
+      const previous =
+        onChange && publish ? (readStoredChats(storage) ?? new Map<string, ChatWakeAt>()) : null
       if (next.size === 0) storage.removeItem(chatSleepStorageKey)
       else storage.setItem(chatSleepStorageKey, JSON.stringify(Object.fromEntries(next)))
+      if (previous) {
+        const changes: ChatSleepChange[] = []
+        for (const [key, wakeAt] of next)
+          if (!previous.has(key) || previous.get(key) !== wakeAt) changes.push({ key, wakeAt })
+        for (const [key, expected] of previous)
+          if (!next.has(key)) changes.push({ key, wakeAt: false, expected })
+        if (changes.length) onChange?.(changes)
+      }
     } catch (error) {
       console.error('[caught:chatSleepStore:write]', error)
     }
@@ -151,6 +170,19 @@ export const createChatSleepStore = ({
   }
 
   return {
+    replace(next: ReadonlyMap<string, ChatWakeAt>): void {
+      const previous = chats
+      const updated = withoutExpired(next)
+      const changed = [...new Set([...previous.keys(), ...updated.keys()])].filter(
+        (key) => previous.has(key) !== updated.has(key) || previous.get(key) !== updated.get(key)
+      )
+      loaded = true
+      write(updated, false)
+      if (!changed.length) return
+      chats = updated
+      schedule()
+      for (const key of changed) subscriptions.notify(key)
+    },
     subscribe(listener: () => void): () => void {
       load()
       return subscriptions.subscribe(listener)

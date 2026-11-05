@@ -356,3 +356,53 @@ test('a queued Codex turn that cannot start stays first in a paused queue', asyn
   assert.ok(adapter.pausedQueuedTurnThreads.has('thread'), 'the rest of the queue waits')
   assert.deepEqual(plain(removed), ['A'], 'no failed placeholder turn is left behind')
 })
+
+test('Codex retries a failed durable restore before admitting queue actions on an already cached thread', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  let reads = 0
+  let rows = [
+    {
+      id: 'old',
+      kind: 'queued',
+      submitted: false,
+      createdAt: 1,
+      payload: JSON.stringify({ text: 'Saved before restart' })
+    }
+  ]
+  const store = new PersistentPendingMessages('codex', {
+    read: async () => {
+      if (++reads === 1) throw new Error('temporary read failure')
+      return rows
+    },
+    replace: async (_provider, _chat, next) => {
+      rows = next
+    }
+  })
+  const adapter = createAdapter(
+    './codex/CodexProviderAdapter.ts',
+    'CodexProviderAdapter',
+    [
+      'startPendingMessageRestore',
+      'ensureChatTailLoaded',
+      'applyRestoredPendingMessages',
+      'persistPendingMessages'
+    ],
+    ['getOptionalStringValue', 'getCodexUserMessageClientId'],
+    `threads = new Map(); pendingMessageRestores = new Map(); queuedTurnsByThread = new Map();
+    steeringMessagesByThread = new Map(); hiddenPendingMessageIdsByThread = new Map();
+    pausedQueuedTurnThreads = new Set();`,
+    { isCodexSubagentThread: () => false }
+  )
+  adapter.pendingMessageStore = store
+  adapter.scheduleChatUpdated = () => {}
+  adapter.getChatWindowInContext = () => assert.fail('the thread is already cached')
+  const thread = { id: 'chat', turns: [] }
+  adapter.threads.set('chat', thread)
+  const restoring = adapter.startPendingMessageRestore(thread)
+  await assert.rejects(restoring, /temporary read failure/)
+  assert.equal(adapter.pendingMessageRestores.has('chat'), false)
+  await adapter.ensureChatTailLoaded('chat')
+  assert.equal(reads, 2)
+  assert.deepEqual(plain(adapter.queuedTurnsByThread.get('chat').map((entry) => entry.id)), ['old'])
+  await store.close()
+})

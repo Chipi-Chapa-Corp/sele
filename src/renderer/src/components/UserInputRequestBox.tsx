@@ -1,5 +1,6 @@
+import { usePreferenceState } from '../usePreferenceState'
 import { Check, X } from 'lucide-react'
-import { useId, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useId, type ChangeEvent, type KeyboardEvent } from 'react'
 import type { ProviderPendingUserInput } from '../../../shared/provider'
 import { getOptionalRenderableText, getRenderableText } from '../renderableText'
 import { readUserInputDraft, writeUserInputDraft } from '../userInputDrafts'
@@ -26,7 +27,7 @@ export const UserInputRequestBox = ({
   onSubmit
 }: UserInputRequestBoxProps): React.ReactElement => {
   const questionId = useId()
-  const [freeformAnswer, setFreeformAnswer] = useState(() => readUserInputDraft(chatKey, request))
+  const [freeformAnswer, setFreeformAnswer] = usePreferenceState(() => readUserInputDraft(chatKey, request))
 
   const answer = freeformAnswer.trim()
   const question = getRenderableText(request.question, 'The agent requested input.')

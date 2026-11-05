@@ -1,0 +1,82 @@
+.host-path-dialog {
+  box-sizing: border-box;
+  width: min(36rem, calc(100vw - 1rem));
+  height: min(42rem, calc(100dvh - 1rem));
+  max-height: calc(100dvh - 1rem);
+  padding: 1rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--panel-radius, 1rem);
+  background: var(--menu-bg);
+  color: var(--lead);
+}
+.host-path-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.host-path-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+.host-path-dialog header,
+.host-path-dialog form,
+.host-path-dialog footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: none;
+}
+.host-path-dialog h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  flex: 1;
+}
+.host-path-dialog p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.host-path-dialog form input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+.host-path-dialog__hidden {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  align-items: center;
+}
+.host-path-dialog__entries {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  border-block: 1px solid var(--glass-line);
+}
+.host-path-dialog__entries > button {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  text-align: left;
+  font: inherit;
+}
+.host-path-dialog__entries > button span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.host-path-dialog__entries > button svg {
+  flex: none;
+}
+.host-path-dialog__entries > button:hover,
+.host-path-dialog__entries > button[aria-pressed="true"] {
+  background: var(--accent-soft);
+}
+.host-path-dialog footer {
+  justify-content: flex-end;
+}

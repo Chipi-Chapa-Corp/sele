@@ -48,6 +48,7 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
   target: Target,
   metadata: ProviderChatMetadata
 ): Target => {
+  const accountId = metadata.accountId ?? target.accountId
   const noProject = metadata.noProject ?? target.noProject
   const doneAt = metadata.doneAt ?? null
   const seenUpdatedAt = mergeSeenUpdatedAt(target.seenUpdatedAt, metadata.seenUpdatedAt)
@@ -56,6 +57,7 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
       ? metadata.container
       : target.container
   if (
+    accountId === target.accountId &&
     noProject === target.noProject &&
     metadata.pinned === target.pinned &&
     metadata.sidebarOrder === target.sidebarOrder &&
@@ -70,6 +72,7 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
   }
   return {
     ...target,
+    accountId,
     noProject,
     pinned: metadata.pinned,
     sidebarOrder: metadata.sidebarOrder,

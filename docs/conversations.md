@@ -45,12 +45,39 @@ summary prompt because its compaction output is encrypted. Forks inherit the sou
 Sending prepends the summaries as linked-chat context. Editing reuses the saved summaries;
 a failed send restores the chips. See `linkedChatContext.ts` and `linkedChats.ts`.
 
+## Background state recovery
+
+Known-chat and native sidebar discovery schedule background reconciliation for active,
+interrupted, failed, and unresolved conversations across Codex, Claude, Copilot, and
+OpenCode. Two bounded latest-turn reads run at a time through the normal account- and
+environment-scoped history APIs. Updated details flow through the usual sidebar and durable
+view publication pipeline without selecting the chat. Unchanged discoveries coalesce;
+superseded reads, changed account scopes, and shutdown cannot publish stale recovery data.
+Failures retain the saved view and may retry on subsequent discovery. Recovery sends no
+prompts and leaves restored queues paused. Provider runtimes retain their own lifetimes:
+reading a stopped session does not restart its model turn.
+
 ## Codex restart recovery
 
 `codexRuntime.cjs` owns a detached app-server connection scoped to profile, account,
 environment, and executable/home. One authenticated UI can attach at a time. Closing Sele
 detaches the UI; reopening restores ownership and reads history without replaying `turn/start`.
-Idle workers exit after five minutes when no turns, requests, or RPCs remain.
+Idle workers exit after five minutes when no turns, background terminals, approvals, or RPCs remain.
+Restoring a runtime also refreshes its background terminal controls.
+
+Account discovery reattaches each configured Codex account's retained worker in the
+background, once per account and execution environment. Sidebar discovery also checks saved
+chat account bindings. Recovery reads and publishes the worker's chat state without waiting
+for a chat to be selected; this includes retained chats beyond the first sidebar page.
+Missing workers are left stopped. Recovery never launches a replacement worker or sends a
+new turn, and restored queued messages remain paused.
+
+Desktop workspace terminals use a separate detached PTY owner. Restarting Sele restores their
+tabs in the original workspace, with bounded scrollback and the same shell, input, and resize
+controls. Closing a tab explicitly stops its shell. Phone terminals still close on disconnect.
+This applies to sessions created by this version; a process already orphaned by an older
+version has no PTY to reconnect to and needs a fresh terminal session. OS shutdown and
+terminal-owner failures can still end a session.
 
 Approvals and undispatched UI tools wait for reconnection. An already-dispatched client tool
 with a lost result fails with an unknown outcome and is never replayed automatically. Output

@@ -133,6 +133,7 @@ export function ProgressiveMarkdownContent({
   content,
   html,
   interactiveFileLinks,
+  baseUrl,
   footnotePrefix,
   streaming,
   container,
@@ -144,6 +145,7 @@ export function ProgressiveMarkdownContent({
   // paths use the same block tree, preserving DOM when a stream outgrows it.
   html?: string
   interactiveFileLinks: boolean
+  baseUrl?: string
   footnotePrefix: string
   streaming: boolean
   container?: AppContainerTarget | null
@@ -165,8 +167,8 @@ export function ProgressiveMarkdownContent({
   const ref = useRef<HTMLDivElement>(null)
   const onCommit = useCallback(() => setRevision((value) => value + 1), [])
   const input = useMemo(
-    () => ({ content, interactiveFileLinks, footnotePrefix }),
-    [content, interactiveFileLinks, footnotePrefix]
+    () => ({ content, interactiveFileLinks, footnotePrefix, baseUrl }),
+    [content, interactiveFileLinks, footnotePrefix, baseUrl]
   )
   const resolvedInput = useRef<typeof input | null>(null)
   useEffect(() => {

@@ -27,8 +27,3 @@
 .changes-sidebar__controls--pull-requests {
   grid-template-columns: minmax(0, 1fr) auto;
 }
-
-.changes-sidebar__page-input {
-  width: 3.5rem;
-  text-align: center;
-}

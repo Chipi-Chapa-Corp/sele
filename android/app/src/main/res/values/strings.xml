@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Sele</string>
+    <string name="title_activity_main">Sele</string>
+    <string name="package_name">com.chipichapa.sele.android</string>
+    <string name="custom_url_scheme">com.chipichapa.sele.android</string>
+</resources>

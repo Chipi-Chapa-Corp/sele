@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
+import {
+  createWorkspaceTestContext,
+  readWorkspaceControllerSource
+} from '../../../scripts/tests/helpers/workspace-controller.mjs'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../shared/noProject.ts'
 import { mergeChatMetadata, mergeSeenUpdatedAt } from './chatMetadata.ts'
 import {
@@ -14,7 +18,9 @@ import {
 const source = (file) =>
   ts.createSourceFile(
     file,
-    readFileSync(new URL(file, import.meta.url), 'utf8'),
+    file === './useWorkspaceController.tsx'
+      ? readWorkspaceControllerSource()
+      : readFileSync(new URL(file, import.meta.url), 'utf8'),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TSX
@@ -40,7 +46,7 @@ const expression = (file, name, context) => {
 
 test('a delayed default folder cannot replace an explicit No Project or project selection', () => {
   let selection = null
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     useCallback: (fn) => fn,
     isNoProjectCwd,
     newSessionNoProjectValue: '__no_project__',
@@ -60,7 +66,7 @@ test('a delayed default folder cannot replace an explicit No Project or project 
 })
 
 test('general chats use Recents instead of Git or Files while keeping Terminal available', () => {
-  const context = vm.createContext({ noProject: true, storedChangesPaneView: 'git' })
+  const context = createWorkspaceTestContext({ noProject: true, storedChangesPaneView: 'git' })
   for (const stored of ['git', 'files', 'recents', 'terminal', 'browser']) {
     context.storedChangesPaneView = stored
     assert.equal(
@@ -74,7 +80,7 @@ test('general chats use Recents instead of Git or Files while keeping Terminal a
 })
 
 test('general chats stay in a dedicated Chats group even with stale project metadata', () => {
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     isNoProjectChat,
     isNoProjectCwd,
     noProjectGroupKey,
@@ -142,7 +148,7 @@ test('general chats stay in a dedicated Chats group even with stale project meta
 
 test('a saved No Project choice hides project controls for a HOME-backed chat', () => {
   const homeChat = { id: 'general', cwd: '/home/user', noProject: true }
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     isNoProjectChat,
     selectedChat: homeChat,
     selectedChatDetail: { id: 'general', cwd: '/home/user' },
@@ -155,7 +161,7 @@ test('a saved No Project choice hides project controls for a HOME-backed chat', 
 })
 
 test('detail, live summaries and metadata changes preserve the saved No Project flag', () => {
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     getChatPreview: () => '',
     mergeSeenUpdatedAt,
     arePendingApprovalsEqual: (a, b) => a === b,

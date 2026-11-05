@@ -121,6 +121,17 @@
   stroke-linejoin: round;
 }
 
+.chat-panel__new-chat-vegvisir--animated[data-active='true'] .chat-panel__new-chat-vegvisir-stroke {
+  animation-name: vegvisir-draw;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+
+@keyframes vegvisir-draw {
+  from { stroke-dashoffset: var(--vegvisir-stroke-length); }
+  to { stroke-dashoffset: 0; }
+}
+
 .chat-panel__composer {
   position: relative;
   /* Keep composer popups above the message pane and its floating controls. */

@@ -4,11 +4,17 @@ type ChangesSidebarProps = {
   header: ReactNode
   content: ReactNode
   footer: ReactNode
+  inert?: boolean
 }
 
-export function ChangesSidebar({ content, footer, header }: ChangesSidebarProps): ReactElement {
+export function ChangesSidebar({
+  content,
+  footer,
+  header,
+  inert
+}: ChangesSidebarProps): ReactElement {
   return (
-    <div className="chat__changes-panel">
+    <div className="chat__changes-panel" inert={inert}>
       <aside className="changes-sidebar">
         {header}
         {content}

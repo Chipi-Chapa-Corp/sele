@@ -28,6 +28,7 @@ test('crash diagnostics include the preceding memory sample and stop sampling on
       if (id === 'electron') return { app, ipcMain: { handle() {} } }
       if (id === 'node:path') return path
       if (id === './processMemoryDiagnostics') return { startProcessMemoryDiagnostics }
+      if (id === './clientIpc') return { registerClientRequest() {} }
       if (id === './diagnosticLog')
         return { createDiagnosticLog: () => ({ write: (...entry) => entries.push(entry) }) }
       throw new Error(`Unexpected module: ${id}`)

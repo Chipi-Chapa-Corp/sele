@@ -312,3 +312,22 @@ test('ignores invalid stored entries', () => {
     ]
   )
 })
+
+test('host snapshots notify changed keys without publishing mutations back to the host', () => {
+  const h = createHarness()
+  const writes = []
+  const store = createChatSleepStore({ storage: h.storage, now: () => h.time, onChange: changes => writes.push(changes) })
+  let notified = 0
+  store.subscribeKey('codex:a', () => notified++)
+  store.replace(new Map([['codex:a', null]]))
+  assert.equal(notified, 1)
+  assert.deepEqual(writes, [])
+  const snapshot = store.getSnapshot()
+  store.replace(new Map([['codex:a', null]]))
+  assert.equal(store.getSnapshot(), snapshot)
+  assert.equal(notified, 1)
+  store.wake('codex:a')
+  assert.deepEqual(writes, [[{ key: 'codex:a', wakeAt: false, expected: null }]])
+  store.sleepMany(['claude:b', 'copilot:c'])
+  assert.deepEqual(writes[1], [{ key: 'claude:b', wakeAt: null }, { key: 'copilot:c', wakeAt: null }])
+})

@@ -1,3 +1,4 @@
+import { compareChatsByCreatedAtDesc } from '../chatListUpdates'
 import type { AppProject, AppSelectedAttachment } from '../../../shared/app'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../../shared/noProject'
 
@@ -126,16 +127,7 @@ export const getChatItemCreatedAt = (item: ProviderChatItem): number | null =>
 export const getChatCommitMarkerPlacementTime = (marker: ChatCommitMarker): number =>
   marker.finishedAt ?? marker.startedAt
 
-export const compareChatsByCreatedAtDesc = (
-  firstChat: ProviderChat,
-  secondChat: ProviderChat
-): number => {
-  if (secondChat.createdAt !== firstChat.createdAt) {
-    return secondChat.createdAt - firstChat.createdAt
-  }
-
-  return secondChat.updatedAt - firstChat.updatedAt
-}
+export { compareChatsByCreatedAtDesc } from '../chatListUpdates'
 
 export const mergeChats = (...chatGroups: ProviderChat[][]): ProviderChat[] => {
   const chatsById = new Map<string, ProviderChat>()

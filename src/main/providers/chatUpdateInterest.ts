@@ -1,4 +1,4 @@
-// Main-process view subscriptions. Multiple windows can watch the same conversation.
+// Main-process view subscriptions. Desktop and LAN clients can watch the same conversation.
 const viewedChats = new Map<number, string>()
 
 export const setChatUpdateInterest = (windowId: number, chatKey: string | null): void => {

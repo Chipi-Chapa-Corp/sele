@@ -1,16 +1,8 @@
+import { BrowserChrome } from './BrowserChrome'
+import { MobileBrowserPanel } from './MobileBrowserPanel'
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  ArrowLeft,
-  ArrowRight,
-  ChevronDown,
-  ChevronUp,
-  ExternalLink,
-  Globe2,
-  Plus,
-  RefreshCw,
-  X
-} from 'lucide-react'
+import { ChevronDown, ChevronUp, Globe2, Plus, X } from 'lucide-react'
 import type {
   DidFailLoadEvent,
   DidNavigateEvent,
@@ -22,7 +14,6 @@ import type {
 import { appWindowZoomLevelToFactor } from '../../../shared/app'
 import type { BrowserOpenRequest, BrowserPageShortcutRequest } from '../../../shared/browser'
 import {
-  getBrowserFaviconUrl,
   getBrowserPageLabel,
   getBrowserPageHostname,
   getBrowserPageZoomFactor,
@@ -39,8 +30,9 @@ import {
 } from '../browserTabs'
 import { Button } from './Button'
 import { Input } from './Input'
-import { SegmentedControl } from './SegmentedControl'
 import './BrowserPanel.css'
+import { isAndroidClient, isRemoteClient } from '../runtimeCapabilities'
+import { RemoteBrowserPanel } from './RemoteBrowserPanel'
 
 type BrowserPanelProps = {
   active: boolean
@@ -49,6 +41,7 @@ type BrowserPanelProps = {
   openRequest?: BrowserOpenRequest | null
   workspaceKey: string
   view: 'global' | 'project' | 'chat'
+  cwd?: string | null
 }
 
 type BrowserTab = {
@@ -169,24 +162,6 @@ const isExpectedWebviewUnavailableError = (error: unknown): boolean =>
   /webview.*(?:not attached|dom-ready)|object has been destroyed|webcontents (?:was|is) destroyed|render frame was disposed/i.test(
     error.message
   )
-
-const BrowserTabIcon: React.FC<{ url: string }> = ({ url }) => {
-  const faviconUrl = getBrowserFaviconUrl(url)
-  const [failedUrl, setFailedUrl] = useState<string | null>(null)
-
-  if (!faviconUrl || failedUrl === faviconUrl) return <Globe2 aria-hidden="true" />
-
-  return (
-    <img
-      alt=""
-      aria-hidden="true"
-      className="browser-panel__tab-favicon"
-      draggable={false}
-      src={faviconUrl}
-      onError={() => setFailedUrl(faviconUrl)}
-    />
-  )
-}
 
 const BrowserPage: React.FC<BrowserPageProps> = ({
   applicationZoomFactor,
@@ -369,7 +344,23 @@ const BrowserPage: React.FC<BrowserPageProps> = ({
   )
 }
 
-export const BrowserPanel: React.FC<BrowserPanelProps> = ({
+export function BrowserPanel(props: BrowserPanelProps): React.ReactElement {
+  return isAndroidClient() ? (
+    <MobileBrowserPanel {...props} />
+  ) : isRemoteClient() ? (
+    <RemoteBrowserPanel
+      key={props.workspaceKey}
+      active={props.active}
+      workspaceKey={props.workspaceKey}
+      cwd={props.cwd ?? ''}
+      openRequest={props.openRequest}
+    />
+  ) : (
+    <DesktopBrowserPanel {...props} />
+  )
+}
+
+const DesktopBrowserPanel: React.FC<BrowserPanelProps> = ({
   active,
   appZoomLevel,
   defaultScale,
@@ -442,6 +433,34 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
     }
   }, [active])
 
+  useEffect(
+    () =>
+      browserApi.onSharedOpen?.((request) => {
+        setWorkspaces((current) => {
+          const session = current.get(request.workspaceKey) ?? { tabs: [], activeTabId: null }
+          const exists = session.tabs.find((tab) => tab.id === request.id)
+          if (exists?.url === request.url) return current
+          const next = createBrowserTab(request.url, { id: request.id })
+          const result = new Map(current)
+          result.set(request.workspaceKey, {
+            tabs: exists
+              ? session.tabs.map((tab) => (tab.id === request.id ? next : tab))
+              : [...session.tabs.filter((tab) => tab.url || tab.id !== session.activeTabId), next],
+            activeTabId: exists ? session.activeTabId : next.id
+          })
+          return result
+        })
+      }),
+    []
+  )
+  useEffect(() => {
+    browserApi.publishTabs?.({
+      workspaceKey,
+      active,
+      activeTabId: workspace?.activeTabId ?? null,
+      tabs: (workspace?.tabs ?? []).map(({ id, url, title }) => ({ id, url, title }))
+    })
+  }, [workspaceKey, active, workspace])
   useEffect(() => {
     writeStoredBrowserWorkspaces(
       Object.fromEntries(
@@ -837,125 +856,28 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({
 
   return (
     <section ref={motionPanelRef} className="browser-panel" aria-label="Browser">
-      <div className="browser-panel__tab-toolbar">
-        <SegmentedControl
-          aria-label="Browser tabs"
-          className="browser-panel__tabs"
-          options={tabs.map((tab) => ({
-            value: tab.id,
-            label: tab.title,
-            ariaLabel: tab.title,
-            title: tab.title,
-            icon: <BrowserTabIcon url={tab.url} />,
-            actionAriaLabel: `Close ${tab.title}`,
-            actionTitle: `Close ${tab.title}`,
-            actionIcon: <X aria-hidden="true" />,
-            actionCallback: () => handleCloseTab(workspaceKey, tab.id)
-          }))}
-          value={activeTabId ?? ''}
-          onChange={handleFocusTab}
-        />
-        <Button
-          aria-label="New browser tab"
-          callback={handleAddTab}
-          icon={<Plus aria-hidden="true" />}
-          size="small"
-          theme="transparent"
-          title="New browser tab"
-        />
-      </div>
-      <form
-        className="browser-panel__navigation"
-        aria-label="Browser navigation"
-        onSubmit={(event) => {
-          event.preventDefault()
-          navigateToAddress()
+      <BrowserChrome
+        tabs={tabs}
+        activeTabId={activeTabId}
+        activeRuntime={activeRuntime}
+        addressDraft={addressDraft}
+        onSelectTab={handleFocusTab}
+        onCloseTab={(id) => handleCloseTab(workspaceKey, id)}
+        onNewTab={handleAddTab}
+        onNavigate={navigateToAddress}
+        onBack={() => webviewsRef.current.get(activeTabId ?? '')?.goBack()}
+        onForward={() => webviewsRef.current.get(activeTabId ?? '')?.goForward()}
+        onReload={() => webviewsRef.current.get(activeTabId ?? '')?.reload()}
+        onAddressChange={(value) => {
+          if (activeTab) setAddressDrafts((drafts) => ({ ...drafts, [activeTab.id]: value }))
         }}
-      >
-        <Button
-          aria-label="Back"
-          callback={() => webviewsRef.current.get(activeTabId ?? '')?.goBack()}
-          disabled={!activeTab || !activeRuntime.canGoBack}
-          icon={<ArrowLeft aria-hidden="true" />}
-          size="small"
-          theme="transparent"
-          title="Back"
-        />
-        <Button
-          aria-label="Forward"
-          callback={() => webviewsRef.current.get(activeTabId ?? '')?.goForward()}
-          disabled={!activeTab || !activeRuntime.canGoForward}
-          icon={<ArrowRight aria-hidden="true" />}
-          size="small"
-          theme="transparent"
-          title="Forward"
-        />
-        <Button
-          aria-label="Reload"
-          callback={() => webviewsRef.current.get(activeTabId ?? '')?.reload()}
-          disabled={!activeTab || !activeTab.url}
-          icon={
-            <RefreshCw
-              aria-hidden="true"
-              className={
-                activeRuntime.loading
-                  ? 'app-loading-spinner browser-panel__loading-icon'
-                  : undefined
-              }
-            />
-          }
-          size="small"
-          theme="transparent"
-          title="Reload"
-        />
-        <Input
-          aria-label="Address"
-          autoCapitalize="off"
-          autoComplete="off"
-          className="browser-panel__address"
-          disabled={!activeTab}
-          placeholder="Enter an address"
-          spellCheck={false}
-          type="text"
-          value={addressDraft}
-          onChange={(event) => {
-            if (!activeTab) return
-            const value = event.currentTarget.value
-            setAddressDrafts((currentDrafts) => ({
-              ...currentDrafts,
-              [activeTab.id]: value
-            }))
-          }}
-          onFocus={(event) => event.currentTarget.select()}
-          onKeyDown={(event) => {
-            if (event.key !== 'Escape') return
-            if (activeTab) {
-              setAddressDrafts((currentDrafts) => ({
-                ...currentDrafts,
-                [activeTab.id]: activeTab.url
-              }))
-            }
-            event.currentTarget.blur()
-          }}
-        />
-        <Button
-          aria-label="Open in host browser"
-          callback={() => {
-            if (!activeTab || !isBrowserPageUrl(activeTab.url)) return
-
+        onExternal={() => {
+          if (activeTab && isBrowserPageUrl(activeTab.url))
             void appApi
               .handleExternalLink({ url: activeTab.url, action: 'open' })
-              .catch((error) => {
-                console.error('[caught:BrowserPanel:openInHostBrowser]', error)
-              })
-          }}
-          disabled={!activeTab || !isBrowserPageUrl(activeTab.url)}
-          icon={<ExternalLink aria-hidden="true" />}
-          size="small"
-          theme="transparent"
-          title="Open in host browser"
-        />
-      </form>
+              .catch((error) => console.error('[caught:BrowserPanel:openInHostBrowser]', error))
+        }}
+      />
       {findOpen && (
         <form
           className="browser-panel__find"

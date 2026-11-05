@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
-import { sortDoneChats, sortChatsForSidebarSection } from './chatSidebarOrder.ts'
+import {
+  createWorkspaceTestContext,
+  readWorkspaceControllerSource
+} from '../../../scripts/tests/helpers/workspace-controller.mjs'
 import { mapPreservingIdentity, mergeChatMetadata } from './chatMetadata.ts'
+import { sortChatsForSidebarSection, sortDoneChats } from './chatSidebarOrder.ts'
 
 const chat = (id, createdAt, doneAt, sidebarOrder = null, cwd = '/repo') => ({
   id,
@@ -96,7 +99,7 @@ test('metadata that changes nothing keeps the same chat and list objects', () =>
 // without mounting the workspace or starting any real provider sessions.
 const source = ts.createSourceFile(
   'useWorkspaceController.tsx',
-  readFileSync(new URL('./useWorkspaceController.tsx', import.meta.url), 'utf8'),
+  readWorkspaceControllerSource(),
   ts.ScriptTarget.Latest,
   true,
   ts.ScriptKind.TSX
@@ -126,7 +129,7 @@ test('switching Done projects filters loaded chats without provider history requ
   let selected = allProjects
   let resets = 0
   let requests = 0
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     useMemo: (fn) => fn(),
     allDoneProjectsValue: allProjects,
     doneGroupKey: 'done',

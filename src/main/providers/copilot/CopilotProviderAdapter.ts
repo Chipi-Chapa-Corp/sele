@@ -118,7 +118,7 @@ import {
   getCopilotCustomProviderSessionOptions
 } from './CopilotCustomProvider'
 import { CopilotEventStore } from './CopilotEventStore.ts'
-import { getCopilotGoalInput, mapCopilotGoal, runCopilotGoal } from './CopilotGoals.ts'
+import { getCopilotGoalInput, mapCopilotGoal, readCopilotGoalState, runCopilotGoal } from './CopilotGoals.ts'
 import { SqliteUsageReader } from '../SqliteUsageReader'
 import {
   bindCopilotUsageQuery,
@@ -2423,7 +2423,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   dispose = (): void => {
     // Record the final live lists; stopping the clients below ends the SDK queues.
     this.states.forEach((state) => this.persistPendingMessages(state))
-    void this.pendingMessageStore.close()
+    void this.pendingMessageStore.close().catch((error: unknown) => {
+      console.error('Unable to flush pending Copilot messages during disposal.', error)
+    })
     this.browserGeneration += 1
     this.historicalUsageReader.dispose()
     this.updateTimers.forEach((timer) => clearTimeout(timer))
@@ -3376,7 +3378,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const sequence = ++state.goalRefreshSequence
     try {
       const [result, commands] = await Promise.all([
-        session.rpc.autopilotObjective.getState(),
+        readCopilotGoalState(session),
         state.goalSupportSession === session ? null : session.rpc.commands.list()
       ])
       if (

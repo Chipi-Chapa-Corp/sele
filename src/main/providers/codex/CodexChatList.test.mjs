@@ -39,6 +39,7 @@ const fixture = () => {
   })
   Object.assign(adapter, {
     id: 'codex',
+    threadContainers: new Map(),
     userQuestions: { getPending: () => null },
     withResolvedThreadName: (value) => value,
     rememberThreadContainer: () => {},
@@ -202,4 +203,14 @@ test('an unavailable native sidebar search never scans the rollout history', asy
   }
   await assert.rejects(adapter.getChatsInContext({ searchTerm: 'needle' }), /not supported/)
   assert.deepEqual(methods, ['thread/search'])
+})
+
+test('refreshing a shared history from another container preserves its known execution route', async () => {
+  const adapter = fixture()
+  adapter.threadContainers.set('chat', null)
+  adapter.getCurrentContainer = () => ({ kind: 'container', tool: 'toolbox', name: 'dev' })
+  adapter.rememberThreadContainer = () =>
+    assert.fail('listing must not replace a known thread route')
+  adapter.client = { request: async () => ({ data: [thread('chat')], nextCursor: null }) }
+  assert.equal((await adapter.getChatsInContext()).chats[0].container, null)
 })

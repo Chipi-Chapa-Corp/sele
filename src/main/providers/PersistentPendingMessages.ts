@@ -43,6 +43,7 @@ export class PersistentPendingMessages<Payload> {
   private readonly restoring = new Map<string, Promise<PersistedPendingMessage<Payload>[]>>()
   private readonly saved = new Map<string, SavedSnapshot>()
   private readonly pending = new Map<string, PendingMessageRow[]>()
+  private readonly writeErrors = new Map<string, unknown>()
   private writing: Promise<void> = Promise.resolve()
   private draining = false
   private closed = false
@@ -82,7 +83,7 @@ export class PersistentPendingMessages<Payload> {
       )
       .catch((error: unknown) => {
         console.error(`Unable to restore pending ${this.providerId} messages for ${chatId}.`, error)
-        return []
+        throw error
       })
       .then((messages) => {
         // Whatever the adapter keeps of these is saved again, so dropping all of them still
@@ -95,11 +96,11 @@ export class PersistentPendingMessages<Payload> {
             payload
           }))
         })
+        if (!this.closed) this.tracked.add(chatId)
         return messages
       })
       .finally(() => {
         this.restoring.delete(chatId)
-        if (!this.closed) this.tracked.add(chatId)
       })
     this.restoring.set(chatId, restoring)
     return restoring
@@ -124,6 +125,7 @@ export class PersistentPendingMessages<Payload> {
         : messages.length === 0
     ) {
       this.saved.set(chatId, previous ?? { entries: [] })
+      if (this.pending.has(chatId)) this.scheduleWrite()
       return
     }
     this.saved.set(chatId, {
@@ -156,7 +158,9 @@ export class PersistentPendingMessages<Payload> {
     while (this.draining || this.pending.size > 0) {
       if (!this.draining) this.scheduleWrite()
       await this.writing
+      if (this.writeErrors.size) throw this.writeErrors.values().next().value
     }
+    if (this.closed) stores.delete(this as PersistentPendingMessages<unknown>)
   }
 
   /** Stops recording: shutdown must not save queues the adapter is tearing down. */
@@ -171,14 +175,20 @@ export class PersistentPendingMessages<Payload> {
     this.writing = (async () => {
       // Coalesce the saves made by one synchronous mutation burst.
       await Promise.resolve()
+      const failed = new Map<string, PendingMessageRow[]>()
       try {
         for (const [chatId, rows] of this.pending) {
+          // Do not spin on a failed snapshot. A newer save may still supersede it in this drain.
+          if (failed.get(chatId) === rows) continue
           this.pending.delete(chatId)
           try {
             await this.backend.replace(this.providerId, chatId, rows)
+            this.writeErrors.delete(chatId)
           } catch (error) {
-            // Forget the snapshot so the next change retries the whole list.
-            this.saved.delete(chatId)
+            failed.set(chatId, rows)
+            this.writeErrors.set(chatId, error)
+            // Preserve a newer save made during the failed write, otherwise retain these rows.
+            if (!this.pending.has(chatId)) this.pending.set(chatId, rows)
             console.error(
               `Unable to save pending ${this.providerId} messages for ${chatId}.`,
               error

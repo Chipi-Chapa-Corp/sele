@@ -198,7 +198,8 @@
   padding: 0;
 }
 
-.chat-detail__message--user {
+.chat-detail__message--user,
+.chat-detail__message--bubble {
   --user-message-border-colors: var(--secondary-border-colors);
   --user-message-color: var(--lead);
   --user-message-shadow: var(--secondary-shadow);
@@ -213,14 +214,19 @@
   box-shadow: var(--user-message-shadow);
 }
 
-:root[data-color-scheme='dark'] .chat-detail__message--user {
+:root[data-color-scheme='dark'] :is(.chat-detail__message--user, .chat-detail__message--bubble) {
   --user-message-border-colors: var(--user-message-background);
 }
 
-:root:not([data-color-scheme='dark']) .chat-detail__message--user {
+:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) {
   --user-message-border-colors: var(--primary-border-colors);
   --user-message-color: var(--accent-ink);
   --user-message-shadow: var(--primary-shadow);
+}
+
+.chat-detail__message--assistant.chat-detail__message--bubble {
+  width: fit-content;
+  border-radius: 0.85rem 0.85rem 0.85rem 0.3rem;
 }
 
 .chat-detail__message-block--pending .chat-detail__message--user {
@@ -868,10 +874,10 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   }
 }
 
-:root:not([data-color-scheme='dark']) .chat-detail__message--user a,
-:root:not([data-color-scheme='dark']) .chat-detail__message--user blockquote,
-:root:not([data-color-scheme='dark']) .chat-detail__message--user li::marker,
-:root:not([data-color-scheme='dark']) .chat-detail__message--user details > summary::marker {
+:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) a,
+:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) blockquote,
+:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) li::marker,
+:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) details > summary::marker {
   color: inherit;
 }
 

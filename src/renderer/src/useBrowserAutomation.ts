@@ -53,6 +53,7 @@ export function useBrowserAutomation(options: Options): void {
     }
     const workspaceKey = (request: BrowserAutomationRequest): string => {
       const { scope } = request
+      if (scope.workspaceKey) return scope.workspaceKey
       switch (current.current.view) {
         case 'global':
           return 'global'
@@ -110,11 +111,26 @@ export function useBrowserAutomation(options: Options): void {
         if (focusGuards.get(token)?.()) restoreNativeFocus()
         focusGuards.delete(token)
         if (request.method === 'preserve-focus') {
-          focusGuards.set(token, captureHostFocus())
+          const restoreHostFocus = captureHostFocus()
+          let restoreInert = (): void => {}
+          focusGuards.set(token, () => {
+            const restored = restoreHostFocus()
+            restoreInert()
+            return restored
+          })
           if (request.focusGuest) {
             let found = false
             for (const element of current.current.webviews.current.values()) {
               if (element.getWebContentsId() === request.tabId) {
+                // Retained background pages are inert to desktop keyboard navigation.
+                // Native/CDP input needs temporary guest focus even while the pane is hidden.
+                const page = element.closest<HTMLElement>('[inert]')
+                if (page) {
+                  page.inert = false
+                  restoreInert = () => {
+                    if (page.isConnected) page.inert = true
+                  }
+                }
                 element.focus()
                 found = true
                 break
@@ -240,6 +256,7 @@ export function useBrowserAutomation(options: Options): void {
     browserApi.automationReady(true)
     return () => {
       mounted = false
+      focusGuards.forEach((restore) => restore())
       focusGuards.clear()
       unsubscribe()
       browserApi.automationReady(false)

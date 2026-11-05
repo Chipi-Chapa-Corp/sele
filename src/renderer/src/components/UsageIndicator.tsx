@@ -13,7 +13,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { animate, AnimatePresence, motion, useIsPresent } from 'motion/react'
-import { LoaderCircle, Shrink } from 'lucide-react'
+import { Gauge, LoaderCircle, Shrink } from 'lucide-react'
 import type { AppContainerTarget } from '../../../shared/app'
 import type {
   ProviderAccountRateLimitResetOutcome,
@@ -64,6 +64,8 @@ type AccountRateLimit = ProviderAccountUsage['rateLimits'][number]
 type AccountBalance = NonNullable<ProviderAccountUsage['balances']>[number]
 
 type UsageIndicatorProps = {
+  triggerLabel?: string
+  queueTriggerLabel?: string
   providerId: ProviderId
   scopeKey?: string
   chatId?: string | null
@@ -337,6 +339,8 @@ const getRateLimitUsageFingerprint = (usage: ProviderAccountUsage | null): strin
   JSON.stringify(usage?.rateLimits ?? null)
 
 export function UsageIndicator({
+  triggerLabel,
+  queueTriggerLabel,
   providerId,
   scopeKey,
   chatId,
@@ -402,13 +406,19 @@ export function UsageIndicator({
         }
   const badgeBalance = selectBadgeBalance(balances, modelProviderId) ?? chatCostBalance
   const hasUsageBadges = badges.length > 0 || badgeBalance != null
+  const canOpenUsage = hasUsageBadges || Boolean(triggerLabel)
   const [usageView, setUsageView] = useState<UsagePopoverView>('limits')
   const [otherLimitsOpen, setOtherLimitsOpen] = useState(false)
   const [resetDetailsOpen, setResetDetailsOpen] = useState(false)
   const [rateLimitResetMessage, setRateLimitResetMessage] = useState<string | null>(null)
   const [rateLimitRefreshBaseline, setRateLimitRefreshBaseline] = useState<string | null>(null)
   const rateLimitResetBaselineRef = useRef<string | null>(null)
-  const usageMenuOpen = usageOpenSource === popoverSourceKey && hasUsageBadges
+  const usageMenuOpen = usageOpenSource === popoverSourceKey && canOpenUsage
+  useEffect(() => {
+    if (!usageMenuOpen || !triggerLabel) return
+    const frame = requestAnimationFrame(() => popoverRef.current?.focus({ preventScroll: true }))
+    return () => cancelAnimationFrame(frame)
+  }, [usageMenuOpen, triggerLabel])
   const usageUpdatedAt = accountUsage?.updatedAt
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload after each usage refresh (one per reply) and when the popover opens.
@@ -444,8 +454,8 @@ export function UsageIndicator({
   }, [popoverSourceKey])
 
   useEffect(() => {
-    if (!hasUsageBadges) setUsageOpenSource(null)
-  }, [hasUsageBadges])
+    if (!canOpenUsage) setUsageOpenSource(null)
+  }, [canOpenUsage])
 
   useLayoutEffect(() => {
     const reference = usageControlRef.current
@@ -627,18 +637,32 @@ export function UsageIndicator({
 
   return (
     <div className="message-box__usage-control" ref={usageControlRef}>
-      <AnimatePresence initial={false}>
-        {badges.map((badge, index) => (
-          <UsageBadge
-            key={badge.key}
-            badge={badge}
-            index={index}
-            popoverId={`message-usage-${usagePopoverId}`}
-            open={usageMenuOpen}
-            onToggle={handleUsageToggle}
+      {triggerLabel && (
+        <span className="usage-summary-trigger">
+          <Button
+            theme="secondary"
+            label={triggerLabel}
+            aria-label={triggerLabel}
+            aria-expanded={usageMenuOpen}
+            aria-controls={`message-usage-${usagePopoverId}`}
+            icon={<Gauge />}
+            callback={handleUsageToggle}
           />
-        ))}
-        {badgeBalance && (
+        </span>
+      )}
+      <AnimatePresence initial={false}>
+        {!triggerLabel &&
+          badges.map((badge, index) => (
+            <UsageBadge
+              key={badge.key}
+              badge={badge}
+              index={index}
+              popoverId={`message-usage-${usagePopoverId}`}
+              open={usageMenuOpen}
+              onToggle={handleUsageToggle}
+            />
+          ))}
+        {!triggerLabel && badgeBalance && (
           <BalanceBadge
             key="balance"
             balance={badgeBalance}
@@ -652,6 +676,7 @@ export function UsageIndicator({
       {onQueueLimitReset && (
         <span className="message-box__reset-queue-control">
           <LimitResetQueueButton
+            triggerLabel={queueTriggerLabel}
             key={sourceKey}
             onQueue={onQueueLimitReset}
             resetsAt={
@@ -676,6 +701,13 @@ export function UsageIndicator({
               id={`message-usage-${usagePopoverId}`}
               role="dialog"
               aria-label="Usage"
+              tabIndex={triggerLabel ? -1 : undefined}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return
+                event.preventDefault()
+                event.stopPropagation()
+                setUsageOpenSource(null)
+              }}
             >
               {(tokenUsageSupported || statisticsSupported) && (
                 <SegmentedControl
@@ -693,11 +725,13 @@ export function UsageIndicator({
                       ? [
                           {
                             value: 'statistics' as const,
-                            label: statisticsLoading
-                              ? 'Statistics'
-                              : statisticsReported
+                            label: triggerLabel
+                              ? 'Stats'
+                              : statisticsLoading
                                 ? 'Statistics'
-                                : 'No statistics',
+                                : statisticsReported
+                                  ? 'Statistics'
+                                  : 'No statistics',
                             ariaLabel: statisticsLoading
                               ? 'Statistics loading'
                               : statisticsReported

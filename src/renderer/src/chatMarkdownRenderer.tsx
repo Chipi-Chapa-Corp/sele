@@ -49,8 +49,23 @@ const renderLocalMediaButton = (path: string, displayPath: string, name: string)
   })}><span class="chat-detail__markdown-image-loading" aria-label="Loading ${escapeHtml(name)}">${loadingImageIconMarkup}</span></button>`
 }
 
-export const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Renderer => {
+export const createChatMarkdownRenderer = (
+  interactiveFileLinks: boolean,
+  baseUrl?: string
+): Renderer => {
   const renderer = new Renderer()
+  const webTarget = (href: string, image = false): string | null => {
+    try {
+      const url = new URL(href, baseUrl)
+      return (image ? ['https:', 'http:'] : ['https:', 'http:', 'mailto:', 'tel:']).includes(
+        url.protocol
+      )
+        ? url.href
+        : null
+    } catch {
+      return null
+    }
+  }
 
   renderer.html = ({ text }) =>
     text
@@ -70,7 +85,12 @@ export const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Rende
     return renderMarkdownCodeBlock(text, lang)
   }
   renderer.link = function (token: Tokens.Link): string {
-    const fileTarget = getMarkdownFileTarget(token.href)
+    if (baseUrl) {
+      const href = webTarget(token.href)
+      if (!href) return this.parser.parseInline(token.tokens)
+      token = { ...token, href }
+    }
+    const fileTarget = baseUrl ? null : getMarkdownFileTarget(token.href)
     if (fileTarget && getVideoMimeType(fileTarget.path)) {
       return renderLocalMediaButton(
         fileTarget.path,
@@ -134,6 +154,12 @@ export const createChatMarkdownRenderer = (interactiveFileLinks: boolean): Rende
     })}>${faviconMarkup}${children}</a>`
   }
   renderer.image = function (token: Tokens.Image): string {
+    if (baseUrl) {
+      const href = webTarget(token.href, true)
+      return href
+        ? defaultChatMarkdownRenderer.image.call(this, { ...token, href })
+        : escapeHtml(token.text)
+    }
     const fileTarget = getMarkdownFileTarget(token.href)
     if (!fileTarget) return defaultChatMarkdownRenderer.image.call(this, token)
 

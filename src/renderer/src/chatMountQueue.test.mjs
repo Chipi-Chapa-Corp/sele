@@ -4,18 +4,48 @@ import { createChatMountQueue } from './chatMountQueue.ts'
 
 const setup = () => {
   const frames = new Set()
-  const enqueue = createChatMountQueue((run) => {
-    frames.add(run)
-    return () => frames.delete(run)
-  })
+  let now = 0
+  const enqueue = createChatMountQueue(
+    (run) => {
+      frames.add(run)
+      return () => frames.delete(run)
+    },
+    () => now
+  )
   const paint = () => {
     assert.equal(frames.size, 1)
     const run = [...frames][0]
     frames.delete(run)
     run()
   }
-  return { frames, enqueue, paint }
+  return {
+    frames,
+    enqueue,
+    paint,
+    advance: (ms) => {
+      now += ms
+    }
+  }
 }
+
+test('continuous high-priority streaming cannot starve queued history', () => {
+  const { enqueue, paint, advance } = setup()
+  const mounted = []
+  enqueue((done) => {
+    mounted.push('history')
+    done()
+  }, 0)
+  for (let index = 0; index < 10; index++) {
+    enqueue((done) => {
+      mounted.push('stream')
+      done()
+    }, 100 + index)
+    advance(50)
+    paint()
+    if (mounted.includes('history')) break
+  }
+  assert.deepEqual(mounted, ['stream', 'stream', 'stream', 'stream', 'history'])
+})
 
 test('history mounts newest first, one committed turn per paint opportunity', () => {
   const { frames, enqueue, paint } = setup()

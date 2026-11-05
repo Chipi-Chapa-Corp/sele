@@ -97,13 +97,31 @@ if (!process.versions.electron) {
       assert.equal(store.status, 0, store.stderr || String(store.error))
 
       const controller = await fs.readFile(
-        path.join(project, 'src/renderer/src/useWorkspaceController.tsx'),
+        path.join(project, 'src/renderer/src/workspace/features/useWorkspaceProjectCatalog.tsx'),
         'utf8'
       )
-      const selection = controller.slice(
-        controller.indexOf('  const handleDeleteProject ='),
-        controller.indexOf('  const handleDeleteSshEnvironment =')
+      const ts = require('typescript')
+      const source = ts.createSourceFile(
+        'project.tsx',
+        controller,
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX
       )
+      const declarations = new Map()
+      const collect = (node) => {
+        if (ts.isVariableStatement(node))
+          for (const declaration of node.declarationList.declarations)
+            declarations.set(declaration.name.getText(source), node.getText(source))
+        ts.forEachChild(node, collect)
+      }
+      collect(source)
+      const selection = ['handleDeleteProject', 'projectOptions', 'newSessionProjectValue']
+        .map((name) => {
+          assert.ok(declarations.has(name), name)
+          return declarations.get(name)
+        })
+        .join('\n')
       assert.ok(selection.includes('const projectOptions ='))
       await require('esbuild').build({
         stdin: {
@@ -133,6 +151,9 @@ if (!process.versions.electron) {
               const [sendError,setSendError]=useState(null)
               const chatProjectCreatedAtKey=JSON.stringify([['/saved',3],['/history',2],['/hidden',1]])
               const projectIconsByGroup={}
+              const projectState={projects,setProjects,deletedProjectCwds,setDeletedProjectCwds,deletingProject,setDeletingProject,deletingProjectRef,projectIconsByGroup}
+              const sourceState={newSessionNoProject,newSessionCwd,setNewSessionProjectSelection}
+              const chatState={setSendError}
               ${selection}
               window.fixture={values:projectOptions.map(o=>o.value),current:newSessionProjectSelection,sendError}
               window.reorder=()=>setProjects(p=>[...p,{cwd:'/saved',name:'Saved again',icon:null}])

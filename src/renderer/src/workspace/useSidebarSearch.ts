@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppContainerTarget } from '../../../shared/app'
 import type { ProviderChat } from '../../../shared/provider'
 import { providerApi } from '../providerApi'
@@ -11,6 +11,7 @@ type SearchState = {
   loading: boolean
   error: string | null
 }
+const emptyChats: ProviderChat[] = []
 
 /** Keep search pages separate from the normal sidebar cache and its metadata refreshes. */
 export function useSidebarSearch(
@@ -84,11 +85,15 @@ export function useSidebarSearch(
   }, [key, sourceKey, searchTerm])
 
   const current = state?.key === key ? state : null
-  return {
-    chats: key ? (current?.chats ?? []) : [],
-    loading: Boolean(key && sources.length && (!current || current.loading)),
-    error: key ? (current?.error ?? null) : null,
-    hasMore: Boolean(key && current?.cursors.some(Boolean)),
-    loadMore: () => loadMoreRef.current()
-  }
+  const chats = key ? (current?.chats ?? emptyChats) : emptyChats
+  const loading = Boolean(key && sources.length && (!current || current.loading))
+  const error = key ? (current?.error ?? null) : null
+  const hasMore = Boolean(key && current?.cursors.some(Boolean))
+  const loadMore = useCallback(() => loadMoreRef.current(), [])
+  // An idle search must not invalidate filtering/grouping on every workspace
+  // update. Keep both the empty collection and the public result stable.
+  return useMemo(
+    () => ({ chats, loading, error, hasMore, loadMore }),
+    [chats, loading, error, hasMore, loadMore]
+  )
 }

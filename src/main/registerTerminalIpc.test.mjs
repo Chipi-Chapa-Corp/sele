@@ -59,7 +59,10 @@ const harness = (now = Date.now) => {
       app: { getPath: () => '/tmp' },
       ipcMain: { on: (channel, handler) => events.set(channel, handler) }
     },
+    './clientIpc': { onClientMessage: (channel, handler) => events.set(channel, handler) },
     './agentTerminalSessions': { agentTerminalSessions: agentSessions },
+    './persistentTerminal': { listPersistentTerminalIds: async () => [] },
+    '../shared/provider': { providerIds: ['codex', 'claude', 'copilot', 'opencode-v2'] },
     'node:os': { userInfo: () => ({ shell: '/bin/sh' }) },
     './pty': {
       spawnPty: (file, args, options) => {
@@ -67,7 +70,7 @@ const harness = (now = Date.now) => {
         return { pid: 123, onData: () => ({ dispose() {} }), onExit: () => ({ dispose() {} }) }
       }
     },
-    './logging': { handleLoggedIpc: (channel, handler) => handlers.set(channel, handler) },
+    './logging': { handleClientRequest: (channel, handler) => handlers.set(channel, handler) },
     '../shared/terminal': { terminalIpcChannels },
     './containerTarget': { requireContainerTarget },
     './hostProcess': host

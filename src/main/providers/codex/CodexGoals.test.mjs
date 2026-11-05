@@ -105,3 +105,30 @@ test('unsupported goal reads do not break chat loading and failed mutations pres
   )
   assert.equal(goals.get('chat').status, 'active')
 })
+
+test('clearing invalidates an uncached read even when both entry identities are undefined', async () => {
+  const goals = new CodexGoals()
+  const old = deferred()
+  const loading = goals.read('chat', () => old.promise)
+  goals.clear()
+  old.resolve({ goal: goal('active', 'Old runtime') })
+  await loading
+  assert.equal(goals.get('chat'), null)
+  await goals.read('chat', async () => ({ goal: goal('active', 'Fresh runtime') }))
+  assert.equal(goals.get('chat').objective, 'Fresh runtime')
+})
+
+test('an old read after clear cannot overwrite a newly admitted read or mutation', async () => {
+  const goals = new CodexGoals()
+  const old = deferred()
+  const fresh = deferred()
+  const previous = goals.read('chat', () => old.promise)
+  goals.clear()
+  const current = goals.read('chat', () => fresh.promise)
+  old.resolve({ goal: goal('active', 'Stale') })
+  await previous
+  assert.equal(goals.get('chat'), null)
+  fresh.resolve({ goal: goal('active', 'Current') })
+  await current
+  assert.equal(goals.get('chat').objective, 'Current')
+})

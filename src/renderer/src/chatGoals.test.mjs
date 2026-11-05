@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
+import {
+  readWorkspaceControllerSource,
+  workspaceTestGlobals
+} from '../../../scripts/tests/helpers/workspace-controller.mjs'
 
 const source = ts.createSourceFile(
   'controller.tsx',
@@ -176,7 +180,7 @@ test('new goals use the normal worktree flow and cancellation never reports succ
 test('the composer offers new-chat goals for supported providers and respects existing chat capabilities', () => {
   const workspace = ts.createSourceFile(
     'workspace.tsx',
-    readFileSync(new URL('./useWorkspaceController.tsx', import.meta.url), 'utf8'),
+    readWorkspaceControllerSource(),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TSX
@@ -196,10 +200,10 @@ test('the composer offers new-chat goals for supported providers and respects ex
     handleSaveGoalObjective: () => {},
     newSessionProvider: 'codex'
   }
-  const offered = () => Boolean(vm.runInNewContext(expression, globals))
-  for (const provider of ['codex', 'claude', 'copilot', 'opencode']) {
+  const offered = () => Boolean(vm.runInNewContext(expression, workspaceTestGlobals(globals)))
+  for (const provider of ['codex', 'claude', 'copilot', 'opencode-v2']) {
     globals.newSessionProvider = provider
-    assert.equal(offered(), provider !== 'opencode')
+    assert.equal(offered(), provider !== 'opencode-v2')
   }
   globals.selectedChat = { id: 'chat' }
   globals.chatDetail = { id: 'chat', capabilities: { setGoal: true } }

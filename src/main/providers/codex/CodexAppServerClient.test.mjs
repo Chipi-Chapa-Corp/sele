@@ -17,7 +17,7 @@ const declaration = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name?.text === 'CodexAppServerClient'
 )
 const code = ts.transpile(
-  `${declaration.getText(source).replace('export class', 'class')}; new CodexAppServerClient({ kind: 'container' })`,
+  `${declaration.getText(source).replace('export class', 'class')}; globalThis.Client = CodexAppServerClient; new CodexAppServerClient({ kind: 'container' })`,
   { target: ts.ScriptTarget.ES2022 }
 )
 const tick = () => new Promise((resolve) => setImmediate(resolve))
@@ -43,6 +43,8 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
     getHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
     registerBrowserUseSession() {},
     removeBrowserUseSessions() {},
+    registerCodexBrowserTools: () => ({ close() {} }),
+    registerCodexDesktopTools: () => ({ close() {} }),
     CodexDynamicTools: class {
       specs = []
       bindings = new Map()
@@ -110,8 +112,131 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
       child.stderr.destroy()
     }
   })
-  return { client, children, logs }
+  return { client, children, logs, context }
 }
+
+test('embedded browser tools reach local Codex sources independently of host desktop tools', (t) => {
+  const { context } = fixture(t)
+  const Client = context.Client
+  for (const container of [
+    null,
+    { kind: 'host' },
+    ...['distrobox', 'toolbox', 'docker', 'podman', 'ssh'].map((tool) => ({
+      kind: 'container',
+      tool,
+      name: 'fixture'
+    }))
+  ]) {
+    const client = new Client(container)
+    const localBrowser =
+      !container || container.kind === 'host' || ['distrobox', 'toolbox'].includes(container.tool)
+    assert.equal(Boolean(client.browserTools), localBrowser, JSON.stringify(container))
+    assert.equal(Boolean(client.desktopTools), container === null)
+    client.dispose()
+  }
+})
+
+test('browser declarations are sent on interactive start/resume and excluded from restricted queries', async (t) => {
+  const { client, children } = fixture(t)
+  const specs = [
+    { type: 'namespace', name: 'browser', tools: [{ type: 'function', name: 'tabs_context' }] }
+  ]
+  client.dynamicTools.specs = specs
+  for (const method of ['thread/start', 'thread/resume']) {
+    for (const restricted of [{}, { ephemeral: true }, { sandbox: 'read-only' }]) {
+      await client.request(method, { threadId: 'fixture', ...restricted })
+      const request = children[0].requests.at(-1)
+      assert.deepEqual(
+        request.params.dynamicTools,
+        Object.keys(restricted).length ? undefined : specs
+      )
+    }
+  }
+})
+
+test('background recovery initializes a retained runtime without submitting a turn', async (t) => {
+  const { client, children, context } = fixture(t, {
+    initializeResult: { seleRuntime: { threads: [{ thread: { id: 'running' } }] } }
+  })
+  client.persistent = true
+  const connect = context.connectCodexRuntime
+  const commands = []
+  context.connectCodexRuntime = (...args) => {
+    commands.push(args[2])
+    return connect(...args)
+  }
+  const restored = []
+  client.onNotification((notification) => {
+    if (notification.method === 'sele/runtime/restored')
+      restored.push(...notification.params.threadIds)
+  })
+  const recovery = client.recoverRuntime()
+  assert.equal(client.recoverRuntime(), recovery)
+  await recovery
+  assert.deepEqual(commands, [null], 'recovery may only attach to an existing worker')
+  assert.deepEqual(restored, ['running'])
+  await client.request('model/list')
+  assert.equal(children.length, 1, 'the foreground reuses the recovered connection')
+  assert.deepEqual(
+    children[0].requests.filter((request) => request.id).map((request) => request.method),
+    ['initialize', 'model/list']
+  )
+})
+
+for (const code of ['ENOENT', 'ECONNREFUSED']) {
+  test(`missing retained runtime (${code}) does not launch until a foreground request`, async (t) => {
+    const { client, children, context } = fixture(t)
+    client.persistent = true
+    const connect = context.connectCodexRuntime
+    const commands = []
+    context.connectCodexRuntime = async (...args) => {
+      commands.push(args[2])
+      if (args[2] === null) throw Object.assign(new Error('No retained worker'), { code })
+      return connect(...args)
+    }
+    const recovery = client.recoverRuntime()
+    // A user request arriving during recovery must still be able to start a fresh worker.
+    const foreground = client.request('model/list')
+    await recovery
+    await foreground
+    assert.equal(commands[0], null)
+    assert.notEqual(commands[1], null)
+    assert.equal(children.length, 1)
+  })
+}
+
+test('background recovery preserves real connection failures', async (t) => {
+  const { client, children, context } = fixture(t)
+  client.persistent = true
+  context.connectCodexRuntime = async () => {
+    throw new Error('Process runtime rejected the connection.')
+  }
+  await assert.rejects(client.recoverRuntime(), /rejected the connection/)
+  assert.equal(children.length, 0)
+})
+
+test('shutdown during background recovery detaches the late connection', async (t) => {
+  const { client, children, context } = fixture(t)
+  client.persistent = true
+  const connect = context.connectCodexRuntime
+  let finish
+  const gate = new Promise((resolve) => {
+    finish = resolve
+  })
+  context.connectCodexRuntime = async (...args) => {
+    await gate
+    return connect(...args)
+  }
+  const recovery = client.recoverRuntime()
+  await tick()
+  client.dispose({ preserveRuntime: true })
+  finish()
+  await recovery
+  assert.equal(children[0].detaches, 1)
+  assert.equal(children[0].kills, 0)
+  assert.equal(client.connectionIdentity, null)
+  assert.equal(client.startPromise, null)
+})
 
 test('expected terminal probes reject quietly while other RPC failures remain logged', async (t) => {
   const { client, children, logs } = fixture(t)

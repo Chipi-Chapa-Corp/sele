@@ -1,5 +1,6 @@
 import type { AppUpdateState, AppUpdateDismissal } from './appUpdate'
-import type { ProviderId, ProviderMessageAttachment } from './provider'
+import type { ProviderId, ProviderMessageAttachment, ProviderReviewComment } from './provider'
+import type { ChatSleepChange, ChatSleepSnapshot } from './chatSleep'
 
 export type FolderSelectionOptions = {
   defaultPath?: string | null
@@ -359,6 +360,7 @@ export type AppGitHubPullRequestState = (typeof appGitHubPullRequestStates)[numb
 export type AppGitHubPullRequestsOptions = AppGitBranchesOptions & {
   page?: number
   states?: readonly AppGitHubPullRequestState[]
+  search?: string
 }
 
 export type AppGitHubPullRequest = {
@@ -376,6 +378,54 @@ export type AppGitHubPullRequestsResult = {
   totalCount: number
   page: number
   pageCount: number
+}
+
+export type AppGitHubPullRequestOptions = AppGitBranchesOptions & {
+  repository: string
+  number: number
+}
+
+export type AppGitHubPullRequestChanges = {
+  commitId: string
+  files: Array<{
+    path: string
+    previousPath: string | null
+    kind: AppGitChangeKind
+    diff: string
+  }>
+}
+
+export type AppGitHubPullRequestReviewOptions = AppGitHubPullRequestOptions & {
+  commitId: string
+  body: string
+  comments: ProviderReviewComment[]
+}
+
+export type AppGitHubPullRequestDetail = AppGitHubPullRequest & {
+  repository: string
+  viewerLogin: string
+  body: string
+  baseRefName: string
+  headRefName: string
+  createdAt: string
+  updatedAt: string
+  mergedAt: string | null
+  closedAt: string | null
+  additions: number
+  deletions: number
+  changedFiles: number
+  reviewDecision: string
+  statusAuthor: string | null
+  statusAt: string
+  activity: Array<{
+    id: string
+    author: string | null
+    body: string
+    createdAt: string
+    kind: 'comment' | 'review' | 'event'
+    state: string | null
+    commitSha?: string
+  }>
 }
 
 export type AppGitSwitchBranchOptions = AppGitBranchesOptions & {
@@ -586,6 +636,9 @@ export type AppGitPullResult = {
 }
 
 export type AppApi = {
+  getChatSleep: () => Promise<ChatSleepSnapshot>
+  updateChatSleep: (changes: ChatSleepChange[]) => Promise<ChatSleepSnapshot>
+  onChatSleepUpdated: (listener: (state: ChatSleepSnapshot) => void) => () => void
   getAppUpdate: () => Promise<AppUpdateState>
   dismissAppUpdate: (mode: AppUpdateDismissal) => Promise<void>
   installAppUpdate: () => Promise<void>
@@ -600,6 +653,7 @@ export type AppApi = {
   setWindowZoomLevel: (level: number) => Promise<void>
   handleExternalLink: (options: AppExternalLinkOptions) => Promise<AppExternalLinkResult | null>
   getDefaultCwd: () => Promise<string>
+  onWorkspaceUpdated: (listener: () => void) => () => void
   getProjects: () => Promise<AppProject[]>
   getDeletedProjectCwds: () => Promise<string[]>
   deleteProject: (cwd: string) => Promise<void>
@@ -615,6 +669,13 @@ export type AppApi = {
   getGitHubPullRequests: (
     options: AppGitHubPullRequestsOptions
   ) => Promise<AppGitHubPullRequestsResult>
+  getGitHubPullRequest: (
+    options: AppGitHubPullRequestOptions
+  ) => Promise<AppGitHubPullRequestDetail>
+  getGitHubPullRequestChanges: (
+    options: AppGitHubPullRequestOptions
+  ) => Promise<AppGitHubPullRequestChanges>
+  submitGitHubPullRequestReview: (options: AppGitHubPullRequestReviewOptions) => Promise<void>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
   switchGitBranch: (options: AppGitSwitchBranchOptions) => Promise<AppGitBranchesResult>
@@ -666,6 +727,9 @@ export type AppApi = {
 }
 
 export const appIpcChannels = {
+  getChatSleep: 'app:get-chat-sleep',
+  updateChatSleep: 'app:update-chat-sleep',
+  chatSleepUpdated: 'app:chat-sleep-updated',
   getAppUpdate: 'app:get-update',
   dismissAppUpdate: 'app:dismiss-update',
   installAppUpdate: 'app:install-update',
@@ -683,6 +747,7 @@ export const appIpcChannels = {
   windowZoomLevelUpdated: 'app:window-zoom-level-updated',
   handleExternalLink: 'app:handle-external-link',
   getDefaultCwd: 'app:get-default-cwd',
+  workspaceUpdated: 'app:workspace-updated',
   getProjects: 'app:get-projects',
   getDeletedProjectCwds: 'app:get-deleted-project-cwds',
   deleteProject: 'app:delete-project',
@@ -696,6 +761,9 @@ export const appIpcChannels = {
   getContainerSuggestions: 'app:get-container-suggestions',
   getSourceAvailability: 'app:get-source-availability',
   getGitHubPullRequests: 'app:get-github-pull-requests',
+  getGitHubPullRequest: 'app:get-github-pull-request',
+  getGitHubPullRequestChanges: 'app:get-github-pull-request-changes',
+  submitGitHubPullRequestReview: 'app:submit-github-pull-request-review',
   getGitChanges: 'app:get-git-changes',
   getGitBranches: 'app:get-git-branches',
   switchGitBranch: 'app:switch-git-branch',

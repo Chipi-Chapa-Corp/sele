@@ -1,3 +1,4 @@
+import { usePreferenceState } from '../usePreferenceState'
 import { preferences as preferenceStorage } from '../preferences.ts'
 import { useEffect, useId, useRef, useState } from 'react'
 import { ArrowRight, Check, ChevronUp, Minus } from 'lucide-react'
@@ -59,7 +60,7 @@ export const ChatPlan: React.FC<ChatPlanProps> = ({ plan }) => {
   const drawerId = useId().replace(/:/g, '')
   const [openContextKey, setOpenContextKey] = useState<string | null>(null)
   const [seenSignatures, setSeenSignatures] =
-    useState<Record<string, string>>(readSeenPlanSignatures)
+    usePreferenceState<Record<string, string>>(readSeenPlanSignatures)
   const savedSignaturesRef = useRef(seenSignatures)
   const open = Boolean(plan && openContextKey === plan.contextKey)
   const updated = plan !== null && !open && seenSignatures[plan.contextKey] !== plan.signature

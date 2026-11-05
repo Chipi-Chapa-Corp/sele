@@ -103,7 +103,7 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
     <div
       ref={panelRef}
       className={`changes-sidebar__body${
-        changesPaneView === 'terminal' || changesPaneView === 'browser'
+        changesPaneView === 'terminal' || changesPaneView === 'browser' || showingPullRequests
           ? ' changes-sidebar__body--utility'
           : ''
       }`}
@@ -264,6 +264,7 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
             openRequest={browserOpenRequest}
             workspaceKey={browserWorkspaceKey}
             view={effectiveAppSettings.browser.view}
+            cwd={changesProjectCwd ?? changesCwd}
           />
         </div>
       )}

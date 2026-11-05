@@ -1,14 +1,20 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import vm from 'node:vm'
 import test from 'node:test'
+import vm from 'node:vm'
 import ts from 'typescript'
+import {
+  createWorkspaceTestContext,
+  readWorkspaceControllerSource
+} from '../../../scripts/tests/helpers/workspace-controller.mjs'
 import { alignChatContentToBottom } from './chatLayout.ts'
 
 const extract = (path, name, effectMarker) => {
   const source = ts.createSourceFile(
     path,
-    readFileSync(new URL(path, import.meta.url), 'utf8'),
+    path === './useWorkspaceController.tsx'
+      ? readWorkspaceControllerSource()
+      : readFileSync(new URL(path, import.meta.url), 'utf8'),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TSX
@@ -38,7 +44,7 @@ const scrollCode = extract(
 
 test('automatic bottom correction cannot trigger paging into older history', () => {
   const element = { scrollTop: 0 }
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     contentRef: { current: element },
     chatDetail: null,
     chatTurnWindowRef: { current: { chatKey: 'chat', startIndex: 0, endIndex: 2, totalCount: 2 } },
@@ -70,7 +76,7 @@ const nativeScrollCode = extract(
 const setupScroll = ({ top = 0, bottom = 0, automatic = true, userIntent = false } = {}) => {
   const element = { scrollTop: top }
   const pages = []
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     contentRef: { current: element },
     chatDetail: null,
     chatTurnWindowRef: {
@@ -178,7 +184,7 @@ test('initial bottom positioning retains its offset without walking message desc
       return null
     }
   }
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     useCallback: (fn) => fn,
     chatAtConversationBottomRef: { current: false },
     chatAutoScrollTargetRef: { current: null },
@@ -203,7 +209,7 @@ test('an unmatched search still anchors the viewport when it stops bottom follow
   )
   const element = {}
   const anchor = { turnId: 'visible-bottom-message' }
-  const context = vm.createContext({
+  const context = createWorkspaceTestContext({
     chatSearchOpen: true,
     chatSearchQuery: 'missing',
     selectedChatKey: 'codex:chat',

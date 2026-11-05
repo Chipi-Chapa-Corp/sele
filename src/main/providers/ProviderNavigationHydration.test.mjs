@@ -63,6 +63,7 @@ const copilotHarness = (state, client) => {
     {
       toMilliseconds: (value) => (value instanceof Date ? value.getTime() : Number(value)),
       normalizeReasoningEffort: () => null,
+      createCopilotTerminalSessions: () => ({ dispose() {} }),
       getCopilotCustomProviderSessionOptions: () => ({}),
       findCopilotItemTurnWindow: () => ({ startIndex: 20, limit: 10 })
     }
@@ -78,6 +79,8 @@ const copilotHarness = (state, client) => {
     restorePendingMessages() {},
     refreshGoal: async () => {},
     createState: () => state,
+    getTitle: () => 'Chat',
+    getCwd: () => null,
     getSessionContainer: () => null,
     ensureClient: async () => client,
     addAdditionalDirectories: async () => {},

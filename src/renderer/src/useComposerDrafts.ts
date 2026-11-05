@@ -1,3 +1,4 @@
+import { usePreferenceState } from './usePreferenceState'
 import { type SetStateAction, useCallback, useLayoutEffect, useState } from 'react'
 import { createAfterPaintWriter } from './afterPaintWriter'
 import {
@@ -11,7 +12,7 @@ const resolveAction = <T>(current: T, action: SetStateAction<T>): T =>
   typeof action === 'function' ? (action as (value: T) => T)(current) : action
 
 export const useComposerDrafts = (editing: boolean) => {
-  const [state, setState] = useState(readStoredComposerDrafts)
+  const [state, setState] = usePreferenceState(readStoredComposerDrafts)
   const [writer] = useState(() =>
     createAfterPaintWriter(writeStoredComposerDrafts, { debounceMs: 300 })
   )

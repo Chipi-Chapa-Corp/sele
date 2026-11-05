@@ -7,6 +7,7 @@ import type {
 } from '../../shared/provider'
 import type { ProviderAdapter } from './ProviderAdapter'
 import type { TokenUsageObservation } from './TokenUsageReporter'
+import { getContainerTargetKey } from '../containerTarget.ts'
 
 // Every operation whose first argument identifies a conversation must use its saved account,
 // including background retries, approvals, forks, subagents, and transcript navigation.
@@ -65,7 +66,11 @@ type Dependencies = {
 export class ChatAccounts {
   readonly adapter: ProviderAdapter
   private runtimes = new Map<string, ProviderAdapter>()
+  private recoveredRuntimes = new Set<string>()
+  private disposed = false
+  private supportsRuntimeRecovery = false
   private bindings = new Map<string, string>()
+  private containers = new Map<string, AppContainerTarget | null>()
   private listeners = new Set<Parameters<ProviderAdapter['onChatUpdated']>[0]>()
   private usageListeners = new Set<(observation: TokenUsageObservation) => void>()
   private latest = new Map<
@@ -81,8 +86,13 @@ export class ChatAccounts {
 
   private dependencies: Dependencies
 
+  private assertOpen = (): void => {
+    if (this.disposed) throw new Error('Provider account runtimes are disposed.')
+  }
+
   constructor(base: ProviderAdapter, dependencies: Dependencies) {
     this.dependencies = dependencies
+    this.supportsRuntimeRecovery = Boolean(base.recoverRuntime)
     const unsubscribeBaseUsage = base.onTokenUsage?.((observation) =>
       this.usageListeners.forEach((listener) => listener(observation))
     )
@@ -100,14 +110,20 @@ export class ChatAccounts {
         }
       },
       startChat: async (message, options, created) => {
+        this.assertOpen()
         const account = options?.accountId ?? (await dependencies.selected(options?.container))
         return this.present(
           account,
-          await this.runtime(account).startChat(message, options, this.created(account, created))
+          await this.runtime(account).startChat(
+            message,
+            options,
+            this.created(account, created, options?.container ?? null)
+          )
         )
       },
       importHistory: base.importHistory
         ? async (id, messages, options, created) => {
+            this.assertOpen()
             const account = id
               ? await this.account(id)
               : await dependencies.selected(options.container)
@@ -121,21 +137,37 @@ export class ChatAccounts {
         : undefined,
       getHistoricalTokenUsage: base.getHistoricalTokenUsage
         ? async (id, options) => {
+            this.assertOpen()
             const runtime = id ? this.runtime(await this.account(id)) : base
             return runtime.getHistoricalTokenUsage!(id, options)
           }
         : undefined,
       getChats: async (options) => {
+        this.assertOpen()
         // Native history is shared between accounts. Discovery stays independent of runtime
         // ownership; overlay live state from the account that actually owns each conversation.
         const account = await dependencies.selected(options?.container)
+        this.assertOpen()
         const page = await base.getChats(options)
-        const listed = await dependencies.bindListed?.(page.chats, account)
+        this.assertOpen()
+        // Discovery can see the same mounted history through several environments.
+        // Preserve the actual execution location before binding listing metadata.
+        const discovered = page.chats.map((chat) =>
+          this.containers.has(chat.id)
+            ? { ...chat, container: this.containers.get(chat.id) ?? null }
+            : chat
+        )
+        const listed = await dependencies.bindListed?.(discovered, account)
         const chats = await Promise.all(
-          page.chats.map(async (chat) => {
+          discovered.map(async (chat) => {
             const metadata = listed?.get(chat.id) ?? (await dependencies.metadata(chat.id))
+            this.assertOpen()
             const bound = metadata.accountId ?? (await dependencies.save(chat.id, account))
+            this.assertOpen()
             this.bindings.set(chat.id, bound)
+            this.recoverRuntimes([bound], {
+              container: chat.container ?? metadata.container ?? null
+            })
             const detail = this.latest.get(chat.id)
             return detail
               ? {
@@ -151,12 +183,14 @@ export class ChatAccounts {
         return { ...page, chats }
       },
       dispose: async () => {
+        this.disposed = true
         unsubscribeBaseUsage?.()
         await Promise.all([
           base.dispose(),
           ...[...this.runtimes.values()].map((runtime) => runtime.dispose())
         ])
         this.runtimes.clear()
+        this.recoveredRuntimes.clear()
         this.listeners.clear()
         this.usageListeners.clear()
         this.latest.clear()
@@ -181,8 +215,15 @@ export class ChatAccounts {
             }
             const run = runtime[method] as (id: string, ...args: unknown[]) => Promise<unknown>
             const result = await run(id, ...args)
+            const latestWindow =
+              method === 'getChatWindow' &&
+              (args[0] as { startIndex?: number | null } | undefined)?.startIndex === null
             return result && typeof result === 'object' && 'revision' in result && 'items' in result
-              ? this.present(account, result as ProviderChatDetail, method === 'getChat')
+              ? this.present(
+                  account,
+                  result as ProviderChatDetail,
+                  method === 'getChat' || latestWindow
+                )
               : result
           })
       })
@@ -196,11 +237,13 @@ export class ChatAccounts {
     ] as const) {
       Object.assign(overrides, {
         [method]: async (options?: ProviderSourceOptions) => {
+          this.assertOpen()
           const runtime = options?.chatId
             ? this.runtime(await this.account(options.chatId))
             : options?.accountId
               ? this.runtime(options.accountId)
               : base
+          this.assertOpen()
           return runtime[method](options)
         }
       })
@@ -208,33 +251,60 @@ export class ChatAccounts {
     this.adapter = { ...base, ...overrides }
   }
 
+  recoverRuntimes(accounts: string[], options: ProviderSourceOptions = {}): void {
+    if (this.disposed || !this.supportsRuntimeRecovery) return
+    for (const account of accounts) {
+      const key = JSON.stringify([account, getContainerTargetKey(options.container)])
+      if (this.recoveredRuntimes.has(key)) continue
+      this.recoveredRuntimes.add(key)
+      void this.runtime(account)
+        .recoverRuntime?.(options)
+        .catch((error) => {
+          console.error('Unable to recover retained provider runtime.', error)
+        })
+    }
+  }
+
   account = async (id: string): Promise<string> => {
+    this.assertOpen()
     await this.changes.get(id)
+    this.assertOpen()
     return this.readAccount(id)
   }
 
   private readAccount = async (id: string): Promise<string> => {
+    this.assertOpen()
     const metadata = await this.dependencies.metadata(id)
-    const account =
-      metadata.accountId ??
-      (await this.dependencies.save(id, await this.dependencies.selected(metadata.container)))
+    this.assertOpen()
+    let account = metadata.accountId
+    if (account == null) {
+      const selected = await this.dependencies.selected(metadata.container)
+      this.assertOpen()
+      account = await this.dependencies.save(id, selected)
+      this.assertOpen()
+    }
     this.bindings.set(id, account)
     return account
   }
 
   select = (id: string, account: string): Promise<void> => {
+    if (this.disposed) return Promise.reject(new Error('Provider account runtimes are disposed.'))
     // Finish operations admitted before this switch so a late history open cannot
     // reclaim the old runtime's writer after releaseChat has handed it off.
     const operations = [...(this.operations.get(id) ?? [])]
     const pending = (this.changes.get(id) ?? Promise.resolve()).then(async () => {
       await Promise.allSettled(operations)
+      this.assertOpen()
       const previous = await this.readAccount(id)
       if (previous === account) return
       const runtime = this.runtimes.get(previous)
       const metadata = await this.dependencies.metadata(id)
+      this.assertOpen()
       if (runtime?.releaseChat) await runtime.releaseChat(id, { container: metadata.container })
       else if (runtime) await runtime.stopChat(id)
+      this.assertOpen()
       await this.dependencies.save(id, account, true)
+      this.assertOpen()
       this.bindings.set(id, account)
       this.latest.delete(id)
     })
@@ -267,8 +337,10 @@ export class ChatAccounts {
     detail: ProviderChatDetail,
     rememberActivity = false
   ): ProviderChatDetail => {
+    this.assertOpen()
     if (this.bindings.has(detail.id) && this.bindings.get(detail.id) !== account)
       throw new Error('This chat’s account changed while loading. Please try again.')
+    if (detail.container !== undefined) this.containers.set(detail.id, detail.container)
     const previous = this.revisions.get(detail.id)
     const offset =
       previous?.account === account
@@ -296,20 +368,43 @@ export class ChatAccounts {
   }
 
   private created =
-    (account: string, callback?: (id: string) => Promise<void>) => async (id: string) => {
+    (
+      account: string,
+      callback?: (id: string) => Promise<void>,
+      container?: AppContainerTarget | null
+    ) =>
+    async (id: string) => {
+      this.assertOpen()
+      if (container !== undefined) this.containers.set(id, container)
       await this.dependencies.save(id, account, true)
+      this.assertOpen()
       this.bindings.set(id, account)
       await callback?.(id)
     }
 
   private runtime = (account: string): ProviderAdapter => {
+    this.assertOpen()
     const existing = this.runtimes.get(account)
     if (existing) return existing
     const runtime = this.dependencies.create(account)
     runtime.onChatUpdated((detail, metadata) => {
-      if (this.bindings.get(detail.id) !== account) return
-      const bound = this.present(account, detail, true)
-      this.listeners.forEach((listener) => listener(bound, metadata))
+      const publish = (): void => {
+        if (this.disposed || this.bindings.get(detail.id) !== account) return
+        const bound = this.present(account, detail, true)
+        this.listeners.forEach((listener) => listener(bound, metadata))
+      }
+      if (!this.bindings.has(detail.id) && runtime.recoverRuntime) {
+        // A retained worker can own chats beyond the first discovery page. Check the
+        // durable credential binding before accepting their background updates.
+        void this.dependencies
+          .metadata(detail.id)
+          .then((saved) => {
+            if (!this.disposed && !this.bindings.has(detail.id) && saved.accountId === account)
+              this.bindings.set(detail.id, account)
+            publish()
+          })
+          .catch((error) => console.error('Unable to bind recovered provider chat.', error))
+      } else publish()
     })
     runtime.onTokenUsage?.((observation) =>
       this.usageListeners.forEach((listener) => listener(observation))

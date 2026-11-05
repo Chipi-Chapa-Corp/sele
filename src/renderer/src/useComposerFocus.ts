@@ -1,4 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react'
+import { useCompactLayout } from './useCompactLayout'
 
 const editingSelector =
   'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'
@@ -14,8 +15,12 @@ export function useComposerFocus(
   autoFocus: boolean
 ): void {
   const actionOrigin = useRef<Element | null>(null)
+  const compact = useCompactLayout()
   // biome-ignore lint/correctness/useExhaustiveDependencies: Chat navigation and reopening must refocus a retained textarea.
   useEffect(() => {
+    // Touch users choose when to open the keyboard. Desktop caret restoration
+    // would reopen it after navigation and steal taps from moving controls.
+    if (compact) return
     const input = inputRef.current
     if (!input) return
     const document = input.ownerDocument
@@ -51,6 +56,14 @@ export function useComposerFocus(
       )
         return
       const active = document.activeElement
+      // Most events arrive while the caret is already here. Do not scan the
+      // transcript for overlays or refocus the window on every streamed update.
+      // Calling window.focus() here can itself emit focus and schedule another
+      // frame, keeping this restoration loop alive indefinitely in Electron.
+      if (active === input) {
+        actionOrigin.current = null
+        return
+      }
       if (
         active &&
         active !== input &&
@@ -62,8 +75,6 @@ export function useComposerFocus(
       if ([...document.querySelectorAll(overlaySelector)].some(visible) || hasSelection()) return
 
       actionOrigin.current = null
-      // Restore Electron's keyboard focus as well as DOM focus after another view owned it.
-      window.focus()
       input.focus({ preventScroll: true })
       // Chromium can retain DOM focus after clipboard/selection cleanup but lose its caret.
       if (document.activeElement === input && document.getSelection()?.rangeCount === 0) {
@@ -172,5 +183,5 @@ export function useComposerFocus(
       document.removeEventListener('focusout', schedule, true)
       window.removeEventListener('focus', onWindowFocus)
     }
-  }, [inputRef, scope, autoFocus])
+  }, [inputRef, scope, autoFocus, compact])
 }

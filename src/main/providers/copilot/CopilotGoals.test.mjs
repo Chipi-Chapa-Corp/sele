@@ -22,12 +22,18 @@ await build({
     {
       name: 'goal-fixture',
       setup(builder) {
+        builder.onResolve({ filter: /\?nodeWorker$/ }, () => ({
+          path: 'worker',
+          namespace: 'fixture'
+        }))
         builder.onResolve(
           { filter: /(?:BrowserAutomation|BrowserMcpServer|SqliteUsageReader)$/ },
           (args) => ({ path: args.path.split('/').at(-1), namespace: 'fixture' })
         )
         builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({
           contents: {
+            worker:
+              'export default () => { throw new Error("Unexpected database worker in goal unit fixture") }',
             BrowserAutomation: 'export const getBrowserAutomationService = () => null',
             BrowserMcpServer: 'export const createBrowserMcpServer = async () => null',
             SqliteUsageReader: 'export class SqliteUsageReader { dispose() {} }'

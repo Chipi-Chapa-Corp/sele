@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import VegvisirWorker from './vegvisir.worker?worker'
 import { vegvisirStrokes } from './vegvisirStrokes'
+import { useCompactLayout } from '../useCompactLayout'
 
 let strokeLengths: number[] | undefined
 const getStrokeLengths = (): number[] => {
@@ -14,6 +15,7 @@ const getStrokeLengths = (): number[] => {
 }
 
 export function VegvisirArt({ active = true }: { active?: boolean }): ReactElement {
+  const compact = useCompactLayout()
   const hostRef = useRef<HTMLDivElement>(null)
   const workerRef = useRef<Worker | null>(null)
   const [reducedMotion, setReducedMotion] = useState(
@@ -23,6 +25,9 @@ export function VegvisirArt({ active = true }: { active?: boolean }): ReactEleme
     () => typeof HTMLCanvasElement.prototype.transferControlToOffscreen !== 'function'
   )
   const staticArt = reducedMotion || workerUnavailable
+  // Android may discard a retained offscreen canvas surface while its pane is
+  // hidden. SVG keeps the same artwork in the document through those transitions.
+  const svgArt = compact || staticArt
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -53,7 +58,7 @@ export function VegvisirArt({ active = true }: { active?: boolean }): ReactEleme
 
   useEffect(() => {
     const host = hostRef.current
-    if (!host || staticArt) return
+    if (!host || svgArt) return
 
     // A transferred canvas cannot be reused, including on Strict Mode's effect replay.
     const canvas = document.createElement('canvas')
@@ -81,12 +86,12 @@ export function VegvisirArt({ active = true }: { active?: boolean }): ReactEleme
       setWorkerUnavailable(true)
     }
     return dispose
-  }, [staticArt])
+  }, [svgArt])
 
   useEffect(() => {
     const host = hostRef.current
     const worker = workerRef.current
-    if (!host || !worker || staticArt) return
+    if (!host || !worker || svgArt) return
     worker.postMessage({ type: 'active', active })
     if (!active) return
     const updateAppearance = (): void => {
@@ -113,18 +118,33 @@ export function VegvisirArt({ active = true }: { active?: boolean }): ReactEleme
       themeObserver.disconnect()
       window.removeEventListener('resize', updateAppearance)
     }
-  }, [active, staticArt])
+  }, [active, svgArt])
 
   return (
-    <div ref={hostRef} className="chat-panel__new-chat-vegvisir" aria-hidden="true">
-      {staticArt && (
+    <div
+      ref={hostRef}
+      className={`chat-panel__new-chat-vegvisir${compact && !reducedMotion ? ' chat-panel__new-chat-vegvisir--animated' : ''}`}
+      data-active={active}
+      aria-hidden="true"
+    >
+      {svgArt && (
         <svg focusable="false" viewBox="0 0 1024 1024">
-          {vegvisirStrokes.map((stroke) => (
+          {vegvisirStrokes.map((stroke, index) => (
             <path
               className="chat-panel__new-chat-vegvisir-stroke"
               d={stroke.d}
               key={stroke.id}
               strokeWidth={stroke.width}
+              style={
+                compact && !reducedMotion
+                  ? ({
+                      '--vegvisir-stroke-length': getStrokeLengths()[index],
+                      strokeDasharray: getStrokeLengths()[index],
+                      animationDelay: `${Math.round(stroke.delayMs * 1.25)}ms`,
+                      animationDuration: `${Math.round(stroke.durationMs * 1.25)}ms`
+                    } as CSSProperties)
+                  : undefined
+              }
             />
           ))}
         </svg>

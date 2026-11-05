@@ -19,17 +19,18 @@ export const WorkingElapsedTime: React.FC<{ item: ProviderWorkingStep }> = ({ it
   return (
     <span className="chat-detail__working-elapsed">
       {elapsed && (
-        <>
-          {' · '}
+        <span className="chat-detail__working-time">
+          <span className="chat-detail__working-divider">{' · '}</span>
           <RollingValue value={elapsed} />
-        </>
+        </span>
       )}
       {usage && (
         <span
+          className="chat-detail__working-price"
           title={`${(usage.inputTokens + usage.cachedInputTokens).toLocaleString()} input tokens (including ${usage.cachedInputTokens.toLocaleString()} cached), ${usage.outputTokens.toLocaleString()} output tokens${usage.costUsesFallback ? '. Price uses fallback model rates because the historical model was not recorded.' : ''}`}
         >
-          {' '}
-          · <RollingValue value={formatTurnTokenUsage(usage)} />
+          <span className="chat-detail__working-divider">{' · '}</span>
+          <RollingValue value={formatTurnTokenUsage(usage)} />
         </span>
       )}
     </span>

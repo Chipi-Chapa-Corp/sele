@@ -14,6 +14,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { toCssRem } from '../cssUnits'
+import { useCompactLayout } from '../useCompactLayout'
 import { getOptionalRenderableText, getRenderableText } from '../renderableText'
 import { Input } from './Input'
 import { MenuSurface } from './MenuSurface'
@@ -151,6 +152,7 @@ export const Dropdown = <TValue extends string>({
   onActiveIndexChange,
   onChange
 }: DropdownProps<TValue>): React.ReactElement => {
+  const compact = useCompactLayout()
   const reactId = useId().replace(/:/g, '')
   const effectiveSize = size ?? (appearance === 'inline' ? 'small' : 'normal')
   const buttonId = id ?? `dropdown-${reactId}`
@@ -167,6 +169,7 @@ export const Dropdown = <TValue extends string>({
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [menuStyle, setMenuStyle] = useState<DropdownMenuStyle | null>(null)
+  const repositionMenu = useRef<() => void>(() => {})
   const [menuPlacement, setMenuPlacement] = useState<DropdownMenuPlacement>(placement)
   const [inFloatingPane, setInFloatingPane] = useState(false)
   const allGroupedOptions = useMemo<readonly DropdownOptionGroup<TValue>[]>(
@@ -330,17 +333,22 @@ export const Dropdown = <TValue extends string>({
         if (root && !target.contains(root)) return
       }
 
-      closeMenu()
+      if (compact) repositionMenu.current()
+      else closeMenu()
     }
 
-    window.addEventListener('resize', closeMenu)
+    const resizeMenu = (): void => {
+      if (compact) repositionMenu.current()
+      else closeMenu()
+    }
+    window.addEventListener('resize', resizeMenu)
     window.addEventListener('scroll', handleScroll, true)
 
     return () => {
-      window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('resize', resizeMenu)
       window.removeEventListener('scroll', handleScroll, true)
     }
-  }, [menuOnly, menuOpen])
+  }, [menuOnly, menuOpen, compact])
 
   const actionWithOpenPanel = menuOpen
     ? menuActions.find((action) => action.panel && action.id === openActionPanelId)
@@ -398,7 +406,7 @@ export const Dropdown = <TValue extends string>({
   ): { placement: DropdownMenuPlacement; style: DropdownMenuStyle } => {
     const viewportInset = 9.6
     const menuOffset = 4.8
-    const maxMenuWidth = 224
+    const maxMenuWidth = compact ? Math.min(360, window.innerWidth - viewportInset * 2) : 224
     const maxMenuHeight = Math.min(336, window.innerHeight * 0.56)
     const spaceAbove = Math.max(0, buttonRect.top - menuOffset - viewportInset)
     const spaceBelow = Math.max(
@@ -423,7 +431,8 @@ export const Dropdown = <TValue extends string>({
     )
     const nextMenuStyle: DropdownMenuStyle = {
       '--menu-surface-max-height': toCssRem(availableHeight),
-      minWidth: toCssRem(buttonRect.width)
+      minWidth: toCssRem(compact ? maxMenuWidth : buttonRect.width),
+      ...(compact ? { width: toCssRem(maxMenuWidth) } : {})
     }
 
     if (resolvedPlacement === 'top') {
@@ -433,7 +442,14 @@ export const Dropdown = <TValue extends string>({
     }
 
     if (menuAlign === 'end') {
-      nextMenuStyle.right = toCssRem(Math.max(viewportInset, window.innerWidth - buttonRect.right))
+      nextMenuStyle.right = toCssRem(
+        compact
+          ? Math.min(
+              Math.max(viewportInset, window.innerWidth - buttonRect.right),
+              Math.max(viewportInset, window.innerWidth - maxMenuWidth - viewportInset)
+            )
+          : Math.max(viewportInset, window.innerWidth - buttonRect.right)
+      )
     } else {
       nextMenuStyle.left = toCssRem(startLeft)
     }
@@ -441,6 +457,13 @@ export const Dropdown = <TValue extends string>({
     return { placement: resolvedPlacement, style: nextMenuStyle }
   }
 
+  repositionMenu.current = () => {
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const next = getMenuPosition(rect)
+    setMenuPlacement(next.placement)
+    setMenuStyle(next.style)
+  }
   const openMenu = (index = selectedIndex): void => {
     if (
       disabled ||
@@ -727,11 +750,10 @@ export const Dropdown = <TValue extends string>({
         aria-disabled={option.disabled || undefined}
         aria-selected={selected}
         onClick={() => {
-          if (!menuOnly) selectOption(option)
+          selectOption(option)
         }}
         onMouseDown={(event) => {
           event.preventDefault()
-          if (menuOnly) selectOption(option)
         }}
         onPointerMove={() => {
           if (!option.disabled) {

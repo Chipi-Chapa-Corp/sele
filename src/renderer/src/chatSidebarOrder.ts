@@ -30,6 +30,7 @@ export const compareChatsBySidebarOrder = (
 const containsSameChats = <Chat>(chats: Chat[], previous?: Chat[]): previous is Chat[] => {
   if (!previous || chats.length !== previous.length) return false
   if (chats === previous) return true
+  if (chats.every((chat, index) => chat === previous[index])) return true
   const entries = new Set(chats)
   return entries.size === previous.length && previous.every((chat) => entries.has(chat))
 }

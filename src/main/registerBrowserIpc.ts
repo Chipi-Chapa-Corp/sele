@@ -1,4 +1,5 @@
-import { handleLoggedIpc } from './logging'
+import { publishBrowserTabs } from './browserSync'
+import { handleClientRequest, handleLoggedIpc } from './logging'
 import { ipcMain, webContents, type WebContents } from 'electron'
 import type {
   BrowserCookieImportBrowser,
@@ -84,6 +85,10 @@ const getCookieImportOptions = (value: unknown): BrowserCookieImportOptions => {
 }
 
 export const registerBrowserIpc = (): void => {
+  ipcMain.on(browserIpcChannels.publishTabs, (event, value: unknown) => {
+    if (event.sender.getType() !== 'window' || event.senderFrame !== event.sender.mainFrame) return
+    publishBrowserTabs(event.sender, value)
+  })
   ipcMain.on(browserIpcChannels.setActive, (event, value: unknown) => {
     if (typeof value !== 'boolean') return
 
@@ -97,10 +102,10 @@ export const registerBrowserIpc = (): void => {
     activeBrowserRendererIds.add(rendererId)
     event.sender.once('destroyed', () => activeBrowserRendererIds.delete(rendererId))
   })
-  handleLoggedIpc(browserIpcChannels.findCookieProfiles, (_event, value: unknown) =>
+  handleClientRequest(browserIpcChannels.findCookieProfiles, (_event, value: unknown) =>
     discoverBrowserCookieProfiles(getCookieProfileDiscoveryOptions(value))
   )
-  handleLoggedIpc(browserIpcChannels.importCookies, (_event, value: unknown) =>
+  handleClientRequest(browserIpcChannels.importCookies, (_event, value: unknown) =>
     importBrowserCookies(getCookieImportOptions(value))
   )
   handleLoggedIpc(browserIpcChannels.resolvePageZoomScale, async (event, value: unknown) => {

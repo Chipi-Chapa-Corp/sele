@@ -20,5 +20,6 @@ export type PreferencesApi = {
   flush: () => Promise<PreferenceResult>
   // A synchronous barrier exclusively for document close/reload.
   commitPending: () => PreferenceResult
+  onChanged?: (listener: (changes: PreferenceChanges) => void) => () => void
   onFailure: (listener: (error: string) => void) => () => void
 }

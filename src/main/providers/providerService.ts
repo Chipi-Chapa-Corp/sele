@@ -5,6 +5,7 @@ import { isNoProjectChat } from '../../shared/noProject'
 import { getLastTurnOutcome } from '../../shared/chatTurnOutcome'
 import { getChatTurnOutcomes, setChatTurnOutcome } from '../database/chatTurnOutcome'
 import { ChatAccounts } from './ChatAccounts'
+import { BackgroundChatRecovery } from './BackgroundChatRecovery'
 import { ImportedConversations } from './ImportedConversations'
 import { app } from 'electron'
 import { prepareChatWorkspace } from './noProjectWorkspace'
@@ -232,6 +233,7 @@ export const getProviderKnownChats = async (
     }))
   )
   if (!scope.current()) return { chats: [], nextCursor: null, conversationViews: [] }
+  backgroundChatRecovery.observe(provider, chats)
   return {
     chats: chats.filter((chat) => !chat.purpose),
     nextCursor: page.nextCursor,
@@ -275,6 +277,7 @@ export const getProviderConversationViews = async (
     }
     if (view && scope.current()) views.push(restoreConversationView(view, chat))
   }
+  backgroundChatRecovery.observe(provider, chats)
   return views
 }
 
@@ -388,6 +391,23 @@ export const importedConversations = new ImportedConversations(
 const adapters = Object.fromEntries(
   Object.keys(nativeAdapters).map((id) => [id, importedConversations.wrap(id as ProviderId)])
 ) as Record<ProviderId, ProviderAdapter>
+
+const backgroundChatRecovery = new BackgroundChatRecovery({
+  scope: (provider, chat) => persistentChatHistory.viewScope(provider, chat.id, chat.container),
+  read: (provider, chat) => {
+    const adapter = adapters[provider]
+    return adapter.getChatWindow
+      ? adapter.getChatWindow(
+          chat.id,
+          { startIndex: null, limit: 10 },
+          { container: chat.container }
+        )
+      : adapter.getChat(chat.id, { container: chat.container })
+  },
+  publish: (provider, detail) => enqueueProviderChatUpdate(provider, detail),
+  failed: (provider, chatId, error) =>
+    console.error(`Unable to recover ${provider} chat ${chatId} in the background.`, error)
+})
 
 const linkedChatOperations = new Map<string, AbortController>()
 
@@ -1026,6 +1046,14 @@ export const providerApi: ProviderApi = {
         : configuration,
       accountEpoch
     )
+    if (
+      providerId === 'codex' &&
+      persistentChatHistory.accountEpoch(providerId, options?.container) === accountEpoch
+    )
+      accountRuntimes.codex.recoverRuntimes(
+        configuration.accounts.map((account) => account.id),
+        { container: options?.container }
+      )
     return configuration
   },
   createAccount: async (providerId, options) => {
@@ -1586,18 +1614,22 @@ export const providerApi: ProviderApi = {
 }
 
 export const disposeProviderAdapters = async (): Promise<void> => {
+  backgroundChatRecovery.dispose()
   await limitResetQueue.close()
   await Promise.allSettled(Object.values(adapters).map((adapter) => adapter.dispose()))
-  await flushPersistentPendingMessages()
-  for (const pending of pendingConversationViews.values()) clearTimeout(pending.timer)
-  const finalViews = [...pendingConversationViews.values()]
-  pendingConversationViews.clear()
   try {
-    await Promise.all(
-      finalViews.map((pending) => saveProviderConversationView(pending.scope, pending.detail))
-    )
-    await Promise.all(conversationViewWrites)
+    await flushPersistentPendingMessages()
   } finally {
-    persistentChatHistory.dispose()
+    for (const pending of pendingConversationViews.values()) clearTimeout(pending.timer)
+    const finalViews = [...pendingConversationViews.values()]
+    pendingConversationViews.clear()
+    try {
+      await Promise.all(
+        finalViews.map((pending) => saveProviderConversationView(pending.scope, pending.detail))
+      )
+      await Promise.all(conversationViewWrites)
+    } finally {
+      persistentChatHistory.dispose()
+    }
   }
 }

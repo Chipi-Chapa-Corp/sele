@@ -22,6 +22,7 @@ if (!process.versions.electron) {
             const noop = () => {}
             const containerRef = {current: document.getElementById('messages')}
             window.commits = 0
+            window.measureSettingsRenders = ${!process.argv.includes('--baseline')}
             window.settings = settings
             window.composerProps = {}
             const root = createRoot(document.getElementById('root'))
@@ -75,7 +76,32 @@ if (!process.versions.electron) {
                 }
               }
             ]
-          : []
+          : [
+              {
+                name: 'count-settings-renders',
+                setup(build) {
+                  build.onLoad({ filter: /ComposerSettings\.tsx$/ }, async (args) => ({
+                    contents: (await fs.readFile(args.path, 'utf8')).replace(
+                      '}: ComposerSettingsProps) {',
+                      '}: ComposerSettingsProps) { window.settingsRenders = (window.settingsRenders ?? 0) + 1;'
+                    ),
+                    loader: 'tsx'
+                  }))
+                  build.onLoad({ filter: /ComposerContextControls\.tsx$/ }, async (args) => ({
+                    contents: (await fs.readFile(args.path, 'utf8'))
+                      .replace(
+                        '  const {',
+                        '  window.workspaceControlRenders = (window.workspaceControlRenders ?? 0) + 1;\n  const {'
+                      )
+                      .replace(
+                        '  const selectedModel =',
+                        '  window.usageControlRenders = (window.usageControlRenders ?? 0) + 1;\n  const selectedModel ='
+                      ),
+                    loader: 'tsx'
+                  }))
+                }
+              }
+            ]
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
@@ -155,6 +181,72 @@ if (!process.versions.electron) {
         Selection.prototype.toString = function() { window.serializeCount++; return original.call(this) };
         void 0;
       `)
+      await run(`window.overlayScans = 0; window.focusCalls = 0;
+        const queryAll = document.querySelectorAll.bind(document);
+        document.querySelectorAll = (selector) => {
+          if (selector === 'dialog[open], [role="dialog"], [role="menu"], [role="listbox"]') window.overlayScans++;
+          return queryAll(selector);
+        };
+        const nativeFocus = window.focus.bind(window);
+        window.focus = () => { window.focusCalls++; nativeFocus(); };
+        for (let i = 0; i < 20; i++) window.dispatchEvent(new Event('focus'));
+      `)
+      await settle()
+      assert.deepEqual(
+        await run('[window.overlayScans, window.focusCalls]'),
+        [0, 0],
+        'an already focused composer must not scan the transcript or refocus its window'
+      )
+      // Typing with a large catalog must leave the settings subtree untouched.
+      // Count the real component body rather than timings, which vary by renderer.
+      if (await run('window.measureSettingsRenders')) {
+        assert.equal(
+          await run('typeof window.settingsRenders'),
+          'number',
+          'the settings component must be instrumented for this regression check'
+        )
+        await run(`window.catalog = Array.from({length:2000}, (_,i) => ({
+          id:'model-'+i,label:'Model '+i,description:'Fixture model',isDefault:i===0,
+          supportedReasoningEfforts:[],defaultReasoningEffort:'medium'
+        })); renderFixture({models:catalog,model:'model-0'})`)
+        await settle()
+        const before = await run('window.settingsRenders')
+        const controlsBefore = await run(
+          '[window.workspaceControlRenders, window.usageControlRenders]'
+        )
+        assert.ok(
+          controlsBefore.every((count) => typeof count === 'number'),
+          'workspace and usage controls must be instrumented for the render check'
+        )
+        const composerBefore = await run('window.commits')
+        for (const character of 'ordinary typing') {
+          await win.webContents.debugger.sendCommand('Input.insertText', { text: character })
+          await settle()
+        }
+        assert.equal(await run('input.value'), 'ordinary typing')
+        assert.ok((await run('window.commits')) > composerBefore, 'the draft really rendered')
+        assert.equal(
+          await run('window.settingsRenders'),
+          before,
+          'draft edits must not rebuild model options, sections or preset details'
+        )
+        assert.deepEqual(
+          await run('[window.workspaceControlRenders, window.usageControlRenders]'),
+          controlsBefore,
+          'draft edits must not render workspace tools or usage controls'
+        )
+        await run(`renderFixture({model:'model-1'})`)
+        await settle()
+        assert.ok((await run('window.settingsRenders')) > before, 'model changes still render')
+        assert.ok(
+          await run(`document.querySelector('#chat-config-mode').title.includes('Model 1')`)
+        )
+        console.log(
+          'Settings render check passed: 15 input edits, 2,000 models, zero settings renders.'
+        )
+        await run(`renderFixture({models:[],model:'test'}); setText('')`)
+        await settle()
+      }
       // Native predictions are draft hints; accepting one must never send it.
       const ghost = () =>
         run('document.querySelector(".message-box__prompt-suggestion")?.textContent ?? null')

@@ -1603,10 +1603,12 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
   ) => Promise<ProviderChatUpdateSummary>
   setViewedChat: (providerId: ProviderId | null, chatId: string | null) => void
   acknowledgeChatUpdate: (sequence: number, detailApplied: boolean) => void
+  onChatMetadataUpdated: (listener: (metadata: ProviderChatMetadata[]) => void) => () => void
   onChatUpdated: (listener: (event: ProviderWindowChatUpdatedEvent) => void) => () => void
 }
 
 export const providerIpcChannels = {
+  chatMetadataUpdated: 'provider:chat-metadata-updated',
   exportChat: 'provider:export-chat',
   openChatImport: 'provider:open-chat-import',
   importChat: 'provider:import-chat',

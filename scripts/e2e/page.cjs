@@ -131,11 +131,11 @@ class Page {
             // frames stall. Both are cancelled before rescheduling so checks never multiply.
             let frame = 0
             let timer = 0
-            const check = () => {
+            const check = async () => {
               cancelAnimationFrame(frame)
               clearTimeout(timer)
               let value
-              try { value = (${expression}) } catch (error) { value = undefined }
+              try { value = await (${expression}) } catch (error) { value = undefined }
               if (value) return resolve(value instanceof Node ? true : value)
               if (performance.now() > deadline) return reject(new Error('e2e-timeout'))
               frame = requestAnimationFrame(check)

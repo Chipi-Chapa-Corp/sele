@@ -1,10 +1,20 @@
 import MarkdownWorker from './chatMarkdown.worker?worker'
 import type { MarkdownPlanNode } from './markdownPlan'
+import type { ProviderMessage } from '../../shared/provider'
+import type { RecentChatReference } from './chatRecents'
 
-type Request = { content: string; interactiveFileLinks: boolean; footnotePrefix: string }
+type MarkdownRequest = {
+  content: string
+  interactiveFileLinks: boolean
+  footnotePrefix: string
+  baseUrl?: string
+}
+type Request =
+  | (MarkdownRequest & { kind: 'markdown' })
+  | { kind: 'references'; items: ProviderMessage[]; messageLimit: number }
 type Job = {
   input: Request
-  resolve: (plan: MarkdownPlanNode[]) => void
+  resolve: (result: unknown) => void
   reject: (error: Error) => void
 }
 const jobs = new Map<number, Job>()
@@ -36,7 +46,7 @@ const drain = (): void => {
         jobs.delete(data.id)
         active = null
         if (data.error) job?.reject(new Error(data.error))
-        else job?.resolve(data.plan)
+        else job?.resolve(job.input.kind === 'references' ? data.references : data.plan)
         drain()
         if (active === null && !jobs.size)
           idleTimer = setTimeout(() => {
@@ -57,10 +67,10 @@ const drain = (): void => {
 }
 
 /** One worker, one active render, and at most one queued revision per mounted message. */
-export const requestMarkdownPlan = (input: Request) => {
+const requestJob = <Result>(input: Request) => {
   const id = ++sequence
-  const result = new Promise<MarkdownPlanNode[]>((resolve, reject) => {
-    jobs.set(id, { input, resolve, reject })
+  const result = new Promise<Result>((resolve, reject) => {
+    jobs.set(id, { input, resolve: (value) => resolve(value as Result), reject })
     drain()
   })
   return {
@@ -72,3 +82,9 @@ export const requestMarkdownPlan = (input: Request) => {
     }
   }
 }
+
+export const requestMarkdownPlan = (input: MarkdownRequest) =>
+  requestJob<MarkdownPlanNode[]>({ ...input, kind: 'markdown' })
+
+export const requestChatReferences = (items: ProviderMessage[], messageLimit: number) =>
+  requestJob<RecentChatReference[]>({ kind: 'references', items, messageLimit })

@@ -1,3 +1,4 @@
+import { useCompactLayout } from '../useCompactLayout'
 import { useProviderLabels } from '../providerLabels'
 import { isNoProjectChat, isNoProjectCwd } from '../../../shared/noProject'
 import {
@@ -59,6 +60,7 @@ import {
 import { BedOff } from './BedOffIcon'
 import { ChatSleepPanel, formatWakeIn } from './ChatSleepPanel'
 import { ChatReadStateContext } from '../manualChatReadState'
+import { useHoldActions } from '../useHoldActions'
 
 type ChatListItemProps = {
   chat: ProviderChat
@@ -181,6 +183,9 @@ export const ChatListItem = memo(function ChatListItem({
   const [detailFocused, setDetailFocused] = useState(false)
   const [detailCardPosition, setDetailCardPosition] = useState<DetailCardPosition | null>(null)
   const itemRef = useRef<HTMLElement>(null)
+  const holdActions = useHoldActions(itemRef)
+  const compact = useCompactLayout()
+  const [touchDragArmed, setTouchDragArmed] = useState(false)
   const detailCardRef = useRef<HTMLDivElement>(null)
   const detailCardId = useId()
   const now = useSemanticDateNow()
@@ -221,7 +226,11 @@ export const ChatListItem = memo(function ChatListItem({
   const finishedUnseen = unread && chat.status === null
   const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()
-  const detailOpen = (detailHovered || detailFocused) && !editingName && !dragging
+  const canHover =
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(hover: hover) and (pointer: fine)').matches === true
+  const detailOpen =
+    canHover && !holdActions.touch && (detailHovered || detailFocused) && !editingName && !dragging
   const shortUpdatedAge = formatShortAge(chat.updatedAt, now)
 
   useLayoutEffect(() => {
@@ -329,11 +338,23 @@ export const ChatListItem = memo(function ChatListItem({
     <article
       ref={itemRef}
       data-chat-id={chat.id}
+      data-touch-actions={holdActions.open ? 'open' : undefined}
+      data-touch-input={holdActions.touch ? 'true' : undefined}
       className={`chat-list-item${!committing && workingStatus ? ' chat-list-item--working' : ''}${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
-      draggable={editingName ? false : draggable || linkDraggable}
+      draggable={
+        !editingName &&
+        (draggable || linkDraggable) &&
+        (!compact || (holdActions.open && touchDragArmed))
+      }
       onDragEnd={onDragEnd}
       onDragOver={(event) => onDragOver?.(event, chat)}
-      onDragStart={(event) => onDragStart?.(event, chat)}
+      onDragStart={(event) => {
+        if (compact && !(holdActions.open && touchDragArmed)) {
+          event.preventDefault()
+          return
+        }
+        onDragStart?.(event, chat)
+      }}
       onFocusCapture={(event) => {
         if (editingName) {
           setDetailFocused(false)
@@ -346,8 +367,21 @@ export const ChatListItem = memo(function ChatListItem({
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setDetailFocused(false)
       }}
-      onPointerDown={() => setDetailFocused(false)}
-      onPointerEnter={() => setDetailHovered(true)}
+      onPointerDown={(event) => {
+        setTouchDragArmed(event.pointerType !== 'touch' || holdActions.open)
+        setDetailFocused(false)
+        if (event.pointerType === 'touch') setDetailHovered(false)
+        holdActions.onPointerDown(event)
+      }}
+      onPointerMove={holdActions.onPointerMove}
+      onPointerUp={holdActions.onPointerUp}
+      onPointerCancel={holdActions.onPointerCancel}
+      onContextMenu={holdActions.onContextMenu}
+      onKeyDown={holdActions.onKeyDown}
+      onPointerEnter={(event) => {
+        if (event.pointerType === 'mouse' && window.matchMedia('(hover: hover)').matches)
+          setDetailHovered(true)
+      }}
       onPointerLeave={() => setDetailHovered(false)}
     >
       {draggable && (
@@ -363,7 +397,10 @@ export const ChatListItem = memo(function ChatListItem({
               type: 'button' as const,
               'aria-current': selected ? ('true' as const) : undefined,
               'aria-describedby': detailOpen ? detailCardId : undefined,
-              onClick: () => onClick(chat)
+              onClick: () => {
+                holdActions.close()
+                onClick(chat)
+              }
             })}
       >
         <span className="chat-list-item__header">

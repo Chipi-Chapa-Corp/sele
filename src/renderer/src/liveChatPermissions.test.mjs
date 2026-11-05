@@ -1,17 +1,20 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import vm from 'node:vm'
 import test from 'node:test'
+import vm from 'node:vm'
 import ts from 'typescript'
 import {
+  readWorkspaceControllerSource,
+  workspaceTestGlobals
+} from '../../../scripts/tests/helpers/workspace-controller.mjs'
+import {
   selectChatPreferences,
-  updateChatPreferences,
-  selectionsEqual
+  selectionsEqual,
+  updateChatPreferences
 } from './chatModelPreferences.ts'
 
 const source = ts.createSourceFile(
   'controller.tsx',
-  readFileSync(new URL('./useWorkspaceController.tsx', import.meta.url), 'utf8'),
+  readWorkspaceControllerSource(),
   ts.ScriptTarget.Latest,
   true,
   ts.ScriptKind.TSX
@@ -102,7 +105,7 @@ const fixture = (selection = {}, overrides = {}) => {
     setServiceTier() {},
     ...overrides
   }
-  return { calls, context, run: () => vm.runInNewContext(code, context) }
+  return { calls, context, run: () => vm.runInNewContext(code, workspaceTestGlobals(context)) }
 }
 
 test('choosing Allow all or Full access updates the running chat immediately', () => {

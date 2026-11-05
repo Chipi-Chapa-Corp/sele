@@ -160,7 +160,7 @@ test('a failed write is retried by the next save', async (t) => {
   const entry = message('a')
   f.failWrite()
   f.store.save('chat', [entry])
-  await f.store.flush()
+  await assert.rejects(f.store.flush(), /disk full/)
   assert.deepEqual(f.rows('chat'), [])
   f.store.save('chat', [entry])
   await f.store.flush()
@@ -191,5 +191,145 @@ test('an unreadable stored message is skipped', async (t) => {
   assert.deepEqual(
     (await f.store.restore('chat')).map((entry) => entry.id),
     ['a']
+  )
+})
+
+test('a failed restore rejects all waiters and leaves durable messages available for retry', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  let reads = 0
+  let rows = [row('old')]
+  const store = new PersistentPendingMessages('claude', {
+    read: async () => {
+      if (++reads === 1) throw new Error('temporary read failure')
+      return rows
+    },
+    replace: async (_provider, _chat, next) => {
+      rows = next
+    }
+  })
+  const first = store.restore('chat')
+  const concurrent = store.restore('chat')
+  await Promise.all([
+    assert.rejects(first, /temporary read failure/),
+    assert.rejects(concurrent, /temporary read failure/)
+  ])
+  store.save('chat', [message('new')])
+  await store.flush()
+  assert.deepEqual(
+    rows.map((entry) => entry.id),
+    ['old'],
+    'an unread queue cannot be replaced'
+  )
+  const restored = await store.restore('chat')
+  assert.deepEqual(
+    restored.map((entry) => entry.id),
+    ['old']
+  )
+  store.save('chat', [...restored, message('new')])
+  await store.close()
+  assert.equal(reads, 2)
+  assert.deepEqual(
+    rows.map((entry) => entry.id),
+    ['old', 'new']
+  )
+})
+
+test('failed writes reject durability barriers and retry without another save', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  let fail = true
+  let attempts = 0
+  let rows = []
+  const store = new PersistentPendingMessages('claude', {
+    read: async () => rows,
+    replace: async (_provider, _chat, next) => {
+      attempts++
+      if (fail) throw new Error('disk unavailable')
+      rows = next
+    }
+  })
+  store.track('chat')
+  store.save('chat', [message('kept')])
+  await assert.rejects(store.flush(), /disk unavailable/)
+  await assert.rejects(store.close(), /disk unavailable/)
+  assert.equal(attempts, 2, 'each barrier attempts the dirty snapshot once instead of spinning')
+  fail = false
+  await flushPersistentPendingMessages()
+  await store.close()
+  assert.deepEqual(
+    rows.map((entry) => entry.id),
+    ['kept']
+  )
+})
+
+test('a failed empty replacement remains dirty until storage is cleared', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  const f = fixture({ 'claude:chat': [row('removed')] })
+  await f.store.restore('chat')
+  f.failWrite()
+  f.store.save('chat', [])
+  await assert.rejects(f.store.flush(), /disk full/)
+  f.store.save('chat', [])
+  await f.store.close()
+  assert.deepEqual(f.rows('chat'), [])
+})
+
+test('a newer snapshot replaces an in-flight failed write without restoring obsolete rows', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  let rejectFirst
+  const first = new Promise((_resolve, reject) => {
+    rejectFirst = reject
+  })
+  const writes = []
+  const store = new PersistentPendingMessages('claude', {
+    read: async () => [],
+    replace: async (_provider, chatId, rows) => {
+      writes.push([chatId, rows.map((entry) => entry.id)])
+      if (writes.length === 1) await first
+    }
+  })
+  store.track('chat')
+  store.track('sibling')
+  store.save('chat', [message('old')])
+  await new Promise(setImmediate)
+  store.save('chat', [message('latest')])
+  store.save('sibling', [message('independent')])
+  rejectFirst(new Error('first write failed'))
+  await store.close()
+  assert.deepEqual(writes, [
+    ['chat', ['old']],
+    ['chat', ['latest']],
+    ['sibling', ['independent']]
+  ])
+})
+
+test('one failing chat does not block another queue and a background failure remains retryable', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  const rows = new Map()
+  const writes = []
+  let fail = true
+  const store = new PersistentPendingMessages('claude', {
+    read: async () => [],
+    replace: async (_provider, chatId, next) => {
+      writes.push(chatId)
+      if (chatId === 'failed' && fail) throw new Error('one queue failed')
+      rows.set(chatId, next)
+    }
+  })
+  for (const chat of ['failed', 'healthy']) {
+    store.track(chat)
+    store.save(chat, [message(chat)])
+  }
+  await new Promise(setImmediate)
+  assert.deepEqual(
+    rows.get('healthy').map((entry) => entry.id),
+    ['healthy']
+  )
+  assert.deepEqual(writes, ['failed', 'healthy'])
+  fail = false
+  await store.close()
+  assert.deepEqual(writes, ['failed', 'healthy', 'failed'])
+  assert.deepEqual(
+    rows.get('failed').map((entry) => entry.id),
+    ['failed']
   )
 })

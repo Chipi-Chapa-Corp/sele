@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  readWorkspaceControllerSource,
+  workspaceTestGlobals
+} from '../../../scripts/tests/helpers/workspace-controller.mjs'
+import {
   deleteChatPreset,
   getChatPresetChanges,
   readChatPresets,
@@ -116,7 +120,7 @@ const { readFileSync } = await import('node:fs')
 const vm = await import('node:vm')
 const source = ts.createSourceFile(
   'controller.tsx',
-  readFileSync(new URL('./useWorkspaceController.tsx', import.meta.url), 'utf8'),
+  readWorkspaceControllerSource(),
   ts.ScriptTarget.Latest,
   true,
   ts.ScriptKind.TSX
@@ -157,7 +161,7 @@ const controllerFixture = (initial) => {
     context[setter] = (value) => {
       state[key] = value
     }
-  vm.runInNewContext(applyPresetSource, context)
+  vm.runInNewContext(applyPresetSource, workspaceTestGlobals(context))
   return { apply: context.apply, state, context }
 }
 

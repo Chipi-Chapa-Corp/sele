@@ -103,6 +103,7 @@ test('Codex cold sidebar reads a stopped last turn before opening it, and after 
       id: 'codex',
       userQuestions: { getPending: () => null },
       threadListScanClients: new WeakSet(),
+      threadContainers: new Map(),
       pendingTurnStarts: new Map(),
       pendingTurnIds: new Map(),
       withResolvedThreadName: (value) => value,

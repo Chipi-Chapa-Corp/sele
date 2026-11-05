@@ -5,6 +5,9 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { terminalApi } from '../terminalApi'
 import { Button } from './Button'
+import { consumeTouchClick } from '../touchInput'
+import { isAndroidClient } from '../runtimeCapabilities'
+import { useCompactLayout } from '../useCompactLayout'
 import { SegmentedControl } from './SegmentedControl'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPanel.css'
@@ -40,8 +43,12 @@ type TerminalState = 'starting' | 'running' | 'exited' | 'error'
 
 type TerminalOutputCache = { value: string }
 
+type TerminalCompletion = { exited: boolean; focused: boolean }
+
 type TerminalTab = {
   outputCache: TerminalOutputCache
+  continueAsShell?: boolean
+  initialOutput?: string
   agentSessionId?: string
   agentStopScope?: 'process' | 'turn'
   agentInteractive?: boolean
@@ -56,7 +63,9 @@ type TerminalTab = {
 }
 
 type TerminalSessionProps = {
+  workspaceKey?: string
   outputCache: TerminalOutputCache
+  initialOutput?: string
   agentSessionId?: string
   agentInteractive?: boolean
   onInterrupt: () => void
@@ -70,7 +79,7 @@ type TerminalSessionProps = {
   label: string
   tabId: string
   visible: boolean
-  onCommandFinish: (tabId: string) => void
+  onCommandFinish: (tabId: string, completion?: TerminalCompletion) => void
   onInput: (tabId: string) => void
   onStateChange: (
     tabId: string,
@@ -188,6 +197,9 @@ const getCommandTabLabel = (command: string): string => {
   return firstLine.length > 24 ? `${firstLine.slice(0, 23)}…` : firstLine
 }
 
+const getCommandHeading = (command: string | null): string =>
+  command?.trim() ? `$ ${command.trim().replace(/\r?\n/g, '\r\n')}\r\n` : ''
+
 const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): TerminalTab => ({
   outputCache: { value: '' },
   chatKey: request.chatKey,
@@ -200,9 +212,11 @@ const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): Termin
 })
 
 export const TerminalSession: React.FC<TerminalSessionProps> = ({
+  workspaceKey,
   agentSessionId,
   agentInteractive,
   outputCache,
+  initialOutput,
   onInterrupt,
   focusOnShow,
   chatKey,
@@ -222,9 +236,11 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
   chatKeyRef.current = chatKey
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<XtermTerminal | null>(null)
+  const compact = useCompactLayout()
   const fitRef = useRef<(() => void) | null>(null)
   const visibleRef = useRef(visible)
   const focusOnShowRef = useRef(focusOnShow)
+  const touchFocus = useRef<{ x: number; y: number } | null>(null)
   const interruptRef = useRef(onInterrupt)
   interruptRef.current = onInterrupt
   const nativeSessionId = agentSessionId
@@ -314,9 +330,19 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
       outputFrame ??= requestAnimationFrame(flushOutput)
     }
 
+    const appendOutput = (data: string): void => {
+      if (!receivedOutput) {
+        receivedOutput = true
+        outputCache.value = ''
+      }
+      outputCache.value = (outputCache.value + data).slice(-512 * 1024)
+      queueOutput(data)
+    }
+
     const restoreOutput = (): void => {
-      if (!receivedOutput && outputCache.value) {
-        terminal?.write(outputCache.value)
+      const previousOutput = initialOutput ?? outputCache.value
+      if (!receivedOutput && previousOutput) {
+        terminal?.write(previousOutput)
         receivedOutput = true
       }
     }
@@ -416,6 +442,7 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
 
           if (
             nativeSessionId &&
+            !agentInteractive &&
             event.ctrlKey &&
             !event.shiftKey &&
             event.key.toLowerCase() === 'c'
@@ -435,13 +462,14 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
 
         removeDataListener = terminalApi.onData((event) => {
           if (event.sessionId === sessionId) {
-            if (!receivedOutput) {
-              receivedOutput = true
-              outputCache.value = ''
-            }
-            outputCache.value = (outputCache.value + event.data).slice(-512 * 1024)
-            if (!nativeSessionId) task.output(event.data)
-            queueOutput(event.data)
+            // Replayed agent output must not report old shell-integration markers as new work.
+            if (!nativeSessionId)
+              task.output(
+                !receivedOutput && initialOutput
+                  ? event.data.slice(initialOutput.length)
+                  : event.data
+              )
+            appendOutput(event.data)
           }
         })
         removeExitListener = terminalApi.onExit((event) => {
@@ -450,7 +478,8 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
           sessionExited = true
           task.finish()
           sessionCreated = false
-          queueOutput(
+          if (terminal) terminal.options.disableStdin = true
+          appendOutput(
             `\r\n\u001b[90m[process exited with code ${event.exitCode}${
               event.signal == null ? '' : `, signal ${event.signal}`
             }]\u001b[0m\r\n`
@@ -458,7 +487,10 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
           updateState('exited')
           if (nativeSessionId) void terminalApi.closeSession(sessionId)
           if (closeOnCommandFinish || nativeSessionId) {
-            window.requestAnimationFrame(() => onCommandFinish(tabId))
+            const focused = terminal?.textarea === document.activeElement
+            window.requestAnimationFrame(() => {
+              if (active) onCommandFinish(tabId, { exited: true, focused })
+            })
           }
         })
 
@@ -487,7 +519,7 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
         fitAndResize()
 
         if (initialCommand?.trim()) {
-          terminal.writeln(`$ ${initialCommand.trim().replace(/\r?\n/g, '\r\n')}`)
+          terminal.write(getCommandHeading(initialCommand))
         }
 
         if (initialCommand?.trim() && !nativeSessionId) task.start()
@@ -505,7 +537,12 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
             cols: terminal.cols,
             rows: terminal.rows,
             initialCommand,
-            keepAliveOnCommandFinish: Boolean(initialCommand?.trim() && !closeOnCommandFinish)
+            initialOutput,
+            keepAliveOnCommandFinish: Boolean(initialCommand?.trim() && !closeOnCommandFinish),
+            workspaceKey,
+            chatKey: initialChatKey,
+            label,
+            closeOnCommandFinish
           })
         if (!active) {
           await terminalApi.closeSession(sessionId)
@@ -580,10 +617,13 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
     nativeSessionId,
     agentInteractive,
     outputCache,
+    initialOutput,
     closeOnCommandFinish,
     container,
     cwd,
     initialCommand,
+    label,
+    workspaceKey,
     initialChatKey,
     onCommandFinish,
     onInput,
@@ -598,9 +638,73 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
       aria-label={label}
       hidden={!visible}
     >
-      <div className="terminal-panel__surface" onPointerDown={() => terminalRef.current?.focus()}>
+      <div
+        className="terminal-panel__surface"
+        data-mobile-editor=""
+        onPointerDownCapture={(event) => {
+          if (event.pointerType === 'touch') {
+            touchFocus.current = { x: event.clientX, y: event.clientY }
+          } else terminalRef.current?.focus()
+        }}
+        onPointerMoveCapture={(event) => {
+          const start = touchFocus.current
+          if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10)
+            touchFocus.current = null
+        }}
+        onPointerCancelCapture={() => {
+          touchFocus.current = null
+        }}
+        onPointerUpCapture={(event) => {
+          if (!touchFocus.current) return
+          touchFocus.current = null
+          consumeTouchClick(event.currentTarget.ownerDocument)
+          terminalRef.current?.focus()
+          // Xterm can retain DOM focus after Android hides its IME. Request
+          // the native keyboard for this completed tap, after xterm's gesture.
+          if (isAndroidClient())
+            void import('@capacitor/core')
+              .then(async ({ Capacitor }) => {
+                if (Capacitor.isNativePlatform() && visibleRef.current) {
+                  const { localNetwork } = await import('../nativeLocalNetwork')
+                  await localNetwork.showKeyboard()
+                }
+              })
+              .catch((error) => console.warn('Unable to open terminal keyboard.', error))
+          event.preventDefault()
+        }}
+      >
         <div className="terminal-panel__host" ref={hostRef} />
       </div>
+      {compact && (!nativeSessionId || agentInteractive) && (
+        <div
+          className="terminal-panel__phone-keys"
+          role="toolbar"
+          aria-label="Terminal keyboard shortcuts"
+        >
+          {[
+            { label: 'Esc', name: 'Escape', value: '\u001b' },
+            { label: 'Tab', name: 'Tab', value: '\t' },
+            { label: 'Ctrl C', name: 'Interrupt command', value: '\u0003' },
+            { label: '↑', name: 'Previous command', value: '\u001b[A' },
+            { label: '↓', name: 'Next command', value: '\u001b[B' }
+          ].map((key) => (
+            <Button
+              key={key.name}
+              label={key.label}
+              aria-label={key.name}
+              theme="secondary"
+              size="small"
+              onPointerDown={(event) => event.preventDefault()}
+              callback={() => {
+                const terminal = terminalRef.current
+                if (!terminal || terminal.options.disableStdin) return
+                terminal.input(key.value, true)
+                terminal.focus()
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -621,14 +725,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
   const viewedAgentTabsRef = useRef(new Set<string>())
   const handledAgentSessionsRef = useRef(new Set<string>())
-  const [workspaces, setWorkspaces] = useState(() => {
-    if (!active) return new Map<string, TerminalWorkspace>()
-    const initialLocalTab = createTerminalTab(1, projectCwd ?? cwd, container)
-    initialLocalTab.chatKey = chatKey
-    return new Map<string, TerminalWorkspace>([
-      [workspaceKey, { activeTabId: initialLocalTab.id, tabs: [initialLocalTab] }]
-    ])
-  })
+  const [sessionsDiscovered, setSessionsDiscovered] = useState(false)
+  const [workspaces, setWorkspaces] = useState(() => new Map<string, TerminalWorkspace>())
   const workspace = workspaces.get(workspaceKey) ?? null
 
   useLayoutEffect(() => {
@@ -639,7 +737,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     let disposed = false
     let polling = false
     const poll = async () => {
-      if (polling || !terminalApi.listAgentSessions) return
+      if (polling) return
       polling = true
       try {
         const sessions = await terminalApi.listAgentSessions()
@@ -666,22 +764,27 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               void terminalApi.dismissAgentSession(source.id)
               continue
             }
-            const key = `${source.providerId}:${source.chatId}`
-            const chat = getAgentTerminalChat(key)
-            const target = `${getContainerTargetKey(source.container)}\0${chat?.projectCwd ?? chat?.cwd ?? source.cwd ?? ''}`
+            const key = source.chatId ? `${source.providerId}:${source.chatId}` : null
+            const chat = key ? getAgentTerminalChat(key) : undefined
+            const target =
+              source.workspaceKey ??
+              `${getContainerTargetKey(source.container)}\0${chat?.projectCwd ?? chat?.cwd ?? source.cwd ?? ''}`
             const previous = next.get(target) ?? { activeTabId: null, tabs: [] }
             const tab: TerminalTab = {
               id: crypto.randomUUID(),
               outputCache: { value: '' },
+              continueAsShell: !source.workspaceKey,
               agentSessionId: source.id,
               chatKey: key,
               agentStopScope: source.stopScope,
               agentInteractive: source.interactive,
-              label: getAgentTerminalTabLabel(chat?.title ?? source.chatTitle, source.index),
+              label:
+                source.workspaceLabel ??
+                getAgentTerminalTabLabel(chat?.title ?? source.chatTitle, source.index),
               container: source.container,
               cwd: source.cwd,
               initialCommand: source.command,
-              closeOnCommandFinish: true,
+              closeOnCommandFinish: source.closeOnCommandFinish ?? true,
               focusOnShow: false
             }
             next.set(target, {
@@ -696,6 +799,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         if (!disposed) console.error('Unable to list agent terminals.', error)
       } finally {
         polling = false
+        if (!disposed) setSessionsDiscovered(true)
       }
     }
     void poll()
@@ -723,12 +827,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   )
 
   useEffect(() => {
-    if (!active) return
+    if (!active || !sessionsDiscovered) return
 
     setWorkspaces((currentWorkspaces) => {
       if (currentWorkspaces.has(workspaceKey)) return currentWorkspaces
 
       const initialLocalTab = createTerminalTab(1, projectCwd ?? cwd, container)
+      initialLocalTab.chatKey = chatKey
       const nextWorkspaces = new Map(currentWorkspaces)
       nextWorkspaces.set(workspaceKey, {
         activeTabId: initialLocalTab.id,
@@ -737,7 +842,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       nextTabNumberByWorkspaceRef.current.set(workspaceKey, 2)
       return nextWorkspaces
     })
-  }, [active, container, cwd, projectCwd, workspaceKey])
+  }, [active, container, cwd, projectCwd, workspaceKey, chatKey, sessionsDiscovered])
 
   useEffect(() => {
     if (
@@ -834,37 +939,67 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     })
   }
 
-  const handleCommandFinish = useCallback((tabId: string): void => {
-    usedTabIdsRef.current.delete(tabId)
-    tabRuntimesRef.current.delete(tabId)
-    setWorkspaces((currentWorkspaces) => {
-      for (const [currentWorkspaceKey, currentWorkspace] of currentWorkspaces) {
-        const closingIndex = currentWorkspace.tabs.findIndex(
-          (currentTab) => currentTab.id === tabId
-        )
-        if (closingIndex < 0) continue
-        const finished = currentWorkspace.tabs[closingIndex]
-        if (finished.agentSessionId) {
-          if (viewedAgentTabsRef.current.has(tabId)) return currentWorkspaces
-          void terminalApi.dismissAgentSession(finished.agentSessionId)
+  const handleCommandFinish = useCallback(
+    (tabId: string, completion?: TerminalCompletion): void => {
+      if (closingTabsRef.current.has(tabId)) return
+      setWorkspaces((currentWorkspaces) => {
+        for (const [currentWorkspaceKey, currentWorkspace] of currentWorkspaces) {
+          const closingIndex = currentWorkspace.tabs.findIndex(
+            (currentTab) => currentTab.id === tabId
+          )
+          if (closingIndex < 0) continue
+          const finished = currentWorkspace.tabs[closingIndex]
+          if (finished.agentSessionId) {
+            if (viewedAgentTabsRef.current.has(tabId)) {
+              if (!finished.continueAsShell || !completion?.exited) return currentWorkspaces
+              void terminalApi.dismissAgentSession(finished.agentSessionId)
+              usedTabIdsRef.current.add(tabId)
+              const nextWorkspaces = new Map(currentWorkspaces)
+              nextWorkspaces.set(currentWorkspaceKey, {
+                ...currentWorkspace,
+                tabs: currentWorkspace.tabs.map((tab) =>
+                  tab.id === tabId
+                    ? {
+                        ...tab,
+                        agentSessionId: undefined,
+                        agentStopScope: undefined,
+                        agentInteractive: undefined,
+                        continueAsShell: false,
+                        initialCommand: null,
+                        initialOutput:
+                          getCommandHeading(tab.initialCommand) +
+                          tab.outputCache.value.replace(/\r?\n/g, '\r\n'),
+                        closeOnCommandFinish: false,
+                        focusOnShow: completion.focused
+                      }
+                    : tab
+                )
+              })
+              return nextWorkspaces
+            }
+            void terminalApi.dismissAgentSession(finished.agentSessionId)
+          }
+
+          usedTabIdsRef.current.delete(tabId)
+          tabRuntimesRef.current.delete(tabId)
+          const nextWorkspaces = new Map(currentWorkspaces)
+          nextWorkspaces.set(currentWorkspaceKey, {
+            activeTabId:
+              currentWorkspace.activeTabId === tabId
+                ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
+                  currentWorkspace.tabs[closingIndex - 1]?.id ??
+                  null)
+                : currentWorkspace.activeTabId,
+            tabs: currentWorkspace.tabs.filter((currentTab) => currentTab.id !== tabId)
+          })
+          return nextWorkspaces
         }
 
-        const nextWorkspaces = new Map(currentWorkspaces)
-        nextWorkspaces.set(currentWorkspaceKey, {
-          activeTabId:
-            currentWorkspace.activeTabId === tabId
-              ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
-                currentWorkspace.tabs[closingIndex - 1]?.id ??
-                null)
-              : currentWorkspace.activeTabId,
-          tabs: currentWorkspace.tabs.filter((currentTab) => currentTab.id !== tabId)
-        })
-        return nextWorkspaces
-      }
-
-      return currentWorkspaces
-    })
-  }, [])
+        return currentWorkspaces
+      })
+    },
+    []
+  )
 
   const handleCloseTab = async (closingWorkspaceKey: string, tab: TerminalTab): Promise<void> => {
     if (closingTabsRef.current.has(tab.id)) return
@@ -978,7 +1113,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         {Array.from(workspaces, ([currentWorkspaceKey, currentWorkspace]) =>
           currentWorkspace.tabs.map((tab) => (
             <TerminalSession
+              workspaceKey={currentWorkspaceKey}
               outputCache={tab.outputCache}
+              initialOutput={tab.initialOutput}
               agentSessionId={tab.agentSessionId}
               agentInteractive={tab.agentInteractive}
               onInterrupt={() => {

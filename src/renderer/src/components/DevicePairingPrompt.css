@@ -1,0 +1,31 @@
+.device-pairing {
+  width: min(26rem, calc(100vw - 2rem));
+  box-sizing: border-box;
+  padding: 1.5rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 1rem;
+  background: var(--depth-shell-surface, #f7f3ed);
+  color: var(--lead);
+  box-shadow: 0 24px 80px #0003;
+}
+.device-pairing::backdrop {
+  background: #16120c66;
+  backdrop-filter: blur(4px);
+}
+.device-pairing h2 {
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+.device-pairing p {
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.device-pairing__hint {
+  opacity: 0.7;
+}
+.device-pairing__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}

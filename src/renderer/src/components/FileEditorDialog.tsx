@@ -59,6 +59,9 @@ import { Button } from './Button'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
 import { EditableUnifiedDiff, UnifiedDiff, type DiffReviewLocation } from './UnifiedDiff'
+import { isRemoteClient } from '../runtimeCapabilities'
+import { MobileCodeEditor } from './MobileCodeEditor'
+import { useCompactLayout } from '../useCompactLayout'
 import './FileEditorDialog.css'
 
 export type FileEditorTarget = {
@@ -70,6 +73,8 @@ export type FileEditorTarget = {
   endLine?: number
   kind?: AppGitChangeKind | null
   previousPath?: string | null
+  /** A revision snapshot shown with the shared diff and review UI. */
+  diff?: string
 }
 
 type FileEditorDialogProps = {
@@ -376,6 +381,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   onReviewCommentsChange,
   onSelectTarget
 }: FileEditorDialogProps): React.JSX.Element {
+  const compact = useCompactLayout()
+  const ContentsEditor = compact ? MobileCodeEditor : EditableUnifiedDiff
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [loadStatePath, setLoadStatePath] = useState(target.path)
   const [saveState, setSaveState] = useState<SaveState>('idle')
@@ -405,9 +412,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const [fileTreeLoadState, setFileTreeLoadState] = useState<LoadState>('loading')
   const [fileTreeError, setFileTreeError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
-  const [diffTreeCollapsed, setDiffTreeCollapsed] = useState(false)
+  const [diffTreeCollapsed, setDiffTreeCollapsed] = useState(compact)
   const [fileView, setFileView] = useState<FileViewMode>(() => (target.kind ? 'diff' : 'contents'))
-  const [wordWrap, setWordWrap] = useState(false)
+  const [wordWrap, setWordWrap] = useState(compact)
   const [markdownView, setMarkdownView] = useState<MarkdownViewMode>('code')
   const [markdownSplitPercentage, setMarkdownSplitPercentage] = useState(
     readStoredMarkdownSplitPercentage
@@ -437,10 +444,11 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const copyFeedbackTimerRef = useRef<number | null>(null)
   const resizeCleanupRef = useRef<(() => void) | null>(null)
   const environmentSuggestionsRequestRef = useRef(0)
-  const isImage = imageFilePattern.test(target.path)
+  const isSnapshot = target.diff !== undefined
+  const isImage = !isSnapshot && imageFilePattern.test(target.path)
   const isMarkdown = markdownFilePattern.test(target.path)
   const canShowImage = isImage && target.kind !== 'delete'
-  const canShowContents = !isImage && target.kind !== 'delete'
+  const canShowContents = !isSnapshot && !isImage && target.kind !== 'delete'
   const canOpenFile = canShowContents || canShowImage
   const targetEnvironmentKey = `${target.cwd}\0${target.path}\0${getFileEnvironmentKey(target.container)}`
   const fileContainer =
@@ -461,9 +469,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const visibleDiffLoadState =
     diffLoadStatePath === target.path ? diffLoadState : hasGitDiff ? 'loading' : 'ready'
   const canEdit = canShowContents && visibleLoadState === 'ready' && editable === true
-  const canShowDiff = Boolean(hasGitDiff && !canShowImage && (target.kind === 'delete' || canEdit))
+  const canShowDiff = Boolean(hasGitDiff && !canShowImage && (isSnapshot || target.kind === 'delete' || canEdit))
   const showFileDiff = canShowDiff && fileView === 'diff'
-  const isFileDiff = hasGitDiff && !canShowImage
+  const isFileDiff = hasGitDiff && !canShowImage && (!isSnapshot || Boolean(target.diff))
   const useDiffTree = fileView === 'diff' && hasGitDiff && !canShowImage
   const showFileViewSwitch = canShowContents && hasGitDiff
   const showTreeSidebar = hasGitDiff && !diffTreeCollapsed
@@ -543,10 +551,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     )
   )
   const showDownload =
-    target.kind !== 'delete' &&
+    !isSnapshot && !isRemoteClient() && target.kind !== 'delete' &&
     (isFileOutsideProject(target) || Boolean(visibleFileTreeResult && !isProjectFile))
   const showRevealInFolder =
-    target.kind !== 'delete' &&
+    !isSnapshot && !isRemoteClient() && target.kind !== 'delete' &&
     !(fileContainer?.kind === 'container' && fileContainer.tool === 'ssh')
   const showOpenRetry = visibleLoadState !== 'error' || !isExpectedFileOpenError(editorError)
   const defaultCollapsedFileFolders = useMemo(() => {
@@ -725,7 +733,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setDiffError(null)
 
       try {
-        const result = await appApi.getGitFileDiff({
+        const result = target.diff !== undefined ? { diff: target.diff } : await appApi.getGitFileDiff({
           container: target.container,
           cwd: target.cwd,
           path: target.path,
@@ -748,7 +756,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         }
       }
     },
-    [gitRepositoryRoot, target.container, target.cwd, target.kind, target.path, target.previousPath]
+    [gitRepositoryRoot, target.container, target.cwd, target.kind, target.path, target.previousPath, target.diff]
   )
 
   const loadFileTree = useCallback(
@@ -834,9 +842,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   }, [canShowDiff, loadDiff])
 
   useEffect(() => {
-    if (fileTreeMatchesTarget) return
+    if (isSnapshot || fileTreeMatchesTarget) return
     queueMicrotask(() => void loadFileTree())
-  }, [fileTreeMatchesTarget, loadFileTree])
+  }, [isSnapshot, fileTreeMatchesTarget, loadFileTree])
 
   useEffect(() => {
     const repositoryRoot = visibleFileTreeResult?.repositoryRoot ?? null
@@ -943,9 +951,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const selectDiffTarget = useCallback(
     (nextTarget: FileEditorTarget): void => {
       if (nextTarget.path === target.path) return
-      requestLeave(() => onSelectTarget?.(nextTarget))
+      requestLeave(() => { onSelectTarget?.(nextTarget); if (compact) setDiffTreeCollapsed(true) })
     },
-    [requestLeave, onSelectTarget, target.path]
+    [requestLeave, onSelectTarget, target.path, compact]
   )
   const toggleDiffFolder = useCallback((folderPath: string): void => {
     setCollapsedDiffFolders((currentFolders) => ({
@@ -1434,7 +1442,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   title={`Continue with ${reviewComments.length} review comment${reviewComments.length === 1 ? '' : 's'}`}
                 />
               )}
-              {canShowImage && visibleLoadState === 'ready' && (
+              {!isRemoteClient() && canShowImage && visibleLoadState === 'ready' && (
                 <Button
                   aria-label={`Copy ${displayPath}`}
                   callback={handleCopyImage}
@@ -1477,7 +1485,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   title={wordWrap ? 'Disable word wrap (Alt+Z)' : 'Enable word wrap (Alt+Z)'}
                 />
               )}
-              <Button
+              {!compact && <Button
                 callback={() => setExpanded((currentExpanded) => !currentExpanded)}
                 icon={
                   expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />
@@ -1486,7 +1494,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                 theme="secondary"
                 aria-label={expanded ? 'Collapse file editor' : 'Expand file editor'}
                 title={expanded ? 'Collapse' : 'Expand'}
-              />
+              />}
               <Button
                 aria-label="Close file editor"
                 callback={requestClose}
@@ -1616,7 +1624,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                     ) : (
                       <div className="file-editor-dialog__state">
                         <FileDiff aria-hidden="true" />
-                        <p>No changes to display.</p>
+                        <p>{isSnapshot ? 'GitHub has no text diff for this file (binary, unchanged, or too large).' : 'No changes to display.'}</p>
                       </div>
                     ))}
                 </div>
@@ -1668,13 +1676,13 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                           theme="secondary"
                         />
                       )}
-                      <Button
+                      {!isRemoteClient() && <Button
                         callback={handleOpenInApp}
                         icon={<ExternalLink />}
                         label="Open in app"
                         size="small"
                         theme="secondary"
-                      />
+                      />}
                       {showEnvironmentRecovery && (
                         <Dropdown
                           aria-label="Try reading from another environment"
@@ -1731,7 +1739,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                       </div>
                     )}
                     <div className="file-editor-dialog__editor-pane">
-                      <EditableUnifiedDiff
+                      <ContentsEditor
                         key={target.path}
                         ariaLabel={`Contents of ${target.displayPath}`}
                         baselineContents={showFileDiff ? savedContents : contents}

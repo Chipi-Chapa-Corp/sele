@@ -8,7 +8,10 @@ import { promisify } from 'node:util'
 import {
   gitHubRepositoryFromRemote,
   resolveGitHubRepository,
-  listGitHubPullRequests
+  listGitHubPullRequests,
+  getGitHubPullRequest,
+  getGitHubPullRequestChanges,
+  submitGitHubPullRequestReview
 } from './githubPullRequests.ts'
 
 const exec = promisify(execFile)
@@ -140,6 +143,23 @@ test('page jumps clamp when the result count shrinks, and search availability bo
   assert.equal(large.pageCount, 50)
 })
 
+test('search stays scoped to the repository and treats titles as literal text', async () => {
+  const queries = []
+  for (const search of ['#123', 'hello there', 'repo:elsewhere/project OR "other"']) {
+    await listGitHubPullRequests('/repo', { search }, runGit, async (args) => {
+      queries.push(args.find((arg) => arg.startsWith('q=')))
+      return response()
+    })
+  }
+  assert.match(queries[0], /repo:Example\/App.* 123$/)
+  assert.ok(queries[1].endsWith(' "hello" "there" in:title'))
+  assert.ok(
+    queries[2].endsWith(
+      ` ${['repo:elsewhere/project', 'OR', '"other"'].map((word) => JSON.stringify(word)).join(' ')} in:title`
+    )
+  )
+})
+
 test('no selected states produce an empty page without calling GitHub', async () => {
   const result = await listGitHubPullRequests('/repo', { states: [] }, runGit, () =>
     assert.fail('No selected states')
@@ -189,5 +209,373 @@ test('unsupported projects and invalid, incomplete, or failed responses do not p
       throw new Error('Authentication required')
     }),
     /Authentication required/
+  )
+})
+
+const detailResponse = (overrides = {}) => ({
+  number: 123,
+  title: 'Native PR details',
+  url: 'https://github.com/Example/App/pull/123',
+  state: 'OPEN',
+  isDraft: false,
+  author: { login: 'kitkat' },
+  body: '**Description**',
+  baseRefName: 'main',
+  headRefName: 'feature/details',
+  createdAt: '2026-11-01T12:00:00Z',
+  updatedAt: '2026-11-03T12:00:00Z',
+  mergedAt: null,
+  closedAt: null,
+  additions: 12,
+  deletions: 3,
+  changedFiles: 2,
+  reviewDecision: 'APPROVED',
+  comments: [],
+  reviews: [],
+  ...overrides
+})
+const detailGit = async () => remotes(['origin', 'git@github.com:Example/App.git'])
+const detailOptions = { repository: 'Example/App', number: 123 }
+const detailCli =
+  (overrides = {}, timeline = [[]]) =>
+  async (args) =>
+    JSON.stringify(
+      args.includes('--slurp')
+        ? timeline
+        : args[0] === 'api'
+          ? { login: 'kitkat' }
+          : detailResponse(overrides)
+    )
+
+test('pull request details use the project remote and combine comments and submitted reviews chronologically', async () => {
+  const result = await getGitHubPullRequest('/project', detailOptions, detailGit, async (args) => {
+    if (args.includes('--slurp')) return JSON.stringify([[]])
+    if (args[0] === 'api') {
+      assert.deepEqual(args, ['api', '--hostname', 'github.com', 'user'])
+      return JSON.stringify({ login: 'SignedInUser' })
+    }
+    assert.deepEqual(args.slice(0, 6), [
+      'pr',
+      'view',
+      '123',
+      '--repo',
+      'https://github.com/Example/App',
+      '--json'
+    ])
+    return JSON.stringify(
+      detailResponse({
+        comments: [
+          { id: 'c1', author: null, body: 'A comment', createdAt: '2026-11-03T10:00:00Z' }
+        ],
+        reviews: [
+          {
+            id: 'r1',
+            author: { login: 'reviewer' },
+            body: 'Looks good',
+            submittedAt: '2026-11-02T10:00:00Z',
+            state: 'APPROVED'
+          },
+          {
+            id: 'r2',
+            author: { login: 'reviewer' },
+            body: 'Unsubmitted',
+            submittedAt: null,
+            state: 'PENDING'
+          }
+        ]
+      })
+    )
+  })
+  assert.equal(result.viewerLogin, 'SignedInUser')
+  assert.equal(result.author, 'kitkat')
+  assert.equal(result.body, '**Description**')
+  assert.equal(result.headRefName, 'feature/details')
+  assert.deepEqual(
+    result.activity.map((item) => [item.kind, item.author, item.body]),
+    [
+      ['review', 'reviewer', 'Looks good'],
+      ['comment', null, 'A comment']
+    ]
+  )
+})
+
+test('detail status preserves merged and closed precedence over draft', async () => {
+  for (const [state, isDraft, expected] of [
+    ['OPEN', false, 'open'],
+    ['OPEN', true, 'draft'],
+    ['CLOSED', true, 'closed'],
+    ['MERGED', true, 'merged']
+  ]) {
+    const result = await getGitHubPullRequest(
+      '/project',
+      detailOptions,
+      detailGit,
+      detailCli({ state, isDraft })
+    )
+    assert.equal(result.state, expected)
+  }
+})
+
+test('detail lookup rejects a changed repository, invalid numbers, malformed data and mismatched PR identity', async () => {
+  const unexpected = async () => {
+    throw new Error('Should not call GitHub')
+  }
+  await assert.rejects(
+    () =>
+      getGitHubPullRequest(
+        '/project',
+        { ...detailOptions, repository: 'Other/App' },
+        detailGit,
+        unexpected
+      ),
+    /repository changed/
+  )
+  for (const number of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+    await assert.rejects(
+      () => getGitHubPullRequest('/project', { ...detailOptions, number }, detailGit, unexpected),
+      /Invalid.*number/
+    )
+  for (const overrides of [{ body: 42 }, { comments: null }, { createdAt: 'invalid' }])
+    await assert.rejects(
+      () => getGitHubPullRequest('/project', detailOptions, detailGit, detailCli(overrides)),
+      /invalid.*details/
+    )
+  for (const overrides of [{ number: 999 }, { url: 'https://github.com/Other/App/pull/123' }])
+    await assert.rejects(
+      () => getGitHubPullRequest('/project', detailOptions, detailGit, detailCli(overrides)),
+      /different pull request/
+    )
+  await assert.rejects(
+    () =>
+      getGitHubPullRequest('/project', detailOptions, detailGit, async () => {
+        throw new Error('Authentication failed')
+      }),
+    /Authentication failed/
+  )
+})
+
+test('detail identity follows the authenticated GitHub account and requires a valid viewer', async () => {
+  for (const login of ['different-account', 'OtherUser']) {
+    const result = await getGitHubPullRequest('/project', detailOptions, detailGit, async (args) =>
+      JSON.stringify(
+        args.includes('--slurp') ? [[]] : args[0] === 'api' ? { login } : detailResponse()
+      )
+    )
+    assert.equal(result.viewerLogin, login)
+    assert.equal(result.author, 'kitkat')
+  }
+  await assert.rejects(
+    () =>
+      getGitHubPullRequest('/project', detailOptions, detailGit, async (args) =>
+        JSON.stringify(args[0] === 'api' ? {} : detailResponse())
+      ),
+    /invalid authenticated user/
+  )
+})
+
+const event = (type, id, time, actor = 'maintainer') => ({
+  event: type,
+  id,
+  created_at: time,
+  actor: actor ? { login: actor } : null
+})
+test('timeline includes commits and state changes from every page, uses the status actor, and collapses merge/close duplicates', async () => {
+  const mergedAt = '2026-11-03T12:00:00Z'
+  const timeline = [
+    [
+      {
+        event: 'committed',
+        sha: 'a'.repeat(40),
+        message: 'Fix the thing\n\nDetails',
+        author: { name: 'Contributor', date: '2026-11-01T10:00:00Z' },
+        committer: { name: 'Contributor', date: '2026-11-01T10:00:00Z' }
+      },
+      { event: 'commented' },
+      event('closed', 1, '2026-11-01T12:00:00Z', 'closer')
+    ],
+    [
+      event('reopened', 2, '2026-11-02T12:00:00Z', 'reopener'),
+      event('merged', 3, mergedAt),
+      event('closed', 4, mergedAt)
+    ]
+  ]
+  const result = await getGitHubPullRequest('/project', detailOptions, detailGit, async (args) => {
+    if (args.includes('--slurp'))
+      assert.deepEqual(args, [
+        'api',
+        '--hostname',
+        'github.com',
+        '--paginate',
+        '--slurp',
+        'repos/Example/App/issues/123/timeline?per_page=100'
+      ])
+    return detailCli({ state: 'MERGED', mergedAt, closedAt: mergedAt }, timeline)(args)
+  })
+  assert.deepEqual(
+    result.activity.map((item) => item.state),
+    ['committed', 'closed', 'reopened', 'merged']
+  )
+  assert.equal(result.activity[0].commitSha, 'a'.repeat(40))
+  assert.equal(result.activity[0].body, 'Fix the thing')
+  assert.equal(result.statusAuthor, 'maintainer')
+  assert.equal(result.statusAt, mergedAt)
+})
+
+test('current PR status uses the latest relevant event, with opening metadata as a fallback', async () => {
+  for (const [overrides, type, expected] of [
+    [{ state: 'CLOSED' }, 'closed', 'closer'],
+    [{ state: 'OPEN' }, 'reopened', 'reopener'],
+    [{ state: 'OPEN', isDraft: true }, 'convert_to_draft', 'drafter'],
+    [{ state: 'OPEN' }, 'ready_for_review', 'reviewer']
+  ]) {
+    const result = await getGitHubPullRequest(
+      '/project',
+      detailOptions,
+      detailGit,
+      detailCli(overrides, [[event(type, 1, '2026-11-03T12:00:00Z', expected)]])
+    )
+    assert.equal(result.statusAuthor, expected)
+    assert.equal(result.statusAt, '2026-11-03T12:00:00Z')
+  }
+  const result = await getGitHubPullRequest('/project', detailOptions, detailGit, detailCli())
+  assert.equal(result.statusAuthor, 'kitkat')
+  assert.equal(result.statusAt, result.createdAt)
+})
+
+test('malformed timeline and commit events fail rather than silently omitting updates', async () => {
+  for (const timeline of [{}, [[{ event: 'merged' }]], [[{ event: 'committed', sha: 'invalid' }]]])
+    await assert.rejects(
+      () => getGitHubPullRequest('/project', detailOptions, detailGit, detailCli({}, timeline)),
+      /invalid.*event/
+    )
+})
+
+const commitId = 'a'.repeat(40)
+const head = { head: { sha: commitId }, changed_files: 3 }
+
+test('PR changes paginate GitHub files and preserve rename, deletion, and binary snapshots', async () => {
+  const calls = []
+  const changes = await getGitHubPullRequestChanges(
+    '/repo',
+    detailOptions,
+    detailGit,
+    async (args) => {
+      calls.push(args)
+      return JSON.stringify(
+        args.includes('--slurp')
+          ? [
+              [
+                {
+                  filename: 'src/new.ts',
+                  previous_filename: 'src/old.ts',
+                  status: 'renamed',
+                  patch: '@@ -1 +1 @@\n-old\n+new'
+                },
+                { filename: 'deleted.txt', status: 'removed', patch: '@@ -1 +0,0 @@\n-old' }
+              ],
+              [{ filename: 'picture.png', status: 'added' }]
+            ]
+          : head
+      )
+    }
+  )
+  assert.equal(changes.commitId, commitId)
+  assert.equal(changes.files.length, 3)
+  assert.equal(changes.files[0].kind, 'rename')
+  assert.match(changes.files[0].diff, /--- a\/src\/old.ts/)
+  assert.match(changes.files[1].diff, /\+\+\+ \/dev\/null/)
+  assert.equal(changes.files[2].diff, '')
+  assert.ok(calls[1].includes('repos/Example/App/pulls/123/files?per_page=100'))
+})
+
+test('PR changes reject racing head updates and incomplete file pages', async () => {
+  let reads = 0
+  await assert.rejects(
+    getGitHubPullRequestChanges('/repo', detailOptions, detailGit, async (args) => {
+      if (args.includes('--slurp')) return '[[]]'
+      return JSON.stringify({ ...head, head: { sha: ++reads === 1 ? commitId : 'b'.repeat(40) } })
+    }),
+    /changed while loading/
+  )
+  await assert.rejects(
+    getGitHubPullRequestChanges('/repo', detailOptions, detailGit, async (args) =>
+      JSON.stringify(args.includes('--slurp') ? [[]] : head)
+    ),
+    /all changed files/
+  )
+})
+
+test('one posted review includes its summary and both sides of multiline comments', async () => {
+  const calls = []
+  const comments = [
+    { id: '1', path: 'src/new.ts', comment: 'Check new lines', line: 4, endLine: 6, side: 'new' },
+    { id: '2', path: 'deleted.txt', comment: 'Keep this?', line: 2, side: 'old' }
+  ]
+  await submitGitHubPullRequestReview(
+    '/repo',
+    { ...detailOptions, commitId, body: 'Review summary', comments },
+    detailGit,
+    async (args, input) => {
+      calls.push({ args, input })
+      return JSON.stringify(head)
+    }
+  )
+  assert.equal(calls.length, 2)
+  assert.ok(calls[1].args.includes('repos/Example/App/pulls/123/reviews'))
+  assert.deepEqual(JSON.parse(calls[1].input), {
+    commit_id: commitId,
+    body: 'Review summary',
+    event: 'COMMENT',
+    comments: [
+      {
+        path: 'src/new.ts',
+        body: 'Check new lines',
+        line: 6,
+        side: 'RIGHT',
+        start_line: 4,
+        start_side: 'RIGHT'
+      },
+      { path: 'deleted.txt', body: 'Keep this?', line: 2, side: 'LEFT' }
+    ]
+  })
+})
+
+test('review submission preserves drafts by rejecting stale heads and invalid input before posting', async () => {
+  const calls = []
+  const run = async (args) => {
+    calls.push(args)
+    return JSON.stringify(head)
+  }
+  await assert.rejects(
+    submitGitHubPullRequestReview(
+      '/repo',
+      { ...detailOptions, commitId: 'b'.repeat(40), body: 'Summary', comments: [] },
+      detailGit,
+      run
+    ),
+    /new commits/
+  )
+  assert.equal(calls.length, 1)
+  for (const change of [
+    { body: ' ' },
+    { comments: [{ id: '1', path: '../secret', comment: 'Bad', line: 1, side: 'new' }] }
+  ])
+    await assert.rejects(
+      submitGitHubPullRequestReview(
+        '/repo',
+        { ...detailOptions, commitId, body: 'Summary', comments: [], ...change },
+        detailGit,
+        run
+      )
+    )
+  assert.equal(calls.length, 1)
+  await assert.rejects(
+    submitGitHubPullRequestReview(
+      '/repo',
+      { ...detailOptions, repository: 'Other/Repo', commitId, body: 'Summary', comments: [] },
+      detailGit,
+      run
+    ),
+    /repository changed/
   )
 })

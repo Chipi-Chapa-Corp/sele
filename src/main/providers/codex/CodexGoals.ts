@@ -4,6 +4,7 @@ type GoalRequest = (method: string, params: unknown) => Promise<unknown>
 
 /** Goal state comes from the goal API, independently of the loaded transcript window. */
 export class CodexGoals {
+  private generation = 0
   private mutations = new Map<string, symbol>()
   private states = new Map<string, { goal: ProviderChatGoal | null }>()
 
@@ -17,13 +18,18 @@ export class CodexGoals {
 
   async read(threadId: string, request: GoalRequest): Promise<void> {
     if (this.mutations.has(threadId)) return
+    const generation = this.generation
     const previous = this.states.get(threadId)
     try {
       const response = (await request('thread/goal/get', { threadId })) as {
         goal: ProviderChatGoal | null
       }
       // A notification or mutation received during the read is newer than its response.
-      if (!this.mutations.has(threadId) && this.states.get(threadId) === previous)
+      if (
+        generation === this.generation &&
+        !this.mutations.has(threadId) &&
+        this.states.get(threadId) === previous
+      )
         this.update(threadId, response.goal)
     } catch (error) {
       // Goal support is optional on older app servers; chat loading must still work.
@@ -36,6 +42,7 @@ export class CodexGoals {
     objective: string | null,
     request: GoalRequest
   ): Promise<ProviderChatGoal | null> {
+    const generation = this.generation
     // Invalidate pending reads before sending the mutation; reads during it cannot restore old state.
     this.update(threadId, this.get(threadId))
     const previous = this.states.get(threadId)
@@ -48,7 +55,7 @@ export class CodexGoals {
             goal: ProviderChatGoal
           })
         : await request('thread/goal/clear', { threadId })
-      if (this.states.get(threadId) === previous) {
+      if (generation === this.generation && this.states.get(threadId) === previous) {
         this.update(threadId, text ? (response as { goal: ProviderChatGoal }).goal : null)
       }
       return this.get(threadId)
@@ -58,6 +65,7 @@ export class CodexGoals {
   }
 
   clear(): void {
+    this.generation++
     this.states.clear()
     this.mutations.clear()
   }

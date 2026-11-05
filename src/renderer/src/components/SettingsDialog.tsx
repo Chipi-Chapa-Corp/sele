@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { useCompactLayout } from '../useCompactLayout'
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { MotionSurface } from '../motion/MotionSurface'
 import type { RefObject } from 'react'
@@ -9,6 +10,7 @@ import {
   Gauge,
   GitBranch,
   Globe2,
+  Wifi,
   PanelLeft,
   MessageSquare,
   Sun,
@@ -23,6 +25,11 @@ import { renderSettingsPanel, type SettingsPanelProps, type SettingsTab } from '
 export type SettingsScope = 'global' | 'project'
 
 const settingsTabOptions = [
+  {
+    value: 'localNetwork',
+    label: 'Local network',
+    icon: <Wifi aria-hidden="true" />
+  },
   {
     value: 'appearance',
     label: 'Appearance',
@@ -90,6 +97,7 @@ export const SettingsDialog = ({
   onTabChange
 }: SettingsDialogProps): React.ReactElement | null => {
   const bodyRef = useRef<HTMLDivElement>(null)
+  const compact = useCompactLayout()
   useFeedbackMotion(bodyRef, tab, 'panel')
 
   if (!open) return null
@@ -121,7 +129,7 @@ export const SettingsDialog = ({
             <nav
               className="settings-dialog__nav"
               aria-label="Settings sections"
-              aria-orientation="vertical"
+              aria-orientation={compact ? 'horizontal' : 'vertical'}
               role="tablist"
             >
               {settingsTabOptions.map((option, index) => {
@@ -142,9 +150,9 @@ export const SettingsDialog = ({
                     onClick={() => onTabChange(option.value)}
                     onKeyDown={(event) => {
                       let nextIndex: number | null = null
-                      if (event.key === 'ArrowDown') {
+                      if (event.key === (compact ? 'ArrowRight' : 'ArrowDown')) {
                         nextIndex = (index + 1) % settingsTabOptions.length
-                      } else if (event.key === 'ArrowUp') {
+                      } else if (event.key === (compact ? 'ArrowLeft' : 'ArrowUp')) {
                         nextIndex =
                           (index - 1 + settingsTabOptions.length) % settingsTabOptions.length
                       } else if (event.key === 'Home') {
@@ -170,7 +178,7 @@ export const SettingsDialog = ({
                 )
               })}
             </nav>
-            {tab !== 'providers' && (
+            {tab !== 'providers' && tab !== 'localNetwork' && (
               <div className="settings-dialog__scope">
                 <SegmentedControl<SettingsScope>
                   aria-label="Settings scope"

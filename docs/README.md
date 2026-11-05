@@ -11,6 +11,7 @@ See the root [README](../README.md#development) for setup, build commands, and t
 | `src/main/browser/`, `src/main/desktop/` | Embedded browser and explicit desktop/Chrome connections |
 | `src/main/mcpApps/` | Interactive MCP widget host |
 | `src/preload/` | Renderer IPC bridge |
+| `src/main/localAccessServer.ts`, `registerLocalAccess.ts`, `clientIpc.ts` | Opt-in LAN server, access settings, and shared client operations |
 | `src/renderer/src/` | React UI; workspace coordination lives in `workspace/` |
 | `src/shared/` | Shared types and IPC contracts |
 | `scripts/tests/`, `scripts/e2e/`, `scripts/benchmarks/` | Integration fixtures, end-to-end checks, and benchmarks |
@@ -18,10 +19,27 @@ See the root [README](../README.md#development) for setup, build commands, and t
 
 Provider runtimes own inference, authentication, and native transcripts. Sele adapts them
 to shared UI contracts and stores its own metadata and display projections in SQLite.
-Keep host operations in the main process and expose them through validated IPC.
+Keep host operations in the main process and expose them through validated client operations.
+`handleClientRequest` and `onClientMessage` register operations for both Electron and authenticated
+LAN clients. Native dialogs, window controls, updates, and desktop automation stay on desktop-only
+IPC. The shared renderer bridge lives in `src/shared/rendererBridge.ts`.
 
 ## Implementation notes
 
+LAN checks: `npm run test:local-access` runs network/transport tests without a display.
+After building, `npm run test:local-access-ui` exercises the real renderer over HTTP with fixture
+providers; append `-- --dev` to check the Vite proxy. Run these GUI checks with `isolated-gui`.
+
+Android uses `capacitor.config.ts`, `vite.mobile.config.ts`, and the native `android/` project.
+`npm run build:android` produces the debug APK; setup is documented in the root README.
+`npm run test:android-connection` checks connection parsing, persistence, and host isolation.
+With built mobile assets, set `SELE_TEST_MOBILE_WEB=1` for the local-access UI fixture to exercise
+the packaged client at its app origin. Set `SELE_ANDROID_TEST_SERIAL=emulator-<port>` instead to
+test the APK in an already booted, agent-owned emulator; `SELE_ANDROID_ADB_PORT` selects its
+ADB server. Neither test mode contacts real provider accounts. GUI and emulator work must use
+`isolated-gui`; native testing requires a working emulator or separately authorized device.
+
+- [Mobile](mobile.md): Android wrapper, LAN pairing, adaptive UI, and emulator verification.
 - [Conversations](conversations.md): opening, paging, queued messages, linked chats, and restart recovery.
 - [Accounts](per-chat-accounts.md): routing and credential isolation.
 - [Chat archives](chat-archives.md): export format and native-session import.

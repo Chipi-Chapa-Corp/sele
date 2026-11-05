@@ -1,3 +1,4 @@
+import type { BrowserTabsPublication, BrowserSharedOpenRequest } from './browserSync'
 import type { AppContainerTarget } from './app'
 import { isExpectedUrlParseError } from './expectedAbsence.ts'
 import type { ProviderId } from './provider'
@@ -95,6 +96,8 @@ export type BrowserAutomationScope = {
   sessionId: string
   cwd: string
   containerKey: string
+  /** Explicit workspace for a paired user's browser view. Provider scopes use the host preference. */
+  workspaceKey?: string
 }
 
 export type BrowserAutomationTab = {
@@ -130,6 +133,8 @@ export type BrowserAutomationResponse = {
 }
 
 export type BrowserRendererApi = {
+  publishTabs: (snapshot: BrowserTabsPublication) => void
+  onSharedOpen: (listener: (request: BrowserSharedOpenRequest) => void) => () => void
   findCookieProfiles: (
     options: BrowserCookieProfileDiscoveryOptions
   ) => Promise<BrowserCookieProfile[]>
@@ -149,6 +154,8 @@ export type BrowserRendererApi = {
 }
 
 export const browserIpcChannels = {
+  publishTabs: 'browser:publish-tabs',
+  sharedOpen: 'browser:shared-open',
   findCookieProfiles: 'browser:find-cookie-profiles',
   importCookies: 'browser:import-cookies',
   openRequested: 'browser:open-requested',

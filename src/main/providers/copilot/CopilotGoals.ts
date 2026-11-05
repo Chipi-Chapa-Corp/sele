@@ -16,6 +16,29 @@ type GoalSession = Pick<CopilotSession, 'rpc' | 'send'> & {
   }
 }
 
+/** Reading an absent objective through the bundled runtime initializes its
+ * autopilot admission controller and can strand ordinary queued prompts. Check
+ * the replayable journal first; a session without goal events has no goal. */
+export const readCopilotGoalState = async (
+  session: Pick<CopilotSession, 'rpc'>
+): Promise<{ state: CopilotGoalState }> => {
+  if (session.rpc.eventLog?.read) {
+    const page = await session.rpc.eventLog.read({
+      direction: 'backward',
+      max: 1,
+      includeEphemeral: false,
+      agentScope: 'primary',
+      types: ['session.autopilot_objective_changed']
+    })
+    if (page.cursorStatus !== 'ok') throw new Error('Copilot goal history cursor expired.')
+    const event = page.events.findLast(
+      (entry) => entry.type === 'session.autopilot_objective_changed'
+    )
+    if (!event || event.data.operation === 'delete') return { state: null }
+  }
+  return session.rpc.autopilotObjective.getState()
+}
+
 export const getCopilotGoalInput = (objective: string | null): string | null => {
   const text = objective?.trim()
   if (!text) return null
@@ -64,7 +87,7 @@ export const runCopilotGoal = async (
         throw new Error(result.kind === 'text' ? result.text : 'Copilot could not stop autopilot.')
       if ((await session.rpc.mode.get()) !== 'interactive')
         throw new Error('Copilot did not leave autopilot mode.')
-      const { state } = await session.rpc.autopilotObjective.getState()
+      const { state } = await readCopilotGoalState(session)
       if (state?.status === 'active') throw new Error('Copilot did not stop the active goal.')
       return
     }

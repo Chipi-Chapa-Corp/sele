@@ -2,6 +2,7 @@ import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { createDiagnosticLog, type LogLevel } from './diagnosticLog'
 import { startProcessMemoryDiagnostics } from './processMemoryDiagnostics'
+import { registerClientRequest, type ClientEvent } from './clientIpc'
 
 app.setAppLogsPath()
 export const diagnosticLog = createDiagnosticLog(join(app.getPath('logs'), 'sele.log'))
@@ -80,6 +81,22 @@ export const handleLoggedIpc: typeof ipcMain.handle = (channel, listener) => {
       throw error
     }
   })
+}
+
+export const handleClientRequest = (
+  channel: string,
+  listener: (event: ClientEvent, ...args: unknown[]) => unknown
+): void => {
+  const handler = async (event: ClientEvent, ...args: unknown[]): Promise<unknown> => {
+    try {
+      return await listener(event, ...args)
+    } catch (error) {
+      logDiagnostic('error', `client:${channel}`, error)
+      throw error
+    }
+  }
+  registerClientRequest(channel, handler)
+  ipcMain.handle(channel, handler)
 }
 
 logDiagnostic('info', 'startup', {

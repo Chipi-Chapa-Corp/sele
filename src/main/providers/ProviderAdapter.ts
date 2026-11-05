@@ -55,6 +55,8 @@ export type HistoricalTokenUsageSnapshot = TokenUsageSummary & { sourceIdentity?
 
 export type ProviderAdapter = {
   id: ProviderId
+  /** Reattach to retained work during discovery without launching a new provider process. */
+  recoverRuntime?: (options?: ProviderSourceOptions) => Promise<void>
   /** Release one conversation before changing its credential runtime. */
   releaseChat?: (chatId: string, options?: ProviderSourceOptions) => Promise<void>
   getChatTerminalTasks?: (chatId: string, options?: ProviderSourceOptions) => Promise<string[]>

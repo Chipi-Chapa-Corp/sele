@@ -7,12 +7,14 @@ import { Textarea } from './Textarea'
 import './ChatGoalButton.css'
 
 type ChatGoalButtonProps = {
+  triggerLabel?: string
   disabled?: boolean
   objective?: string | null
   onSetGoal: (objective: string) => Promise<void>
 }
 
 export const ChatGoalButton: React.FC<ChatGoalButtonProps> = ({
+  triggerLabel,
   disabled = false,
   objective = null,
   onSetGoal
@@ -68,6 +70,7 @@ export const ChatGoalButton: React.FC<ChatGoalButtonProps> = ({
         ref={buttonRef}
         theme="secondary"
         aria-label="Set goal"
+        label={triggerLabel}
         title="Set goal"
         aria-haspopup="dialog"
         aria-expanded={open}

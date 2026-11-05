@@ -2066,7 +2066,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   dispose = (): void => {
     // Record the final live lists, then keep them: closing queries below would discard them.
     this.states.forEach((state) => this.persistPendingMessages(state))
-    void this.pendingMessageStore.close()
+    void this.pendingMessageStore.close().catch((error: unknown) => {
+      console.error('Unable to flush pending Claude messages during disposal.', error)
+    })
     this.disposed = true
     this.stateGeneration += 1
     this.sessionDiscovery.dispose()

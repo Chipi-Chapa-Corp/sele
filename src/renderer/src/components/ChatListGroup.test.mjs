@@ -46,6 +46,23 @@ test('regrouping another project keeps this group memoized', () => {
   )
 })
 
+test('unchanged groups do not inspect every chat to compare unchanged indicator maps', () => {
+  const before = props()
+  let inspected = 0
+  before.group.chats = Array.from(
+    { length: 10_000 },
+    () =>
+      new Proxy(chat, {
+        get(target, key) {
+          inspected++
+          return target[key]
+        }
+      })
+  )
+  assert.equal(compare(before, { ...before, group: { ...before.group } }), true)
+  assert.equal(inspected, 0, 'unrelated renders must not read ten thousand chat identities')
+})
+
 test('updates to another project’s indicators or icons do not rebuild this list', () => {
   const before = props()
   const after = {

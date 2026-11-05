@@ -220,7 +220,7 @@ const pasteIntoEditor = async (editor: monaco.editor.IStandaloneCodeEditor): Pro
 
 let editableDiffInstanceId = 0
 
-const getOriginalContents = (fileDiff: ProviderFileDiff, currentContents: string): string => {
+export const getOriginalContents = (fileDiff: ProviderFileDiff, currentContents: string): string => {
   const unifiedDiff = toUnifiedDiff(fileDiff)
   if (!unifiedDiff) return fileDiff.kind === 'create' ? '' : currentContents
 
@@ -252,7 +252,7 @@ type ReviewCommentGroup = {
   comments: ProviderReviewComment[]
 }
 
-type ReviewMarker = {
+export type ReviewMarker = {
   group: ReviewCommentGroup
   top: number
 }
@@ -300,7 +300,7 @@ const getDiffLineTarget = (
   return null
 }
 
-const groupReviewComments = (comments: readonly ProviderReviewComment[]): ReviewCommentGroup[] => {
+export const groupReviewComments = (comments: readonly ProviderReviewComment[]): ReviewCommentGroup[] => {
   const sortedComments = [...comments].sort(
     (first, second) =>
       first.side.localeCompare(second.side) ||
@@ -397,7 +397,7 @@ const ReviewCommentEditor = ({
   )
 }
 
-const ReviewMarkers = ({
+export const ReviewMarkers = ({
   markers,
   onChangeComment,
   onDeleteComment,
@@ -451,6 +451,8 @@ const ReviewMarkers = ({
       {openMarker && onChangeComment && onDeleteComment && (
         <div
           className="unified-diff__review-overlay"
+          role="dialog"
+          aria-label="Review comments"
           style={{
             right: toCssRem(reviewMarkerInset + reviewMarkerWidth + reviewBlockGap),
             top: toCssRem(openMarker.top)

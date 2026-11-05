@@ -77,6 +77,9 @@ createInterface({input:process.stdin}).on('line',line=>{
  if(m.method==='fixture/large')return reply({marker:p.marker,text:'ж'.repeat(p.size)});
  if(m.method==='fixture/complete') {active=false;
   send({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed'}}});return reply({})}
+ if(m.method==='fixture/terminal') {
+  send({method:'item/completed',params:{threadId:'thread',item:{id:'server',type:'commandExecution',processId:'17',status:'completed',exitCode:p.exitCode??null}}});return reply({});
+ }
  if(m.method==='fixture/state')return reply({pid:process.pid,starts,active,lastResult,lastSampleId,lastCancel,sampleId,interrupts,unsubscribed});
  reply({});
 });
@@ -153,6 +156,24 @@ const detach = async (transport) => {
   await closed
   connections.delete(transport)
 }
+
+test('background attachment never launches a worker and restores an existing running turn', async () => {
+  const profile = join(directory, 'background-recovery')
+  await assert.rejects(connectCodexRuntime(profile, 'account-a', null), { code: 'ENOENT' })
+  const firstTransport = await connectRuntime(profile)
+  const first = rpc(firstTransport)
+  const original = await first.initialize()
+  await first.request('thread/start')
+  await first.request('turn/start', { threadId: 'thread' })
+  await detach(firstTransport)
+  const recoveredTransport = await connectCodexRuntime(profile, 'account-a', null)
+  connections.add(recoveredTransport)
+  const recovered = rpc(recoveredTransport)
+  assert.equal((await recovered.initialize()).pid, original.pid)
+  const state = await recovered.request('fixture/state')
+  assert.equal(state.active, true)
+  assert.equal(state.starts, 1, 'reattachment must not replay or continue the turn')
+})
 
 test('an immediate provider startup failure preserves its actionable error across retries', async () => {
   const profile = join(directory, 'startup-failure')
@@ -431,6 +452,52 @@ test('idle cleanup waits for detached work to finish and allows a later fresh la
   await exited
   const third = rpc(await connectRuntime(profile))
   assert.notEqual((await third.initialize()).pid, original.pid, 'restart an expired idle worker')
+})
+
+test('background terminals keep an idle detached runtime alive until the process exits', async (t) => {
+  const profile = join(directory, 'background-idle')
+  const stateDirectory = join(profile, 'codex-runtime-v1', codexRuntimeKey(profile, 'account-a'))
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(stateDirectory, { recursive: true })
+  const token = 'b'.repeat(64)
+  await writeFile(join(stateDirectory, 'token'), token)
+  const worker = spawn(
+    process.execPath,
+    [new URL('./codexRuntime.cjs', import.meta.url).pathname],
+    { stdio: ['pipe', 'ignore', 'pipe'] }
+  )
+  t.after(() => worker.kill())
+  worker.stdin.end(
+    JSON.stringify({
+      endpointPath: join(stateDirectory, 'endpoint.json'),
+      token,
+      command,
+      idleTimeoutMs: 100
+    }) + '\n'
+  )
+  await waitFor(async () => {
+    try {
+      await readFile(join(stateDirectory, 'endpoint.json'))
+      return true
+    } catch {
+      return false
+    }
+  })
+  const firstTransport = await connectRuntime(profile)
+  const first = rpc(firstTransport)
+  const original = await first.initialize()
+  await first.request('thread/start')
+  await first.request('fixture/terminal')
+  await detach(firstTransport)
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  assert.equal(worker.exitCode, null, 'a background dev server survives the idle timeout')
+  const secondTransport = await connectRuntime(profile)
+  const second = rpc(secondTransport)
+  assert.equal((await second.initialize()).pid, original.pid)
+  await second.request('fixture/terminal', { exitCode: 0 })
+  const exited = once(worker, 'exit')
+  await detach(secondTransport)
+  await exited
 })
 
 test('profile, account and execution environment cannot share workers accidentally', () => {

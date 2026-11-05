@@ -10,6 +10,7 @@ type Options = Omit<
   stop: () => Promise<unknown>
   write?: (data: string) => Promise<unknown> | void
   read?: () => Promise<{ data: string; exitCode?: number }>
+  resize?: (cols: number, rows: number) => void
 }
 type Listener = { data: (data: string) => void; exit: (code: number) => void }
 const maximumOutput = 512 * 1024
@@ -116,7 +117,10 @@ export const createAgentTerminalSessions = (now = Date.now) => {
             chatTitle: options.chatTitle,
             cwd: options.cwd,
             container: options.container,
-            command: options.command
+            command: options.command,
+            workspaceKey: options.workspaceKey,
+            workspaceLabel: options.workspaceLabel,
+            closeOnCommandFinish: options.closeOnCommandFinish
           },
           startedAt: now(),
           background: !!options.background,
@@ -200,12 +204,14 @@ export const createAgentTerminalSessions = (now = Date.now) => {
     write: async (id: string, data: string) => {
       const entry = entries.get(id)
       if (!entry || entry.info.status === 'exited') return
-      if (data === '\x03') {
+      if (data === '\x03' && !entry.info.workspaceKey) {
         await entry.options.stop()
         await finish(id, 130)
       } else if (entry.options.write) await entry.options.write(data)
     },
     status: (id: string) => entries.get(id)?.info.status ?? 'exited',
+    resize: (id: string, cols: number, rows: number) =>
+      entries.get(id)?.options.resize?.(cols, rows),
     dismiss: (id: string) => {
       completedOutput.delete(id)
       const entry = entries.get(id)
