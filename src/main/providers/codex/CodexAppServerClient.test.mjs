@@ -1,3 +1,4 @@
+import { supportsLocalHostTools } from '../hostToolTarget.ts'
 import assert from 'node:assert/strict'
 import { EventEmitter, getEventListeners } from 'node:events'
 import { readFileSync } from 'node:fs'
@@ -41,7 +42,9 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
     console: { error: (...args) => logs.push(args) },
     getAppServerCommand: () => ({ command: 'fixture', args: [] }),
     getHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
+    supportsLocalHostTools,
     registerBrowserUseSession() {},
+    removeBrowserUseSession() {},
     removeBrowserUseSessions() {},
     registerCodexBrowserTools: () => ({ close() {} }),
     registerCodexDesktopTools: () => ({ close() {} }),
@@ -131,7 +134,7 @@ test('embedded browser tools reach local Codex sources independently of host des
     const localBrowser =
       !container || container.kind === 'host' || ['distrobox', 'toolbox'].includes(container.tool)
     assert.equal(Boolean(client.browserTools), localBrowser, JSON.stringify(container))
-    assert.equal(Boolean(client.desktopTools), container === null)
+    assert.equal(Boolean(client.desktopTools), localBrowser)
     client.dispose()
   }
 })
@@ -139,7 +142,7 @@ test('embedded browser tools reach local Codex sources independently of host des
 test('browser declarations are sent on interactive start/resume and excluded from restricted queries', async (t) => {
   const { client, children } = fixture(t)
   const specs = [
-    { type: 'namespace', name: 'browser', tools: [{ type: 'function', name: 'tabs_context' }] }
+    { type: 'namespace', name: 'sele_browser', tools: [{ type: 'function', name: 'tabs_context' }] }
   ]
   client.dynamicTools.specs = specs
   for (const method of ['thread/start', 'thread/resume']) {

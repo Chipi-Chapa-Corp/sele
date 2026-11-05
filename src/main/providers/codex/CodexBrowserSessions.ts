@@ -1,3 +1,4 @@
+import { supportsLocalHostTools } from '../hostToolTarget'
 import type { AppContainerTarget } from '../../../shared/app'
 import type { BrowserAutomationScope } from '../../../shared/browser'
 import { getContainerTargetKey } from '../../containerTarget'
@@ -20,7 +21,7 @@ export function registerBrowserUseSession(
 ): void {
   // Remote providers need a forwarded transport, not access to an unrelated local browser.
   const existing = sessions.get(sessionId)
-  if (container?.kind === 'container' && container.tool === 'ssh') {
+  if (!supportsLocalHostTools(container)) {
     if (existing) {
       sessions.delete(sessionId)
       for (const listener of removedListeners) listener(sessionId)
@@ -50,10 +51,15 @@ export function getBrowserUseSession(sessionId: string): BrowserAutomationScope 
   return sessions.get(sessionId)?.scope
 }
 
+export function removeBrowserUseSession(owner: object, sessionId: string): void {
+  if (sessions.get(sessionId)?.owner !== owner) return
+  sessions.delete(sessionId)
+  for (const listener of removedListeners) listener(sessionId)
+}
+
 export function removeBrowserUseSessions(owner: object): void {
   for (const [id, session] of sessions) {
     if (session.owner !== owner) continue
-    sessions.delete(id)
-    for (const listener of removedListeners) listener(id)
+    removeBrowserUseSession(owner, id)
   }
 }

@@ -7,6 +7,7 @@
 //   #text N        answer with N markdown paragraphs
 //   #hold NAME     keep running shell tools until the test calls release(NAME)
 //   #slow MS       each shell tool sleeps MS (default 200)
+//   #browser URL   open a foreground Sele browser tab before the shell steps
 // The final answer echoes every user message of the current turn as `Reply to: a | b`.
 const http = require('node:http')
 const fs = require('node:fs')
@@ -157,6 +158,20 @@ function titleRequest(messages, body) {
 }
 
 function decide(messages, tools, body = {}) {
+  // Claude's native classifier also calls this local model. Grade only the exact,
+  // harmless localhost browser action used by the host-tools fixture.
+  const reviewText = [textOf(body.system), ...messages.map((message) => message.text ?? '')].join(
+    '\n'
+  )
+  if (
+    tools.length === 0 &&
+    reviewText.includes('Output <severity>N</severity>') &&
+    /host-tools-claude #browser http:\/\/127\.0\.0\.1:\d+\/claude #work 2/.test(reviewText) &&
+    /"mcp__Claude_Browser__tabs_create":"url=http:\/\/127\.0\.0\.1:\d+\/claude foreground=true"/.test(
+      reviewText
+    )
+  )
+    return { text: '<severity>0</severity>' }
   const title = titleRequest(messages, body)
   if (title) return title
   let start = 0
@@ -200,11 +215,39 @@ function decide(messages, tools, body = {}) {
   const agentTool = tools.find((tool) => agentToolNames.test(tool.name))
   const step = toolResults - agentCalls + 1
   const waitTool = tools.find((tool) => waitToolNames.test(tool.name))
+  const browserUrl = users
+    .map((text) => /#browser\s+(https?:\/\/\S+)/.exec(text)?.[1])
+    .find(Boolean)
+  const browserCalled = turn.some((message) =>
+    message.toolCalls?.some((name) => /tabs_create$/.test(name))
+  )
+  const browserSteps = browserUrl
+    ? turn.filter((message) =>
+        message.toolCalls?.some((name) => /tabs_create$|tool_?search/i.test(name))
+      ).length
+    : 0
+  if (browserUrl && !browserCalled) {
+    const browser = tools.find(
+      (tool) =>
+        (tool.namespace === 'sele_browser' && tool.name === 'tabs_create') ||
+        /(?:Claude_Browser|Sele_Browser)(?:__|-|\/)tabs_create$/.test(tool.name) ||
+        tool.name === 'sele_browser_tabs_create'
+    )
+    if (!browser) {
+      const search = tools.find((tool) => /tool_?search/i.test(tool.name))
+      if (search) return { delay, tool: search, kind: 'search' }
+      throw new Error(
+        'Sele browser tool was not advertised to the model; offered: ' +
+          tools.map((tool) => tool.name).join(', ')
+      )
+    }
+    return { delay, tool: browser, kind: 'browser', url: browserUrl }
+  }
   if (agent !== null && agentTool && spawned === 0)
     return { delay, tool: agentTool, kind: 'agent', prompt: '#work ' + agent }
   if (agent !== null && waitTool && spawned > 0 && waited === 0 && agentId)
     return { delay, tool: waitTool, kind: 'wait', target: agentId[1] ?? agentId[2] }
-  if (shell && toolResults - agentCalls < work)
+  if (shell && toolResults - agentCalls - browserSteps < work)
     return { delay, tool: shell, kind: 'shell', step, sleepMs }
   const hold = users.map((text) => /#hold\s+([\w-]+)/.exec(text)?.[1]).find(Boolean)
   if (shell && hold && !released.has(hold))
@@ -219,6 +262,14 @@ function decide(messages, tools, body = {}) {
 }
 
 function argumentsFor(decision) {
+  if (decision.kind === 'search')
+    return {
+      query:
+        decision.tool.name === 'ToolSearch'
+          ? 'select:mcp__Claude_Browser__tabs_create'
+          : 'tabs_create'
+    }
+  if (decision.kind === 'browser') return { url: decision.url, foreground: true }
   const schema = decision.tool.schema ?? {}
   const properties = schema.properties ?? {}
   const command = `sleep ${((decision.sleepMs ?? 200) / 1000).toFixed(2)}; echo step-${decision.step ?? 0}`

@@ -22,12 +22,15 @@ await build({
     {
       name: 'no-gui',
       setup(builder) {
-        builder.onResolve({ filter: /^electron$/ }, () => ({
-          path: 'electron',
+        builder.onResolve({ filter: /^electron$|ComputerAutomation$/ }, (args) => ({
+          path: args.path,
           namespace: 'fixture'
         }))
-        builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
-          contents: 'export const nativeImage = {}'
+        builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({
+          contents:
+            path === 'electron'
+              ? 'export const nativeImage = {}'
+              : 'export const computerAutomation = {execute: async () => {throw new Error("Connect the desktop in Sele Settings first")}}'
         }))
       }
     }
@@ -120,7 +123,12 @@ test('real MCP discovery, schema validation, suspension, fresh capability and cl
     'upload_files',
     'downloads',
     'print_pdf',
-    'record_gif'
+    'record_gif',
+    'chrome_tabs_context',
+    'chrome_navigate',
+    'chrome_computer',
+    'chrome_upload_files',
+    'native_computer'
   ]) {
     assert.ok(
       tools.tools.some((tool) => tool.name === name),
@@ -128,6 +136,12 @@ test('real MCP discovery, schema validation, suspension, fresh capability and cl
     )
   }
   assert.match(text(await client.callTool({ name: 'tabs_context' })), /chat/)
+  const desktop = await client.callTool({
+    name: 'native_computer',
+    arguments: { action: 'screenshot' }
+  })
+  assert.equal(desktop.isError, true)
+  assert.match(text(desktop), /Connect the desktop/)
   const invalid = await client.callTool({ name: 'tabs_close', arguments: { tabId: -1 } })
   assert.equal(invalid.isError, true)
   assert.equal(clients[0].calls, 1)

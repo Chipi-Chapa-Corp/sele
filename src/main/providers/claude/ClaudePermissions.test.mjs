@@ -4,6 +4,10 @@ import { getClaudePermissionAction, getClaudePermissionMode } from './ClaudePerm
 
 test('keeps host permission callbacks enabled for no-approval sessions', () => {
   assert.equal(getClaudePermissionMode({ approvalPolicy: 'never' }), 'default')
+  assert.equal(
+    getClaudePermissionMode({ approvalPolicy: 'never', approvalsReviewer: 'auto_review' }),
+    'default'
+  )
 })
 
 test('uses the SDK classifier for automatic review sessions', () => {

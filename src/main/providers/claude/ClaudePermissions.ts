@@ -27,6 +27,7 @@ export type ClaudePermissionAction =
 export const getClaudePermissionMode = (
   options: ProviderTurnOptions | undefined
 ): PermissionMode => {
+  if (options?.approvalPolicy === 'never') return 'default'
   if (options?.approvalsReviewer === 'auto_review') return 'auto'
   return 'default'
 }

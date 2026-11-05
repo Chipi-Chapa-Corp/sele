@@ -7,7 +7,10 @@ import { z } from 'zod'
 import type { BrowserAutomationScope } from '../../../shared/browser'
 import type { BrowserAutomationService } from '../../browser/BrowserAutomation'
 import { createBrowserMcpServer, type BrowserMcpIntegration } from '../../browser/BrowserMcpServer'
-import { browserToolInstructions, createBrowserTools } from '../../browser/BrowserTools'
+import {
+  createProviderBrowserTools,
+  providerBrowserToolInstructions as browserToolInstructions
+} from '../../browser/ProviderBrowserTools'
 
 export const openCodeBrowserToolPrefix = 'sele_browser_'
 
@@ -22,7 +25,7 @@ export async function createOpenCodeBrowserBridge(service: BrowserAutomationServ
   register(scope: BrowserAutomationScope): Promise<BrowserMcpIntegration>
   close(): Promise<void>
 }> {
-  const discovery = createBrowserTools(service, {
+  const discovery = createProviderBrowserTools(service, {
     providerId: 'opencode-v2',
     sessionId: 'discovery',
     cwd: '',

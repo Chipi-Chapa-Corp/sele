@@ -9,8 +9,9 @@ import { build } from 'esbuild'
 import { checkOpenCodeCredential } from './OpenCodeCredentialHealth.ts'
 import { getOpenCodePermissionRules } from './OpenCodePermissions.ts'
 
-for (const wrapped of [false, true]) {
-  test(`installed OpenCode server authenticates ${wrapped ? 'through a captured host environment' : 'directly'}, loads its plugin, and routes real tool calls`, {
+for (const target of [null, 'distrobox', 'toolbox']) {
+  const wrapped = target !== null
+  test(`installed OpenCode server authenticates ${target ? 'through a captured ' + target + ' environment' : 'directly'}, loads its plugin, and routes real tool calls`, {
     skip: !process.env.SELE_OPENCODE_RUNTIME,
     timeout: 90_000
   }, async () => {
@@ -127,6 +128,11 @@ for (const wrapped of [false, true]) {
       for (const name of ['CONFIG', 'CACHE', 'DATA', 'STATE'])
         process.env[`XDG_${name}_HOME`] = join(directory, name.toLowerCase())
       await mkdir(join(directory, 'data', 'opencode'), { recursive: true })
+      await mkdir(join(directory, 'data', 'sele', 'opencode-v2'), { recursive: true })
+      await symlink(
+        process.env.SELE_OPENCODE_RUNTIME,
+        join(directory, 'data', 'sele', 'opencode-v2', 'opencode')
+      )
       await writeFile(
         join(directory, 'data', 'opencode', 'auth.json'),
         JSON.stringify({ fixture: { type: 'api', key: 'fixture-key' } })
@@ -182,7 +188,7 @@ for (const wrapped of [false, true]) {
                   'export const getOpenCodeExecutable = () => process.env.SELE_OPENCODE_RUNTIME; export const getOpenCodeExecutableError = x => x;',
                 BrowserAutomation:
                   'export const getBrowserAutomationService = () => globalThis.__seleOpenCodeBrowserService;',
-                electron: 'export const nativeImage = {};'
+                electron: 'export const nativeImage = {}; export const app = {};'
               }
               builder.onResolve(
                 {
@@ -201,7 +207,9 @@ for (const wrapped of [false, true]) {
       const { OpenCodeServerClient, getOpenCodeV2Client } = await import(
         pathToFileURL(join(directory, 'server.mjs')).href
       )
-      server = new OpenCodeServerClient()
+      server = new OpenCodeServerClient(
+        target ? { kind: 'container', tool: target, name: 'dev' } : null
+      )
       const client = await server.getClient()
       eventAbort = new AbortController()
       const events = await client.global.event({ signal: eventAbort.signal, throwOnError: true })
@@ -370,7 +378,9 @@ for (const wrapped of [false, true]) {
       eventAbort.abort()
       await eventPump
       await server.dispose()
-      server = new OpenCodeServerClient()
+      server = new OpenCodeServerClient(
+        target ? { kind: 'container', tool: target, name: 'dev' } : null
+      )
       let releaseStartup
       let reachedStartup
       const reached = new Promise((resolve) => {

@@ -24,7 +24,7 @@ export async function checkCodexBrowserTools({
       threadId,
       turnId: 'direct-browser-test',
       callId: tool,
-      namespace: 'browser',
+      namespace: 'sele_browser',
       tool,
       arguments: args
     })
@@ -51,7 +51,7 @@ export async function checkCodexBrowserTools({
           threadId,
           turnId: 'blocked',
           callId: 'blocked',
-          namespace: 'browser',
+          namespace: 'sele_browser',
           tool: 'tabs_create',
           arguments: {}
         })

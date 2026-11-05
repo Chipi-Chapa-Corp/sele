@@ -17,8 +17,9 @@ uses Codex-managed device login/refresh; **Sign in again** recovers expired cred
 Register Codex host implementations with `CodexAppServerClient.dynamicTools.register`
 before starting/resuming threads. Declarations carry JSON schemas; implementations receive
 a cancellation context. Forks inherit declarations. Missing implementations fail explicitly;
-read-only and remote/container conversations cannot acquire local host capabilities. Codex's
-scoped Browser pane tools are also available in local Distrobox/Toolbox conversations.
+read-only and separate-network remote/container conversations cannot acquire local host
+capabilities. All four providers expose browser, shared-desktop, and attached-Chrome tools
+for local host, Distrobox, and Toolbox conversations.
 See `CodexDynamicTools.ts` and the [browser/desktop integration](browser-use.md).
 
 ## MCP Apps

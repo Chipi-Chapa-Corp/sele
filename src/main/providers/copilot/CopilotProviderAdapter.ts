@@ -1,3 +1,4 @@
+import { supportsLocalHostTools } from '../hostToolTarget'
 import { CopilotHistoryPages } from './CopilotHistoryPages'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createCopilotTerminalSessions } from './CopilotTerminalSessions'
@@ -2614,8 +2615,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   })
 
   private browserAllowed = (state: CopilotSessionState): boolean =>
-    !state.container &&
-    normalizeContainerTarget(state.options?.container).kind !== 'container' &&
+    supportsLocalHostTools(state.container) &&
+    supportsLocalHostTools(state.options?.container) &&
     state.options?.sandboxMode !== 'read-only' &&
     !this.hiddenSessionIds.has(state.id)
 

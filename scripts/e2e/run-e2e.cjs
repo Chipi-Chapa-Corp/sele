@@ -17,6 +17,7 @@ const { Sele } = require('./sele.cjs')
 const { Runner, MainLog } = require('./runner.cjs')
 
 const phases = {
+  'host-tools': require('./scenarios/host-tools.cjs'),
   messaging: require('./scenarios/messaging.cjs'),
   persistence: require('./scenarios/persistence.cjs'),
   navigation: require('./scenarios/navigation.cjs'),

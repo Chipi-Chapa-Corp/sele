@@ -6,6 +6,7 @@ import type {
   BrowserAutomationTab
 } from '../../shared/browser'
 import { browserApi } from './browserApi'
+import { isExpectedWebviewUnavailableError } from './browserWebview'
 
 type Tab = {
   id: string
@@ -78,7 +79,8 @@ export function useBrowserAutomation(options: Options): void {
             }
           ]
         } catch (error) {
-          console.error('[caught:useBrowserAutomation:readTabs]', error)
+          if (!isExpectedWebviewUnavailableError(error))
+            console.error('[caught:useBrowserAutomation:readTabs]', error)
           return []
         }
       })
@@ -193,7 +195,8 @@ export function useBrowserAutomation(options: Options): void {
         try {
           return state.webviews.current.get(item.id)?.getWebContentsId() === request.tabId
         } catch (error) {
-          console.error('[caught:useBrowserAutomation:handle]', error)
+          if (!isExpectedWebviewUnavailableError(error))
+            console.error('[caught:useBrowserAutomation:handle]', error)
           return false
         }
       })

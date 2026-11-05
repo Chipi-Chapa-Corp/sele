@@ -6,20 +6,25 @@ input is serialized per window and restores host focus/selection, including afte
 
 | Provider | Embedded browser integration |
 | --- | --- |
-| Codex | Direct `browser` tools for local interactive chats, including Distrobox/Toolbox. Optional native `iab` transport also supports compatible Browser Use plugins. |
+| Codex | Direct `sele_browser`, `chrome`, and `sele.computer` tools. Optional native `iab` transport also supports compatible Browser Use plugins. |
 | Claude | `Claude_Browser` MCP tools through the Agent SDK. |
 | Copilot | `Sele_Browser` over authenticated localhost HTTP MCP. |
 | OpenCode | Ephemeral `sele_browser_*` plugin routes trusted runtime session context to scoped MCP endpoints. |
 
-Host browser tools are scoped to supported local interactive sessions. One-shot, read-only,
-and remote/container sessions do not receive host capabilities. Provider permission handling
-still applies. Stop, disposal, or replacement revokes the owning capability; expired element
+All four providers expose the same embedded-browser, attached-Chrome, and shared-desktop
+operations in writable interactive chats on the host and local Distrobox/Toolbox sources.
+`supportsLocalHostTools` centralizes this source policy. One-shot and read-only sessions do
+not receive these capabilities. Separate SSH, Docker, and Podman network namespaces need
+transport forwarding and do not receive unreachable host endpoints. Provider permissions
+still apply. Stop, disposal, or replacement revokes the owning capability; expired element
 references cannot be reused. Global/project workspaces share tabs, with exclusive debugger
 leases; chat workspaces isolate sessions.
 
-Codex's direct Browser pane tools also work in local Distrobox/Toolbox chats and do not
-require `js_repl` or browser plugins. This does not grant those chats native desktop or
-attached Chrome access. SSH, Docker, and Podman chats do not receive the direct tools.
+Codex's direct tools do not require `js_repl` or browser plugins. Other providers share
+`ProviderBrowserTools`: ordinary names control the embedded Browser pane, `chrome_*`
+names control attached Chrome, and `native_computer` controls the shared desktop. Chrome
+and desktop connections must still be explicitly connected in Settings. Disconnected tools
+return connection instructions instead of falling back to another browser or desktop.
 
 ## Code boundaries
 
@@ -38,7 +43,7 @@ UI, preview-server management, and a complete cross-frame locator API are unavai
 
 ## Explicit computer and Chrome connections
 
-**Settings → Browser & desktop** connects local writable Codex/Claude conversations to these
+**Settings → Browser & desktop** connects local writable conversations in all four providers to these
 capabilities. Connections are not restored after restart.
 
 **Connect computer** starts a Linux host helper. X11 requires `xdotool` and ImageMagick;
@@ -55,9 +60,14 @@ revokes the old credential. Chrome 125+ is required for flattened iframe session
 
 ## Checks
 
-Run `npm run test:browser-unit` and `test:browser-use`; the latter opens a fixture window and
+Run `npm run test:browser-unit`, `test:desktop`, and `test:browser-use`; the latter opens a fixture window and
 requires [GUI isolation](README.md). Optional installed-runtime checks use
 `SELE_BROWSER_RUNTIME`, `SELE_CLAUDE_RUNTIME`, and `SELE_COPILOT_RUNTIME` (path or `bundled`).
 `SELE_OPENCODE_RUNTIME=/absolute/path npm run test:opencode` checks plugin integration.
 `scripts/tests/test-native-computer.py` tests private-display X11 input/capture. Real Chrome
 extension pairing, Wayland portals, and native biometric flows need separate host validation.
+
+`npm run test:e2e -- --phase host-tools` drives browser and shell tool calls through all
+installed provider CLIs against a scripted local model and temporary profiles. Run it with
+GUI isolation. The shared catalog test also compares every provider's advertised tool set
+and checks that screenshot images survive SDK, dynamic-tool, HTTP MCP, and plugin transports.

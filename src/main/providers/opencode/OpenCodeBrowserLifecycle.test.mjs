@@ -1,3 +1,5 @@
+import { supportsLocalHostTools } from '../hostToolTarget.ts'
+import { getContainerTargetKey } from '../../containerTarget.ts'
 import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit.ts'
 import { PendingMessageEdits } from '../PendingMessageEdits.ts'
 import assert from 'node:assert/strict'
@@ -40,7 +42,8 @@ const code = ts.transpileModule(
 ).outputText
 const fixture = () => {
   const context = vm.createContext({
-    getContainerTargetKey: () => 'host',
+    supportsLocalHostTools,
+    getContainerTargetKey,
     PendingMessageEdits,
     console,
     getOpenCodeUsageLimitMessage,
@@ -114,7 +117,7 @@ const fixture = () => {
   return { adapter, state, calls, client, browser, entry }
 }
 
-test('adapter binds interactive turns and revokes before abort, while restricted/container turns get no capability', async () => {
+test('adapter binds interactive turns and revokes before abort, while restricted/remote turns get no capability', async () => {
   const { adapter, state, calls } = fixture()
   await adapter.sendPrompt(state, 'test')
   assert.equal(calls[0][0], 'register')
@@ -129,6 +132,19 @@ test('adapter binds interactive turns and revokes before abort, while restricted
   state.container = { kind: 'container', tool: 'ssh' }
   await adapter.sendPrompt(state, 'test')
   assert.ok(!calls.some((x) => x[0] === 'register'))
+})
+
+test('OpenCode local container turns bind host tools using the container workspace key', async () => {
+  for (const tool of ['distrobox', 'toolbox']) {
+    const { adapter, state, calls } = fixture()
+    state.container = { kind: 'container', tool, name: 'dev' }
+    await adapter.sendPrompt(state, 'test')
+    assert.equal(calls[0][0], 'register')
+    assert.equal(calls[0][1].containerKey, `${tool}:dev`)
+    assert.equal(calls[0][1].cwd, '/project')
+    await adapter.abortState(state)
+    assert.deepEqual(calls.slice(-3), ['suspend', 'close', 'abort'])
+  }
 })
 
 test('adapter revokes on idle, error, and deletion, and rejects an aborted registration', async () => {

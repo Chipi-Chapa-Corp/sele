@@ -6,7 +6,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { z } from 'zod'
 import type { BrowserAutomationScope } from '../../shared/browser'
 import type { BrowserAutomationService } from './BrowserAutomation'
-import { browserToolInstructions, createBrowserTools } from './BrowserTools'
+import { createProviderBrowserTools, providerBrowserToolInstructions } from './ProviderBrowserTools'
 
 export type BrowserMcpIntegration = {
   url: string
@@ -26,7 +26,7 @@ export type BrowserMcpOptions = {
 
 /** A local, authenticated MCP endpoint for runtimes with supported HTTP MCP configuration.
  * The bearer token is a per-session capability; it is never published in discovery or logs.
- * Remote/container sessions must not receive this host endpoint.
+ * Local Distrobox/Toolbox runtimes share loopback; other network namespaces need forwarding.
  */
 export async function createBrowserMcpServer(
   service: BrowserAutomationService,
@@ -35,7 +35,7 @@ export async function createBrowserMcpServer(
 ): Promise<BrowserMcpIntegration> {
   // Snapshot the scope: a caller cannot widen an existing endpoint by mutating its input.
   const boundScope = { ...scope }
-  let browser: ReturnType<typeof createBrowserTools> | null = createBrowserTools(
+  let browser: ReturnType<typeof createProviderBrowserTools> | null = createProviderBrowserTools(
     service,
     boundScope
   )
@@ -72,7 +72,7 @@ export async function createBrowserMcpServer(
     }
     const server = new Server(
       { name: 'Sele_Browser', version: '1.0.0' },
-      { capabilities: { tools: {} }, instructions: browserToolInstructions }
+      { capabilities: { tools: {} }, instructions: providerBrowserToolInstructions }
     )
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -163,7 +163,7 @@ export async function createBrowserMcpServer(
     suspend,
     resume: () => {
       if (closed) throw new Error('Browser MCP endpoint closed')
-      browser ??= createBrowserTools(service, boundScope)
+      browser ??= createProviderBrowserTools(service, boundScope)
     },
     close: async () => {
       if (closed) return

@@ -1,3 +1,5 @@
+import { getContainerTargetKey } from '../../containerTarget.ts'
+import { supportsLocalHostTools } from '../hostToolTarget.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -23,7 +25,7 @@ const code = ts.transpileModule(
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
 ).outputText
 
-function setup({ remote = false, readOnly = false, failQuery = false } = {}) {
+function setup({ remote = false, container = null, readOnly = false, failQuery = false } = {}) {
   const events = []
   let queryOptions
   const permissionHandler = async () => ({ behavior: 'deny', message: 'test permission policy' })
@@ -33,6 +35,7 @@ function setup({ remote = false, readOnly = false, failQuery = false } = {}) {
   }
   const control = { close: () => events.push('query.close') }
   const context = vm.createContext({
+    supportsLocalHostTools,
     clearTimeout,
     AsyncMessageQueue: class {
       close() {
@@ -46,7 +49,7 @@ function setup({ remote = false, readOnly = false, failQuery = false } = {}) {
       return integration
     },
     claudeBrowserServerName: 'Claude_Browser',
-    getContainerTargetKey: (container) => (container ? 'remote' : 'host'),
+    getContainerTargetKey,
     getClaudeModel: () => 'model',
     isExpectedClaudeQueryShutdownError: () => false,
     query: ({ options }) => {
@@ -64,7 +67,7 @@ function setup({ remote = false, readOnly = false, failQuery = false } = {}) {
     queryStartupRevision: 0,
     options: { cwd: '/project', sandboxMode: readOnly ? 'read-only' : 'workspace-write' },
     cwd: '/project',
-    container: remote ? { name: 'remote' } : null,
+    container: remote ? { kind: 'container', tool: 'ssh', name: 'remote' } : container,
     messages: [],
     backgroundTaskIds: new Set(),
     partialMessages: new Map()
@@ -115,6 +118,18 @@ test('remote and read-only Claude queries cannot acquire the local browser capab
     assert.equal(harness.state.browser, null)
     assert.equal(harness.options().mcpServers, undefined)
     assert.ok(!harness.events.some((event) => Array.isArray(event)))
+  }
+})
+
+test('Claude local container queries receive all host tools with their real workspace scope', async () => {
+  for (const tool of ['distrobox', 'toolbox']) {
+    const harness = setup({ container: { kind: 'container', tool, name: 'dev' } })
+    await harness.instance.startStateQuery(harness.state)
+    assert.equal(harness.options().mcpServers.Claude_Browser, harness.integration.server)
+    assert.equal(harness.events[0][1].cwd, '/project')
+    assert.equal(harness.events[0][1].containerKey, `${tool}:dev`)
+    await harness.instance.closeStateQuery(harness.state)
+    assert.ok(harness.events.includes('browser.close'))
   }
 })
 

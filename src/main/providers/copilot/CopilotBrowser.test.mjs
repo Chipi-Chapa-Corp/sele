@@ -19,6 +19,14 @@ await build({
     {
       name: 'browser-lifecycle-fixture',
       setup(builder) {
+        builder.onResolve({ filter: /\?nodeWorker$/ }, () => ({
+          path: 'worker',
+          namespace: 'worker-fixture'
+        }))
+        builder.onLoad({ filter: /.*/, namespace: 'worker-fixture' }, () => ({
+          contents:
+            'export default () => { throw new Error("Unexpected database worker in browser lifecycle fixture") }'
+        }))
         builder.onResolve(
           { filter: /(?:BrowserAutomation|BrowserMcpServer|SqliteUsageReader|pendingMessages)$/ },
           (args) => ({ path: args.path.split('/').at(-1), namespace: 'fixture' })
@@ -140,7 +148,7 @@ test('Copilot creates and resumes session-local MCP config with scope and native
   assert.equal(bridges[1].closed, true)
 })
 
-test('read-only, one-shot and container sessions do not receive the host browser', async () => {
+test('read-only, one-shot and separate-network sessions do not receive unreachable host tools', async () => {
   for (const [options, interactive] of [
     [{ cwd: '/project', sandboxMode: 'read-only' }, true],
     [{ cwd: '/project' }, false],
@@ -152,6 +160,25 @@ test('read-only, one-shot and container sessions do not receive the host browser
     assert.equal(bridges.length, 0)
     assert.equal(configurations[0].mcpServers, undefined)
     adapter.dispose()
+  }
+})
+
+test('Copilot local container chats register and resume host tools in the correct scope', async () => {
+  for (const tool of ['distrobox', 'toolbox']) {
+    const { adapter, bridges, configurations } = fixture()
+    const container = { kind: 'container', tool, name: 'dev' }
+    const options = { cwd: '/project', container }
+    const state = adapter.createState('chat', options)
+    await adapter.createSession(state, options)
+    assert.equal(configurations[0].mcpServers.Sele_Browser.type, 'http')
+    assert.equal(bridges[0].scope.containerKey, `${tool}:dev`)
+    assert.equal(bridges[0].scope.cwd, '/project')
+    state.session = null
+    await adapter.ensureSession('chat', options)
+    assert.equal(configurations[1].mcpServers.Sele_Browser.type, 'http')
+    assert.equal(bridges[0].closed, true)
+    adapter.dispose()
+    assert.equal(bridges[1].closed, true)
   }
 })
 

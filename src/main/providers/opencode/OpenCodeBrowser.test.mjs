@@ -21,12 +21,15 @@ await build({
     {
       name: 'no-gui',
       setup(builder) {
-        builder.onResolve({ filter: /^electron$/ }, () => ({
-          path: 'electron',
+        builder.onResolve({ filter: /^electron$|ComputerAutomation$/ }, (args) => ({
+          path: args.path,
           namespace: 'fixture'
         }))
-        builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
-          contents: 'export const nativeImage = {}'
+        builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({
+          contents:
+            path === 'electron'
+              ? 'export const nativeImage = {}'
+              : 'export const computerAutomation = {execute: async () => {throw new Error("Connect the desktop in Sele Settings first")}}'
         }))
       }
     }
@@ -98,6 +101,8 @@ test('generated plugin routes trusted runtime sessions, asks permission, revokes
       session: { get: async () => ({ location: { directory: callerDirectory } }) }
     })
     const tool = definitions.get('sele_browser_tabs_context')
+    for (const name of ['chrome_tabs_context', 'chrome_computer', 'native_computer'])
+      assert.ok(definitions.has(`sele_browser_${name}`), name)
     const result = await tool.execute(
       { sessionID: 'sibling' },
       context('chat', '/project', async (x) => approvals.push(x))

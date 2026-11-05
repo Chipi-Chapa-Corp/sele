@@ -7,9 +7,19 @@ import {
 } from '../../desktop/ComputerTools'
 import { chromeAutomation } from '../../desktop/ChromeAutomation'
 import { createBrowserTools } from '../../browser/BrowserTools'
+import { getBrowserUseSession, onBrowserUseSessionRemoved } from './CodexBrowserSessions'
 
 export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(): void } {
   const chrome = new Map<string, ReturnType<typeof createBrowserTools>>()
+  const revoke = (sessionId: string): void => {
+    chrome.get(sessionId)?.close()
+    chrome.delete(sessionId)
+  }
+  let unsubscribe: (() => void) | undefined
+  const subscribe = (): void => {
+    unsubscribe ??= onBrowserUseSessionRemoved(revoke)
+  }
+  subscribe()
   const convert = (
     result: Awaited<ReturnType<typeof executeComputerTool>>
   ): CodexDynamicToolResult => ({
@@ -49,14 +59,12 @@ export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(
       },
       async (args, context) => {
         if (context.signal.aborted) throw new Error('Tool canceled.')
+        const scope = getBrowserUseSession(context.threadId)
+        if (!scope) throw new Error('Chrome session is not owned by Sele.')
+        subscribe()
         let workspace = chrome.get(context.threadId)
         if (!workspace) {
-          workspace = createBrowserTools(chromeAutomation, {
-            providerId: 'codex',
-            sessionId: context.threadId,
-            cwd: '',
-            containerKey: 'host'
-          })
+          workspace = createBrowserTools(chromeAutomation, scope)
           chrome.set(context.threadId, workspace)
         }
         const tool = workspace.tools.find((tool) => tool.name === definition.name)!
@@ -69,6 +77,8 @@ export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(
     close: () => {
       for (const workspace of chrome.values()) workspace.close()
       chrome.clear()
+      unsubscribe?.()
+      unsubscribe = undefined
     }
   }
 }

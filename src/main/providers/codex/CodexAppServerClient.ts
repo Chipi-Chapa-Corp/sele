@@ -1,4 +1,8 @@
-import { registerBrowserUseSession, removeBrowserUseSessions } from './CodexBrowserSessions'
+import {
+  registerBrowserUseSession,
+  removeBrowserUseSession,
+  removeBrowserUseSessions
+} from './CodexBrowserSessions'
 import { spawn } from 'node:child_process'
 import { app } from 'electron'
 import { createInterface } from 'node:readline'
@@ -9,6 +13,7 @@ import { getCodexAccountViewCommand } from './CodexAccountView'
 import { CodexDynamicTools } from './CodexDynamicTools'
 import { registerCodexDesktopTools } from './CodexDesktopTools'
 import { registerCodexBrowserTools } from './CodexBrowserTools'
+import { supportsLocalHostTools } from '../hostToolTarget'
 import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
 
 type RpcError = {
@@ -115,16 +120,10 @@ export class CodexAppServerClient {
     private readonly accountId?: string,
     private readonly persistent = false
   ) {
-    if (!container) this.desktopTools = registerCodexDesktopTools(this.dynamicTools)
-    // Local dev containers can use the scoped Browser pane without receiving
-    // host desktop/Chrome access or depending on a plugin's JS runtime.
-    if (
-      !container ||
-      container.kind === 'host' ||
-      container.tool === 'distrobox' ||
-      container.tool === 'toolbox'
-    )
+    if (supportsLocalHostTools(container)) {
+      this.desktopTools = registerCodexDesktopTools(this.dynamicTools)
       this.browserTools = registerCodexBrowserTools(this.dynamicTools)
+    }
   }
   private desktopTools: ReturnType<typeof registerCodexDesktopTools> | null = null
   private browserTools: ReturnType<typeof registerCodexBrowserTools> = null
@@ -193,6 +192,7 @@ export class CodexAppServerClient {
       ])
       this.ownedThreadIds.delete(threadId)
       this.browserSessionCwds.delete(threadId)
+      removeBrowserUseSession(this, threadId)
     } finally {
       clearTimeout(timeout)
       unsubscribe()
@@ -262,6 +262,7 @@ export class CodexAppServerClient {
     ) {
       this.ownedThreadIds.delete(input.threadId)
       this.browserSessionCwds.delete(input.threadId)
+      removeBrowserUseSession(this, input.threadId)
     }
     return result
   }
@@ -568,6 +569,7 @@ export class CodexAppServerClient {
           if (threadId) {
             this.ownedThreadIds.delete(threadId)
             this.browserSessionCwds.delete(threadId)
+            removeBrowserUseSession(this, threadId)
           }
         }
         this.notificationListeners.forEach((listener) => listener(notification))

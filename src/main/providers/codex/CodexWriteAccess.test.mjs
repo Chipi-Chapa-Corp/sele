@@ -178,7 +178,12 @@ test('client ownership lasts through idle turns and clears on disposal or proces
       'dispose',
       'handleProcessEnd'
     ],
-    { CodexDynamicTools, registerBrowserUseSession() {}, removeBrowserUseSessions() {} }
+    {
+      CodexDynamicTools,
+      registerBrowserUseSession() {},
+      removeBrowserUseSession() {},
+      removeBrowserUseSessions() {}
+    }
   )
   Object.assign(client, {
     start: async () => {},
@@ -217,6 +222,7 @@ const releaseFixture = (globals = {}) => {
       clearTimeout,
       requestTimeoutMs: 30_000,
       registerBrowserUseSession() {},
+      removeBrowserUseSession() {},
       ...globals
     }
   )

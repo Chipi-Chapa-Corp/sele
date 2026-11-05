@@ -1,3 +1,4 @@
+import { supportsLocalHostTools } from '../hostToolTarget'
 import { isProviderUsageLimitError } from '../../../shared/providerErrors'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createClaudeTerminalSessions } from './ClaudeTerminalSessions'
@@ -2729,9 +2730,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         !startOptions.forkFrom &&
         !startOptions.resumeAt
       const browserService = getBrowserAutomationService()
-      // Do not connect remote/container or restricted queries to an unrelated host browser.
+      // Local container sources share Sele’s scoped host tools.
       const browser =
-        browserService && !state.container && !queryReadOnly
+        browserService && supportsLocalHostTools(state.container) && !queryReadOnly
           ? createClaudeBrowserIntegration(browserService, {
               providerId: 'claude',
               sessionId: state.id,

@@ -1,3 +1,4 @@
+import { supportsLocalHostTools } from '../hostToolTarget'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createOpenCodeTerminalSessions } from './OpenCodeTerminalSessions'
 import { PersistentPendingMessages } from '../PersistentPendingMessages'
@@ -2911,12 +2912,12 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const client = entry.client
     this.closeBrowser(state)
     const generation = state.browserGeneration
-    if (!state.container && options?.sandboxMode !== 'read-only') {
+    if (supportsLocalHostTools(state.container) && options?.sandboxMode !== 'read-only') {
       const browser = await entry.server.registerBrowser({
         providerId: this.id,
         sessionId: state.id,
         cwd: state.directory,
-        containerKey: 'host'
+        containerKey: getContainerTargetKey(state.container)
       })
       if (generation !== state.browserGeneration || this.states.get(state.id) !== state) {
         await browser?.close()

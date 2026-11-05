@@ -15,10 +15,34 @@ const {
   registerBrowserUseSession,
   getBrowserUseSession,
   onBrowserUseSessionRemoved,
+  removeBrowserUseSession,
   removeBrowserUseSessions
 } = await import(
   `data:text/javascript;base64,${Buffer.from(outputFiles[0].contents).toString('base64')}`
 )
+
+test('closing one conversation revokes only its browser and Chrome scope', () => {
+  const owner = {}
+  registerBrowserUseSession(owner, 'closing', '/project', null)
+  registerBrowserUseSession(owner, 'sibling', '/project', null)
+  const closing = mockBridgeClient('closing')
+  const sibling = mockBridgeClient('sibling')
+  try {
+    removeBrowserUseSession({}, 'closing')
+    assert.equal(closing.closeCount, 0, 'another owner cannot revoke the scope')
+    removeBrowserUseSession(owner, 'closing')
+    assert.equal(closing.closeCount, 1)
+    assert.equal(getBrowserUseSession('closing'), undefined)
+    assert.equal(sibling.closeCount, 0)
+    assert.ok(getBrowserUseSession('sibling'))
+    removeBrowserUseSession(owner, 'closing')
+    assert.equal(closing.closeCount, 1)
+  } finally {
+    closing.unsubscribe()
+    sibling.unsubscribe()
+    removeBrowserUseSessions(owner)
+  }
+})
 
 function mockBridgeClient(sessionId) {
   let leaseHeld = true

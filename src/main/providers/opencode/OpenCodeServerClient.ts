@@ -1,3 +1,4 @@
+import { supportsLocalHostTools } from '../hostToolTarget'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:net'
@@ -123,7 +124,7 @@ export class OpenCodeServerClient {
       OPENCODE_SERVER_USERNAME: 'opencode'
     }
     const browserService = getBrowserAutomationService()
-    if (!this.container && browserService) {
+    if (supportsLocalHostTools(this.container) && browserService) {
       try {
         // Merge only the ephemeral process environment; never write OpenCode user/project config.
         const content = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}')

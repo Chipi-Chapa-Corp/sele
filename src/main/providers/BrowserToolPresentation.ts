@@ -79,11 +79,12 @@ const computerActions: Record<string, string> = {
 }
 
 export function getBrowserToolLabel(names: string[], input: unknown): string | null {
+  if (names.some((name) => /^sele(?:__|\/)computer$/.test(name))) return 'Used shared desktop'
   const browserTool = names
     .map(
       (name) =>
         name.match(
-          /^(?:mcp__)?(?:Claude_Browser|Sele_Browser|OpenCode_Browser)(?:__|\/|_)(.+)$/i
+          /^(?:mcp__)?(?:Claude_Browser|Sele_Browser|OpenCode_Browser|sele_browser|chrome)(?:__|\/|_|-)(.+)$/i
         )?.[1]
     )
     .find(Boolean)

@@ -53,7 +53,7 @@ export function registerCodexBrowserTools(registry: CodexDynamicTools): { close(
           )
         }
       },
-      'browser'
+      'sele_browser'
     )
   definitions.close()
   return {

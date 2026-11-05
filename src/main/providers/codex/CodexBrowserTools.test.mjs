@@ -95,7 +95,7 @@ function fixture(t) {
       threadId: id,
       turnId: 'turn',
       callId: 'call',
-      namespace: 'browser',
+      namespace: 'sele_browser',
       tool,
       arguments: args
     })
@@ -109,7 +109,7 @@ function fixture(t) {
 
 test('Codex can discover and open visible Browser pane tabs without plugins or js_repl', async (t) => {
   const { registry, bind, call, clients } = fixture(t)
-  const browser = registry.specs.find((spec) => spec.name === 'browser')
+  const browser = registry.specs.find((spec) => spec.name === 'sele_browser')
   for (const name of ['tabs_context', 'tabs_create', 'navigate', 'read_page', 'computer'])
     assert.ok(
       browser.tools.some((tool) => tool.name === name),

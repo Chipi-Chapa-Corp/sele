@@ -1,3 +1,4 @@
+import { isExpectedWebviewUnavailableError } from '../browserWebview'
 import { BrowserChrome } from './BrowserChrome'
 import { MobileBrowserPanel } from './MobileBrowserPanel'
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
@@ -156,12 +157,6 @@ const createInitialBrowserWorkspaces = (
 
 const getBrowserErrorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Unable to load this page.'
-
-const isExpectedWebviewUnavailableError = (error: unknown): boolean =>
-  error instanceof Error &&
-  /webview.*(?:not attached|dom-ready)|object has been destroyed|webcontents (?:was|is) destroyed|render frame was disposed/i.test(
-    error.message
-  )
 
 const BrowserPage: React.FC<BrowserPageProps> = ({
   applicationZoomFactor,
