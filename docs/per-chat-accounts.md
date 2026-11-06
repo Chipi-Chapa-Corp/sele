@@ -34,9 +34,8 @@ per account. See `ClaudeAccountStore.ts` and the root [setup guide](../README.md
 
 ## Checks
 
-- `npm run test:chat-accounts`: routing, storage, and credential isolation.
-- `node scripts/tests/test-codex-account-handoff.cjs`: installed Codex with fixture keys/history;
+- `npm test -- ChatAccounts CodexAccount ClaudeAccount`: routing, storage, and credential isolation.
+- `npm run test:runtime -- codex-account-handoff`: installed Codex with fixture keys/history;
   checks shared state, writer exclusion, and repeated handoffs without inference. Set
   `SELE_TEST_CODEX_NATIVE=1` for the shell-free launch path used on Windows.
-- `node scripts/tests/test-chat-account-switch.cjs` and `test-account-limits.cjs` in the same
-  directory: picker, IPC, usage, and saved bindings; run with [GUI isolation](README.md).
+- `npm run test:ui -- chat-account-switch account-limits`: picker, IPC, usage, and saved bindings; run with [GUI isolation](README.md).

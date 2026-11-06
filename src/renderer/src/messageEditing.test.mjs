@@ -1,3 +1,4 @@
+import { workspaceTestGlobals } from '../../../scripts/tests/helpers/workspace-controller.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -106,7 +107,10 @@ for (const type of ['message', 'pending']) {
         },
         console
       }
-      const send = vm.runInNewContext(`${code(['handleSendMessage'])}; handleSendMessage`, globals)
+      const send = vm.runInNewContext(
+        `${code(['handleSendMessage'])}; handleSendMessage`,
+        workspaceTestGlobals(globals)
+      )
       assert.equal(await send(attachments.length ? '' : 'caption', undefined, attachments), true)
       assert.equal(packet.method, type === 'pending' ? 'editPendingMessage' : 'editMessage')
       assert.equal(packet.args[2], type === 'pending' ? 'pending-id' : 'server-turn')

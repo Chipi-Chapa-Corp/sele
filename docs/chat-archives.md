@@ -33,5 +33,5 @@ Cancellation closes the dialog and prevents navigation. Preparation stops, in-fl
 settle before cleanup, and partial native sessions stay persistently hidden. Temporary files
 and archived payloads are removed. Errors retain the preview for retry.
 
-Run `npm run test:chat-archive`; its GUI portion needs [isolation](README.md). The suite uses
+Run `npm run test:ui -- chat-archive`; its GUI portion needs [isolation](README.md). The suite uses
 temporary SQLite/provider fixtures and starts no paid model turns.

@@ -93,7 +93,10 @@ const setup = (overrides = {}) => {
     console: { error() {} },
     ...overrides
   }
-  const start = vm.runInNewContext(`${controller}; handleStartGoalChat`, globals)
+  const start = vm.runInNewContext(
+    `${controller}; handleStartGoalChat`,
+    workspaceTestGlobals(globals)
+  )
   return { start, globals, calls, states, drafts }
 }
 

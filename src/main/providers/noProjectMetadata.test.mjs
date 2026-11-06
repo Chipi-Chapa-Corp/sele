@@ -29,6 +29,7 @@ const fixture = () => {
   const native = (id) => ({ id, cwd: '/home/user', items: [], container: null, preview: '' })
   const context = vm.createContext({
     console,
+    backgroundChatRecovery: { observe() {} },
     persistentChatHistory: { invalidate() {}, observe() {}, beginOpening: () => null },
     saveProviderChatHistory: () => {},
     isNoProjectChat,

@@ -26,5 +26,5 @@ threads. Credentials stay in the main process; temporary events do not enter vis
 or usage. To remove the fallback once native support is available, delete the Desktop delegate,
 configuration module, and compatibility tests at the `CodexPromptSuggestions.ts` boundary.
 
-Run `npm run test:prompt-suggestions` for provider events, persistence, and composer behavior.
+Run `npm test -- CodexPromptSuggestions CodexDesktopPredictions ClaudeSendTransition` for provider events, persistence, and composer behavior.
 Its GUI fixtures require the [isolated display](README.md).

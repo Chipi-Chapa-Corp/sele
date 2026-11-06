@@ -116,7 +116,6 @@ test('failed writes propagate so the UI cannot report a preset as saved', () => 
 // Exercise the production handler: independent field callbacks cannot restore review
 // when switching away from full access because they close over the old access mode.
 const ts = (await import('typescript')).default
-const { readFileSync } = await import('node:fs')
 const vm = await import('node:vm')
 const source = ts.createSourceFile(
   'controller.tsx',

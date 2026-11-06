@@ -77,11 +77,11 @@ the turn's model, permissions, container and account, without resending attachme
 requests. Outbox delivery rearms this policy for subsequent turns. Failed turns no longer
 show a **Continue in …** button; queued prompts remain visible and removable in the queue.
 
-Run `npm run test:provider-errors` for cross-provider classification and retry regressions.
+Run `npm test -- ProviderErrors ProviderNetworkRetry UsageResetContinuation` for cross-provider classification and retry regressions.
 
 ## Checks
 
-`npm run test:provider-interactions` covers validation and widget ownership/CSP.
-`test:codex-interactions`, `test:claude-history`, and `test:copilot` cover native paths;
-`test:chat-goal` and `test:mcp-apps:ui` include GUI fixtures. Run GUI portions on the
+`npm test -- ProviderElicitation mcpApps/` covers validation and widget ownership/CSP.
+`npm test -- providers/codex/ providers/claude/ providers/copilot/` covers native paths;
+`npm run test:ui -- chat-goal mcp-apps` runs the GUI fixtures. Run GUI portions on the
 [isolated display](README.md) with temporary profiles.

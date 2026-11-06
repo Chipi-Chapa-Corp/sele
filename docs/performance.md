@@ -141,27 +141,28 @@ revision cannot retain all earlier revisions. Bounds and cache thresholds live i
 
 ## Checks and profiling
 
-- `npm run test:performance-pipeline`, `test:chat-scaling`, and `test:chat-state` cover
-  incremental work, paging, immutable snapshots, and rendering state.
-- `npm run test:sqlite-worker` checks worker concurrency, durability, migrations, and recovery.
+- `npm test` covers incremental work, paging, immutable snapshots, and rendering state.
+  Use file filters such as `npm test -- chatScaling readCache markdownPlan` for focused runs.
+- `npm run test:integration -- database` checks worker concurrency, durability, migrations, and recovery.
 - `npm run benchmark:performance` and `benchmark:render-caches` measure synthetic hot paths.
-- GUI fixtures: `test:active-chat-switching`, `test:streaming-composer`, `test:retained-chats`,
-  `test:progressive-markdown`, and `test:message-continuity` via `npm run`.
-- `npm run test:renderer-performance` checks worker chat isolation, bounded streaming jobs,
+- GUI fixtures: `npm run test:ui -- retained-chats progressive-markdown message-continuity`.
+  Active switching and typing benchmarks use `npm run benchmark:active-chat-switching`
+  and `npm run benchmark:streaming-composer`.
+- `npm run test:ui -- renderer-performance` checks worker chat isolation, bounded streaming jobs,
   500 responsive consumers sharing one browser listener, and 60 animated marks without
-  per-frame SVG writes. `test:composer-input` checks zero
+  per-frame SVG writes. `npm run test:ui -- composer-input` checks zero
   settings/tools/usage renders while typing with 2,000 models, plus focus, caret and selection.
-- `test:workspace-navigation` also asserts zero regroupings when toggling empty search;
+- `benchmark:workspace-navigation` also asserts zero regroupings when toggling empty search;
   use `SELE_BENCHMARK_CHAT_COUNT=1000` for the larger catalog. Departing inert animation
   rows are excluded when measuring current selection.
-- `test:workspace-interactions` keeps rich conversations streaming while switching chats,
+- `benchmark:workspace-interactions` keeps rich conversations streaming while switching chats,
   rapidly cycling All/Active/Sleeping/Working, and completing selected/unselected chats.
   Its 2,400-chat fixture checks bounded mounted rows, document-projection reads, overlay
   scans, drag reorder, pagination, and Tab/Shift+Tab across virtual window boundaries.
   Set `SELE_BENCHMARK_PROFILE` to save CPU/trace data and phase measurements.
   Detailed browser tracing requires `SELE_BENCHMARK_TRACE=1`; it adds substantial overhead
   to development measurements.
-- `test:workspace-vite` uses the real Vite server and module graph with disposable APIs,
+- `benchmark:workspace-vite` uses the real Vite server and module graph with disposable APIs,
   recording cold/warm loading, fully formatted cached chats, and sidebar filtering while
   rich chats stream. `SELE_BENCHMARK_STRESS=1` adds twelve rapid cached-chat selections
   with a painted-view identity check and forty rapid filter changes, and
@@ -174,11 +175,11 @@ revision cannot retain all earlier revisions. Bounds and cache thresholds live i
   models, and accounts to exercise startup work arriving after the first paint.
   It also checks that pending resource publication does not duplicate requests and
   that streamed chat reordering preserves project option objects.
-- `test:status-icons` checks bounded steady paint, visible transform/opacity animation
+- `npm run test:ui -- compositor-icons` checks bounded steady paint, visible transform/opacity animation
   without host DOM writes, continued motion through an 800 ms renderer stall,
-  accessibility, reduced motion, and inactive state. `test:diff-rendering` checks that read-only diffs
+  accessibility, reduced motion, and inactive state. `npm run test:ui -- diff-idle` and `npm run test:integration -- diff-viewer` checks that read-only diffs
   exclude Monaco and that idle reviews and unrelated sidebar scrolls do no marker work.
-- `test:icon-dependencies` checks named aliases, type imports, new exports during HMR,
+- `npm run test:integration -- icon-imports` checks named aliases, type imports, new exports during HMR,
   namespace/dynamic imports, third-party consumers, and removed source files.
 
 Run GUI fixtures on the [isolated display](README.md). Put output in `test-results/` or
@@ -330,7 +331,7 @@ It also changes the private clipboard after capturing the paste File and verifie
 native clipboard rereads. Draft restoration, attachment editing, typing and real Vite
 development worker transforms are covered by companion checks.
 
-Run `npm run test:image-paste` through the isolated-gui helper on a private display.
+Run `npm run test:ui -- image-paste` through the isolated-gui helper on a private display.
 These measurements use a synthetic image and software-rendered disposable Electron
 profile; they do not claim native GPU performance in the user's running instance.
 The IPC/preload changes require a normal dev restart. An older running preload remains

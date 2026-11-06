@@ -29,6 +29,6 @@ administrator authorization when needed. Unsigned apps are supported; only quara
 removed. Homebrew receipts are unchanged. `mac-update-pending.json` and staging `helper.log`
 files in user data retain post-exit diagnostics; failed staging is kept for recovery.
 
-Run `npm run test:app-update` for platform adapters and filesystem transaction tests.
+Run `npm test -- appUpdate` for platform adapters and filesystem transaction tests.
 Before release, also verify real install-to-install updates on macOS, NSIS Windows, and
 user/system Flatpak, including administrator cancellation and rollback where applicable.

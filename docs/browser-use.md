@@ -60,10 +60,11 @@ revokes the old credential. Chrome 125+ is required for flattened iframe session
 
 ## Checks
 
-Run `npm run test:browser-unit`, `test:desktop`, and `test:browser-use`; the latter opens a fixture window and
+Run `npm test -- browser/ BrowserLifecycle BrowserSessions BrowserTools CopilotBrowser OpenCodeBrowser desktop/`
+and `npm run test:ui -- browser-use`; the latter opens a fixture window and
 requires [GUI isolation](README.md). Optional installed-runtime checks use
 `SELE_BROWSER_RUNTIME`, `SELE_CLAUDE_RUNTIME`, and `SELE_COPILOT_RUNTIME` (path or `bundled`).
-`SELE_OPENCODE_RUNTIME=/absolute/path npm run test:opencode` checks plugin integration.
+`SELE_OPENCODE_RUNTIME=/absolute/path npm test -- providers/opencode/` checks plugin integration.
 `scripts/tests/test-native-computer.py` tests private-display X11 input/capture. Real Chrome
 extension pairing, Wayland portals, and native biometric flows need separate host validation.
 

@@ -79,3 +79,63 @@ test('reading an older persisted prediction cannot revive it after restart', asy
   const result = await views.read([{ key: 'fixture', current: () => true }])
   assert.equal(result.get('fixture').promptSuggestion, undefined)
 })
+
+test('large saved message lists retain full text and use a single payload for openings', async () => {
+  const items = Array.from({ length: 30 }, (_, i) => [
+    { id: `user-${i}`, type: 'message', role: 'user', content: `Question ${i}` },
+    {
+      id: `answer-${i}`,
+      type: 'message',
+      role: 'assistant',
+      content: `Start ${i}\n${'Full message text. '.repeat(2000)}\nEnd ${i}`,
+      attachments: [{ kind: 'file', path: `/fixture/file-${i}.txt`, name: `file-${i}.txt` }]
+    }
+  ]).flat()
+  const view = {
+    id: 'large',
+    title: 'Large chat',
+    conversationView: true,
+    historyPreview: true,
+    items,
+    turnCount: 30,
+    itemsStartTurnIndex: 0
+  }
+  let row
+  let columns
+  const query = {
+    values(value) {
+      row = value
+      return this
+    },
+    onConflict() {
+      return this
+    },
+    select(value) {
+      columns = value
+      return this
+    },
+    where() {
+      return this
+    },
+    async execute() {
+      return row ? [{ ...row, opening: '{"items":[]}' }] : []
+    }
+  }
+  const views = new SqliteConversationViews(async () => ({
+    insertInto: () => query,
+    selectFrom: () => query
+  }))
+  const scope = { key: 'large-scope', current: () => true }
+  await views.write(scope, view)
+  assert.equal(row.opening, null, 'do not save a second truncated message list')
+  const restored = (await views.read([scope], { opening: true })).get(scope.key)
+  assert.deepEqual(
+    Array.from(columns),
+    ['scope_key', 'format_version', 'payload'],
+    'ignore obsolete truncated openings'
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(restored.items)), items)
+  assert.equal(restored.items.length, 60)
+  assert.equal(restored.items[1].content, items[1].content)
+  assert.equal(restored.itemsStartTurnIndex, 0)
+})

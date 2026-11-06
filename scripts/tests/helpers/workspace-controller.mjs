@@ -74,6 +74,7 @@ const namespaces = [
 ]
 
 export const workspaceTestGlobals = (globals) => {
+  globals.startTransition ??= (update) => update()
   globals.prefetchChatOpening ??= () => {}
   globals.readChatOpening ??= (chat) =>
     globals.providerApi?.getCachedChat?.(chat.providerId, chat.id, {

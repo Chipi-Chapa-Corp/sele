@@ -1,5 +1,9 @@
-import type { ProviderChat, ProviderChatDetail, ProviderChatItem } from './provider'
-import { getProviderChatTurns, startsProviderChatTurn } from './chatTurns.ts'
+import type { ProviderChat, ProviderChatDetail } from './provider'
+import {
+  getProviderChatTurns,
+  startsProviderChatTurn,
+  unloadWorkingStepItems
+} from './chatTurns.ts'
 import { asChatPreview } from './chatPreview.ts'
 
 /** Sidebar discovery must not carry a saved transcript or other detail payloads. */
@@ -77,62 +81,19 @@ export const isConversationOpeningDetail = (detail: ProviderChatDetail): boolean
     (detail.itemsStartTurnIndex ?? 0) + getProviderChatTurns(detail.items).length >=
       detail.turnCount)
 
-/** A stable, bounded opening viewport; older pages remain independently pageable. */
-export const createConversationView = (detail: ProviderChatDetail): ProviderChatDetail => {
-  const turns = getProviderChatTurns(detail.items)
-  const latest = turns.at(-1)
-  return {
-    ...asChatPreview(detail),
-    conversationView: true,
-    conversationViewSourceRevision: detail.conversationViewSourceRevision ?? detail.revision,
-    items: latest?.items ?? [],
-    itemsStartTurnIndex: (detail.itemsStartTurnIndex ?? 0) + Math.max(0, turns.length - 1),
-    turnCount: detail.turnCount ?? turns.length
-  }
-}
-
-/** Readable first viewport. Full turns remain in the durable view/history pages. */
-export const createConversationOpening = (view: ProviderChatDetail): ProviderChatDetail => {
-  const items: ProviderChatItem[] = []
-  let messages = 0
-  let working = false
-  for (let index = view.items.length - 1; index >= 0; index--) {
-    const item = view.items[index]
-    if ((item.type === 'message' || item.type === 'pendingMessage') && messages < 2) {
-      const truncated = item.content.length > 8192
-      items.push({
-        id: item.id,
-        type: item.type,
-        ...(item.type === 'message' ? { role: item.role } : { kind: item.kind, editable: false }),
-        content: (truncated ? '…\n' : '') + item.content.slice(-8192),
-        contentLoaded: truncated ? false : item.contentLoaded,
-        contentTruncated: truncated || item.contentTruncated,
-        contentCharacterCount: item.contentCharacterCount ?? item.content.length,
-        createdAt: item.createdAt
-      } as ProviderChatItem)
-      messages++
-    } else if (item.type === 'working' && !working) {
-      items.push({
-        type: 'working',
-        id: item.id,
-        status: item.status,
-        failureReason: item.failureReason,
-        items: [],
-        itemsLoaded: false,
-        itemCount: item.itemCount ?? item.items.length
-      })
-      working = true
-    }
-    if (messages === 2 && working) break
-  }
-  return {
-    ...asChatPreview(view),
-    openingPreview: true,
-    items: items.reverse(),
-    subagents: undefined,
-    promptSuggestion: undefined,
-    goal: undefined,
-    tokenUsage: null,
-    contextUsage: null
-  }
-}
+/** Persist the processed message list as-is, with no separate truncated opening. */
+export const createConversationView = (detail: ProviderChatDetail): ProviderChatDetail => ({
+  ...asChatPreview(detail),
+  conversationView: true,
+  openingPreview: undefined,
+  conversationViewSourceRevision: detail.conversationViewSourceRevision ?? detail.revision,
+  // Keep message text, attachments, ordering and pagination intact. Hidden tool
+  // bodies are fetched on expansion through their existing page API.
+  items: detail.items.map((item) =>
+    item.type === 'working' && (item.items.length > 0 || item.itemSegments)
+      ? unloadWorkingStepItems(item)
+      : item
+  ),
+  itemsStartTurnIndex: detail.itemsStartTurnIndex ?? 0,
+  turnCount: detail.turnCount ?? getProviderChatTurns(detail.items).length
+})

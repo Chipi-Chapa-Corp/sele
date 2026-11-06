@@ -110,6 +110,7 @@ const harness = (history = records(1000, 'x'.repeat(4096))) => {
     resumeSession: async () => t.session
   }
   const context = vm.createContext({
+    copilotProcessHooks: () => ({}),
     createCopilotTerminalSessions: () => ({ sync() {}, dispose() {} }),
     ...renderers,
     ...subagents,

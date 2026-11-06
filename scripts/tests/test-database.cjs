@@ -643,9 +643,9 @@ run().catch(error => { console.error(error); process.exitCode = 1 })
         run().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>disposeDatabase())
       `
 }
-const filters = process.argv.slice(2).map(value => value.toLowerCase())
-const selected = [...Object.keys(cases), 'conversation-views'].filter(name =>
-  !filters.length || filters.some(filter => name.includes(filter))
+const filters = process.argv.slice(2).map((value) => value.toLowerCase())
+const selected = [...Object.keys(cases), 'conversation-views'].filter(
+  (name) => !filters.length || filters.some((filter) => name.includes(filter))
 )
 assert.ok(selected.length, 'No database tests matched: ' + filters.join(', '))
 
@@ -656,7 +656,13 @@ for (const name of selected) {
       const entry = path.join(directory, 'fixture.cjs')
       await require('esbuild').build({
         ...(cases[name]
-          ? { stdin: { contents: cases[name], resolveDir: path.resolve(__dirname, '../..'), loader: 'ts' } }
+          ? {
+              stdin: {
+                contents: cases[name],
+                resolveDir: path.resolve(__dirname, '../..'),
+                loader: 'ts'
+              }
+            }
           : { entryPoints: [path.join(__dirname, 'fixtures/conversation-views-store.ts')] }),
         bundle: true,
         platform: 'node',
@@ -668,11 +674,16 @@ for (const name of selected) {
             name: 'isolated-database',
             setup(build) {
               build.onResolve({ filter: /^better-sqlite3$/ }, () => ({
-                path: require.resolve('better-sqlite3'), external: true
+                path: require.resolve('better-sqlite3'),
+                external: true
               }))
-              build.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'fixture' }))
+              build.onResolve({ filter: /^electron$/ }, () => ({
+                path: 'electron',
+                namespace: 'fixture'
+              }))
               build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
-                contents: 'export const app = { getPath() { throw new Error("Real profile access is forbidden") } }'
+                contents:
+                  'export const app = { getPath() { throw new Error("Real profile access is forbidden") } }'
               }))
             }
           }
@@ -680,7 +691,11 @@ for (const name of selected) {
       })
       // Electron's Node ABI matches better-sqlite3; this never starts an app or windows.
       const result = spawnSync(require('electron'), [entry], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', SELE_DATABASE_PATH: path.join(directory, 'test.sqlite') },
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: '1',
+          SELE_DATABASE_PATH: path.join(directory, 'test.sqlite')
+        },
         encoding: 'utf8',
         timeout: 60000
       })

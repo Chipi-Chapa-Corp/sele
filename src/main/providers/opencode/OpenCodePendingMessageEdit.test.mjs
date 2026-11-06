@@ -1,3 +1,5 @@
+import { supportsLocalHostTools } from '../hostToolTarget.ts'
+import { getOpenCodeErrorMessage } from './OpenCodeItemRenderers.ts'
 import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit.ts'
 import assert from 'node:assert/strict'
 import { reconcileOpenCodeMessageSnapshot } from './OpenCodeEvents.ts'
@@ -43,6 +45,8 @@ const code = ts.transpile(
 const fixture = (kind = 'queued') => {
   const adapter = vm.runInNewContext(code, {
     PendingMessageEdits,
+    supportsLocalHostTools,
+    getOpenCodeErrorMessage,
     basename,
     console,
     getOpenCodeUsageLimitMessage,

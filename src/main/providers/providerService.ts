@@ -165,7 +165,7 @@ export const saveProviderConversationView = async (
     return
   const sequence = (conversationViewSequences.get(scope.key) ?? 0) + 1
   conversationViewSequences.set(scope.key, sequence)
-  const view = prepareChatDetailForRenderer(createConversationView(detail))
+  const view = createConversationView(detail)
   const write = durableConversationViews.write(
     scope,
     view,

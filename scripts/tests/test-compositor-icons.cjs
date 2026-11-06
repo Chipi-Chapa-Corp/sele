@@ -155,13 +155,27 @@ if (!process.versions.electron) {
       await pause(100)
       assert.equal(
         await w.webContents.executeJavaScript('!!document.querySelector(".working-chats-icon")'),
-        false,
-        'reduced motion shows the static bot'
+        true,
+        'working chats still show the spinner with reduced motion'
+      )
+      assert.equal(
+        await w.webContents.executeJavaScript(
+          'getComputedStyle(document.querySelector(".working-chats-icon")).animationName'
+        ),
+        'none',
+        'reduced motion stops the spinner animation'
       )
       await w.webContents.executeJavaScript('window.renderIcons(false)')
       assert.equal(
         await w.webContents.executeJavaScript('!!document.querySelector(".working-chats-icon")'),
         false
+      )
+      assert.equal(
+        await w.webContents.executeJavaScript(
+          '!!document.querySelector("svg.lucide-bot-message-square")'
+        ),
+        true,
+        'idle working tab shows the static bot'
       )
       console.log(
         'Status icon checks passed: visible transform/opacity animation, bounded steady paint, no host DOM writes, accessible label, reduced motion and inactive state.'

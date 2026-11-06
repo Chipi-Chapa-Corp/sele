@@ -307,3 +307,24 @@ test('shutdown awaits the final durable viewport before closing its scope', asyn
   assert.equal(h.saved[0].items[0].content, '1')
   assert.equal(h.closed(), true)
 })
+
+test('durable ingestion saves the complete processed message list without a second window or text truncation', async () => {
+  const h = ingestionFixture()
+  const items = Array.from({ length: 30 }, (_, i) => [
+    { type: 'message', id: `u-${i}`, role: 'user', content: `Question ${i}` },
+    {
+      type: 'message',
+      id: `a-${i}`,
+      role: 'assistant',
+      content: 'Answer '.repeat(2000),
+      attachments: [{ kind: 'file', path: `/fixture/${i}.txt`, name: `${i}.txt` }]
+    }
+  ]).flat()
+  await h.context.saveProviderConversationView(h.scope, { ...opening(1), items })
+  assert.equal(h.saved.length, 1)
+  assert.equal(h.saved[0].items.length, 60)
+  assert.equal(h.saved[0].itemsStartTurnIndex, 0)
+  assert.equal(h.saved[0].turnCount, 30)
+  assert.deepEqual(h.saved[0].items, items)
+  assert.equal(h.saved[0].openingPreview, undefined)
+})

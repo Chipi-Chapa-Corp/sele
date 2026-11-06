@@ -63,6 +63,7 @@ const copilotHarness = (state, client) => {
     {
       toMilliseconds: (value) => (value instanceof Date ? value.getTime() : Number(value)),
       normalizeReasoningEffort: () => null,
+      copilotProcessHooks: () => ({}),
       createCopilotTerminalSessions: () => ({ dispose() {} }),
       getCopilotCustomProviderSessionOptions: () => ({}),
       findCopilotItemTurnWindow: () => ({ startIndex: 20, limit: 10 })

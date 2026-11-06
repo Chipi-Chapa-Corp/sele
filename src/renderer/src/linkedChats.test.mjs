@@ -101,9 +101,13 @@ test('ignores linked blocks with unknown providers', () => {
 })
 
 test('serializes and validates sidebar drag payloads', () => {
-  const payload = serializeLinkedChatDrag({ providerId: 'opencode', chatId: 'ses_1', name: ' A ' })
+  const payload = serializeLinkedChatDrag({
+    providerId: 'opencode-v2',
+    chatId: 'ses_1',
+    name: ' A '
+  })
   assert.deepEqual(parseLinkedChatDrag(payload), {
-    providerId: 'opencode',
+    providerId: 'opencode-v2',
     chatId: 'ses_1',
     name: 'A'
   })

@@ -53,8 +53,11 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
-      - name: Test app updates
-        run: npm run test:app-update
+      - name: Unit tests
+        run: npm test
+
+      - name: Integration tests
+        run: npm run test:integration
 
   windows:
     name: Windows x64
@@ -128,7 +131,7 @@ jobs:
           brew style Casks/sele.rb
 
       - name: Test macOS update helper
-        run: npm run test:app-update
+        run: npm test -- appUpdate
 
       - name: Build unsigned DMG and update ZIP
         env:

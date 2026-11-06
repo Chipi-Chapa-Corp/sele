@@ -1,7 +1,6 @@
 import type { ProviderChat, ProviderChatDetail, ProviderId } from '../../shared/provider'
 import { chatPreviewSourceKey } from '../../shared/chatPreview.ts'
 import {
-  createConversationOpening,
   createConversationView,
   isConversationOpeningDetail,
   restoreConversationView
@@ -24,22 +23,9 @@ export const createConversationViews = () => {
   ): void => {
     for (const detail of details) {
       if (!detail.conversationView && !isConversationOpeningDetail(detail)) continue
-      const source = detail.conversationView ? detail : createConversationView(detail)
-      // This registry outlives the full-history LRU. Keep only a readable viewport;
-      // otherwise every visited large turn (including tool output) lives forever.
-      const large =
-        source.items.length > 3 ||
-        source.items.some((item) =>
-          item.type === 'working'
-            ? item.items.length > 0
-            : (item.type === 'message' || item.type === 'pendingMessage') &&
-              (item.content.length > 8192 ||
-                item.attachments?.some(
-                  (attachment) =>
-                    attachment.kind === 'image' && (attachment.dataUrl?.length ?? 0) > 8192
-                ))
-        )
-      const view = large ? createConversationOpening(source) : source
+      // Keep the same processed list in RAM and SQLite. Reopening must not
+      // collapse it to the last message or replace it with truncated text.
+      const view = detail.conversationView ? detail : createConversationView(detail)
       const key = keyOf(provider, view.id, view.container)
       const isLive = live || !detail.conversationView
       const previousRevision = liveRevisions.get(key)

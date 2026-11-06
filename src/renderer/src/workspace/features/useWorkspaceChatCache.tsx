@@ -97,7 +97,7 @@ export function useWorkspaceChatCache({
       entry.detail.status !== chat.status
     ) {
       // A background stream makes the cached detail stale, but it still contains
-      // the mounted history window. Replacing it with the one-turn opening view
+      // the mounted history window. Replacing it with a different saved window
       // would unmount that history on every switch. Keep it read-only until the
       // independent provider refresh supplies the current transcript/permissions.
       if (isActiveChatStatus(chat.status)) return asChatPreview(entry.detail)

@@ -59,13 +59,37 @@ test('opening projection is one indexed viewport and is ready to map before sele
     turnCount: 7
   })
   const projected = createConversationView(input)
-  assert.deepEqual(projected.items, detail().items)
-  assert.equal(projected.itemsStartTurnIndex, 6)
+  assert.deepEqual(projected.items, input.items)
+  assert.equal(projected.itemsStartTurnIndex, 5)
   const views = createConversationViews()
   views.install('codex', [projected])
   assert.equal(
     buildChatConversationModel(projected.items),
     buildChatConversationModel(views.get(chat()).items)
+  )
+})
+test('a durable opening keeps the complete processed message list and full text', () => {
+  const input = detail('many', {
+    items: Array.from({ length: 30 }, (_, i) => [
+      { id: `u-${i}`, type: 'message', role: 'user', content: `Question ${i}` },
+      { id: `w-${i}`, type: 'working', status: 'worked', items: [{ id: `tool-${i}` }] },
+      { id: `a-${i}`, type: 'message', role: 'assistant', content: 'Answer '.repeat(20000) }
+    ]).flat(),
+    turnCount: 30
+  })
+  const projected = createConversationView(input)
+  assert.equal(projected.itemsStartTurnIndex, 0)
+  assert.equal(projected.items.length, 90)
+  const views = createConversationViews()
+  views.install('codex', [projected])
+  const opening = views.get(chat('many'))
+  assert.equal(opening.items.length, 90)
+  assert.equal(opening.items[0].id, 'u-0')
+  assert.equal(opening.items.at(-1).id, 'a-29')
+  assert.equal(opening.items.at(-1).content, input.items.at(-1).content)
+  assert.equal(opening.openingPreview, undefined)
+  assert.ok(
+    opening.items.filter((item) => item.type === 'working').every((item) => !item.items.length)
   )
 })
 test('provider, source and account resets isolate views, and older windows cannot replace the opening view', () => {
@@ -290,12 +314,11 @@ test('the persistent renderer opening registry cannot retain complete large tool
   })
   views.install('codex', [input])
   const opening = views.get(chat('large'))
-  assert.ok(JSON.stringify(opening).length < 20000)
+  assert.ok(JSON.stringify(opening).length < 710000)
   assert.equal(opening.items[1].itemCount, 1)
   assert.deepEqual(opening.items[1].items, [])
-  assert.equal(opening.items[2].contentCharacterCount, input.items[2].content.length)
-  assert.equal(opening.items[2].contentLoaded, false)
-  assert.ok(opening.items[2].content.endsWith(input.items[2].content.slice(-8192)))
+  assert.equal(opening.items[2].content, input.items[2].content)
+  assert.equal(opening.items[2].contentLoaded, undefined)
   assert.equal(
     input.items[1].items[0].output.length,
     600000,

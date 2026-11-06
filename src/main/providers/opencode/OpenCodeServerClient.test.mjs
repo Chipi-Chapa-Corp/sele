@@ -52,6 +52,9 @@ test('wrapped startup captures the same fresh credentials that the SDK uses', as
             throw Error('No real processes should be launched')
           }
         }
+      if (name.includes('hostToolTarget')) return { supportsLocalHostTools: () => true }
+      if (name.includes('chatProcessOwnership'))
+        return { registerChatProcess() {}, unregisterChatProcess() {} }
       if (name.includes('currentContainer'))
         return {
           getCurrentContainerHostBridge: async () => ({}),

@@ -2,11 +2,16 @@
 
 ## Opening and history
 
-Provider transcripts are authoritative. SQLite `conversation_view` stores a bounded latest
-viewport for each processed chat. Sidebar discovery returns only metadata. Opening a chat
-reads its saved viewport locally alongside the provider refresh; warm in-memory views display
+Provider transcripts are authoritative. SQLite `conversation_view` stores the processed
+message list for each chat. Sidebar discovery returns only metadata. Opening a chat
+reads its saved messages locally alongside the provider refresh; warm in-memory views display
 synchronously. Do not preload every saved transcript to construct the sidebar. Unknown chats
 need initial ingestion; the first view is committed before publication.
+
+SQLite stores the processed message list with full message text, attachments, ordering,
+and history-page coordinates. Openings read that same list directly; there is no separate
+last-message or truncated-text preview. Hidden tool bodies still load on expansion.
+Every chat opens at the bottom. Scroll positions and follow-latest flags are not persisted.
 
 Views have no TTL or LRU eviction. Active writes coalesce over 250 ms; completion flushes
 promptly and shutdown awaits writes. Codex and Claude use a shared account namespace for
@@ -95,7 +100,9 @@ in the chat's saved host/container/SSH environment and requires Python 3 there. 
 provider cancellation remains available on other platforms. Undoing done does not restart
 processes. Cleanup errors leave the chat unfinished so the action can be retried.
 
-Checks: `test:chat-process-cleanup`, `test:conversation-views`, `test:chat-state`, `test:pending-messages`,
-`test:linked-chats`, and `test:codex-transport` via `npm run`. The full-app opening fixture is
+Checks: `npm test -- chatProcessCleanup conversationViews renderer/src/ PersistentPendingMessages
+PendingMessageRestore linkedChats CodexAppServerClient CodexRuntime` and
+`npm run test:integration -- database` cover state and storage.
+The full-app opening fixture is
 `scripts/tests/test-persistent-chat-opening.cjs`. Run GUI portions with isolation as described
 in the [repository guide](README.md).

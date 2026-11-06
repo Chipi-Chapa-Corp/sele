@@ -1202,6 +1202,16 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     }
   }, [cacheRecentChatDetail, chatLoadRequest, markChatSeenAt, selectedProviderId, selectedChatId])
   useLayoutEffect(() => {
+    chatInitialLayoutKeyRef.current = null
+    chatAutoScrollEnabledRef.current = true
+    loadedWorkingStepIdsRef.current = []
+    chatAutoScrollTargetRef.current = null
+    chatScrollAdjustmentTargetRef.current = null
+    pendingChatScrollAnchorRef.current = null
+    chatViewportAnchorRef.current = null
+    previousChatScrollTopRef.current = null
+  }, [selectedProviderId, selectedChatId])
+  useLayoutEffect(() => {
     if (!chatDetail || !selectedChatKey) {
       chatInitialLayoutKeyRef.current = null
       return
@@ -1222,8 +1232,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     }
 
     prepareChatContentLayout(contentElement)
-    // The resize observer follows after browser layout and before paint. Do
-    // not force the newly revealed transcript to lay out inside React commit.
+    // Every opening starts at the latest message before the first paint. Resize
+    // observation keeps following asynchronous Markdown and history mounts.
+    scrollChatContentToBottom(contentElement)
   }, [
     activeSubagentId,
     chatDetail?.items,
@@ -1243,15 +1254,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     scrollChatContentToBottom(contentElement)
     scheduleChatAutoScroll(contentElement)
   }, [pendingUserInputId, scheduleChatAutoScroll, scrollChatContentToBottom])
-  useEffect(() => {
-    chatAutoScrollEnabledRef.current = true
-    loadedWorkingStepIdsRef.current = []
-    chatAutoScrollTargetRef.current = null
-    chatScrollAdjustmentTargetRef.current = null
-    pendingChatScrollAnchorRef.current = null
-    chatViewportAnchorRef.current = null
-    previousChatScrollTopRef.current = null
-  }, [selectedProviderId, selectedChatId])
   useLayoutEffect(() => {
     if (!selectedChatKey) return
 
@@ -1307,7 +1309,13 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       if (reconnectFrame !== null) window.cancelAnimationFrame(reconnectFrame)
       observer.disconnect()
     }
-  }, [activeSubagentId, chatLoadState, scrollChatContentToBottom, selectedChatKey])
+  }, [
+    activeSubagentId,
+    chatLoadState,
+    Boolean(chatDetail),
+    scrollChatContentToBottom,
+    selectedChatKey
+  ])
   useEffect(() => {
     if (selectedChat) return
 

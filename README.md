@@ -224,7 +224,7 @@ implementation notes.
 Requires Node.js 22.
 
 PR mock data lives in `scripts/tests/fixtures/githubPullRequests.ts` and is injected
-through the test harness API. Run `SELE_TEST_PR_MOCKS=1 npm run test:github-pull-requests`
+through the test harness API. Run `SELE_TEST_PR_MOCKS=1 npm run test:ui -- github-pull-requests`
 to check scrolling, filtering, and cache eviction against 100 fixture PRs. The app
 always loads pull requests through its normal GitHub API.
 
@@ -240,7 +240,7 @@ the affected component. Refresh tracks signatures in custom `.ts` and hook-only 
 modules so hook additions remount their consumers safely. Main-process and preload changes require a restart or reload.
 Restart `npm run dev` after changing `electron.vite.config.ts`, `vite.renderer.ts`, or its
 plugins. Reloading the window alone keeps the running server's dependency configuration.
-`npm run test:renderer-hmr` checks drafts, selection, focus, and scrolling across real
+`npm run test:ui -- renderer-hmr` checks drafts, selection, focus, and scrolling across real
 Vite updates; run this GUI fixture on the `isolated-gui` private display.
 
 Run the project checks with:
@@ -251,10 +251,48 @@ npm run typecheck
 npm run build
 ```
 
-Regression tests live beside the source they cover (`*.test.mjs`); use the named
-`npm run test:*` commands in `package.json` to run a focused suite. Electron and
-worker integration checks live in `scripts/tests/`, with fixtures in its `fixtures/`
-directory. These checks may require a desktop session or a built app.
+Use these test entry points:
+
+| Command | Coverage |
+| --- | --- |
+| `npm test` | All source `*.test.mjs` regressions; no GUI or installed provider CLI required |
+| `npm run test:integration` | Native SQLite, bundling and dependency checks; no GUI |
+| `npm run test:ui` | Electron and renderer fixtures; private display required on Linux |
+| `npm run test:runtime` | Installed Codex handoff and built Claude discovery worker; requires CLIs / `npm run build` |
+| `npm run test:native` | Linux GTK input/capture fixture; private display required |
+| `npm run test:e2e` | Full app and provider transport scenarios |
+| `npm run test:mobile-providers` | Android emulator and provider transport scenarios |
+| `npm run test:clean` | Remove generated test results, benchmark results and coverage |
+
+Unit, integration, UI, runtime and native commands accept case-insensitive file-path
+filters (multiple filters match either) and `--list` to inspect selection without
+running tests. For example, `npm test -- appUpdate`,
+`npm test -- providers/copilot/`, and `npm run test:ui -- composer-input`.
+An unmatched filter fails instead of silently passing. New source tests and `test-*`
+fixture drivers are discovered automatically; helpers and fixtures are never run as
+tests. Unit files run with four workers and a 30-second timeout per file. Fixture
+drivers run sequentially and report every failed file.
+
+Linux GUI suites require the `isolated-gui` helper's private display and D-Bus session.
+For this development environment:
+
+```bash
+desktop=/var/home/kitkat/.codex/skills/isolated-gui/scripts/desktop.py
+python3 "$desktop" --session sele-tests start
+python3 "$desktop" --session sele-tests run --cwd "$PWD" --timeout 180 -- \
+  npm run test:ui -- input-focus
+python3 "$desktop" --session sele-tests stop
+```
+
+Run `npm run build` before `test:ui -- preferences` or `test:runtime -- claude-discovery`.
+Device-dependent Android helpers remain opt-in through the local-access and mobile
+provider fixtures; they are not part of the default suites.
+
+Regression tests live beside their source; Electron and worker fixtures live in
+`scripts/tests/`. The native database cases share `test-database.cjs`; to select a
+single case, use `node scripts/tests/test-database.cjs sqlite-worker`.
+Keep behavioral coverage when consolidating tests, and reuse shared fixtures and setup.
+Use unit tests for error propagation and logging behavior; keep syntax rules in the linter.
 
 `npm run test:e2e` builds Sele and drives the real app against the installed Codex,
 Claude Code, Copilot and OpenCode CLIs. A local scripted model server answers for every
@@ -265,7 +303,7 @@ account is used. It opens windows; run it on a private display such as Xvfb. Opt
 `SELE_E2E_BUDGET_SCALE` relaxes latency and frame budgets on slow machines. Reports and
 failure screenshots go to `test-results/e2e/`.
 
-Reusable performance benchmarks live in `scripts/benchmarks/`. Keep generated
+Performance commands use the `benchmark:*` prefix. Reusable performance benchmarks live in `scripts/benchmarks/`. Keep generated
 reports, screenshots, and profiling output in the gitignored `test-results/` or
 `benchmark-results/` directories, and use `tmp/` for local scratch files. The
 `build/` directory contains required packaging assets, not generated output.

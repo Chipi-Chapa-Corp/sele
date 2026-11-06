@@ -12,7 +12,9 @@ import { providerIpcChannels as channels } from '../../shared/provider.ts'
 
 const require = createRequire(import.meta.url)
 const workerDirectory = await mkdtemp(join(tmpdir(), 'sele-archive-workers-'))
-process.on('exit', () => require('node:fs').rmSync(workerDirectory, { recursive: true, force: true }))
+process.on('exit', () =>
+  require('node:fs').rmSync(workerDirectory, { recursive: true, force: true })
+)
 const bundled = await build({
   entryPoints: [new URL('./ChatArchiveIpc.ts', import.meta.url).pathname],
   bundle: true,
@@ -150,7 +152,7 @@ test('cancelled imports do not open, failure permits retry, and malformed archiv
       return cancelled() ? null : { id: 'unexpected' }
     }
     const preview = await h.open()
-    const importing = h.invoke(channels.importChat, preview.id, 'opencode')
+    const importing = h.invoke(channels.importChat, preview.id, 'opencode-v2')
     while (!release) await new Promise((resolve) => setImmediate(resolve))
     await assert.rejects(
       h.invoke(channels.importChat, preview.id, 'copilot'),

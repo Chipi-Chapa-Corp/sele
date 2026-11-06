@@ -137,18 +137,18 @@ the isolated GUI helper, not through the inherited display.
 Pure transport, connection, host picker, and browser boundary checks need no display:
 
 ```sh
-npm run test:mobile-unit
-npm run test:copilot-goals
+npm test -- localAccessServer remoteBrowser browserSync hostDirectory mobileConnection mobileBrowser chatSleep
+npm test -- CopilotGoal
 ```
 
 GUI checks, run within the private session:
 
 ```sh
-npm run test:touch-buttons
-npm run test:local-access-ui
-SELE_TEST_MOBILE_WEB=1 npm run test:local-access-ui
+npm run test:ui -- touch-buttons
+npm run test:ui -- local-access
+SELE_TEST_MOBILE_WEB=1 npm run test:ui -- local-access
 SELE_ANDROID_TEST_SERIAL=emulator-5580 SELE_ANDROID_ADB_PORT=5049 \
-  SELE_ANDROID_NATIVE_TOUCH=1 SELE_ANDROID_TEST_ALL_UI=1 npm run test:local-access-ui
+  SELE_ANDROID_NATIVE_TOUCH=1 SELE_ANDROID_TEST_ALL_UI=1 npm run test:ui -- local-access
 ```
 
 The native fixture installs and clears only the selected emulator's Sele app. It covers approval,

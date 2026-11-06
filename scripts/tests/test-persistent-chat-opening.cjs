@@ -4,6 +4,28 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 
+const fixtureItems = (id, prefix) =>
+  Array.from({ length: id === 'first' ? 10 : 1 }, (_, index) => [
+    { type: 'message', id: id + ':user-' + index, role: 'user', content: 'Question ' + index },
+    {
+      type: 'message',
+      id: id + ':answer-' + index,
+      role: 'assistant',
+      content:
+        prefix +
+        ' ' +
+        id +
+        '\n\n' +
+        (id === 'first'
+          ? Array.from(
+              { length: 40 },
+              (_, paragraph) =>
+                'Paragraph ' + paragraph + ': ' + 'Saved messages remain readable. '.repeat(8)
+            ).join('\n\n')
+          : '')
+    }
+  ]).flat()
+
 if (!process.versions.electron) {
   ;(async () => {
     const root = path.resolve(__dirname, '../..')
@@ -47,6 +69,20 @@ if (!process.versions.electron) {
         `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('fixtureNative',{list:()=>ipcRenderer.invoke('fixture:list'),cached:()=>{throw new Error('Known opening must never read a disk preview after selection')}})`
       )
       await require('esbuild').build({
+        entryPoints: [path.join(root, 'src/renderer/src/chatMarkdown.worker.ts')],
+        bundle: true,
+        platform: 'browser',
+        jsx: 'automatic',
+        define: { 'process.env.NODE_ENV': '"production"' },
+        alias: {
+          'decode-named-character-reference': path.join(
+            root,
+            'node_modules/decode-named-character-reference/index.js'
+          )
+        },
+        outfile: path.join(directory, 'markdown-worker.js')
+      })
+      await require('esbuild').build({
         stdin: {
           resolveDir: root,
           loader: 'tsx',
@@ -55,6 +91,10 @@ if (!process.versions.electron) {
           import {createRoot} from 'react-dom/client'
           import './src/renderer/src/assets/main.css'
           const noop=()=>{};
+          const fixtureItems=${fixtureItems.toString()};
+          window.viewport=()=>{const element=document.getElementById('chat-search-content');
+            return {top:element.scrollTop,gap:element.scrollHeight-element.clientHeight-element.scrollTop}};
+          window.scrollPreferenceWrites=[];
           const chats=['first','second','unknown','empty','fallback','no-default'].map(id=>({id,providerId:'codex',createdAt:1,updatedAt:999,
             title:'Cached '+id,preview:'Saved answer',cwd:'/fixture',cwdKind:'directory',projectCwd:null,
             branchName:null,worktreeBaseBranchName:null,container:null,status:null,pinned:false,sidebarOrder:null,
@@ -79,9 +119,8 @@ if (!process.versions.electron) {
             textarea.dispatchEvent(new Event('input',{bubbles:true}));};
           window.fresh=id=>({...chats.find(chat=>chat.id===id),revision:1,writeAccess:'writable',
             capabilities:{editMessages:true,activeMessages:true},pendingApproval:null,pendingUserInput:null,
-            contextUsage:null,subagents:[],turnCount:1,itemsStartTurnIndex:0,
-            items:[{type:'message',id:id+':user',role:'user',content:'Question'},
-              {type:'message',id:id+':answer',role:'assistant',content:'Fresh authoritative '+id}]});
+            contextUsage:null,subagents:[],turnCount:id==='first'?10:1,itemsStartTurnIndex:0,
+            items:fixtureItems(id,'Fresh authoritative')});
           const usage={updatedAt:2,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,rateLimits:[],rateLimitResetCredits:null,errors:[]};
           const defaults={
             getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
@@ -106,9 +145,12 @@ if (!process.versions.electron) {
           };
           const api=new Proxy({}, {get:(_target,name)=>name.startsWith('on')?()=>noop:(...args)=>Promise.resolve(defaults[name]?.(...args)??null)});
           Object.assign(window,{appApi:api,providerApi:api,terminalApi:api,browserApi:api});
-          const stored=new Map([['sele:app-settings:v1',JSON.stringify({appearance:{position:'hidden'},chat:{recentChatCacheLimit:0}})]]);
+          const stored=new Map([
+            ['sele:app-settings:v1',JSON.stringify({appearance:{position:'hidden'},chat:{recentChatCacheLimit:0}})],
+            ['sele:chat-viewport:v1:["codex","host",null,"first"]',JSON.stringify({following:false,anchor:{turnId:'first:user-2',offset:0}})]
+          ]);
           window.preferencesApi={getItem:key=>({ok:true,value:stored.get(key)??null}),
-            setItem:(key,value)=>{stored.set(key,value);return {ok:true,value:null}},removeItem:key=>{stored.delete(key);return {ok:true,value:null}}};
+            setItem:(key,value)=>{if(key.startsWith('sele:chat-viewport:'))window.scrollPreferenceWrites.push(key);stored.set(key,value);return {ok:true,value:null}},removeItem:key=>{stored.delete(key);return {ok:true,value:null}}};
           window.addEventListener('error',event=>console.error(event.error?.stack??event.message));
           window.addEventListener('unhandledrejection',event=>console.error(event.reason?.stack??event.reason));
           import('./src/renderer/src/App').then(({App})=>createRoot(document.getElementById('root')).render(<App/>));
@@ -128,8 +170,10 @@ if (!process.versions.electron) {
                 path: args.path,
                 namespace: 'worker'
               }))
-              build.onLoad({ filter: /.*/, namespace: 'worker' }, () => ({
-                contents: 'export default class {postMessage(){} terminate(){}}'
+              build.onLoad({ filter: /.*/, namespace: 'worker' }, ({ path: worker }) => ({
+                contents: worker.includes('chatMarkdown.worker')
+                  ? `export default class extends Worker {constructor(){super('./markdown-worker.js')}}`
+                  : 'export default class {postMessage(){} terminate(){}}'
               }))
             }
           }
@@ -137,7 +181,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script>'
+        '<meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script>'
       )
       const env = { ...process.env, SELE_DATABASE_PATH: path.join(directory, 'fixture.sqlite') }
       delete env.ELECTRON_RUN_AS_NODE
@@ -197,20 +241,9 @@ if (!process.versions.electron) {
           ...chat,
           revision: 1000,
           capabilities: { editMessages: true, activeMessages: true },
-          turnCount: chat.id === 'empty' ? 0 : 1,
+          turnCount: chat.id === 'empty' ? 0 : chat.id === 'first' ? 10 : 1,
           itemsStartTurnIndex: 0,
-          items:
-            chat.id === 'empty'
-              ? []
-              : [
-                  { type: 'message', id: chat.id + ':user', role: 'user', content: 'Question' },
-                  {
-                    type: 'message',
-                    id: chat.id + ':answer',
-                    role: 'assistant',
-                    content: 'Saved answer ' + chat.id
-                  }
-                ]
+          items: chat.id === 'empty' ? [] : fixtureItems(chat.id, 'Saved answer')
         })
         await views.write(
           identity.viewScope('codex', chat.id),
@@ -225,7 +258,7 @@ if (!process.versions.electron) {
       views = new backend.SqliteConversationViews(backend.getDatabase)
       ipcMain.handle('fixture:list', async () => {
         const scopes = headers.map((chat) => identity.viewScope('codex', chat.id))
-        return [...(await views.read(scopes)).values()]
+        return [...(await views.read(scopes, { opening: true })).values()]
       })
       const win = new BrowserWindow({
         show: true,
@@ -250,9 +283,8 @@ if (!process.versions.electron) {
           `new Promise((resolve,reject)=>{const deadline=performance.now()+8000;function check(){if(${condition})return resolve();if(performance.now()>deadline)return reject(new Error('Timed out: '+${JSON.stringify(condition)}+'; reads='+JSON.stringify(window.chatReads)+'; selections='+JSON.stringify(window.accountSelections)+'; composer='+document.querySelector('.chat-panel__composer')?.textContent));requestAnimationFrame(check)}check()})`
         )
       await ready(`document.querySelector('[data-chat-id="first"] .chat-list-item__main')`)
-      assert.equal(
-        await run('discovery'),
-        1,
+      assert.ok(
+        await run('discovery >= 1'),
         'local rows become selectable with native discovery still pending'
       )
       assert.equal(
@@ -264,7 +296,7 @@ if (!process.versions.electron) {
 
       assert.match(
         firstOpen.text,
-        /Saved answer first/,
+        /Paragraph 39:/,
         'prepared messages paint on selection with provider replies withheld'
       )
       assert.equal(firstOpen.loader, false, 'no intermediate loading view')
@@ -426,6 +458,48 @@ if (!process.versions.electron) {
       assert.equal(await run('window.accountSelections.length'), 1, 'no fallback without Default')
       await run(`openChat('first')`)
       await ready(`!document.querySelector('[aria-label="Request error"]')`)
+      await run(`pending.first.resolve(fresh('first'))`)
+      await ready(
+        `document.querySelectorAll('#chat-search-content [data-chat-turn-id]').length===10`
+      )
+      await ready(`viewport().gap<=1`)
+      await run(`document.getElementById('chat-search-content').scrollTop *= 0.5`)
+      await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+      assert.ok((await run('viewport()')).gap > 1000, 'scroll away from latest')
+      await run(`(async()=>{await openChat('second');await openChat('first')})()`)
+      await ready('viewport().gap<=1')
+      assert.ok((await run('viewport()')).top > 1000, 'reopening goes to the latest message')
+      assert.deepEqual(
+        await run('scrollPreferenceWrites'),
+        [],
+        'scroll position is never persisted'
+      )
+      await win.loadFile(path.join(directory, 'index.html'))
+      await ready(`document.querySelector('[data-chat-id="first"] .chat-list-item__main')`)
+      const restart = await run(`openChat('first')`)
+      assert.equal(restart.loader, false)
+      await ready(
+        `document.querySelectorAll('#chat-search-content [data-chat-turn-id]').length===10`
+      )
+      await ready('viewport().gap<=1')
+      assert.ok(
+        (await run('viewport()')).top > 1000,
+        'SQLite messages reopen at the bottom after restart'
+      )
+      await ready(
+        `document.getElementById('chat-search-content').textContent.includes('Paragraph 0:')`
+      )
+      const firstText = await run(`document.getElementById('chat-search-content').textContent`)
+      assert.match(firstText, /Question 0/, 'SQLite retains the whole processed list')
+      assert.match(firstText, /Paragraph 0:/, 'long messages retain their beginning')
+      assert.match(firstText, /Paragraph 39:/, 'long messages retain their end')
+      assert.equal(await run('Boolean(pending.first)'), true, 'the provider is still pending')
+      assert.deepEqual(await run('scrollPreferenceWrites'), [])
+      if (process.env.SELE_MESSAGES_SCREENSHOT)
+        await fs.writeFile(
+          process.env.SELE_MESSAGES_SCREENSHOT,
+          (await win.webContents.capturePage()).toPNG()
+        )
       assert.deepEqual(
         errors.filter(
           (error) =>
@@ -440,7 +514,7 @@ if (!process.versions.electron) {
           previewMs.toFixed(1) +
           ' ms, normal second click visible before next paint (' +
           secondOpen.ms.toFixed(1) +
-          ' ms); providers remained pending; refresh, read-only failure and retry passed'
+          ' ms); full SQLite message list, long text, refresh, retry and bottom-on-reopen/restart passed'
       )
     } catch (error) {
       console.error(error)

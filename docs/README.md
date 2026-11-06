@@ -26,13 +26,13 @@ IPC. The shared renderer bridge lives in `src/shared/rendererBridge.ts`.
 
 ## Implementation notes
 
-LAN checks: `npm run test:local-access` runs network/transport tests without a display.
-After building, `npm run test:local-access-ui` exercises the real renderer over HTTP with fixture
+LAN checks: `npm test -- localAccessServer` runs network/transport tests without a display.
+After building, `npm run test:ui -- local-access` exercises the real renderer over HTTP with fixture
 providers; append `-- --dev` to check the Vite proxy. Run these GUI checks with `isolated-gui`.
 
 Android uses `capacitor.config.ts`, `vite.mobile.config.ts`, and the native `android/` project.
 `npm run build:android` produces the debug APK; setup is documented in the root README.
-`npm run test:android-connection` checks connection parsing, persistence, and host isolation.
+`npm test -- mobileConnection` checks connection parsing, persistence, and host isolation.
 With built mobile assets, set `SELE_TEST_MOBILE_WEB=1` for the local-access UI fixture to exercise
 the packaged client at its app origin. Set `SELE_ANDROID_TEST_SERIAL=emulator-<port>` instead to
 test the APK in an already booted, agent-owned emulator; `SELE_ANDROID_ADB_PORT` selects its
