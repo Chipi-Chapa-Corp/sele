@@ -3,11 +3,11 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
+const provider = process.env.SELE_TEST_PROVIDER === 'claude' ? 'claude' : 'codex'
 
 if (!process.versions.electron) {
   ;(async () => {
     const root = path.resolve(__dirname, '../..')
-    const provider = process.env.SELE_TEST_PROVIDER === 'claude' ? 'claude' : 'codex'
     const directory = await fs.mkdtemp(
       path.join(require('node:os').tmpdir(), 'sele-opening-stability-')
     )
@@ -56,6 +56,7 @@ if (!process.versions.electron) {
             const defaults={
               getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'${provider}',available:true}]}),
               getChats:()=>({chats,nextCursor:null}),
+              getKnownChats:()=>({chats,nextCursor:null}),
               getChat:(_provider,id)=>['4','5'].includes(id)?new Promise(resolve=>{
                 window.pendingChatReads??={};window.pendingChatReads[id]=()=>resolve(detail(id,1,id==='5'?[]:items))
               }):detail(id),
@@ -105,7 +106,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<html><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script></html>'
+        '<html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script></html>'
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
@@ -155,9 +156,9 @@ if (!process.versions.electron) {
         run(`new Promise((resolve,reject)=>{
         const deadline=performance.now()+10000;
         function check(){if(${condition})return resolve();
-          if(performance.now()>deadline)return reject(new Error('Opening timed out'));requestAnimationFrame(check)}check()
+          if(performance.now()>deadline)return reject(new Error('Opening timed out: '+${JSON.stringify(condition)}));requestAnimationFrame(check)}check()
       })`)
-      await ready(`document.querySelector('[data-chat-id="1"] .chat-list-item__main')`)
+      await ready(`document.querySelector('[data-chat-id="4"] .chat-list-item__main')`)
       await run('document.fonts.ready')
       await run(`document.querySelector('[data-chat-id="4"] .chat-list-item__main').click()`)
       await ready(
@@ -246,7 +247,7 @@ if (!process.versions.electron) {
         await run(`document.querySelector('[data-chat-id="${id}"] .chat-list-item__main').click()`)
         await ready(
           `document.querySelector('[data-chat-id="${id}"].chat-list-item--selected') &&
-           document.querySelector('[data-chat-view="codex:${id}"] #chat-search-content [data-chat-message-id="answer-9"] p:last-child')`
+           document.querySelector('[data-chat-view="${provider}:${id}"] #chat-search-content [data-chat-message-id="answer-9"] p:last-child')`
         )
         const rect =
           await run(`(()=>{const r=document.querySelector('#chat-search-content [data-chat-message-id="answer-9"] p:last-child').getBoundingClientRect();

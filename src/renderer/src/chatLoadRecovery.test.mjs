@@ -292,7 +292,7 @@ test('a failed request for a closed chat cannot publish its error into the next 
   assert.equal(h.state.loadError, null)
 })
 
-test('RAM history and disabling the chat cache bypass SQLite, while disk failure permits a normal open', async () => {
+test('RAM history bypasses saved-view reads; a disabled RAM cache and disk failure still permit normal opening', async () => {
   for (const mode of ['ram', 'disabled', 'failed']) {
     const current = mode === 'ram' ? detail(1) : null
     const h = setup('codex', current)
@@ -305,10 +305,46 @@ test('RAM history and disabling the chat cache bypass SQLite, while disk failure
     h.startLoad()
     h.resolve(detail(2))
     await settle()
-    assert.equal(calls, mode === 'failed' ? 1 : 0)
+    assert.equal(calls, mode === 'ram' ? 0 : 1)
     assert.equal(h.state.detail.revision, 2)
     assert.equal(h.state.loadState, 'ready')
   }
+})
+
+test('durable views remain available with the optional RAM cache disabled', async () => {
+  const h = setup('codex')
+  h.context.effectiveAppSettings.chat.recentChatCacheLimit = 0
+  const installed = []
+  h.context.conversationViews = { install: (...args) => installed.push(args) }
+  const preview = { ...savedPreview(), conversationView: true }
+  h.context.providerApi.getCachedChat = async () => preview
+  h.startLoad()
+  await settle()
+  assert.equal(h.state.detail, preview)
+  assert.equal(installed[0][1][0], preview)
+  h.resolve(detail(2))
+  await settle()
+  assert.equal(h.state.detail.revision, 2)
+})
+
+test('a fast provider failure still permits a later local saved view with a retry error', async () => {
+  const h = setup('codex')
+  let finishDisk
+  const preview = { ...savedPreview(), conversationView: true }
+  h.context.conversationViews = { install: () => {} }
+  h.context.providerApi.getCachedChat = () =>
+    new Promise((resolve) => {
+      finishDisk = resolve
+    })
+  h.startLoad()
+  h.reject(new Error('Provider offline'))
+  await settle()
+  finishDisk(preview)
+  await settle()
+  assert.equal(h.state.detail, preview)
+  assert.equal(h.state.loadState, 'error')
+  assert.equal(h.state.loadError.message, 'Provider offline')
+  assert.equal(h.state.detail.writeAccess, 'checking')
 })
 
 for (const provider of ['codex', 'claude', 'copilot', 'opencode']) {
@@ -529,4 +565,112 @@ test('background summaries preserve messages and changed sidebar stamps still op
     openingView,
     'completed chats may use their newer saved opening view'
   )
+})
+
+test('selected-chat resynchronization yields without delaying the summary acknowledgement', async () => {
+  const observed = []
+  let listener, resolveRead
+  let transitioning = false
+  const view = { id: 'selected', revision: 1, historyPreview: true, items: [{ id: 'reply' }] }
+  const context = createWorkspaceTestContext({
+    providerApi: {
+      onChatUpdated: (callback) => {
+        listener = callback
+        return () => {}
+      },
+      acknowledgeChatUpdate: (sequence, applied) =>
+        observed.push(['ack', sequence, applied, transitioning]),
+      getChat: () =>
+        new Promise((resolve) => {
+          resolveRead = resolve
+        })
+    },
+    startTransition: (callback) => {
+      transitioning = true
+      try {
+        callback()
+      } finally {
+        transitioning = false
+      }
+    },
+    getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
+    selectedChatKeyRef: { current: 'codex:selected' },
+    chatDetailRef: { current: view },
+    chatDetailResyncRequestIdRef: { current: 0 },
+    chatDetailResyncRef: { current: null },
+    chatTerminalActivity: { requestProbe: () => {} },
+    applyChatSummary: () => {},
+    applyChatDetail: (_provider, detail) =>
+      observed.push(['detail', detail.revision, transitioning]),
+    scopedCommitActivitiesRef: { current: {} },
+    changesCwdRef: { current: null }
+  })
+  vm.runInContext(streamCode, context)
+  context.callback()
+  listener({
+    providerId: 'codex',
+    chatId: 'selected',
+    sequence: 9,
+    detail: null,
+    summary: { id: 'selected', revision: 2, status: 'active' },
+    turnCompleted: false
+  })
+  assert.deepEqual(
+    observed,
+    [['ack', 9, false, false]],
+    'acknowledgement does not wait for the provider read or React commit'
+  )
+  resolveRead({ ...view, revision: 2, historyPreview: false })
+  await settle()
+  assert.deepEqual(
+    observed,
+    [
+      ['ack', 9, false, false],
+      ['detail', 2, true]
+    ],
+    'the recovered transcript cannot force a blocking render'
+  )
+})
+
+test('pending navigation rejects obsolete provider and disk replies before projection without waiting for effect cleanup', async () => {
+  const h = setup('codex')
+  let diskReply
+  h.context.providerApi.getCachedChat = () =>
+    new Promise((resolve) => {
+      diskReply = resolve
+    })
+  h.context.reuseChatSnapshotItems = () => {
+    throw Error('Obsolete history must not be projected')
+  }
+  h.startLoad()
+  h.context.selectedChatKeyRef.current = 'codex:next'
+  diskReply(savedPreview())
+  h.resolve(detail(100))
+  await settle()
+  assert.equal(h.state.detail, null)
+  assert.equal(h.context.chatDetailRef.current, null)
+  assert.equal(h.state.loadState, 'loading')
+  assert.deepEqual(h.state.seen, [])
+  assert.deepEqual(h.state.errors, [])
+})
+
+test('late offline expansion cannot replace a newly requested chat before effect cleanup', async () => {
+  const initial = { ...savedPreview(), openingPreview: true }
+  const h = setup('codex', initial)
+  let diskReply
+  h.context.providerApi.getCachedChat = () =>
+    new Promise((resolve) => {
+      diskReply = resolve
+    })
+  h.startLoad()
+  h.reject(new Error('Provider offline'))
+  await settle()
+  assert.equal(typeof diskReply, 'function')
+  const next = { ...detail(), id: 'next', openingPreview: true }
+  h.context.selectedChatKeyRef.current = 'codex:next'
+  h.context.chatDetailRef.current = next
+  diskReply(savedPreview())
+  await settle()
+  assert.equal(h.context.chatDetailRef.current, next)
+  assert.equal(h.state.detail, initial)
 })

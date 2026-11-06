@@ -12,10 +12,27 @@ export const createCodexTerminalSessions = (
   registry = agentTerminalSessions
 ) => {
   let prefix = `codex:${crypto.randomUUID()}:`
-  const commands = new Map<string, Command>()
+  // Polling one chat must not scan every command ever executed by this client.
+  const commands = new Map<string, Map<string, Command>>()
+  const completed = new Set<string>()
+  const commandKey = (chatId: string, itemId: string): string => JSON.stringify([chatId, itemId])
+  const finish = (chatId: string, itemId: string, entry: Command, code = 0): void => {
+    void entry.handle.finish(code).then(() => {
+      const chat = commands.get(chatId)
+      if (chat?.get(itemId) !== entry) return
+      chat.delete(itemId)
+      if (!chat.size) commands.delete(chatId)
+      completed.add(commandKey(chatId, itemId))
+      if (completed.size > 1024) completed.delete(completed.values().next().value!)
+      // The registry retains bounded terminal output for existing tabs. The
+      // adapter only needs its duplicate-output buffer while a command is live.
+      entry.output = ''
+    })
+  }
   const ensure = (chatId: string, itemId: string, command: string, cwd: string | null) => {
-    const key = `${chatId}:${itemId}`
-    let entry = commands.get(key)
+    const key = commandKey(chatId, itemId)
+    let chat = commands.get(chatId)
+    let entry = chat?.get(itemId)
     if (!entry) {
       const metadata = options.metadata(chatId)
       const handle = registry.register(prefix + key, {
@@ -27,17 +44,18 @@ export const createCodexTerminalSessions = (
         container: options.container,
         stopScope: 'turn',
         stop: async () => {
-          const processId = commands.get(key)?.processId
+          const processId = commands.get(chatId)?.get(itemId)?.processId
           if (processId) await options.stop(chatId, processId)
           else {
-            const turnId = commands.get(key)?.turnId
+            const turnId = commands.get(chatId)?.get(itemId)?.turnId
             if (!turnId) throw new Error('The owning Codex turn is no longer available.')
             await options.interrupt(chatId, turnId)
           }
         }
       })
       entry = { handle, output: '' }
-      commands.set(key, entry)
+      if (!chat) commands.set(chatId, (chat = new Map()))
+      chat.set(itemId, entry)
     }
     return entry
   }
@@ -66,6 +84,9 @@ export const createCodexTerminalSessions = (
         params.item?.type === 'commandExecution'
       ) {
         const item = params.item
+        // Recovering a stream may replay completion. Retain only a bounded ID
+        // marker, rather than the entire output, to avoid duplicating its text.
+        if (completed.has(commandKey(params.threadId, item.id))) return
         const entry = ensure(params.threadId, item.id, item.command ?? '', item.cwd ?? null)
         entry.turnId = params.turnId ?? entry.turnId
         entry.processId = item.processId ?? entry.processId
@@ -77,7 +98,10 @@ export const createCodexTerminalSessions = (
         if (notification.method === 'item/completed') {
           if (entry.processId && item.exitCode == null) entry.handle.background()
           else
-            void entry.handle.finish(
+            finish(
+              params.threadId,
+              item.id,
+              entry,
               item.exitCode ??
                 (item.status === 'interrupted' ? 130 : item.status === 'failed' ? 1 : 0)
             )
@@ -87,16 +111,16 @@ export const createCodexTerminalSessions = (
         params.itemId &&
         typeof params.delta === 'string'
       ) {
-        const entry = commands.get(`${params.threadId}:${params.itemId}`)
+        const entry = commands.get(params.threadId)?.get(params.itemId)
         if (entry) {
           entry.handle.append(params.delta)
           entry.output += params.delta
         }
       } else if (notification.method === 'turn/completed') {
         const turnId = params.turn?.id ?? params.turnId
-        for (const [key, entry] of commands) {
-          if (key.startsWith(`${params.threadId}:`) && entry.turnId === turnId && !entry.processId)
-            void entry.handle.finish(params.turn?.status === 'completed' ? 0 : 130)
+        for (const [itemId, entry] of commands.get(params.threadId) ?? []) {
+          if (entry.turnId === turnId && !entry.processId)
+            finish(params.threadId, itemId, entry, params.turn?.status === 'completed' ? 0 : 130)
         }
       }
     },
@@ -106,18 +130,19 @@ export const createCodexTerminalSessions = (
     ) => {
       const live = new Set(tasks.map((task) => task.processId))
       for (const task of tasks) {
+        if (completed.has(commandKey(chatId, task.itemId))) continue
         const entry = ensure(chatId, task.itemId, task.command, task.cwd)
         entry.processId = task.processId
         entry.handle.setStopScope('process')
         entry.handle.background()
       }
-      for (const [key, entry] of commands)
-        if (key.startsWith(`${chatId}:`) && entry.processId && !live.has(entry.processId))
-          void entry.handle.finish()
+      for (const [itemId, entry] of commands.get(chatId) ?? [])
+        if (entry.processId && !live.has(entry.processId)) finish(chatId, itemId, entry)
     },
     dispose: () => {
       registry.finishMatching(prefix)
       commands.clear()
+      completed.clear()
       prefix = `codex:${crypto.randomUUID()}:`
     }
   }

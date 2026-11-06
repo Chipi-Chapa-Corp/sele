@@ -321,8 +321,12 @@ window.runScrollChecks = async () => {
     let commitGap
     if (kind === 'active commit') {
       window.chatDetail = { ...window.chatDetail, status: 'running' }
+      const beforePaint = new ResizeObserver(() => {
+        beforePaint.disconnect()
+        commitGap = window.getScrollBottomTop(element) - element.scrollTop
+      })
+      beforePaint.observe(tool)
       window.applyChatLayout()
-      commitGap = window.getScrollBottomTop(element) - element.scrollTop
     }
     await settle()
     autoFollow.push({
@@ -334,7 +338,39 @@ window.runScrollChecks = async () => {
     stop()
     element.removeEventListener('scroll', onScroll)
   }
+  reset()
+  const scrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')
+  let latestReads = 0
+  Object.defineProperty(element, 'scrollHeight', {
+    configurable: true,
+    get() {
+      latestReads++
+      return scrollHeight.get.call(this)
+    }
+  })
+  window.renderedChatTurns = [{}]
+  window.scrollToLatestTurnAfterRenderRef.current = true
+  window.chatAutoScrollEnabledRef.current = true
+  const cancelLatest = window.followLatestAfterLayout()
+  const latestCommitReads = latestReads
+  let latestPaintGap = null
+  const beforePaint = new ResizeObserver(() => {
+    beforePaint.disconnect()
+    latestPaintGap = window.getScrollBottomTop(element) - element.scrollTop
+  })
+  beforePaint.observe(element)
+  await settle()
+  cancelLatest()
+  delete element.scrollHeight
+  element.scrollTop = 50
+  window.scrollToLatestTurnAfterRenderRef.current = true
+  window.followLatestAfterLayout()()
+  await settle()
+  const cancelledLatestScroll = element.scrollTop === 50
   return {
+    latestCommitReads,
+    latestPaintGap,
+    cancelledLatestScroll,
     cursorRequests,
     cursorAutoFollow,
     normalPaging,

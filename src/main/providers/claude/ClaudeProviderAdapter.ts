@@ -2,6 +2,7 @@ import { supportsLocalHostTools } from '../hostToolTarget'
 import { isProviderUsageLimitError } from '../../../shared/providerErrors'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createClaudeTerminalSessions } from './ClaudeTerminalSessions'
+import { chatProcessEnvironment } from '../../chatProcessOwnership'
 import { createAgentTerminalOutputReader } from '../../agentTerminalOutput'
 import { createProviderElicitation, getProviderElicitationResult } from '../ProviderElicitation'
 import { ClaudeLiveTokenUsage } from './ClaudeLiveTokenUsage.ts'
@@ -2033,6 +2034,24 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     }
   }
 
+  stopChatProcesses = async (chatId: string): Promise<string[]> => {
+    this.completionCoordinator.cancel(chatId)
+    const state = this.states.get(chatId)
+    if (!state) return []
+    const stopped = await Promise.allSettled(
+      [...state.backgroundTaskIds].map((id) => state.query?.stopTask(id))
+    )
+    // stopChat closes the per-chat CLI as well as pausing queued work.
+    await this.stopChat(chatId)
+    const failures = stopped.filter((result) => result.status === 'rejected')
+    if (failures.length)
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        'Unable to stop Claude background tasks.'
+      )
+    return [chatId]
+  }
+
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
     this.pinState(state)
@@ -2184,7 +2203,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private getQueryRuntime = async (
     container: AppContainerTarget | null | undefined,
     cwd?: string | null,
-    usageOnly = false
+    usageOnly = false,
+    chatId?: string
   ): Promise<ClaudeQueryRuntime> => {
     const normalized = normalizeContainerTarget(container)
     const storedContainer = normalized.kind === 'container' ? normalized : null
@@ -2195,9 +2215,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const command = await getHostExecutableCommand(executable, [], {
       container: storedContainer,
       cwd: cwd ?? undefined,
-      env: usageOnly
-        ? await claudeAccounts.getUsageEnvironment(storedContainer, this.accountId)
-        : await claudeAccounts.getEnvironment(storedContainer, this.accountId)
+      env: {
+        ...(usageOnly
+          ? await claudeAccounts.getUsageEnvironment(storedContainer, this.accountId)
+          : await claudeAccounts.getEnvironment(storedContainer, this.accountId)),
+        ...(chatId ? chatProcessEnvironment(chatId) : {})
+      }
     })
     if (accountRevision !== (this.accountRevisions.get(key) ?? 0) || this.accountChanges.has(key)) {
       throw new Error('Claude account changed while starting the session. Please try again.')
@@ -2712,7 +2735,12 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       const adapterGeneration = this.stateGeneration
       state.options = options ?? state.options
       const input = new AsyncMessageQueue<SDKUserMessage>()
-      const runtime = await this.getQueryRuntime(state.container, state.cwd ?? state.options?.cwd)
+      const runtime = await this.getQueryRuntime(
+        state.container,
+        state.cwd ?? state.options?.cwd,
+        false,
+        state.id
+      )
       if (
         this.disposed ||
         adapterGeneration !== this.stateGeneration ||

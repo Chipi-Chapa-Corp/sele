@@ -416,3 +416,27 @@ test('missing or invalid image references preserve text and never read unrelated
     { kind: 'file', name: 'file', path: '/file' }
   ])
 })
+
+test('thumbnail drafts restore the original file path and full-resolution preview flag', async () => {
+  const disk = {},
+    client = await makeClient(disk)
+  const pasted = {
+    ...image,
+    path: '/original/full-size.png',
+    dataUrl: 'data:image/webp;base64,AAAA',
+    previewOnly: true
+  }
+  writeStoredComposerDrafts({
+    composerDrafts: new Map([
+      ['chat', { message: 'keep typing', attachments: [pasted], skills: [], apps: [] }]
+    ]),
+    promptDraftsByScope: new Map()
+  })
+  await client.flush()
+  await makeClient(disk)
+  const restored = readStoredComposerDrafts().composerDrafts.get('chat').attachments[0]
+  assert.equal(restored.previewOnly, true)
+  assert.equal(restored.path, pasted.path)
+  assert.equal(restored.dataUrl, pasted.dataUrl)
+  assert.equal(JSON.stringify(disk).includes('previewOnly'), true)
+})

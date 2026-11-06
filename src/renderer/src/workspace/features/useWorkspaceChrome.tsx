@@ -1,5 +1,5 @@
 import { Maximize2, Minimize2, Minus, Settings, X } from 'lucide-react'
-import { useCallback, useEffect } from 'react'
+import { startTransition, useCallback, useEffect } from 'react'
 import { appApi } from '../../appApi'
 import { Button } from '../../components/Button'
 import { useLatestHandler } from '../stableProps'
@@ -24,7 +24,9 @@ export function useWorkspaceChrome({
     appApi
       .getWindowState()
       .then((nextWindowState) => {
-        if (active) dialogState.setWindowState(nextWindowState)
+        startTransition(() => {
+          if (active) dialogState.setWindowState(nextWindowState)
+        })
       })
       .catch((error: unknown) => {
         console.error('Unable to load the window state.', error)

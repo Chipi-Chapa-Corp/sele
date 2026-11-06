@@ -11,7 +11,10 @@ import {
   listGitHubPullRequests,
   getGitHubPullRequest,
   getGitHubPullRequestChanges,
-  submitGitHubPullRequestReview
+  submitGitHubPullRequestReview,
+  getGitHubPullRequestManagement,
+  getGitHubPullRequestCommitChanges,
+  performGitHubPullRequestAction
 } from './githubPullRequests.ts'
 
 const exec = promisify(execFile)
@@ -240,11 +243,13 @@ const detailCli =
   (overrides = {}, timeline = [[]]) =>
   async (args) =>
     JSON.stringify(
-      args.includes('--slurp')
-        ? timeline
-        : args[0] === 'api'
-          ? { login: 'kitkat' }
-          : detailResponse(overrides)
+      args.some((arg) => arg.includes('/pulls/123/comments'))
+        ? [[]]
+        : args.includes('--slurp')
+          ? timeline
+          : args[0] === 'api'
+            ? { login: 'kitkat' }
+            : detailResponse(overrides)
     )
 
 test('pull request details use the project remote and combine comments and submitted reviews chronologically', async () => {
@@ -296,6 +301,120 @@ test('pull request details use the project remote and combine comments and submi
       ['review', 'reviewer', 'Looks good'],
       ['comment', null, 'A comment']
     ]
+  )
+})
+
+test('discussion includes paginated inline reviews, replies and outdated locations without duplicate summaries', async () => {
+  const submittedAt = '2026-11-02T10:00:00Z'
+  const timeline = [
+    [
+      {
+        event: 'reviewed',
+        id: 41,
+        node_id: 'r41',
+        user: { login: 'reviewer' },
+        body: 'Please adjust these lines',
+        submitted_at: submittedAt,
+        state: 'changes_requested'
+      }
+    ],
+    [
+      {
+        event: 'reviewed',
+        id: 42,
+        node_id: 'r42',
+        user: { login: 'kitkat' },
+        body: '',
+        submitted_at: '2026-11-03T10:00:00Z',
+        state: 'commented'
+      }
+    ]
+  ]
+  const comment = {
+    id: 1,
+    pull_request_review_id: 41,
+    user: { login: 'reviewer' },
+    body: 'Handle this case',
+    created_at: '2026-11-02T09:00:00Z',
+    path: 'src/main.ts',
+    line: 14,
+    original_line: 14,
+    start_line: 12,
+    side: 'RIGHT',
+    html_url: 'https://github.com/Example/App/pull/123#discussion_r1'
+  }
+  const result = await getGitHubPullRequest('/repo', detailOptions, detailGit, async (args) => {
+    if (args.some((arg) => arg.includes('/pulls/123/comments'))) {
+      assert.ok(args.includes('--paginate') && args.includes('--slurp'))
+      return JSON.stringify([
+        [comment],
+        [
+          {
+            ...comment,
+            id: 2,
+            pull_request_review_id: 42,
+            user: { login: 'kitkat' },
+            body: 'Fixed in the next commit',
+            created_at: '2026-11-03T09:00:00Z',
+            in_reply_to_id: 1,
+            line: null,
+            original_line: 8,
+            start_line: null,
+            original_start_line: 6,
+            side: 'LEFT'
+          }
+        ]
+      ])
+    }
+    return detailCli(
+      {
+        reviews: [
+          {
+            id: 'r41',
+            author: { login: 'reviewer' },
+            body: 'Please adjust these lines',
+            submittedAt,
+            state: 'CHANGES_REQUESTED'
+          }
+        ]
+      },
+      timeline
+    )(args)
+  })
+  assert.deepEqual(
+    result.activity.map((item) => [item.id, item.author, item.state]),
+    [
+      ['review:r41', 'reviewer', 'CHANGES_REQUESTED'],
+      ['review-comment:1', 'reviewer', null],
+      ['review:r42', 'kitkat', 'COMMENTED'],
+      ['review-comment:2', 'kitkat', null]
+    ]
+  )
+  assert.equal(result.activity[1].createdAt, submittedAt)
+  assert.deepEqual(result.activity[1].reviewComment, {
+    path: 'src/main.ts',
+    line: 14,
+    startLine: 12,
+    side: 'new',
+    outdated: false,
+    url: comment.html_url
+  })
+  assert.deepEqual(result.activity[3].reviewComment, {
+    path: 'src/main.ts',
+    line: 8,
+    startLine: 6,
+    side: 'old',
+    outdated: true,
+    url: comment.html_url
+  })
+  await assert.rejects(
+    () =>
+      getGitHubPullRequest('/repo', detailOptions, detailGit, async (args) =>
+        args.some((arg) => arg.includes('/pulls/123/comments'))
+          ? JSON.stringify([[{ ...comment, line: 'invalid' }]])
+          : detailCli()(args)
+      ),
+    /invalid review comments/
   )
 })
 
@@ -400,7 +519,7 @@ test('timeline includes commits and state changes from every page, uses the stat
     ]
   ]
   const result = await getGitHubPullRequest('/project', detailOptions, detailGit, async (args) => {
-    if (args.includes('--slurp'))
+    if (args.some((arg) => arg.includes('/issues/123/timeline')))
       assert.deepEqual(args, [
         'api',
         '--hostname',
@@ -577,5 +696,244 @@ test('review submission preserves drafts by rejecting stale heads and invalid in
       run
     ),
     /repository changed/
+  )
+})
+
+const managementResponse = (
+  repo = {},
+  pr = {},
+  rollup = { state: 'SUCCESS', contexts: { totalCount: 4 } }
+) =>
+  JSON.stringify({
+    data: {
+      repository: {
+        viewerDefaultMergeMethod: 'SQUASH',
+        viewerPermission: 'WRITE',
+        mergeCommitAllowed: true,
+        squashMergeAllowed: true,
+        rebaseMergeAllowed: true,
+        ...repo,
+        pullRequest: {
+          headRefOid: commitId,
+          state: 'OPEN',
+          isDraft: false,
+          mergeable: 'MERGEABLE',
+          viewerCanUpdate: true,
+          commits: { nodes: [{ commit: { statusCheckRollup: rollup } }] },
+          ...pr
+        }
+      }
+    }
+  })
+
+test('management uses repository merge methods and the repository viewer default, with CI rollup status', async () => {
+  const data = await getGitHubPullRequestManagement(
+    '/repo',
+    detailOptions,
+    detailGit,
+    async (args) => {
+      assert.ok(args.includes('graphql'))
+      assert.ok(args.includes('owner=Example'))
+      assert.ok(args.includes('name=App'))
+      return managementResponse()
+    }
+  )
+  assert.deepEqual(data, {
+    headSha: commitId,
+    mergeMethods: ['merge', 'squash', 'rebase'],
+    defaultMergeMethod: 'squash',
+    canMerge: true,
+    canClose: true,
+    checks: 'success',
+    checkCount: 4
+  })
+  const limited = await getGitHubPullRequestManagement(
+    '/repo',
+    detailOptions,
+    detailGit,
+    async () => managementResponse({ squashMergeAllowed: false, rebaseMergeAllowed: false })
+  )
+  assert.deepEqual(limited.mergeMethods, ['merge'])
+  assert.equal(limited.defaultMergeMethod, 'merge')
+  for (const [rollup, status] of [
+    [null, 'none'],
+    [{ state: 'PENDING', contexts: { totalCount: 1 } }, 'pending'],
+    [{ state: 'FAILURE', contexts: { totalCount: 1 } }, 'failure'],
+    [{ state: 'ERROR', contexts: { totalCount: 1 } }, 'failure']
+  ]) {
+    const result = await getGitHubPullRequestManagement(
+      '/repo',
+      detailOptions,
+      detailGit,
+      async () => managementResponse({}, {}, rollup)
+    )
+    assert.equal(result.checks, status)
+  }
+})
+
+test('management prevents merging drafts, closed PRs, conflicts and accounts without write access', async () => {
+  for (const [repo, pr] of [
+    [{}, { isDraft: true }],
+    [{}, { state: 'MERGED', viewerCanUpdate: false }],
+    [{}, { mergeable: 'CONFLICTING' }],
+    [{ viewerPermission: 'READ' }, {}]
+  ]) {
+    const result = await getGitHubPullRequestManagement(
+      '/repo',
+      detailOptions,
+      detailGit,
+      async () => managementResponse(repo, pr)
+    )
+    assert.equal(result.canMerge, false)
+  }
+})
+
+test('ordinary comments post to the issue discussion and preserve literal Markdown', async () => {
+  const calls = []
+  const body = '    code $(literal) `text`\n\nComment'
+  await performGitHubPullRequestAction(
+    '/repo',
+    { ...detailOptions, action: 'comment', body },
+    detailGit,
+    async (args, input) => {
+      calls.push({ args, input })
+      return '{}'
+    }
+  )
+  assert.equal(calls.length, 1)
+  assert.ok(calls[0].args.includes('repos/Example/App/issues/123/comments'))
+  assert.ok(calls[0].args.includes('POST'))
+  assert.deepEqual(JSON.parse(calls[0].input), { body })
+  await assert.rejects(() =>
+    performGitHubPullRequestAction(
+      '/repo',
+      { ...detailOptions, action: 'comment', body: '   ' },
+      detailGit,
+      async () => assert.fail('empty comments must not post')
+    )
+  )
+})
+
+test('closing updates the PR state once and rejects merged PRs', async () => {
+  const calls = []
+  await performGitHubPullRequestAction(
+    '/repo',
+    { ...detailOptions, action: 'close' },
+    detailGit,
+    async (args, input) => {
+      calls.push({ args, input })
+      return input ? '{}' : JSON.stringify({ state: 'open', merged: false })
+    }
+  )
+  assert.ok(calls[1].args.includes('PATCH'))
+  assert.deepEqual(JSON.parse(calls[1].input), { state: 'closed' })
+  let writes = 0
+  await performGitHubPullRequestAction(
+    '/repo',
+    { ...detailOptions, action: 'close' },
+    detailGit,
+    async (_args, input) => {
+      if (input) writes++
+      return JSON.stringify({ state: 'closed', merged: false })
+    }
+  )
+  assert.equal(writes, 0)
+  await assert.rejects(
+    () =>
+      performGitHubPullRequestAction(
+        '/repo',
+        { ...detailOptions, action: 'close' },
+        detailGit,
+        async () => JSON.stringify({ state: 'closed', merged: true })
+      ),
+    /already been merged/
+  )
+})
+
+test('merge sends the chosen method with a head SHA and leaves commit message defaults to GitHub', async () => {
+  const calls = []
+  await performGitHubPullRequestAction(
+    '/repo',
+    { ...detailOptions, action: 'merge', method: 'squash', headSha: commitId },
+    detailGit,
+    async (args, input) => {
+      calls.push({ args, input })
+      return input ? JSON.stringify({ merged: true }) : managementResponse()
+    }
+  )
+  assert.ok(calls[1].args.includes('repos/Example/App/pulls/123/merge'))
+  assert.ok(calls[1].args.includes('PUT'))
+  assert.deepEqual(JSON.parse(calls[1].input), { sha: commitId, merge_method: 'squash' })
+  for (const [options, response, reason] of [
+    [{ headSha: 'b'.repeat(40) }, managementResponse(), /new commits/],
+    [{}, managementResponse({ squashMergeAllowed: false }), /cannot be merged/],
+    [{}, managementResponse({}, { isDraft: true }), /cannot be merged/]
+  ])
+    await assert.rejects(
+      () =>
+        performGitHubPullRequestAction(
+          '/repo',
+          { ...detailOptions, action: 'merge', method: 'squash', headSha: commitId, ...options },
+          detailGit,
+          async (_args, input) => {
+            assert.equal(input, undefined)
+            return response
+          }
+        ),
+      reason
+    )
+  await assert.rejects(
+    () =>
+      performGitHubPullRequestAction(
+        '/repo',
+        { ...detailOptions, action: 'merge', method: 'squash', headSha: commitId },
+        detailGit,
+        async (_args, input) =>
+          input
+            ? JSON.stringify({ merged: false, message: 'Required checks are pending' })
+            : managementResponse()
+      ),
+    /Required checks/
+  )
+})
+
+test('commit snapshots validate PR membership and include only that commit’s files across pages', async () => {
+  const calls = []
+  const result = await getGitHubPullRequestCommitChanges(
+    '/repo',
+    { ...detailOptions, commitSha: commitId },
+    detailGit,
+    async (args) => {
+      calls.push(args)
+      if (args.some((arg) => arg.includes('/timeline?')))
+        return JSON.stringify([[{ event: 'committed', sha: commitId }]])
+      assert.ok(args.includes(`repos/Example/App/commits/${commitId}?per_page=100`))
+      return JSON.stringify([
+        {
+          sha: commitId,
+          files: [{ filename: 'one.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }]
+        },
+        {
+          sha: commitId,
+          files: [{ filename: 'two.ts', status: 'added', patch: '@@ -0,0 +1 @@\n+new' }]
+        }
+      ])
+    }
+  )
+  assert.deepEqual(
+    result.files.map((file) => file.path),
+    ['one.ts', 'two.ts']
+  )
+  assert.equal(result.commitId, commitId)
+  assert.ok(!calls.some((args) => args.includes('repos/Example/App/pulls/123/files?per_page=100')))
+  await assert.rejects(
+    () =>
+      getGitHubPullRequestCommitChanges(
+        '/repo',
+        { ...detailOptions, commitSha: commitId },
+        detailGit,
+        async () => JSON.stringify([[]])
+      ),
+    /does not belong/
   )
 })

@@ -39,9 +39,26 @@ export function useStreamReveal(
 ): void {
   const previous = useRef<{ text: string; streaming: boolean } | null>(null)
   const ranges = useRef<RevealRange[]>([])
+  const applied = useRef<{
+    host: HTMLDivElement | null
+    html: string
+    streaming: boolean
+    reduced: boolean
+  } | null>(null)
   const reduced = useReducedMotionPreference()
   // biome-ignore lint/correctness/useExhaustiveDependencies: HTML is the commit signal for this DOM-owned subtree.
   useLayoutEffect(() => {
+    const host = ref.current
+    if (!html) return
+    const appliedBefore = applied.current
+    if (
+      appliedBefore?.host === host &&
+      appliedBefore.html === html &&
+      appliedBefore.streaming === streaming &&
+      appliedBefore.reduced === reduced
+    )
+      return
+    applied.current = { host, html, streaming, reduced }
     const root = ref.current?.querySelector<HTMLElement>('.chat-detail__message-markdown')
     if (!root) return
     const text = root.textContent ?? ''

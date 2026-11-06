@@ -34,7 +34,7 @@ export const clamp = (value: number, min: number, max: number): number =>
 export const getScrollBottomTop = (element: HTMLElement): number =>
   Math.max(0, element.scrollHeight - element.clientHeight)
 
-export const alignChatContentToBottom = (element: HTMLElement): void => {
+export const prepareChatContentLayout = (element: HTMLElement): void => {
   const inner = element.querySelector<HTMLElement>('.chat-detail__messages-inner')
   if (inner) {
     if (inner.style.translate) inner.style.removeProperty('translate')
@@ -45,6 +45,10 @@ export const alignChatContentToBottom = (element: HTMLElement): void => {
       element.style.setProperty('--chat-layout-pixel', pixel)
     }
   }
+}
+
+export const alignChatContentToBottom = (element: HTMLElement): void => {
+  prepareChatContentLayout(element)
   // Let the browser clamp to its true maximum, including at fractional zoom.
   element.scrollTop = element.scrollHeight
 }

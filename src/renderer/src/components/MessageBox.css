@@ -97,7 +97,7 @@
 }
 
 .message-box__chat-config-preset-row:hover,
-.message-box__chat-config-preset-row:focus-within {
+.message-box__chat-config-preset-row:has(:focus-visible) {
   background: var(--menu-option-active-bg);
 }
 
@@ -212,6 +212,7 @@
   --chat-config-icon-size: var(--control-icon-size);
   position: fixed;
   z-index: 1000;
+  outline: 0;
 }
 
 .message-box__chat-config-menu {

@@ -17,8 +17,8 @@ if (!process.versions.electron) {
             import {copyRenderedImage} from './src/renderer/src/imageClipboard'
             const root = createRoot(document.getElementById('root'))
             let key = 0
-            window.renderEditor = (path = 'docs/README.md', container = {kind: 'container', tool: 'ssh', name: 'test'}) => flushSync(() => root.render(
-              <FileEditorDialog key={++key} target={{cwd: '/project/subfolder', path, displayPath: path,
+            window.renderEditor = (path = 'docs/README.md', container = {kind: 'container', tool: 'ssh', name: 'test'}, retain = false) => flushSync(() => root.render(
+              <FileEditorDialog key={retain ? key : ++key} target={{cwd: '/project/subfolder', path, displayPath: path,
                 container}}
                 onClose={() => { window.closedCount++; root.render(null) }} />
             ))
@@ -36,7 +36,11 @@ if (!process.versions.electron) {
           {
             name: 'test-editor-input',
             setup(build) {
-              build.onLoad({ filter: /\/UnifiedDiff\.tsx$/ }, () => ({
+              build.onLoad({ filter: /\/MobileCodeEditor\.tsx$/ }, () => ({
+                contents: 'export const MobileCodeEditor = () => null',
+                loader: 'tsx'
+              }))
+              build.onLoad({ filter: /\/(?:Editable)?UnifiedDiff\.tsx$/ }, () => ({
                 contents: `import React from 'react'; export const UnifiedDiff = () => null;
                 export const EditableUnifiedDiff = ({contents, onChange}) =>
                   <textarea aria-label="Test contents" value={contents} onChange={e => onChange(e.target.value)} />`,
@@ -83,7 +87,8 @@ if (!process.versions.electron) {
             getGitFileDiff: async () => ({diff: ''}),
             getLocalImage: async options => {
               window.images.push(options);
-              return {data: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="5" height="10" fill="red"/></svg>').buffer, mimeType: 'image/svg+xml'};
+              const width = options.path === 'second.svg' ? 23 : 10;
+              return {data: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="10"><rect width="5" height="10" fill="red"/></svg>').buffer, mimeType: 'image/svg+xml'};
             },
             writeFileContents: async options => {
               window.writes.push(options);
@@ -325,6 +330,19 @@ if (!process.versions.electron) {
       await assertClipboardPixels()
       assert.equal(await run('window.images.length'), imageReads, 'copy does not reread the file')
 
+      await run("window.renderEditor('second.svg', undefined, true)")
+      await settle()
+      await click('[aria-label="Copy second.svg"]')
+      assert.deepEqual(
+        clipboard.readImage().getSize(),
+        { width: 23, height: 10 },
+        'switching files copies the second image'
+      )
+      await run("window.renderEditor('picture.svg', undefined, true)")
+      await settle()
+      await click('[aria-label="Copy picture.svg"]')
+      await assertClipboardPixels()
+
       // The lightbox also copies displayed images, including images without a file path.
       const svgDataUrl = `data:image/svg+xml;base64,${Buffer.from(svgBytes).toString('base64')}`
       for (const imagePath of ['/missing-after-preview.svg', null]) {
@@ -347,6 +365,31 @@ if (!process.versions.electron) {
           await window.copyRenderedImage(image);
         })()`)
         assert.deepEqual(clipboard.readImage().getSize(), { width: 13, height: 7 }, mimeType)
+      }
+
+      // Copy different previews consecutively without clearing the system clipboard.
+      for (const [width, height, color] of [
+        [17, 9, 'blue'],
+        [23, 11, 'green'],
+        [17, 9, 'red']
+      ]) {
+        await run(`(() => {
+          const canvas = document.createElement('canvas'); canvas.width = ${width}; canvas.height = ${height};
+          const context = canvas.getContext('2d'); context.fillStyle = ${JSON.stringify(color)};
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          window.renderLightbox(canvas.toDataURL(), null);
+        })()`)
+        await settle()
+        await click('[aria-label="Copy Clipboard fixture"]')
+        assert.equal(
+          await run('Boolean(document.querySelector(".image-lightbox svg.lucide-check"))'),
+          true
+        )
+        assert.deepEqual(
+          clipboard.readImage().getSize(),
+          { width, height },
+          'the latest preview replaces the previous copy'
+        )
       }
       const beforeInvalidCopy = clipboard.readImage().toPNG()
       assert.throws(() => writeClipboardImage(new ArrayBuffer(0)), /No image data/)

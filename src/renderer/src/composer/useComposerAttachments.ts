@@ -1,8 +1,9 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { useRef, useState } from 'react'
-import type { AppSelectedAttachment } from '../../../shared/app'
+import type { AppSelectedAttachment, AppSelectedImage } from '../../../shared/app'
 import { appApi } from '../appApi'
 import { hasLinkedChatDrag, linkedChatDragType, parseLinkedChatDrag } from '../linkedChats'
+import { readPastedImage } from './pastedImage'
 import { maxSelectedAttachmentCount } from './composerLimits'
 
 const getComposerDragKind = (dataTransfer: DataTransfer): 'files' | 'chat' | null => {
@@ -183,10 +184,12 @@ export function useComposerAttachments({
   }
 
   const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
-    const hasImage = Array.from(event.clipboardData.items).some(
+    const imageItem = Array.from(event.clipboardData.items).find(
       (item) => item.kind === 'file' && item.type.startsWith('image/')
     )
-    if (!hasImage) return
+    if (!imageItem) return
+    // Capture the paste event's file before any asynchronous work or clipboard change.
+    const file = imageItem.getAsFile()
 
     event.preventDefault()
     if (attachmentSelectionPending) return
@@ -200,7 +203,7 @@ export function useComposerAttachments({
 
     try {
       const selectionEditId = editSessionIdRef.current
-      const image = await appApi.getClipboardImage()
+      const image = await (file ? readPastedImage(file) : appApi.getClipboardImage())
       if (selectionEditId !== editSessionIdRef.current) return
       if (!image) throw new Error('Unable to read the pasted image.')
 
@@ -249,6 +252,12 @@ export function useComposerAttachments({
 
     onOpenAttachment?.(attachment)
   }
+
+  const handleSaveOpenedImage = (image: AppSelectedImage): void => {
+    setSelectedAttachments((attachments) =>
+      attachments.map((attachment) => (attachment === openedImage ? image : attachment))
+    )
+  }
   return {
     openedImage,
     setOpenedImage,
@@ -264,6 +273,7 @@ export function useComposerAttachments({
     handleRemoveAttachment,
     handleRemoveSkill,
     handleRemoveApp,
-    handleOpenAttachment
+    handleOpenAttachment,
+    handleSaveOpenedImage
   }
 }

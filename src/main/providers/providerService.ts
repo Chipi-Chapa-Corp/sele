@@ -6,6 +6,9 @@ import { getLastTurnOutcome } from '../../shared/chatTurnOutcome'
 import { getChatTurnOutcomes, setChatTurnOutcome } from '../database/chatTurnOutcome'
 import { ChatAccounts } from './ChatAccounts'
 import { BackgroundChatRecovery } from './BackgroundChatRecovery'
+import { createChatProcessCleanup } from './ChatProcessCleanup'
+import { killChatProcesses } from '../chatProcesses'
+import { agentTerminalSessions } from '../agentTerminalSessions'
 import { ImportedConversations } from './ImportedConversations'
 import { app } from 'electron'
 import { prepareChatWorkspace } from './noProjectWorkspace'
@@ -222,13 +225,13 @@ export const getProviderKnownChats = async (
     offset,
     Math.max(1, Math.min(options.limit ?? 100, 100))
   )
-  page.views.forEach((view) => {
+  page.summaries.forEach((view) => {
     const viewScope = persistentChatHistory.viewScope(provider, view.id, view.container)
     if (viewScope?.current()) knownConversationScopes.add(viewScope.key)
   })
   const chats = await applyMetadataToChats(
-    page.views.map((view) => ({
-      ...getChatUpdateSummary(view, view.updatedAt ?? view.createdAt),
+    page.summaries.map((view) => ({
+      ...view,
       providerId: provider
     }))
   )
@@ -237,62 +240,35 @@ export const getProviderKnownChats = async (
   return {
     chats: chats.filter((chat) => !chat.purpose),
     nextCursor: page.nextCursor,
-    conversationViews: scope.current() ? page.views : []
+    conversationViews: []
   }
-}
-
-export const getProviderConversationViews = async (
-  provider: ProviderId,
-  chats: ProviderChat[]
-): Promise<ProviderChatDetail[]> => {
-  const sources = new Map(
-    chats.map((chat) => [getContainerTargetKey(chat.container), chat.container])
-  )
-  await Promise.all(
-    [...sources.values()].map(async (container) => {
-      if (!persistentChatHistory.viewScope(provider, '', container))
-        await providerApi.getAccounts(provider, { container })
-    })
-  )
-  const scopes = chats.map((chat) =>
-    persistentChatHistory.viewScope(provider, chat.id, chat.container)
-  )
-  const stored = await durableConversationViews.read(
-    scopes.filter((scope): scope is ConversationViewScope => scope !== null)
-  )
-  for (const key of stored.keys()) knownConversationScopes.add(key)
-  const views: ProviderChatDetail[] = []
-  for (const [index, chat] of chats.entries()) {
-    const scope = scopes[index]
-    if (!scope?.current()) continue
-    let view = stored.get(scope.key)
-    // One-time adoption of still-valid pages from the old disposable cache.
-    if (!view) {
-      const legacy = await persistentChatHistory.preview(provider, chat.id, chat.container)
-      if (legacy) {
-        view = createConversationView(legacy)
-        if (await durableConversationViews.write(scope, view))
-          knownConversationScopes.add(scope.key)
-      }
-    }
-    if (view && scope.current()) views.push(restoreConversationView(view, chat))
-  }
-  backgroundChatRecovery.observe(provider, chats)
-  return views
 }
 
 export const getProviderCachedChat = async (
   providerId: ProviderId,
   chatId: string,
-  options?: { container?: import('../../shared/app').AppContainerTarget | null }
+  options?: { container?: import('../../shared/app').AppContainerTarget | null; opening?: boolean }
 ): Promise<ProviderChatDetail | null> => {
   const metadata = await getChatMetadata(chatId)
   if (metadata.done || metadata.purpose) return null
-  return persistentChatHistory.preview(
-    providerId,
-    chatId,
-    options?.container !== undefined ? options.container : metadata.container
-  )
+  const container = options?.container !== undefined ? options.container : metadata.container
+  const scope = persistentChatHistory.viewScope(providerId, chatId, container)
+  if (scope) {
+    const view = (
+      await durableConversationViews.read([scope], { opening: options?.opening === true })
+    ).get(scope.key)
+    if (view && scope.current()) {
+      knownConversationScopes.add(scope.key)
+      return restoreConversationView(view, {
+        ...view,
+        ...metadata,
+        providerId,
+        updatedAt: view.updatedAt ?? view.createdAt,
+        preview: ''
+      })
+    }
+  }
+  return persistentChatHistory.preview(providerId, chatId, container)
 }
 
 export const beginProviderChatHistoryRead = async (
@@ -391,6 +367,13 @@ export const importedConversations = new ImportedConversations(
 const adapters = Object.fromEntries(
   Object.keys(nativeAdapters).map((id) => [id, importedConversations.wrap(id as ProviderId)])
 ) as Record<ProviderId, ProviderAdapter>
+
+const cleanupChatProcesses = createChatProcessCleanup({
+  adapters,
+  metadata: getChatMetadata,
+  stopTerminals: (ids) => agentTerminalSessions.stopChats(ids),
+  killProcesses: killChatProcesses
+})
 
 const backgroundChatRecovery = new BackgroundChatRecovery({
   scope: (provider, chat) => persistentChatHistory.viewScope(provider, chat.id, chat.container),
@@ -1349,6 +1332,7 @@ export const providerApi: ProviderApi = {
     const page = await adapters[providerId].getChats(options)
     const chats = await applyMetadataToChats(page.chats)
     persistentChatHistory.observe(chats)
+    backgroundChatRecovery.observe(providerId, chats)
     const projectCwd = normalizeCwd(options?.projectCwd)
     return {
       ...page,
@@ -1600,8 +1584,14 @@ export const providerApi: ProviderApi = {
     adapters[providerId]
       .stopChat(chatId)
       .then((detail) => applyMetadataToDetail(detail, providerId)),
-  markChatDone: (_providerId, chatId, done = true) => setChatDone(chatId, done),
-  markChatsDone: (chatIds) => setChatsDone(chatIds, true),
+  markChatDone: async (providerId, chatId, done = true) => {
+    if (done) await cleanupChatProcesses([chatId], providerId)
+    return setChatDone(chatId, done)
+  },
+  markChatsDone: async (chatIds) => {
+    await cleanupChatProcesses(chatIds)
+    return setChatsDone(chatIds, true)
+  },
   getCwdNotes: (providerId, cwd) => getCwdNotes(providerId, cwd),
   setCwdNotes: (providerId, cwd, notes) => setCwdNotes(providerId, cwd, notes),
   markChatSeen: (_providerId, chatId, seenUpdatedAt) => setChatSeen(chatId, seenUpdatedAt),

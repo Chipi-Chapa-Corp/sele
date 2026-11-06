@@ -48,7 +48,7 @@ export function useWorkspaceSidebarPresentation({
   }, [workingProjectCwds])
 
   const renderSidebarChatGroup = useCallback(
-    (group: ChatListGroupData, contentId: string, layoutOrder?: string): React.ReactElement => {
+    (group: ChatListGroupData, contentId: string): React.ReactElement => {
       const holdsSelectedChat = Boolean(
         selectedChatKey &&
           group.chats.some(
@@ -66,8 +66,7 @@ export function useWorkspaceSidebarPresentation({
         contentId,
         holdsSelectedChat ? subagentPresentation.selectedChatSubagentList : null,
         holdsSelectedChat && subagentPresentation.selectedSubagentChatOpen,
-        subagentState.workingSubagentChatKeys,
-        layoutOrder
+        subagentState.workingSubagentChatKeys
       )
     },
     [
@@ -80,5 +79,5 @@ export function useWorkspaceSidebarPresentation({
       subagentState.workingSubagentChatKeys
     ]
   )
-  return { renderSidebarChatGroup }
+  return { renderSidebarChatGroup, hasWorkingChats: workingProjectCwds.size > 0 }
 }

@@ -7,7 +7,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
   type ReactElement,
   type ReactNode
 } from 'react'
@@ -33,11 +32,7 @@ import {
   shouldDisableRateLimitReset,
   sortRateLimitsForDisplay
 } from '../accountRateLimits'
-import {
-  formatRateLimitResetExpirationDate,
-  getRateLimitResetMessage,
-  groupRateLimitResetCreditsByExpiration
-} from '../rateLimitReset'
+import { getRateLimitResetMessage, groupRateLimitResetCreditsByExpiration } from '../rateLimitReset'
 import {
   describeBalance,
   formatBalanceAmount,
@@ -301,7 +296,13 @@ const formatResetTime = (resetsAt: number | null): string | null => {
   }).format(new Date(timestamp))
 }
 
-const LimitResetCountdown = ({ resetsAt }: { resetsAt: number | null }): ReactElement | null => {
+const LimitResetCountdown = ({
+  resetsAt,
+  expiration = false
+}: {
+  resetsAt: number | null
+  expiration?: boolean
+}): ReactElement | null => {
   const now = useSemanticDateNow()
   if (!resetsAt) return null
 
@@ -311,7 +312,13 @@ const LimitResetCountdown = ({ resetsAt }: { resetsAt: number | null }): ReactEl
 
   return (
     <time className="message-box__limit-reset" dateTime={reset.dateTime} title={reset.title}>
-      {timestamp > now ? reset.label.replace(/^in /, 'for ') : 'Reset pending'}
+      {expiration
+        ? timestamp > now
+          ? `Expires ${reset.label}`
+          : 'Expired'
+        : timestamp > now
+          ? reset.label.replace(/^in /, 'for ')
+          : 'Reset pending'}
     </time>
   )
 }
@@ -361,7 +368,6 @@ export function UsageIndicator({
   const usagePopoverId = useId().replace(/:/g, '')
   const usageControlRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const [popoverStyle, setPopoverStyle] = useState<CSSProperties | null>(null)
   const sourceKey = JSON.stringify([scopeKey, providerId, chatId, container])
   // Preserve the sidebar's source-specific popover reset without replacing its badges.
   const popoverSourceKey = scopeKey === undefined ? '' : sourceKey
@@ -472,13 +478,26 @@ export function UsageIndicator({
         placement: 'top-end',
         middleware: [offset(6), flip(), shift({ padding: 8 })]
       }).then(({ x, y }) => {
-        if (active) setPopoverStyle({ left: x, top: y })
+        if (!active) return
+        const left = `${x}px`
+        const top = `${y}px`
+        if (floating.style.left !== left) floating.style.left = left
+        if (floating.style.top !== top) floating.style.top = top
+        if (floating.style.visibility !== 'visible') floating.style.visibility = 'visible'
       })
     }
-    const cleanup = autoUpdate(reference, floating, update)
+    // Overflow ancestor discovery reads geometry. Start after browser layout,
+    // so opening this popover never forces the transcript to lay out in commit.
+    let cleanup: (() => void) | undefined
+    const ready = new ResizeObserver(() => {
+      ready.disconnect()
+      if (active) cleanup = autoUpdate(reference, floating, update)
+    })
+    ready.observe(floating)
     return () => {
       active = false
-      cleanup()
+      ready.disconnect()
+      cleanup?.()
     }
   }, [usageMenuOpen])
 
@@ -696,7 +715,7 @@ export function UsageIndicator({
           {usageMenuOpen && (
             <MotionSurface
               ref={popoverRef}
-              style={popoverStyle ?? { visibility: 'hidden' }}
+              style={{ visibility: 'hidden' }}
               className="message-box__usage-popover"
               id={`message-usage-${usagePopoverId}`}
               role="dialog"
@@ -917,9 +936,14 @@ export function UsageIndicator({
                                     key={group.expiresAt ?? 'none'}
                                   >
                                     <span>
-                                      {group.expiresAt == null
-                                        ? 'No expiration'
-                                        : `Expires ${formatRateLimitResetExpirationDate(group.expiresAt)}`}
+                                      {group.expiresAt == null ? (
+                                        'No expiration'
+                                      ) : (
+                                        <LimitResetCountdown
+                                          resetsAt={group.expiresAt}
+                                          expiration
+                                        />
+                                      )}
                                     </span>
                                     <strong>
                                       {numberFormatter.format(group.count)}{' '}

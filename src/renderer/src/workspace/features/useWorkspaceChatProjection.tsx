@@ -17,6 +17,7 @@ import {
   areChatsEqual,
   areContainerTargetsEqual,
   getChatFromDetail,
+  getChatSidebarMetadata,
   getChatFromUpdateSummary,
   getProviderChatKey,
   isActiveChatStatus,
@@ -104,7 +105,7 @@ export function useWorkspaceChatProjection({
         }
         chatState.setSelectedChat((currentChat) =>
           currentChat?.providerId === providerId && currentChat.id === appliedDetail.id
-            ? getChatFromDetail(providerId, appliedDetail, currentChat, updatedAt)
+            ? getChatSidebarMetadata(providerId, appliedDetail, currentChat, updatedAt)
             : currentChat
         )
       }
@@ -116,7 +117,7 @@ export function useWorkspaceChatProjection({
           currentChats.find(
             (chat) => chat.providerId === providerId && chat.id === appliedDetail.id
           ) ?? null
-        const nextChat = getChatFromDetail(providerId, appliedDetail, existingChat, updatedAt)
+        const nextChat = getChatSidebarMetadata(providerId, appliedDetail, existingChat, updatedAt)
 
         return mergeChatUpdate(currentChats, nextChat)
       })
@@ -149,7 +150,10 @@ export function useWorkspaceChatProjection({
       }
       const cacheKey = getProviderChatKey(providerId, summary.id)
       const cached = chatCache.recentChatCacheRef.current.get(cacheKey)
-      if (cached) {
+      if (
+        cached &&
+        (cached.detail.revision < summary.revision || cached.detail.status !== summary.status)
+      ) {
         chatCache.recentChatCacheRef.current.set(cacheKey, {
           ...cached,
           detail: asChatPreview(cached.detail)
@@ -168,15 +172,15 @@ export function useWorkspaceChatProjection({
           chatState.selectedChatUpdatedAtRef.current ?? 0,
           summary.updatedAt
         )
-      }
-      chatState.setSelectedChat((currentChat) => {
-        if (currentChat?.providerId !== providerId || currentChat.id !== summary.id) {
-          return currentChat
-        }
+        chatState.setSelectedChat((currentChat) => {
+          if (currentChat?.providerId !== providerId || currentChat.id !== summary.id) {
+            return currentChat
+          }
 
-        const nextChat = getChatFromUpdateSummary(providerId, summary, currentChat, turnCompleted)
-        return areChatsEqual(currentChat, nextChat) ? currentChat : nextChat
-      })
+          const nextChat = getChatFromUpdateSummary(providerId, summary, currentChat, turnCompleted)
+          return areChatsEqual(currentChat, nextChat) ? currentChat : nextChat
+        })
+      }
       if (hiddenCommit) return
 
       chatState.setChats((currentChats) => {

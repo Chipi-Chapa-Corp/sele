@@ -1986,6 +1986,18 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     }
   }
 
+  stopChatProcesses = async (chatId: string): Promise<string[]> => {
+    this.completionCoordinator.cancel(chatId)
+    if (!this.states.get(chatId)?.session) return []
+    const children = await this.getSubagents(chatId)
+    for (const child of children) {
+      if (child.status === 'running' || child.status === 'pending' || child.status === 'idle')
+        await this.cancelSubagent(chatId, child.id)
+    }
+    await this.stopChat(chatId)
+    return [chatId, ...children.map((child) => child.id)]
+  }
+
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
     this.closeBrowser(state)

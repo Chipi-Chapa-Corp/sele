@@ -1,11 +1,10 @@
+import { Spinner } from './Spinner'
+import { ChatListGroupPagination } from './ChatListGroupPagination'
 import {
   Bed,
   CheckCheck,
-  ChevronDown,
   ChevronRight,
-  ChevronUp,
   FolderKanban,
-  LoaderCircle,
   MessageSquare,
   PinOff,
   SquarePen
@@ -47,6 +46,7 @@ export type ChatListGroupData = {
 }
 
 export type ChatListGroupProps = {
+  headerOnly?: boolean
   contentId: string
   group: ChatListGroupData
   open: boolean
@@ -159,12 +159,13 @@ function ProjectWorkingIndicator() {
       aria-label="Chat in progress"
       title="Chat in progress"
     >
-      <LoaderCircle className="app-loading-spinner" size={16} aria-hidden="true" />
+      <Spinner className="app-loading-spinner" size={16} aria-hidden="true" />
     </span>
   )
 }
 
 export const ChatListGroup = memo(function ChatListGroup({
+  headerOnly = false,
   contentId,
   group,
   open,
@@ -226,11 +227,6 @@ export const ChatListGroup = memo(function ChatListGroup({
   )
   const deferredOpen = useDeferredValue(open)
   const renderItems = !deferItems || deferredOpen
-  const remainingChatCount = Math.max(0, group.chats.length - visibleChats.length)
-  const nextChatCount = Math.min(chatPageSize, remainingChatCount)
-  const canShowLessChats = visibleChatCount > chatPageSize
-  const showChatPaginationActions =
-    (remainingChatCount > 0 && onLoadMoreChats) || (canShowLessChats && onShowLessChats)
   const toggleContent = (
     <>
       <ChevronRight
@@ -250,7 +246,7 @@ export const ChatListGroup = memo(function ChatListGroup({
       className={`ui-disclosure-toggle chat-list-group__toggle${open ? ' ui-disclosure-toggle--open' : ''}`}
       role="button"
       tabIndex={0}
-      aria-controls={contentId}
+      aria-controls={headerOnly ? undefined : contentId}
       aria-expanded={open}
       draggable={projectDraggable}
       title={group.cwd ?? groupLabel}
@@ -269,7 +265,7 @@ export const ChatListGroup = memo(function ChatListGroup({
     <DisclosureToggle
       className="chat-list-group__toggle"
       chevronClassName="chat-list-group__chevron"
-      aria-controls={contentId}
+      aria-controls={headerOnly ? undefined : contentId}
       open={open}
       title={group.cwd ?? groupLabel}
       onClick={() => onToggle(group.key)}
@@ -408,7 +404,7 @@ export const ChatListGroup = memo(function ChatListGroup({
         ) : null}
         {headerAction}
       </div>
-      {open && (
+      {open && !headerOnly && (
         <blockquote
           className="chat-list-group__items"
           id={contentId}
@@ -447,34 +443,13 @@ export const ChatListGroup = memo(function ChatListGroup({
                   selectedChatChildOpen={selectedChatChildOpen}
                 />
               )}
-              {showChatPaginationActions && (
-                <div className="chat-list-group__more">
-                  {canShowLessChats && onShowLessChats && (
-                    <Button
-                      theme="secondary"
-                      size="small"
-                      fill
-                      aria-label={`Show fewer ${groupLabel} chats`}
-                      title="Show less"
-                      callback={() => onShowLessChats(group)}
-                      icon={<ChevronUp aria-hidden="true" />}
-                      label="Show less"
-                    />
-                  )}
-                  {remainingChatCount > 0 && onLoadMoreChats && (
-                    <Button
-                      theme="secondary"
-                      size="small"
-                      fill
-                      aria-label={`Load next ${nextChatCount} ${groupLabel} chats`}
-                      title={`Load next ${nextChatCount} chats`}
-                      callback={() => onLoadMoreChats(group)}
-                      icon={<ChevronDown aria-hidden="true" />}
-                      label={`Load next ${nextChatCount}`}
-                    />
-                  )}
-                </div>
-              )}
+              <ChatListGroupPagination
+                group={group}
+                visibleChatCount={visibleChatCount}
+                chatPageSize={chatPageSize}
+                onLoadMoreChats={onLoadMoreChats}
+                onShowLessChats={onShowLessChats}
+              />
             </>
           )}
         </blockquote>
@@ -483,17 +458,14 @@ export const ChatListGroup = memo(function ChatListGroup({
   )
 }, areChatListGroupPropsEqual)
 
-// Keep the group animation boundary memoized too. Otherwise every workspace update
-// schedules Motion's projection tree even when the group's children can bail out.
+// Keep the animation boundary memoized so unrelated workspace updates can bail out.
 export const AnimatedChatListGroup = memo(
-  forwardRef<HTMLDivElement, ChatListGroupProps & { layoutOrder?: string }>(
-    function AnimatedChatListGroup({ layoutOrder, ...props }, ref) {
-      return (
-        <MotionListItem ref={ref} order={layoutOrder ?? props.group.key} popLayout>
-          <ChatListGroup {...props} />
-        </MotionListItem>
-      )
-    }
-  ),
+  forwardRef<HTMLDivElement, ChatListGroupProps>(function AnimatedChatListGroup(props, ref) {
+    return (
+      <MotionListItem ref={ref} popLayout>
+        <ChatListGroup {...props} />
+      </MotionListItem>
+    )
+  }),
   areChatListGroupPropsEqual
 )

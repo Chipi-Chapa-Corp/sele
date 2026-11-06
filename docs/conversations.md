@@ -3,9 +3,10 @@
 ## Opening and history
 
 Provider transcripts are authoritative. SQLite `conversation_view` stores a bounded latest
-viewport for each processed chat. Sidebar pages install these views before making rows
-selectable, so selecting a known chat synchronously displays its messages without provider
-I/O. Unknown chats need initial ingestion; the first view is committed before publication.
+viewport for each processed chat. Sidebar discovery returns only metadata. Opening a chat
+reads its saved viewport locally alongside the provider refresh; warm in-memory views display
+synchronously. Do not preload every saved transcript to construct the sidebar. Unknown chats
+need initial ingestion; the first view is committed before publication.
 
 Views have no TTL or LRU eviction. Active writes coalesce over 250 ms; completion flushes
 promptly and shutdown awaits writes. Codex and Claude use a shared account namespace for
@@ -85,7 +86,16 @@ uses backpressure rather than disconnecting on large replies. OS shutdown, runti
 remote disconnect, or sandbox termination can still stop work. Other providers retain their
 own process lifetimes.
 
-Checks: `test:conversation-views`, `test:chat-state`, `test:pending-messages`,
+Marking a chat done stops its active work, subagents, and background terminal commands
+before saving the done flag. Bulk completion uses the same cleanup. On Linux, cleanup also
+finds detached helpers by their exact inherited chat environment marker, including Codex
+processes left behind before a Sele restart. It checks the user and process start time before
+signalling, allows graceful termination, then force-kills surviving processes. Cleanup runs
+in the chat's saved host/container/SSH environment and requires Python 3 there. Native
+provider cancellation remains available on other platforms. Undoing done does not restart
+processes. Cleanup errors leave the chat unfinished so the action can be retried.
+
+Checks: `test:chat-process-cleanup`, `test:conversation-views`, `test:chat-state`, `test:pending-messages`,
 `test:linked-chats`, and `test:codex-transport` via `npm run`. The full-app opening fixture is
 `scripts/tests/test-persistent-chat-opening.cjs`. Run GUI portions with isolation as described
 in the [repository guide](README.md).

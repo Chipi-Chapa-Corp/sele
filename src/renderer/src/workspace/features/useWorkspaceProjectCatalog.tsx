@@ -39,7 +39,10 @@ export function useWorkspaceProjectCatalog({
       if (!cwd || isNoProjectCwd(cwd)) continue
       latestCreatedAtByCwd.set(cwd, Math.max(latestCreatedAtByCwd.get(cwd) ?? 0, chat.createdAt))
     }
-    return JSON.stringify([...latestCreatedAtByCwd])
+    // Streaming changes sidebar order without changing a project's newest chat.
+    return JSON.stringify(
+      [...latestCreatedAtByCwd].sort(([first], [second]) => first.localeCompare(second))
+    )
   }, [chatState.chats])
 
   const handleDeleteProject = useCallback(async (cwd: string, name: string): Promise<void> => {

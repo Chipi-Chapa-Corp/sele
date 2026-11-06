@@ -98,11 +98,46 @@ const patchChildren = (live: Node, previous: Node, next: Node): void => {
   if (appended.length) (live as ParentNode).append(...appended)
 }
 
+/** Apply one bounded, sanitized DOM part without replacing unchanged descendants. */
+export const patchMarkdownFragment = (
+  node: HTMLElement,
+  previous: DocumentFragment | null,
+  next: DocumentFragment
+): void => {
+  if (!previous) node.replaceChildren(next.cloneNode(true))
+  else {
+    node.normalize()
+    patchChildren(node, previous, next)
+  }
+}
+
 type PatchedSource = {
   node: HTMLElement
   html: string
   // Parsed lazily: settled messages never change, so they keep only the string.
   fragment: DocumentFragment | null
+}
+
+// Progressive leaves already own a sanitized fragment. Keep one React boundary
+// per bounded leaf rather than one component/effect for every heading and code
+// block. In particular, revealing a retained chat must not reconnect thousands
+// of otherwise idle layout effects.
+export function usePatchedFragment(
+  ref: RefObject<HTMLElement | null>,
+  fragment: DocumentFragment
+): void {
+  const source = useRef<{
+    node: HTMLElement
+    fragment: DocumentFragment
+  } | null>(null)
+  useLayoutEffect(() => {
+    const node = ref.current
+    if (!node) return
+    const previous = source.current
+    if (previous?.node === node && previous.fragment === fragment) return
+    patchMarkdownFragment(node, previous?.node === node ? previous.fragment : null, fragment)
+    source.current = { node, fragment }
+  }, [fragment, ref])
 }
 
 // Owns the children of `ref` unless `html` is null; render it without React children.

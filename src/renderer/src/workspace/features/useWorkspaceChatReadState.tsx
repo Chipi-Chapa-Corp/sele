@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { startTransition, useCallback, useEffect } from 'react'
 import type {
   ProviderChatDetail,
   ProviderChatMetadata,
@@ -63,7 +63,13 @@ export function useWorkspaceChatReadState({
     })
   }, [])
 
-  useEffect(() => providerApi.onChatMetadataUpdated(applyChatMetadata), [applyChatMetadata])
+  useEffect(
+    () =>
+      providerApi.onChatMetadataUpdated((metadata) =>
+        startTransition(() => applyChatMetadata(metadata))
+      ),
+    [applyChatMetadata]
+  )
 
   const applySeenUpdatedAt = useCallback(
     (providerId: ProviderId, chatId: string, seenUpdatedAt: number): void => {
@@ -105,11 +111,11 @@ export function useWorkspaceChatReadState({
 
   const markChatSeenAt = useCallback(
     (providerId: ProviderId, chatId: string, seenUpdatedAt: number): void => {
-      applySeenUpdatedAt(providerId, chatId, seenUpdatedAt)
+      startTransition(() => applySeenUpdatedAt(providerId, chatId, seenUpdatedAt))
 
       void persistChatSeen(providerId, chatId, seenUpdatedAt)
         .then((metadata) => {
-          if (metadata) applyChatMetadata([metadata])
+          if (metadata) startTransition(() => applyChatMetadata([metadata]))
         })
         .catch((error: unknown) => {
           console.error('Unable to persist the chat seen state.', error)

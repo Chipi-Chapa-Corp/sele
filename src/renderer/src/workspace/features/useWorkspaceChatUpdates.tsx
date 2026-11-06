@@ -105,14 +105,9 @@ export function useWorkspaceChatUpdates({
               turnCompleted: event.turnCompleted
             })
           }
-          if (
-            chatState.chatDetailRef.current?.id === event.chatId &&
-            chatState.chatDetailRef.current.items.length > 0
-          ) {
-            startTransition(publish)
-          } else {
-            publish()
-          }
+          // Provider delivery, including the first or recovered snapshot, must
+          // not promote a pending selection into a blocking workspace render.
+          startTransition(publish)
         } else {
           // Other conversations can publish many summaries while the user types.
           // Keep their sidebar work interruptible, like the active transcript,
@@ -129,10 +124,15 @@ export function useWorkspaceChatUpdates({
               })
             if (retainedDetail && !chatState.chatDetailRef.current) {
               chatState.chatDetailRef.current = retainedDetail
-              chatState.setChatDetail(retainedDetail)
-              chatState.setChatLoadState('ready')
+              startTransition(() => {
+                chatState.setChatDetail(retainedDetail)
+                chatState.setChatLoadState('ready')
+              })
             }
-            if (retainedDetail?.id === event.chatId) {
+            if (
+              retainedDetail?.id === event.chatId &&
+              (retainedDetail.historyPreview || retainedDetail.revision < event.summary.revision)
+            ) {
               // Keep the selected chat interactive while recovering a missed or unmergeable
               // detail update. Clearing it would disable and blur the focused message composer.
               const currentResync = chatState.chatDetailResyncRef.current
@@ -154,7 +154,7 @@ export function useWorkspaceChatUpdates({
 
                     chatState.chatDetailResyncRef.current = null
                     if (chatState.selectedChatKeyRef.current !== updatedChatKey) return
-                    chatProjection.applyChatDetail(event.providerId, detail)
+                    startTransition(() => chatProjection.applyChatDetail(event.providerId, detail))
                   })
                   .catch((error: unknown) => {
                     console.error('Unable to resynchronize an updated chat.', error)
@@ -163,7 +163,7 @@ export function useWorkspaceChatUpdates({
                     }
                   })
               }
-            } else {
+            } else if (!retainedDetail) {
               chatState.chatDetailRef.current = null
               chatState.setChatDetail(null)
               chatState.setChatLoadState('loading')

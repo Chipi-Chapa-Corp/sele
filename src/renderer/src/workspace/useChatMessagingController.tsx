@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef } from 'react'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../../shared/noProject'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
@@ -556,7 +556,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     sendInFlightProjectKeyRef.current = sendProjectKey
     setSendInFlightProjectKey(sendProjectKey)
     chatAutoScrollEnabledRef.current = true
-    setChatAtConversationBottom(true)
+    startTransition(() => setChatAtConversationBottom(true))
     scrollToLatestTurnAfterRenderRef.current = true
     const messageWithComposerMentions = serializeComposerMessage(message, skills, apps)
     const serializedMessage = review

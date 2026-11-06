@@ -22,6 +22,9 @@ if (!process.versions.electron) {
             const root = createRoot(document.getElementById('root'))
             function Fixture({editing}) {
               window.drafts = useComposerDrafts(editing)
+              window.chatList = useChatListController({
+                applyChatMetadata: () => {}, removeRecentChatCacheEntry: () => {}, selectedChat: null
+              })
               return null
             }
             window.render = editing => flushSync(() => root.render(<React.StrictMode><Fixture editing={editing} /></React.StrictMode>))
@@ -38,13 +41,11 @@ if (!process.versions.electron) {
             })
             window.snapshot = () => ({composerDrafts: [...window.drafts.composerDrafts], promptDraftsByScope: [...window.drafts.promptDraftsByScope]})
             window.move = (from, to) => flushSync(() => updateStoredComposerDrafts(state => moveComposerDraftScope(state, from, to)))
-            const chatList = useChatListController({
-              applyChatMetadata: () => {}, removeRecentChatCacheEntry: () => {}, selectedChat: null
-            })
+
             window.complete = async keys => {
               const chats = keys.map(key => ({providerId: key.split(':')[0], id: key.slice(key.indexOf(':') + 1), cwd: '/a'}))
-              if (chats.length === 1) await chatList.handleMarkChatDone(chats[0])
-              else await chatList.handleMarkCwdChatsDone({kind: 'cwd', chats})
+              if (chats.length === 1) await window.chatList.handleMarkChatDone(chats[0])
+              else await window.chatList.handleMarkCwdChatsDone({kind: 'cwd', chats})
               flushSync(() => {})
             }
             window.flush = flushPreferences

@@ -94,6 +94,12 @@ export const createRendererBridge = (
       transport.invoke(appIpcChannels.getGitHubPullRequests, options),
     getGitHubPullRequestChanges: (options) =>
       transport.invoke(appIpcChannels.getGitHubPullRequestChanges, options),
+    getGitHubPullRequestManagement: (options) =>
+      transport.invoke(appIpcChannels.getGitHubPullRequestManagement, options),
+    getGitHubPullRequestCommitChanges: (options) =>
+      transport.invoke(appIpcChannels.getGitHubPullRequestCommitChanges, options),
+    performGitHubPullRequestAction: (options) =>
+      transport.invoke(appIpcChannels.performGitHubPullRequestAction, options),
     submitGitHubPullRequestReview: (options) =>
       transport.invoke(appIpcChannels.submitGitHubPullRequestReview, options),
     getGitHubPullRequest: (options) =>
@@ -136,7 +142,7 @@ export const createRendererBridge = (
       ),
     readClipboardText: () => transport.invoke(appIpcChannels.readClipboardText),
     writeClipboardText: (text) => transport.invoke(appIpcChannels.writeClipboardText, text),
-    getClipboardImage: () => transport.invoke(appIpcChannels.getClipboardImage),
+    getClipboardImage: (image) => transport.invoke(appIpcChannels.getClipboardImage, image),
     getLocalVideo: (options) => transport.invoke(appIpcChannels.getLocalVideo, options),
     copyLocalVideo: (options) => transport.invoke(appIpcChannels.copyLocalVideo, options),
     saveLocalVideo: (options) => transport.invoke(appIpcChannels.saveLocalVideo, options),

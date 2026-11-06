@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { buildChatConversationModel } from '../chatConversationModel'
 import { extendChatCursorWindow, type ChatCursorWindow } from '../chatCursorWindow'
@@ -18,6 +18,7 @@ import {
 import {
   getScrollBottomTop,
   isNearChatPageBoundary,
+  prepareChatContentLayout,
   readChatScrollAnchor,
   restoreChatScrollAnchor
 } from '../chatLayout'
@@ -298,7 +299,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     }
 
     let active = true
-    queueMicrotask(() => {
+    startTransition(() => {
       if (!active) return
       setRecentChatReferencesCache((currentCache) =>
         currentCache?.chatKey === selectedChatKey &&
@@ -370,7 +371,7 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
     chatTurnPageLoadRequestRef.current += 1
     chatTurnPageLoadInFlightRef.current = false
     chatTurnScrollDirectionRef.current = null
-    queueMicrotask(() => {
+    startTransition(() => {
       if (!active) return
       setChatTurnPageLoadDirection(null)
 
@@ -424,11 +425,19 @@ export function useConversationViewModel(dependencies: ConversationViewModelDepe
   ])
   useLayoutEffect(() => {
     if (!scrollToLatestTurnAfterRenderRef.current || renderedChatTurns.length === 0) return
-    scrollToLatestTurnAfterRenderRef.current = false
     if (!chatAutoScrollEnabledRef.current) return
-    pendingChatScrollAnchorRef.current = null
     const contentElement = contentRef.current
-    if (contentElement) scrollChatContentToBottom(contentElement)
+    if (!contentElement) return
+    prepareChatContentLayout(contentElement)
+    const observer = new ResizeObserver(() => {
+      observer.disconnect()
+      if (contentRef.current !== contentElement || !chatAutoScrollEnabledRef.current) return
+      scrollToLatestTurnAfterRenderRef.current = false
+      pendingChatScrollAnchorRef.current = null
+      scrollChatContentToBottom(contentElement)
+    })
+    observer.observe(contentElement)
+    return () => observer.disconnect()
   }, [
     chatTurnWindow,
     effectiveChatTurnWindow?.endIndex,

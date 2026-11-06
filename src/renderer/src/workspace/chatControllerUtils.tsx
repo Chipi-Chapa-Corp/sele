@@ -620,6 +620,7 @@ export const arePendingApprovalsEqual = (
 export const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolean =>
   first.id === second.id &&
   first.providerId === second.providerId &&
+  first.accountId === second.accountId &&
   first.imported?.providerId === second.imported?.providerId &&
   first.imported?.chatId === second.imported?.chatId &&
   first.title === second.title &&
@@ -650,28 +651,8 @@ export const getChatFromUpdateSummary = (
   turnCompleted: boolean
 ): ProviderChat => {
   const container = summary.container ?? existingChat?.container ?? null
-  const summaryChanged =
-    !existingChat ||
-    existingChat.title !== summary.title ||
-    existingChat.accountId !== summary.accountId ||
-    existingChat.noProject !== summary.noProject ||
-    existingChat.cwd !== summary.cwd ||
-    existingChat.cwdKind !== summary.cwdKind ||
-    existingChat.projectCwd !== summary.projectCwd ||
-    existingChat.branchName !== summary.branchName ||
-    existingChat.worktreeBaseBranchName !== summary.worktreeBaseBranchName ||
-    existingChat.status !== summary.status ||
-    existingChat.lastTurnOutcome !== summary.lastTurnOutcome ||
-    !arePendingApprovalsEqual(existingChat.pendingApproval, summary.pendingApproval) ||
-    existingChat.pinned !== summary.pinned ||
-    existingChat.sidebarOrder !== summary.sidebarOrder ||
-    existingChat.done !== summary.done ||
-    existingChat.doneAt !== summary.doneAt ||
-    existingChat.seenUpdatedAt !== summary.seenUpdatedAt ||
-    existingChat.purpose !== summary.purpose ||
-    !areContainerTargetsEqual(existingChat.container, container)
 
-  return {
+  const next: ProviderChat = {
     id: summary.id,
     accountId: summary.accountId ?? existingChat?.accountId,
     noProject: summary.noProject ?? existingChat?.noProject,
@@ -685,8 +666,7 @@ export const getChatFromUpdateSummary = (
     branchName: summary.branchName,
     worktreeBaseBranchName: summary.worktreeBaseBranchName,
     createdAt: summary.createdAt,
-    updatedAt:
-      !existingChat || summaryChanged || turnCompleted ? summary.updatedAt : existingChat.updatedAt,
+    updatedAt: existingChat?.updatedAt ?? summary.updatedAt,
     status: summary.status,
     lastTurnOutcome:
       summary.lastTurnOutcome === undefined
@@ -706,6 +686,44 @@ export const getChatFromUpdateSummary = (
     purpose: summary.purpose,
     container
   }
+  // Compare the metadata we actually publish. A delayed seen timestamp (or an
+  // omitted optional field normalized above) is not new chat activity. Comparing
+  // the raw packet made every streamed token rebuild/re-sort the whole sidebar
+  // after the user had marked a chat read.
+  if (
+    !existingChat ||
+    turnCompleted ||
+    !areChatsEqual(existingChat, {
+      ...next,
+      seenUpdatedAt: existingChat.seenUpdatedAt
+    })
+  )
+    next.updatedAt = summary.updatedAt
+  return next
+}
+
+/** Token text belongs to the transcript; sidebar metadata changes at lifecycle boundaries. */
+export const getChatSidebarMetadata = (
+  providerId: ProviderId,
+  detail: ProviderChatDetail,
+  existingChat: ProviderChat | null,
+  updatedAt: number
+): ProviderChat => {
+  let next = getChatFromDetail(providerId, detail, existingChat, updatedAt)
+  if (existingChat && isActiveChatStatus(detail.status)) {
+    next = getChatFromUpdateSummary(
+      providerId,
+      {
+        ...next,
+        revision: detail.revision,
+        currentActivity: null,
+        previewLength: next.preview.length
+      },
+      existingChat,
+      false
+    )
+  }
+  return existingChat && areChatsEqual(existingChat, next) ? existingChat : next
 }
 
 export const getOptimisticItems = (

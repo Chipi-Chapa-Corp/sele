@@ -138,6 +138,7 @@ test('general chats stay in a dedicated Chats group even with stale project meta
   assert.equal(groups.find((entry) => entry.cwd === '/home/user').chats[0].id, 'home-project')
   context.activeChatGroups = groups
   context.chatGroupingPreference = 'flat'
+  context.useMemo = (compute) => compute()
   context.activeGroupKey = 'active'
   context.generalChatGroups = [chats]
   context.projectChatGroups = groups.filter((entry) => entry !== chats)
@@ -170,6 +171,7 @@ test('detail, live summaries and metadata changes preserve the saved No Project 
   const fromDetail = expression(utils, 'getChatFromDetail', context)
   const fromSummary = expression(utils, 'getChatFromUpdateSummary', context)
   const areEqual = expression(utils, 'areChatsEqual', context)
+  context.areChatsEqual = areEqual
   const native = { id: 'general', cwd: '/home/user', noProject: true }
   const detailChat = fromDetail('opencode', native, null, 1)
   assert.equal(detailChat.noProject, true)

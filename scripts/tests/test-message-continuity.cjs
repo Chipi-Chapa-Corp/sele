@@ -53,7 +53,7 @@ if (!process.versions.electron) {
                 selectedChatKey:'codex:chat',selectedChatCommitMarkers:[],selectedChatSubagents:[],
                 subagentChatConversationModel:{turns:[]},subagentVisibleChatItems:[],
                 visibleChatItems:detail.items,sendState:'idle',showChatTurnDownButton:false}
-              flushSync(()=>root.render(<React.StrictMode><ConversationMessages {...props}/></React.StrictMode>))
+              flushSync(()=>root.render(<React.StrictMode><ConversationMessages view={new Map([["current",props]])}/></React.StrictMode>))
             }
             window.send=()=>{
               captureMessageFlight(document.getElementById('composer'),'Look at this','codex:chat')
@@ -103,7 +103,7 @@ if (!process.versions.electron) {
           window.pixel='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
           window.reads=[];window.pendingReads=[];
           window.appApi={getLocalImage:options=>{window.reads.push(options);return new Promise(resolve=>window.pendingReads.push(resolve))}};
-          window.providerApi={};
+          window.providerApi={getLimitResetMessages:async()=>[]};
           window.resolveImages=async()=>{const data=await(await fetch(pixel)).arrayBuffer();pendingReads.splice(0).forEach(resolve=>resolve({data,mimeType:'image/png'}))};
         </script><script src="fixture.js"></script>`
       )
@@ -144,7 +144,13 @@ if (!process.versions.electron) {
       const run = (source) => win.webContents.executeJavaScript(source)
       const frames = () =>
         run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
-      await run(`send();window.row=document.querySelector('[data-chat-message-id]');
+      await run('send()')
+      // First use loads the lazy transcript module; hold the file read pending
+      // while waiting for that initial component commit.
+      await run(
+        `new Promise((resolve,reject)=>{const end=performance.now()+3000;function check(){if(document.querySelector('.chat-detail__generated-image-thumbnail img'))return resolve();if(performance.now()>end)return reject(new Error('Initial message did not mount'));requestAnimationFrame(check)}check()})`
+      )
+      await run(`window.row=document.querySelector('[data-chat-message-id]');
         window.turn=document.querySelector('[data-chat-turn-id]');
         window.placeholder=document.querySelector('.chat-detail__tool-placeholder');
         window.workingMark=placeholder.querySelector('svg');

@@ -24,6 +24,31 @@ const listen = (registry, id) => {
   return { events, detach }
 }
 
+test('marking a chat done stops short and dismissed processes without touching sibling chats', async () => {
+  const registry = createAgentTerminalSessions()
+  const stopped = []
+  const first = registry.register('hidden', {
+    ...options,
+    stop: async () => stopped.push('hidden')
+  })
+  const second = registry.register('dismissed', {
+    ...options,
+    stop: async () => stopped.push('dismissed')
+  })
+  const sibling = registry.register('sibling', {
+    ...options,
+    chatId: 'other',
+    stop: async () => stopped.push('other')
+  })
+  registry.dismiss(second.id)
+  assert.deepEqual(registry.list(), [])
+  await registry.stopChats(['chat'])
+  assert.deepEqual(stopped, ['hidden', 'dismissed'])
+  assert.equal(registry.status(first.id), 'exited')
+  assert.equal(registry.status(second.id), 'exited')
+  assert.equal(registry.status(sibling.id), 'running')
+})
+
 test('completed output survives expiration of the provider process handle', async () => {
   let now = 0
   const registry = createAgentTerminalSessions(() => now)
@@ -37,6 +62,37 @@ test('completed output survives expiration of the provider process handle', asyn
   assert.deepEqual(registry.completed(handle.id), { output: 'output to keep\r\n', exitCode: 7 })
   registry.dismiss(handle.id)
   assert.equal(registry.completed(handle.id), undefined)
+})
+
+test('completed handles expire even when the terminal list is never opened', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let now = 0
+  const registry = createAgentTerminalSessions(() => now)
+  const handle = registry.register('unlisted', { ...options, background: true })
+  handle.append('output')
+  await handle.finish(0)
+  now = 120_001
+  context.mock.timers.tick(120_001)
+  assert.equal(registry.available(handle.id), false)
+})
+
+test('expiration protects attached terminals and releases callbacks after detach', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let now = 0
+  const registry = createAgentTerminalSessions(() => now)
+  const handle = registry.register('attached', { ...options, background: true })
+  registry.list()
+  const listener = listen(registry, handle.id)
+  handle.append('retained output')
+  await handle.finish(7)
+  now = 120_001
+  context.mock.timers.tick(120_001)
+  assert.equal(registry.available(handle.id), true)
+  listener.detach()
+  now++
+  context.mock.timers.tick(1)
+  assert.equal(registry.available(handle.id), false)
+  assert.deepEqual(registry.completed(handle.id), { output: 'retained output', exitCode: 7 })
 })
 
 test('only long foreground commands and background jobs get tabs, with indexes per chat', async () => {
@@ -340,6 +396,119 @@ test('Codex preserves output deltas, original process IDs and individual termina
     assert.deepEqual(stops, [['chat', '17']])
   } finally {
     listener.detach()
+    controller.dispose()
+  }
+})
+
+test('Codex releases completed command tracking without losing retained terminal output', async () => {
+  const registry = createAgentTerminalSessions()
+  let finishes = 0
+  const wrapped = {
+    ...registry,
+    register: (...args) => {
+      const handle = registry.register(...args)
+      return {
+        ...handle,
+        finish: (...values) => {
+          finishes++
+          return handle.finish(...values)
+        }
+      }
+    }
+  }
+  const controller = createCodexTerminalSessions(
+    {
+      container: null,
+      metadata: () => ({ title: 'Chat', cwd: '/fixture' }),
+      stop: async () => {},
+      interrupt: async () => {}
+    },
+    wrapped
+  )
+  try {
+    controller.background('chat', [
+      { processId: '17', itemId: 'item', command: 'npm run dev', cwd: '/fixture' }
+    ])
+    controller.consume({
+      method: 'item/completed',
+      params: {
+        threadId: 'chat',
+        turnId: 'turn',
+        item: {
+          id: 'item',
+          type: 'commandExecution',
+          processId: '17',
+          exitCode: 0,
+          aggregatedOutput: 'Completed output\r\n'
+        }
+      }
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    for (let i = 0; i < 10; i++) controller.background('chat', [])
+    assert.equal(finishes, 1, 'polling must not revisit completed command handles')
+    controller.consume({
+      method: 'item/completed',
+      params: {
+        threadId: 'chat',
+        turnId: 'turn',
+        item: {
+          id: 'item',
+          type: 'commandExecution',
+          processId: '17',
+          exitCode: 0,
+          aggregatedOutput: 'Completed output\r\n'
+        }
+      }
+    })
+    controller.background('chat', [
+      { processId: '17', itemId: 'item', command: 'npm run dev', cwd: '/fixture' }
+    ])
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(
+      finishes,
+      1,
+      'replayed completions and stale polls must not resurrect a finished command'
+    )
+    const [source] = registry.list()
+    assert.equal(source.status, 'exited')
+    const listener = listen(registry, source.id)
+    try {
+      assert.deepEqual(listener.events, [
+        ['data', 'Completed output\r\n'],
+        ['exit', 0]
+      ])
+    } finally {
+      listener.detach()
+    }
+  } finally {
+    controller.dispose()
+  }
+})
+
+test('Codex terminal reconciliation only finishes tasks from the requested chat', async () => {
+  const registry = createAgentTerminalSessions()
+  const controller = createCodexTerminalSessions(
+    {
+      container: null,
+      metadata: () => ({ title: 'Chat', cwd: '/fixture' }),
+      stop: async () => {},
+      interrupt: async () => {}
+    },
+    registry
+  )
+  try {
+    for (const [chatId, processId] of [
+      ['chat', '17'],
+      ['chat:other', '18']
+    ])
+      controller.background(chatId, [
+        { processId, itemId: 'item', command: 'npm run dev', cwd: '/fixture' }
+      ])
+    controller.background('chat', [])
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(registry.list().find((s) => s.chatId === 'chat').status, 'exited')
+    assert.equal(registry.list().find((s) => s.chatId === 'chat:other').status, 'running')
+  } finally {
     controller.dispose()
   }
 })

@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { FolderKanban, FolderTree } from 'lucide-react'
 import type { ProviderMessage } from '../../../shared/provider'
 import { AnimatedChatListGroup, type ChatListGroupData } from '../components/ChatListGroup'
@@ -71,8 +71,7 @@ const renderChatListGroup = (
   contentId: string,
   selectedChatChildren: React.ReactNode = null,
   selectedChatChildOpen = false,
-  workingSubagentChatKeys?: ReadonlySet<string>,
-  layoutOrder?: string
+  workingSubagentChatKeys?: ReadonlySet<string>
 ): React.ReactElement => {
   const {
     searchTerms,
@@ -155,7 +154,6 @@ const renderChatListGroup = (
 
   return (
     <AnimatedChatListGroup
-      layoutOrder={layoutOrder}
       contentId={contentId}
       group={group}
       key={group.key}
@@ -391,7 +389,9 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         currentTurnWindow &&
         currentTurnWindow.endIndex >= currentTurnWindow.totalCount
     )
-    setChatAtConversationBottom(atConversationBottom)
+    // Scroll following and user intent are held in refs above/below. Only the
+    // jump-to-latest button needs React state; it must not flush the workspace.
+    startTransition(() => setChatAtConversationBottom(atConversationBottom))
 
     const chatKey = currentTurnWindow?.chatKey
     const updateViewportAnchor = (): void => {
@@ -467,8 +467,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
       contentId: string,
       selectedChatChildren: React.ReactNode = null,
       selectedChatChildOpen = false,
-      workingSubagentChatKeys?: ReadonlySet<string>,
-      layoutOrder?: string
+      workingSubagentChatKeys?: ReadonlySet<string>
     ): React.ReactElement =>
       renderChatListGroup(
         chatGroupRenderInputs,
@@ -476,8 +475,7 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
         contentId,
         selectedChatChildren,
         selectedChatChildOpen,
-        workingSubagentChatKeys,
-        layoutOrder
+        workingSubagentChatKeys
       ),
     [chatGroupRenderInputs]
   )

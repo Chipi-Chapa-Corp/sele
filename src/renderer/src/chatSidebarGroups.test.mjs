@@ -1,8 +1,21 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { reuseChatGroups } from './chatSidebarGroups.ts'
+import { getProjectDropInsertionIndex } from './chatSidebarOrder.ts'
 
 const group = (key, chats = []) => ({ key, cwd: '/' + key, label: key, kind: 'cwd', chats })
+
+test('project drop positions use logical indices when only middle headers are mounted', () => {
+  const keys = Array.from({ length: 20 }, (_, i) => String(i))
+  const headers = [
+    { key: '10', top: 0, height: 40 },
+    { key: '11', top: 40, height: 40 }
+  ]
+  assert.equal(getProjectDropInsertionIndex(keys, headers, 5), 10)
+  assert.equal(getProjectDropInsertionIndex(keys, headers, 25), 11)
+  assert.equal(getProjectDropInsertionIndex(keys, headers, 65), 12)
+  assert.equal(getProjectDropInsertionIndex(keys, [], 65), null)
+})
 
 test('equivalent groups reuse the complete list; a changed project preserves its neighbors', () => {
   const before = [group('first'), group('second'), group('third')]

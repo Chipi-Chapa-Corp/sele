@@ -1,5 +1,12 @@
-import { useEffect, useRef } from 'react'
-import { ArrowLeft, ArrowRight, ExternalLink, GitPullRequestArrow, Globe } from 'lucide-react'
+import { Fragment, useEffect, useRef } from 'react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  ExternalLink,
+  GitCommitHorizontal,
+  GitPullRequestArrow,
+  Globe
+} from 'lucide-react'
 import type { AppGitHubPullRequestDetail } from '../../../shared/app'
 import type { BrowserOpenRequest } from '../../../shared/browser'
 import type { GitHubPullRequestDetailState } from '../workspace/useGitHubPullRequest'
@@ -52,17 +59,6 @@ export function GitHubPullRequestDetail({
   const now = useSemanticDateNow()
   const pr = state.result ?? state.selected!
   const detail = state.result
-  const statusDate = detail
-    ? formatSemanticLexicalDateDifference(Date.parse(detail.statusAt), { now })
-    : null
-  const status =
-    pr.state === 'merged'
-      ? 'Merged'
-      : pr.state === 'closed'
-        ? 'Closed'
-        : pr.state === 'draft'
-          ? 'Draft'
-          : 'Opened'
   const entries: Activity[] = detail
     ? [
         {
@@ -80,7 +76,7 @@ export function GitHubPullRequestDetail({
     <section
       className={`changes-sidebar__pull-request-detail${detail && state.cwd ? ' changes-sidebar__pull-request-detail--with-files' : ''}`}
       aria-label={`Pull request #${pr.number} details`}
-      aria-busy={state.loading}
+      aria-busy={state.loading || state.refreshing}
       onClick={(event) => {
         const anchor =
           event.target instanceof Element
@@ -107,7 +103,6 @@ export function GitHubPullRequestDetail({
         >
           <Button
             theme="transparent"
-            size="small"
             icon={<ArrowLeft aria-hidden="true" />}
             aria-label="Back to pull requests"
             title="Back to pull requests"
@@ -130,7 +125,6 @@ export function GitHubPullRequestDetail({
           </h3>
           <Button
             theme="transparent"
-            size="small"
             icon={<Globe aria-hidden="true" />}
             aria-label={`Open pull request #${pr.number} in built-in browser`}
             title={
@@ -143,7 +137,6 @@ export function GitHubPullRequestDetail({
           />
           <Button
             theme="transparent"
-            size="small"
             icon={<ExternalLink aria-hidden="true" />}
             aria-label={`Open pull request #${pr.number} in external browser`}
             title="Open in external browser"
@@ -151,11 +144,10 @@ export function GitHubPullRequestDetail({
           />
           <Button
             theme="transparent"
-            size="small"
             icon={<GitRefreshIcon />}
             aria-label="Refresh pull request"
             title="Refresh pull request"
-            disabled={state.loading}
+            disabled={state.loading || state.refreshing}
             callback={state.refresh}
           />
         </div>
@@ -176,16 +168,6 @@ export function GitHubPullRequestDetail({
                 · {detail.changedFiles} {detail.changedFiles === 1 ? 'change' : 'changes'} ·{' '}
                 <span className="changes-sidebar__pull-request-additions">+{detail.additions}</span>{' '}
                 <span className="changes-sidebar__pull-request-deletions">−{detail.deletions}</span>
-              </span>
-            </div>
-            <div className="chat-detail__message-date" aria-label="Pull request status">
-              <span>
-                {status} by {detail.statusAuthor ?? 'Unknown user'} ·{' '}
-                {statusDate && (
-                  <time dateTime={statusDate.dateTime} title={statusDate.title}>
-                    {statusDate.label}
-                  </time>
-                )}
               </span>
             </div>
           </>
@@ -227,7 +209,8 @@ export function GitHubPullRequestDetail({
                 <div className="chat-detail__messages-inner">
                   {entries.map((item) => {
                     const id = `github:${detail.repository}:${detail.number}:${item.id}`
-                    if (item.kind === 'event' || (item.kind === 'review' && !item.body.trim())) {
+                    const event = (() => {
+                      if (item.kind !== 'event' && item.kind !== 'review') return null
                       const date = formatSemanticLexicalDateDifference(Date.parse(item.createdAt), {
                         now
                       })
@@ -240,27 +223,56 @@ export function GitHubPullRequestDetail({
                             .filter(Boolean)
                             .join('\n')}
                         >
-                          <span>{eventLabel(item)}</span>
+                          {item.state === 'committed' && item.commitSha ? (
+                            <Button
+                              theme="secondary"
+                              icon={<GitCommitHorizontal aria-hidden="true" />}
+                              label={
+                                <span className="changes-sidebar__recent-label">
+                                  {item.body || item.commitSha.slice(0, 7)}
+                                </span>
+                              }
+                              title={item.body || item.commitSha}
+                              aria-label={`Review commit ${item.commitSha.slice(0, 7)}: ${item.body}`}
+                              disabled={!state.cwd || state.reviewCommit === item.commitSha}
+                              callback={() => state.openCommit(item.commitSha!)}
+                            />
+                          ) : (
+                            <span>{eventLabel(item)}</span>
+                          )}
                         </div>
                       )
-                    }
+                    })()
+                    const location = item.reviewComment
+                    const locationLabel = location
+                      ? `${location.path}${location.line ? `:${location.startLine && location.startLine !== location.line ? `${location.startLine}–` : ''}${location.line}` : ''}${location.outdated ? ' (outdated)' : ''}`
+                      : null
+                    const content =
+                      location && locationLabel
+                        ? `[${locationLabel.replace(/[\\[\]`*_<>]/g, '\\$&')}](${location.url})\n\n${item.body}`
+                        : item.body
                     return (
-                      <ChatDetailItem
-                        key={id}
-                        markdownBaseUrl={detail.url}
-                        messageBubble
-                        item={{
-                          type: 'message',
-                          id,
-                          role:
-                            item.author?.toLowerCase() === detail.viewerLogin.toLowerCase()
-                              ? 'user'
-                              : 'assistant',
-                          content: item.body,
-                          createdAt: Date.parse(item.createdAt),
-                          label: item.author ?? 'Deleted user'
-                        }}
-                      />
+                      <Fragment key={id}>
+                        {event}
+                        {item.kind !== 'event' && content.trim() && (
+                          <ChatDetailItem
+                            key={id}
+                            markdownBaseUrl={detail.url}
+                            messageBubble
+                            item={{
+                              type: 'message',
+                              id,
+                              role:
+                                item.author?.toLowerCase() === detail.viewerLogin.toLowerCase()
+                                  ? 'user'
+                                  : 'assistant',
+                              content,
+                              createdAt: Date.parse(item.createdAt),
+                              label: item.author ?? 'Deleted user'
+                            }}
+                          />
+                        )}
+                      </Fragment>
                     )
                   })}
                 </div>

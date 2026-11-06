@@ -11,7 +11,10 @@ const path = require('node:path')
 const assert = require('node:assert/strict')
 const providerId = process.env.SELE_BENCHMARK_PROVIDER || 'codex'
 const historySections = Math.max(1, Number(process.env.SELE_BENCHMARK_HISTORY_SECTIONS) || 40)
-const activeChats = process.env.SELE_BENCHMARK_ACTIVE_CHATS === '1'
+const interactionCheck = process.env.SELE_BENCHMARK_INTERACTIONS === '1'
+const viteCheck = process.env.SELE_BENCHMARK_VITE === '1'
+const startupBurst = process.env.SELE_BENCHMARK_STARTUP_BURST === '1'
+const activeChats = process.env.SELE_BENCHMARK_ACTIVE_CHATS === '1' || interactionCheck || viteCheck
 const devBuild = process.env.SELE_BENCHMARK_DEV === '1'
 const typingCheck = process.env.SELE_BENCHMARK_TYPING === '1'
 const mixedProviders = typingCheck
@@ -25,7 +28,9 @@ if (!process.versions.electron) {
     const root = path.resolve(__dirname, '../..')
     const richHistory = process.env.SELE_BENCHMARK_RICH_HISTORY === '1'
     const chatCount = Math.max(400, Number(process.env.SELE_BENCHMARK_CHAT_COUNT) || 1000)
-    const directory = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'sele-workspace-'))
+    const fixtureParent = viteCheck ? path.join(root, 'tmp') : require('node:os').tmpdir()
+    await fs.mkdir(fixtureParent, { recursive: true })
+    const directory = await fs.mkdtemp(path.join(fixtureParent, 'sele-workspace-'))
     try {
       await require('esbuild').build({
         entryPoints: [path.join(root, 'src/renderer/src/components/vegvisir.worker.ts')],
@@ -55,15 +60,24 @@ if (!process.versions.electron) {
           import {createRoot} from 'react-dom/client'
           import {App} from './src/renderer/src/App'
           import './src/renderer/src/assets/main.css'
-          const root=createRoot(document.getElementById('root'));root.render(<React.StrictMode><App/></React.StrictMode>);window.unmountFixture=()=>root.unmount();
-          window.frameGaps=[];window.longTasks=[];window.fixtureTurnNodes=new Map();
+          const root=createRoot(document.getElementById('root'));React.startTransition(()=>root.render(<React.StrictMode><App/></React.StrictMode>));window.unmountFixture=()=>root.unmount();
+          window.frameGaps=[];window.longTasks=[];window.fixtureLongTasks=[];window.fixtureTurnNodes=new Map();
+          window.fixtureReadProjectOptions=()=>{
+            const input=document.getElementById('message-input');
+            const key=Object.keys(input).find(key=>key.startsWith('__reactFiber'));
+            for(let fiber=input[key];fiber;fiber=fiber.return)
+              if(Array.isArray(fiber.memoizedProps?.projectOptions))return fiber.memoizedProps.projectOptions;
+            throw Error('Missing composer project options');
+          };
           // Exit animations retain inert copies of removed rows. They are not the current selection.
-          window.fixtureSelectedChat=()=>[...document.getElementsByClassName('chat-list-item--selected')].find(row=>!row.closest('[inert]'))?.dataset.chatId??null;
-          new PerformanceObserver(list=>window.longTasks.push(...list.getEntries().map(e=>e.duration)))
+          window.fixtureSelectedChat=()=>{const title=document.querySelector('.chat-panel--selected')?.getAttribute('aria-label');return fixtureChats.find(chat=>chat.title===title)?.id??null};
+          window.fixtureEnsureSidebarChat=async (id,header=false)=>{if(id==='new')return;if(header)window.fixtureRevealSidebarHeader?.(id);else window.fixtureRevealSidebarChat?.(id);const selector=header?'[data-project-group-key="'+CSS.escape('cwd:'+fixtureChats.find(chat=>chat.id===id).cwd)+'"]':'[data-chat-id="'+id+'"]';const end=performance.now()+5000;while(!document.querySelector(selector)){if(performance.now()>end)throw Error('Virtual chat did not appear: '+id);await new Promise(resolve=>requestAnimationFrame(resolve));}};
+          new PerformanceObserver(list=>{for(const e of list.getEntries()){window.longTasks.push(e.duration);window.fixtureLongTasks.push({startTime:e.startTime,duration:e.duration})}})
             .observe({type:'longtask',buffered:true});
           let before=performance.now();
           requestAnimationFrame(function frame(now){window.frameGaps.push(now-before);before=now;requestAnimationFrame(frame)});
           window.measureNavigation=async (destination,action='select')=>{
+            await window.fixtureEnsureSidebarChat(destination,action==='done-project');
             await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
             window.frameGaps=[];window.longTasks=[];
             const paintSamples=[];
@@ -74,17 +88,19 @@ if (!process.versions.electron) {
               const turns=content?[...content.getElementsByClassName('chat-detail__turn')].map(node=>node.dataset.chatTurnId):[];
               const shell=content?.parentElement;
               const loading=Boolean(shell?.getElementsByClassName('chat-detail__messages-status-icon--loading').length);
-              paintSamples.push({ms:performance.now()-start,selected,turns,loading,faded:shell&&getComputedStyle(shell).opacity!=='1'});
+              paintSamples.push({ms:performance.now()-start,selected,turns,readable:Boolean(content?.querySelector('[data-chat-message-id]')?.textContent?.trim()),loading,faded:shell&&getComputedStyle(shell).opacity!=='1'});
               if(measuring)requestAnimationFrame(sample);
             };
             window.fixtureRowRenders=[];window.fixtureMotionRenders=0;window.fixtureGroupRenders=[];window.fixtureMessageRenders=[];
             window.fixtureAlignments=[];
-            const spinner=document.querySelector('[data-chat-id="0"] .chat-list-item__loading');
+            const spinner=document.getElementById('fixture-animation-probe');
             if(!spinner)throw new Error('Missing background running spinner before '+action+' '+destination+'; '+JSON.stringify({chat:window.fixtureChats[0],row:document.querySelector('[data-chat-id="0"]')?.textContent}));
             const historyRequests=window.fixtureCalls.filter(name=>name==='getChats').length;
             const detailRequests=window.fixtureCalls.filter(name=>name==='getChat').length;
             const availabilityRequests=window.fixtureCalls.filter(name=>name==='getSourceAvailability').length;
             const selectedBefore=window.fixtureSelectedChat();
+            const beforeRows=new Map([...document.querySelectorAll('[data-chat-id]')].map(node=>[node.dataset.chatId,node]));
+            const beforeGroups=new Set([...document.querySelectorAll('[data-sidebar-group-key]')].map(node=>node.dataset.sidebarGroupKey));
             const styleSheetCount=document.styleSheets.length;
             const popLayoutRules=window.fixturePopLayoutRules;
             const canvasTransfers=window.fixtureCanvasTransfers;
@@ -92,10 +108,10 @@ if (!process.versions.electron) {
             const markdownChatRequests=window.fixtureMarkdownChatRequests?.length??0;
             const start=performance.now();
             const measurementId='navigate:'+action+':'+destination+':'+start;
-            const button=action==='done-project' ? document.querySelector('[data-chat-id="'+destination+'"]')?.closest('.chat-list-group').querySelector('[title="Mark project chats done"]') : action==='done' ? document.querySelector('[data-chat-id="'+destination+'"] [aria-label="Mark chat done"]') : destination==='new' ? document.querySelector('button[aria-label="New chat"]') :
+            const button=action==='done-project' ? document.querySelector('[data-project-group-key="'+CSS.escape('cwd:'+fixtureChats.find(chat=>chat.id===destination).cwd)+'"] [title="Mark project chats done"]') : action==='done' ? document.querySelector('[data-chat-id="'+destination+'"] [aria-label="Mark chat done"]') : destination==='new' ? document.querySelector('button[aria-label="New chat"]') :
               document.querySelector('[data-chat-id="'+destination+'"] .chat-list-item__main');
             if(!button)throw new Error('No navigation button '+destination);
-            const affectedChatIds=action==='done-project' ? Array.from(button.closest('.chat-list-group').querySelectorAll('[data-chat-id]'),row=>row.dataset.chatId) : [destination];
+            const affectedChatIds=action==='done-project' ? fixtureChats.filter(chat=>chat.cwd===fixtureChats.find(chat=>chat.id===destination).cwd&&!chat.done).map(chat=>chat.id) : [destination];
             performance.mark(measurementId+':start');
             requestAnimationFrame(sample);
             button.click();
@@ -113,7 +129,7 @@ if (!process.versions.electron) {
             const reusedTurns=previousNodes?turnNodes.filter(node=>previousNodes.get(node.dataset.chatTurnId)===node).length:null;
             if(action==='select'&&destination!=='new'&&turnNodes.length)
               window.fixtureTurnNodes.set(destination,new Map(turnNodes.map(node=>[node.dataset.chatTurnId,node])));
-            return {measurementId,destination,action,selectedBefore,affectedChatIds,clickMs,reusedTurns,
+            return {measurementId,clickStartedAt:start,destination,action,selectedBefore,affectedChatIds,clickMs,reusedTurns,
               bottomAlignments:window.fixtureAlignments.length,bottomAlignmentMs:window.fixtureAlignments.reduce((sum,ms)=>sum+ms,0),
               markdownRequests:(window.fixtureMarkdownRequests??0)-markdownRequests,
               destinationMarkdownRequests:(window.fixtureMarkdownChatRequests??[]).slice(markdownChatRequests).filter(id=>id===destination).length,
@@ -124,14 +140,17 @@ if (!process.versions.electron) {
               availabilityRequests:window.fixtureCalls.filter(name=>name==='getSourceAvailability').length-availabilityRequests,
               firstSelectionMs:paintSamples.find(sample=>sample.selected===destination)?.ms??null,
               firstMessagesMs:paintSamples.find(sample=>sample.selected===destination&&sample.turns.some(id=>id.startsWith(destination+':')))?.ms??null,
+              firstMessageTextMs:paintSamples.find(sample=>sample.selected===destination&&sample.readable&&sample.turns.some(id=>id.startsWith(destination+':')))?.ms??null,
               allTurnsMs:paintSamples.find(sample=>sample.selected===destination&&sample.turns.length===10)?.ms??null,
               fadedFrames:paintSamples.filter(sample=>sample.selected&&sample.faded).length,
               mixedChatFrames:paintSamples.filter(sample=>sample.selected&&sample.turns.some(id=>!id.startsWith(sample.selected+':'))).length,
               blankFrames:paintSamples.filter(sample=>sample.selected===destination&&!sample.turns.length&&!sample.loading).length,canvasTransfers:window.fixtureCanvasTransfers-canvasTransfers,artActive:window.fixtureArtActive,styleSheetCountChange:document.styleSheets.length-styleSheetCount,popLayoutRules:window.fixturePopLayoutRules-popLayoutRules,
               groupRenders:[...new Set(window.fixtureGroupRenders)],
-              unexpectedRowIds:[...new Set(window.fixtureRowRenders)].filter(id=>id!=='0'&&id!==selectedBefore&&!affectedChatIds.includes(id)),maxFrameGap:Math.max(...window.frameGaps),longTasks:window.longTasks,
-              selected:window.fixtureSelectedChat(),
-              spinnerRetained:spinner===document.querySelector('[data-chat-id="0"] .chat-list-item__loading'),
+              newlyMountedRows:[...new Set(window.fixtureRowRenders)].filter(id=>beforeRows.get(id)!==document.querySelector('[data-chat-id="'+id+'"]')).length,
+              newlyMountedGroups:[...new Set(window.fixtureGroupRenders)].filter(key=>!beforeGroups.has(key)),
+              unexpectedRowIds:[...new Set(window.fixtureRowRenders)].filter(id=>id!=='0'&&id!==selectedBefore&&!affectedChatIds.includes(id)&&beforeRows.get(id)===document.querySelector('[data-chat-id="'+id+'"]')),maxFrameGap:Math.max(...window.frameGaps),longTasks:window.longTasks,
+              selected:window.fixtureSelectedChat(),selectedLabel:document.querySelector('.chat-panel--selected')?.getAttribute('aria-label'),viewed:window.fixtureViewedChat,
+              spinnerRetained:spinner===document.getElementById('fixture-animation-probe'),
               rowRenders:window.fixtureRowRenders.length,rowIds:[...new Set(window.fixtureRowRenders)].slice(0,10),uniqueRows:new Set(window.fixtureRowRenders).size,motionRenders:window.fixtureMotionRenders,
               historyRequests:window.fixtureCalls.filter(name=>name==='getChats').length-historyRequests,messages:document.querySelectorAll('#chat-search-content [data-chat-message-id]').length,
               done:window.fixtureChats.find(chat=>chat.id===destination)?.done??false,
@@ -151,6 +170,20 @@ if (!process.versions.electron) {
         outfile: path.join(directory, 'fixture.js'),
         plugins: [
           {
+            name: 'vite-fixture-source',
+            setup(build) {
+              if (viteCheck)
+                build.onStart(() =>
+                  fs.writeFile(
+                    path.join(directory, 'vite-entry.tsx'),
+                    build.initialOptions.stdin.contents
+                      .replaceAll('./src/', `/@fs${root}/src/`)
+                      .replace("/src/renderer/src/App'", "/src/renderer/src/App.tsx'")
+                  )
+                )
+            }
+          },
+          {
             name: 'fixture-workers',
             setup(build) {
               if (process.env.SELE_BENCHMARK_UNCACHED_CATALOGS === '1') {
@@ -164,6 +197,20 @@ if (!process.versions.electron) {
                   resolveDir: path.dirname(args.path)
                 }))
               }
+              build.onLoad({ filter: /ChatSidebarGroups\.tsx$/ }, async (args) => ({
+                contents: (await fs.readFile(args.path, 'utf8')).replace(
+                  '  const list = useRef<VirtuosoHandle>(null)',
+                  `  const list = useRef<VirtuosoHandle>(null)
+                  window.fixtureRevealSidebarChat = id => { const index=entries.findIndex(entry=>entry.kind==='row'&&entry.chats[entry.index].id===id); if(index>=0)list.current?.scrollToIndex({index,align:'center'}); };
+                  window.fixtureHasSidebarFooter = id => entries.some(entry=>entry.kind==='footer'&&entry.group.chats.some(chat=>chat.id===id));
+                  window.fixtureRevealSidebarFooter = id => { const index=entries.findIndex(entry=>entry.kind==='footer'&&entry.group.chats.some(chat=>chat.id===id)); if(index>=0)list.current?.scrollToIndex({index,align:'center'}); };
+                  window.fixtureRevealSidebarHeader = id => { const index=entries.findIndex(entry=>entry.kind==='header'&&entry.group.chats.some(chat=>chat.id===id)); if(index>=0)list.current?.scrollToIndex({index,align:'center'}); };
+                  window.fixtureScrollSidebarEnd = () => list.current?.scrollToIndex({index:entries.length-1,align:'end'});
+                  window.fixtureSidebarData = () => data;`
+                ),
+                loader: 'tsx',
+                resolveDir: path.dirname(args.path)
+              }))
               build.onLoad({ filter: /Chat(?:DetailItem|Message)\.tsx$/ }, async (args) => ({
                 contents: (await fs.readFile(args.path, 'utf8')).replace(
                   '  const messageRef = useRef<HTMLDivElement>(null)',
@@ -175,8 +222,8 @@ if (!process.versions.electron) {
               build.onLoad({ filter: /chatLayout\.ts$/ }, async (args) => ({
                 contents: (await fs.readFile(args.path, 'utf8'))
                   .replace(
-                    "  const inner = element.querySelector<HTMLElement>('.chat-detail__messages-inner')",
-                    "  const fixtureStart = performance.now();\n  const inner = element.querySelector<HTMLElement>('.chat-detail__messages-inner')"
+                    'export const alignChatContentToBottom = (element: HTMLElement): void => {',
+                    'export const alignChatContentToBottom = (element: HTMLElement): void => {\n  const fixtureStart = performance.now();'
                   )
                   .replace(
                     '  element.scrollTop = element.scrollHeight',
@@ -245,6 +292,46 @@ if (!process.versions.electron) {
         path.join(directory, 'api.js'),
         `
         const now=Date.now();
+        window.fixtureReactCommits=[];
+        window.fixtureReactUpdates=[];
+        {const seen=new WeakSet(),setters=new WeakMap();
+          window.fixtureTrackDispatcher=dispatcher=>{
+            if(seen.has(dispatcher))return;seen.add(dispatcher);
+            for(const name of ['useState','useReducer']){
+              const original=dispatcher[name];
+              dispatcher[name]=function(...args){const pair=original.apply(this,args);
+                if(!setters.has(pair[1])){const setter=pair[1];setters.set(setter,(...args)=>{
+                  const stack=new Error().stack;
+                  fixtureReactUpdates.push({time:performance.now(),stack});return setter(...args);
+                });}return [pair[0],setters.get(pair[1])];};
+            }
+          };
+        }
+        if(${process.env.SELE_BENCHMARK_FIBERS === '1'}) {
+          const renderers=new Map();let lastCommit=0;
+          window.__REACT_DEVTOOLS_GLOBAL_HOOK__={supportsFiber:true,renderers,
+            inject(renderer){const id=renderers.size+1;renderers.set(id,renderer);return id},
+            onCommitFiberUnmount(){},onPostCommitFiberRoot(){},
+            onCommitFiberRoot(_id,root){
+              const costs=new Map();
+              function visit(f){
+                if((f.flags&1)&&f.actualDuration>0&&f.actualStartTime>=lastCommit){
+                  let childMs=0;for(let c=f.child;c;c=c.sibling)childMs+=c.actualDuration??0;
+                  const ms=Math.max(0,f.actualDuration-childMs);
+                  const type=f.type;const name=typeof type==='string'?null:type?.displayName??type?.name??type?.render?.name;
+                  if(name&&ms>0){const cost=costs.get(name)??{name,ms:0,count:0,changes:new Set()};cost.ms+=ms;cost.count++;
+                    const a=f.alternate?.memoizedProps,b=f.memoizedProps;
+                    if(ms>1&&a&&b)for(const key of Object.keys(b))if(!Object.is(a[key],b[key]))cost.changes.add(key);
+                    costs.set(name,cost);}
+                }
+                for(let c=f.child;c;c=c.sibling)visit(c);
+              }
+              visit(root.current);
+              fixtureReactCommits.push({time:performance.now(),ms:root.current.actualDuration,
+                costs:[...costs.values()].sort((a,b)=>b.ms-a.ms).slice(0,15).map(c=>({...c,changes:[...c.changes]}))});
+              lastCommit=performance.now();
+            }};
+        }
         window.fixturePopLayoutRules=0;
         const insertRule=CSSStyleSheet.prototype.insertRule;
         CSSStyleSheet.prototype.insertRule=function(rule,...args){
@@ -254,11 +341,13 @@ if (!process.versions.electron) {
         window.fixtureCanvasTransfers=0;
         const transfer=HTMLCanvasElement.prototype.transferControlToOffscreen;
         if(transfer)HTMLCanvasElement.prototype.transferControlToOffscreen=function(...args){fixtureCanvasTransfers++;return transfer.apply(this,args)};
+        const probe=document.createElement('div');probe.id='fixture-animation-probe';probe.className='app-loading-spinner';probe.style.cssText='position:fixed;top:0;left:0;width:12px;height:12px;border:2px solid white;border-top-color:transparent;border-radius:50%;pointer-events:none';document.body.append(probe);
         window.fixtureChats=Array.from({length:${chatCount}},(_,i)=>({id:String(i),providerId:${mixedProviders}&&[2,6].includes(i)?'opencode-v2':'${providerId}',title:'Empty conversation '+i,
-          preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0||(${activeChats}&&[1,2,${typingCheck ? '5,6' : ''}].includes(i))?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
+          preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,status:i===0||(${activeChats}&&[1,2,${viteCheck ? '20,' : ''}${typingCheck ? '5,6' : ''}].includes(i))?'active':null,cwd:'/fixture/project-'+(i===1?'single':i%20),
           cwdKind:'directory',projectCwd:null,branchName:null,worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,
-          done:false,seenUpdatedAt:now,purpose:null,container:{kind:'host'}}));
+          done:false,doneAt:null,pendingApproval:null,seenUpdatedAt:now,purpose:null,container:{kind:'host'}}));
         window.fixtureCalls=[];
+        window.fixtureProjectResourceCalls=new Map();
         window.fixtureMessageRenders=[];
         window.fixtureLastDetails=new Map();
         window.fixtureRowRenders=[];window.fixtureMotionRenders=0;window.fixtureGroupRenders=[];
@@ -282,17 +371,24 @@ if (!process.versions.electron) {
         const defaults={
           getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'${providerId}',available:true},...(${mixedProviders}?[{providerId:'opencode-v2',available:true}]:[])]}),
           // IPC returns fresh objects; sharing the fixture's source objects hides list reloads.
-          getChats:provider=>({chats:fixtureChats.filter(chat=>chat.providerId===provider).map(chat=>({...chat,container:{...chat.container}})),nextCursor:null}),
+          getKnownChats:()=>({chats:[],nextCursor:null,conversationViews:[]}),
+          getChats:(provider,options)=>{const chats=fixtureChats.filter(chat=>chat.providerId===provider);
+            const offset=${startupBurst}?Number(options?.cursor??0):0;
+            const end=${startupBurst}?offset+100:chats.length;
+            return {chats:chats.slice(offset,end).map(chat=>({...chat,container:{...chat.container}})),nextCursor:end<chats.length?String(end):null}},
+          getCachedChat:(_provider,id,options)=>{if(!${process.env.SELE_BENCHMARK_LATENCY === '1'})return null;(window.fixtureCachedOptions??=[]).push({id,opening:options?.opening===true});return {...detail(id),historyPreview:true,conversationView:true,openingPreview:options?.opening===true,revision:-1,writeAccess:'checking',capabilities:{editMessages:false,activeMessages:false},items:options?.opening?history(id).slice(-2):history(id),itemsStartTurnIndex:options?.opening?9:0}},
           getChat:(_provider,id)=>{const view=structuredClone(detail(id));
             fixtureLastDetails.set(id,view);return view},
           markChatDone:(_provider,id,done=true)=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done,doneAt:done?Date.now():null,sidebarOrder:null});return {...chat}},
           markChatsDone:ids=>{const doneAt=Date.now();return ids.map(id=>{const chat=fixtureChats.find(chat=>chat.id===id);Object.assign(chat,{done:true,doneAt,sidebarOrder:null});return {...chat}})},
+          setChatOrder:ids=>ids.map((id,sidebarOrder)=>{const chat=fixtureChats.find(chat=>chat.id===id);chat.sidebarOrder=sidebarOrder;return {...chat}}),
+          setProjectOrder:cwds=>{window.fixtureProjectOrder=cwds;return cwds.map((cwd,sidebarOrder)=>({cwd,sidebarOrder,name:'',icon:null,additionalCwds:[],addedAt:now,updatedAt:now,orderOnly:true}))},
           markChatSeen:(_provider,id,seenUpdatedAt)=>({...fixtureChats.find(chat=>chat.id===id),seenUpdatedAt}),
           getModels:()=>Array.from({length:${modelCount}},(_,i)=>({id:i?'fixture-'+i:'fixture',get label(){window.fixtureModelLabelReads=(window.fixtureModelLabelReads??0)+1;return 'Fixture model '+i},description:'Fixture',isDefault:i===0,supportedReasoningEfforts:[],defaultReasoningEffort:'medium'})),
           getAccounts:()=>({available:true,unavailableMessage:null,accounts:[]}),getUsage:()=>usage,
           getConnections:()=>[],getTokenUsage:()=>({chat:null}),
           getDefaultCwd:()=>'/fixture/project-0',getWindowState:()=>({isMaximized:false}),getAppUpdate:()=>null,
-          getProjects:()=>[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
+          getProjects:()=>${startupBurst}?Array.from({length:38},(_,i)=>({cwd:'/fixture/project-'+i,name:'Project '+i,icon:null,additionalCwds:[],addedAt:now,updatedAt:now,sidebarOrder:null})):[],getContainerSuggestions:()=>[],getSshEnvironments:()=>[],getChatContainers:()=>[],
           getInstalledFontFamilies:()=>[],getAgentModes:()=>[],getApprovalModes:()=>[],getSandboxModes:()=>[],
           getSkills:()=>[],getApps:()=>[],listAgentSessions:()=>[],getChatTerminalTasks:()=>[],getCwdNotes:()=>[],getProjectIcon:()=>null,getSubagents:()=>[],getLimitResetMessages:()=>[],
           getUpdateAvailability:()=>null,
@@ -301,14 +397,24 @@ if (!process.versions.electron) {
         const api=new Proxy({}, {get:(_target,name)=>{
           if(name==='onChatUpdated')return listener=>{window.fixtureChatListener=listener;return ()=>{if(window.fixtureChatListener===listener)window.fixtureChatListener=null}};
           if(name.startsWith('on'))return ()=>()=>{};
-          return (...args)=>{fixtureCalls.push(name);return Promise.resolve(defaults[name]?.(...args)??null)};
+          return (...args)=>{fixtureCalls.push(name);
+            if(name==='getCwdNotes'||name==='getProjectIcon'){
+              const key=name+':'+(name==='getCwdNotes'?args[1]:args[0]?.cwd);
+              fixtureProjectResourceCalls.set(key,(fixtureProjectResourceCalls.get(key)??0)+1);
+            }
+            if(name==='getChat'&&args[1]===window.fixtureFailChat)return Promise.reject(new Error('Fixture provider offline'));
+            const value=defaults[name]?.(...args)??null;
+            if(name==='getCachedChat'&&args[1]==='100'&&args[2]?.opening)return new Promise(resolve=>setTimeout(()=>resolve(value),250));
+            const delays=${startupBurst}?{getChats:80,getProjects:650,getInstalledFontFamilies:1200,getApprovalModes:300,getSandboxModes:450,getProjectIcon:900,getCwdNotes:750,getModels:1100,getAccounts:1000,getUpdateAvailability:1400}:{};
+            if(${process.env.SELE_BENCHMARK_LATENCY === '1'}&&name==='getChat'&&args[1]==='80')return new Promise(resolve=>setTimeout(()=>resolve(value),750));
+            return delays[name]?new Promise(resolve=>setTimeout(()=>resolve(value),delays[name])):Promise.resolve(value)};
         }});
         window.appApi=api;window.providerApi=api;window.terminalApi=api;window.browserApi=api;
         window.beginBackgroundUpdates=()=>{let revision=10;return setInterval(()=>{
           revision++;
           window.fixtureRevision=revision;
           if(${activeChats}){
-            for(const id of ['1','2',${typingCheck ? "'5','6'" : ''}]){
+            for(const id of ['1','2',${viteCheck ? "'0','20'," : ''}${typingCheck ? "'5','6'" : ''}]){
               const items=history(id);histories.set(id,items.map((item,index)=>index===items.length-1?
                 {...item,content:item.content+'\\n\\nLive '+id+' update '+revision+'.'}:item));
               const chat=fixtureChats.find(chat=>chat.id===id);chat.updatedAt=Date.now();
@@ -336,6 +442,15 @@ if (!process.versions.electron) {
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
+      if (viteCheck) {
+        process.exitCode = await require('./workspace-vite.cjs').launch({
+          directory,
+          root,
+          script: __filename,
+          env
+        })
+        return
+      }
       const result = require('node:child_process').spawnSync(
         require('electron'),
         [__filename, directory, '--no-sandbox'],
@@ -357,27 +472,43 @@ if (!process.versions.electron) {
   const { app, BrowserWindow } = require('electron')
   const directory = process.argv[2]
   app.setPath('userData', path.join(directory, 'profile'))
-  app.disableHardwareAcceleration()
+  if (process.env.SELE_BENCHMARK_COMPOSITOR !== '1') app.disableHardwareAcceleration()
   app.whenReady().then(async () => {
     let code = 0
     try {
       const errors = []
       const win = new BrowserWindow({
         show: true,
+        frame: false,
         width: 1500,
         height: 950,
         webPreferences: { backgroundThrottling: false }
       })
+      const zoom = Number(process.env.SELE_BENCHMARK_ZOOM ?? 1)
+      assert.ok(Number.isFinite(zoom) && zoom > 0, 'valid fixture zoom')
+      if (zoom !== 1)
+        win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(zoom))
       win.webContents.on('render-process-gone', (_event, details) => {
         console.error('Navigation fixture renderer exited:', details)
         app.exit(1)
       })
       win.webContents.on('console-message', (event) => {
         if (event.level === 'error') {
+          if(process.env.SELE_BENCHMARK_OFFLINE==='1' && event.message.startsWith('Unable to load messages for '+providerId+' chat 100.')) return
           errors.push(event.message)
           console.error(event.message)
         }
       })
+      if (viteCheck) {
+        await require('./workspace-vite.cjs').measure({
+          win,
+          run: (source) => win.webContents.executeJavaScript(source),
+          errors,
+          url: process.argv[3]
+        })
+        app.exit(0)
+        return
+      }
       await win.loadFile(path.join(directory, 'index.html'))
       const run = (source) => win.webContents.executeJavaScript(source)
       await run('new Promise(resolve=>setTimeout(resolve,1200))')
@@ -392,6 +523,13 @@ if (!process.versions.electron) {
         groupingBuilds,
         'opening and closing empty search must not regroup the chat catalog'
       )
+      if (interactionCheck) {
+        await run('window.backgroundUpdates=window.beginBackgroundUpdates()')
+        win.webContents.debugger.attach('1.3')
+        await require('./workspace-interactions.cjs')({ win, run, directory, errors })
+        app.exit(0)
+        return
+      }
       // Size containment must preserve the grid track and the entire scroll
       // range, including after resizing. Menus and row details portal outside it.
       for (const [width, height] of [
@@ -399,6 +537,8 @@ if (!process.versions.electron) {
         [1500, 950]
       ]) {
         win.setSize(width, height)
+        await run('window.fixtureScrollSidebarEnd?.()')
+        await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
         const sidebar =
           await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
           const body=document.querySelector('.chat-sidebar__body');
@@ -414,6 +554,7 @@ if (!process.versions.electron) {
         assert.equal(sidebar.scrollable, true, 'sidebar history remains scrollable')
         assert.equal(sidebar.lastRowVisible, true, 'the final sidebar row remains reachable')
       }
+      await run('window.fixtureEnsureSidebarChat("0")')
       await run(
         `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true})); document.querySelector('.chat-list-item__main').focus({preventScroll:true})`
       )
@@ -628,9 +769,10 @@ if (!process.versions.electron) {
         if (process.env.SELE_BENCHMARK_PROGRESS) console.error('Navigated:', destination)
       }
       const rapidNavigation = await run(`(async () => {
-        const spinner=document.querySelector('[data-chat-id="0"] .chat-list-item__loading');
+        const spinner=document.getElementById('fixture-animation-probe');
         window.frameGaps=[];
         for(const id of ['1','new','2','3','4','new','1','2','new','3','4','2']) {
+          await window.fixtureEnsureSidebarChat(id);
           const button=id==='new'?document.querySelector('[aria-label="New chat"]'):
             document.querySelector('[data-chat-id="'+id+'"] .chat-list-item__main');
           button.click();
@@ -638,7 +780,7 @@ if (!process.versions.electron) {
         }
         await new Promise(resolve=>setTimeout(resolve,300));
         return {selected:window.fixtureSelectedChat(),
-          spinnerRetained:spinner===document.querySelector('[data-chat-id="0"] .chat-list-item__loading'),
+          spinnerRetained:spinner===document.getElementById('fixture-animation-probe'),
           maxFrameGap:Math.max(...window.frameGaps)};
       })()`)
       assert.equal(rapidNavigation.selected, '2', 'rapid switches commit the final selection')
@@ -669,7 +811,11 @@ if (!process.versions.electron) {
           assert.equal(result.selected, result.destination)
         }
         for (const result of results) {
-          assert.equal(result.selected, result.destination === 'new' ? null : result.destination)
+          assert.equal(
+            result.selected,
+            result.destination === 'new' ? null : result.destination,
+            JSON.stringify(result)
+          )
           assert.equal(result.mixedChatFrames, 0, 'never paint a different conversation')
           if (['3', '4'].includes(result.destination) && result.reusedTurns === 10) {
             // The outgoing stream remains visible while navigation yields and
@@ -861,7 +1007,9 @@ if (!process.versions.electron) {
           return ['done', ...ids.map(id => window.fixtureChats.find(chat => chat.id === id)).filter(Boolean).map(chat => 'cwd:' + chat.cwd)];
         })()`)
         assert.deepEqual(
-          result.groupRenders.filter((key) => !expectedGroups.includes(key)),
+          result.groupRenders.filter(
+            (key) => !expectedGroups.includes(key) && !result.newlyMountedGroups.includes(key)
+          ),
           [],
           'unaffected project groups must not rebuild their lists'
         )
@@ -906,11 +1054,12 @@ if (!process.versions.electron) {
           'only affected chats, the previous selection and running chat should render'
         )
         assert.ok(
-          result.rowRenders < 40 + result.affectedChatIds.length * 3,
+          result.rowRenders < 40 + result.newlyMountedRows * 3 + result.affectedChatIds.length * 3,
           'navigation/completion must not rerender the whole sidebar'
         )
         assert.ok(
-          result.motionRenders < 120 + result.affectedChatIds.length * 6,
+          result.motionRenders <
+            120 + result.newlyMountedRows * 6 + result.affectedChatIds.length * 6,
           'presence context must not rerender all animation wrappers'
         )
       }

@@ -62,6 +62,11 @@ if (!process.versions.electron) {
         'src/renderer/src/workspace/useWorkspaceSelection.tsx',
         'observeContentResize',
         'const observer = new ResizeObserver'
+      ),
+      extract(
+        'src/renderer/src/workspace/useConversationViewModel.tsx',
+        'followLatestAfterLayout',
+        'if (!scrollToLatestTurnAfterRenderRef.current || renderedChatTurns.length === 0)'
       )
     ].join('\n')
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sele-chat-scroll-'))
@@ -69,12 +74,14 @@ if (!process.versions.electron) {
       await require('esbuild').build({
         stdin: {
           contents: `
+            import {startTransition} from 'react'
             import * as layout from './src/renderer/src/chatLayout'
             import * as detail from './src/renderer/src/chatDetailWindow'
             import * as turns from './src/renderer/src/chatTurnWindow'
             import {extendChatCursorWindow} from './src/renderer/src/chatCursorWindow'
             import {getChatDetailFromSnapshot} from './src/renderer/src/workspace/chatControllerUtils'
             Object.assign(window, layout, detail, turns, {getChatDetailFromSnapshot, extendChatCursorWindow})
+            window.startTransition=startTransition
             ${fs.readFileSync(path.join(__dirname, 'fixtures/chat-scroll.js'), 'utf8')}
             const chatState=new Proxy(window,{get:(target,key)=>target[key],set:(target,key,value)=>{target[key]=value;return true}})
             const viewportState=chatState
@@ -178,6 +185,13 @@ if (!process.versions.electron) {
           `${resize.kind}: keep the visible block stationary`
         )
       }
+      assert.equal(result.latestCommitReads, 0, 'jumping to latest must not read layout in commit')
+      assert.ok(result.latestPaintGap <= 1, 'latest history follows before paint')
+      assert.equal(
+        result.cancelledLatestScroll,
+        true,
+        'cancelled layout work must not move history'
+      )
       console.log(
         'Chat scrolling checks passed: cursor navigation, numeric paging, delayed responses, live updates, content resizing, and growing tool blocks.'
       )

@@ -2,12 +2,17 @@ import { watchWorkspace, publishWorkspace } from './workspaceEvents'
 import { appGitHubPullRequestStates } from '../shared/app'
 import {
   getGitHubPullRequest,
+  getGitHubPullRequestManagement,
+  getGitHubPullRequestCommitChanges,
+  performGitHubPullRequestAction,
+  gitHubPullRequestActionSchema,
   listGitHubPullRequests,
   getGitHubPullRequestChanges,
   submitGitHubPullRequestReview,
   gitHubPullRequestReviewSchema
 } from './githubPullRequests'
 import { bufferedCommands } from './BufferedCommandWorker'
+import { PastedImageStore } from './pastedImages'
 import { prepareMessageAttachments } from './messageAttachments'
 import { getVideoMimeType } from '../shared/video'
 import { copyVideoFile } from './videoClipboard'
@@ -828,10 +833,12 @@ const runGitHub = async (
       [
         input === undefined
           ? 'Unable to load GitHub pull requests.'
-          : 'Unable to post GitHub pull request review.',
+          : 'Unable to update the GitHub pull request.',
         hint,
         detail
-      ].filter(Boolean).join('\n')
+      ]
+        .filter(Boolean)
+        .join('\n')
     )
   }
   return stdout
@@ -3463,28 +3470,77 @@ export const registerAppIpc = (): void => {
     )
   })
 
-  handleClientRequest(appIpcChannels.getGitHubPullRequestChanges, async (_event, value: unknown) => {
-    const options = getGitHubPullRequestOptions(value)
-    const cwd = options.cwd ?? process.cwd()
-    return runWithGitContainer(options.container, () =>
-      getGitHubPullRequestChanges(cwd, options, runGit, (args) =>
-        runGitHub(cwd, options.container, args)
+  handleClientRequest(
+    appIpcChannels.getGitHubPullRequestChanges,
+    async (_event, value: unknown) => {
+      const options = getGitHubPullRequestOptions(value)
+      const cwd = options.cwd ?? process.cwd()
+      return runWithGitContainer(options.container, () =>
+        getGitHubPullRequestChanges(cwd, options, runGit, (args) =>
+          runGitHub(cwd, options.container, args)
+        )
       )
-    )
-  })
-
-  handleClientRequest(appIpcChannels.submitGitHubPullRequestReview, async (_event, value: unknown) => {
-    const options = {
-      ...getGitHubPullRequestOptions(value),
-      ...gitHubPullRequestReviewSchema.parse(value)
     }
-    const cwd = options.cwd ?? process.cwd()
-    return runWithGitContainer(options.container, () =>
-      submitGitHubPullRequestReview(cwd, options, runGit, (args, input) =>
-        runGitHub(cwd, options.container, args, input)
+  )
+
+  handleClientRequest(
+    appIpcChannels.submitGitHubPullRequestReview,
+    async (_event, value: unknown) => {
+      const options = {
+        ...getGitHubPullRequestOptions(value),
+        ...gitHubPullRequestReviewSchema.parse(value)
+      }
+      const cwd = options.cwd ?? process.cwd()
+      return runWithGitContainer(options.container, () =>
+        submitGitHubPullRequestReview(cwd, options, runGit, (args, input) =>
+          runGitHub(cwd, options.container, args, input)
+        )
       )
-    )
-  })
+    }
+  )
+
+  handleClientRequest(
+    appIpcChannels.getGitHubPullRequestManagement,
+    async (_event, value: unknown) => {
+      const options = getGitHubPullRequestOptions(value)
+      const cwd = options.cwd ?? process.cwd()
+      return runWithGitContainer(options.container, () =>
+        getGitHubPullRequestManagement(cwd, options, runGit, (args) =>
+          runGitHub(cwd, options.container, args)
+        )
+      )
+    }
+  )
+  handleClientRequest(
+    appIpcChannels.getGitHubPullRequestCommitChanges,
+    async (_event, value: unknown) => {
+      const options = getGitHubPullRequestOptions(value)
+      const commitSha = (value as { commitSha?: unknown }).commitSha
+      if (typeof commitSha !== 'string' || !/^[a-f\d]{40,64}$/i.test(commitSha))
+        throw new Error('Invalid commit SHA')
+      const cwd = options.cwd ?? process.cwd()
+      return runWithGitContainer(options.container, () =>
+        getGitHubPullRequestCommitChanges(cwd, { ...options, commitSha }, runGit, (args) =>
+          runGitHub(cwd, options.container, args)
+        )
+      )
+    }
+  )
+  handleClientRequest(
+    appIpcChannels.performGitHubPullRequestAction,
+    async (_event, value: unknown) => {
+      const options = {
+        ...getGitHubPullRequestOptions(value),
+        ...gitHubPullRequestActionSchema.parse(value)
+      }
+      const cwd = options.cwd ?? process.cwd()
+      return runWithGitContainer(options.container, () =>
+        performGitHubPullRequestAction(cwd, options, runGit, (args, input) =>
+          runGitHub(cwd, options.container, args, input)
+        )
+      )
+    }
+  )
 
   handleClientRequest(appIpcChannels.getGitBranches, async (_event, value: unknown) => {
     const options = getGitBranchesOptions(value)
@@ -3800,7 +3856,21 @@ export const registerAppIpc = (): void => {
     clipboard.writeText(value)
   })
 
-  handleLoggedIpc(appIpcChannels.getClipboardImage, async () => {
+  const pastedImages = new PastedImageStore(join(app.getPath('userData'), 'sele-message-images'))
+  const pastedImageSenders = new Set<number>()
+  handleLoggedIpc(appIpcChannels.getClipboardImage, async (event, value: unknown) => {
+    const imageDirectory = join(app.getPath('userData'), 'sele-message-images')
+    if (value !== undefined) {
+      const owner = event.sender.id
+      if (!pastedImageSenders.has(owner)) {
+        pastedImageSenders.add(owner)
+        event.sender.once('destroyed', () => {
+          pastedImageSenders.delete(owner)
+          void pastedImages.cancelOwner(owner)
+        })
+      }
+      return pastedImages.write(value, owner)
+    }
     const clipboardImage = clipboard.readImage()
     if (clipboardImage.isEmpty()) return null
 
@@ -3809,7 +3879,6 @@ export const registerAppIpc = (): void => {
       throw new Error('Paste an image smaller than 32 MB.')
     }
 
-    const imageDirectory = join(app.getPath('userData'), 'sele-message-images')
     const imageName = 'Pasted image.png'
     const imagePath = join(imageDirectory, `pasted-image-${randomUUID()}.png`)
     await mkdir(imageDirectory, { recursive: true })

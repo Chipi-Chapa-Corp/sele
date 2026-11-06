@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { startTransition, useCallback, useEffect } from 'react'
 import {
   alignChatContentToBottom,
   clamp,
@@ -17,7 +17,7 @@ export function useWorkspaceScroll({ chatState, viewportState }: WorkspaceScroll
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
     alignChatContentToBottom(contentElement)
     // Skips the update itself when already at the bottom.
-    chatState.setChatAtConversationBottom(true)
+    startTransition(() => chatState.setChatAtConversationBottom(true))
     viewportState.chatAutoScrollTargetRef.current = {
       element: contentElement,
       top: contentElement.scrollTop
@@ -43,7 +43,7 @@ export function useWorkspaceScroll({ chatState, viewportState }: WorkspaceScroll
     viewportState.chatAutoScrollEnabledRef.current = false
     viewportState.chatAutoScrollTargetRef.current = null
     viewportState.chatUserScrollIntentRef.current = false
-    chatState.setChatAtConversationBottom(false)
+    startTransition(() => chatState.setChatAtConversationBottom(false))
 
     viewportState.pinnedMessageScrollCleanupRef.current?.()
     messageElement.classList.remove('chat-detail__message-block--pin-target')

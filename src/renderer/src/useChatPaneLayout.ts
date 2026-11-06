@@ -2,6 +2,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -61,13 +62,16 @@ export const useChatPaneLayout = (changesSidebarExpanded: boolean): ChatPaneLayo
 
     const updatePanelsWidth = (width: number): void => {
       const roundedWidth = Math.round(width)
-      setPanelsWidth((currentWidth) =>
-        currentWidth === roundedWidth ? currentWidth : roundedWidth
+      startTransition(() =>
+        setPanelsWidth((currentWidth) =>
+          currentWidth === roundedWidth ? currentWidth : roundedWidth
+        )
       )
     }
 
-    updatePanelsWidth(panels.getBoundingClientRect().width)
-
+    // ResizeObserver supplies the initial size after layout. Reading geometry
+    // here forces the entire first workspace commit to lay out synchronously
+    // (twice under StrictMode), then immediately renders the root again.
     const observer = new ResizeObserver(([entry]) => {
       if (entry) updatePanelsWidth(entry.contentRect.width)
     })

@@ -1,3 +1,4 @@
+import { ComposerImageLightbox } from '../composer/ComposerImageLightbox'
 import { MessagesSquare, Paperclip, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { ComposerAttachments } from '../composer/ComposerAttachments'
@@ -12,7 +13,6 @@ import { useComposerMentions } from '../composer/useComposerMentions'
 import { useComposerSubmission } from '../composer/useComposerSubmission'
 import { useComposerFocus } from '../useComposerFocus'
 import { Button } from './Button'
-import { ImageLightbox } from './ImageLightbox'
 import './MessageBox.css'
 
 import type { MessageBoxProps } from './MessageBox.types'
@@ -325,10 +325,10 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
         />
       </div>
       {attachments.openedImage && (
-        <ImageLightbox
-          imageUrl={attachments.openedImage.dataUrl}
-          name={attachments.openedImage.name}
-          path={attachments.openedImage.path}
+        <ComposerImageLightbox
+          key={attachments.openedImage.path}
+          image={attachments.openedImage}
+          onSave={attachments.handleSaveOpenedImage}
           onClose={() => attachments.setOpenedImage(null)}
         />
       )}

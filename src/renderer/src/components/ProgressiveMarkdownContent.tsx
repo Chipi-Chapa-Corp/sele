@@ -1,54 +1,26 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import DOMPurify from 'dompurify'
+import {
+  memo,
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
+import { sanitizedFragment } from '../markdownFragment'
+import { FlatMarkdownSequence } from './FlatMarkdownSequence'
 import type { AppContainerTarget } from '../../../shared/app'
-import { createMarkdownPlan, type MarkdownPlanNode } from '../markdownPlan'
+import { createMarkdownPlan, reuseMarkdownPlan, type MarkdownPlanNode } from '../markdownPlan'
 import { requestMarkdownPlan } from '../chatMarkdownClient'
 import { useMarkdownImages } from '../useMarkdownImages'
 import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { DeferredChatTurn } from './DeferredChatTurn'
-import { MarkdownElement, MarkdownNodes } from './MarkdownContent'
+import { MarkdownElement, MarkdownFragment, MarkdownNodes } from './MarkdownContent'
 
 // Even a few kilobytes of code and file links expand into a large highlighted
 // DOM. Keep parsing off the renderer before a message reaches that size.
 export const progressiveMarkdownThreshold = 4_096
-
-// HTML fragments inside tables need their native parse context. Sanitizing a bare <tr> or
-// <tbody> as body HTML would strip the table structure before React could mount it.
-const sanitizedFragment = (
-  html: string,
-  parent: string,
-  alreadySanitized = false
-): DocumentFragment => {
-  const contexts: Record<string, string[]> = {
-    table: ['table'],
-    thead: ['table', 'thead'],
-    tbody: ['table', 'tbody'],
-    tfoot: ['table', 'tfoot'],
-    tr: ['table', 'tbody', 'tr'],
-    colgroup: ['table', 'colgroup']
-  }
-  const context = contexts[parent] ?? []
-  const markup =
-    context.map((tag) => `<${tag}>`).join('') +
-    html +
-    [...context]
-      .reverse()
-      .map((tag) => `</${tag}>`)
-      .join('')
-  const fragment = alreadySanitized
-    ? (() => {
-        const template = document.createElement('template')
-        template.innerHTML = markup
-        return template.content
-      })()
-    : DOMPurify.sanitize(markup, { ADD_ATTR: ['target'], RETURN_DOM_FRAGMENT: true })
-  let source: ParentNode = fragment
-  for (const tag of context) source = source.querySelector(tag) ?? source
-  if (source === fragment) return fragment
-  const result = document.createDocumentFragment()
-  result.append(...source.childNodes)
-  return result
-}
 
 type PartProps = {
   node: MarkdownPlanNode
@@ -74,6 +46,9 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
     [html, parent, sanitized]
   )
   const committedFragment = useRef<DocumentFragment | null>(null)
+  // Flow content can share a DOM-owned boundary. Tables/lists retain their
+  // native parent contexts; embedded applications keep their React lifecycle.
+  const flat = parent === 'div' && !fragment.querySelector('[data-visualization]')
   useLayoutEffect(() => {
     // Revealing an Activity reconnects effects without inserting any new DOM.
     // Replaying every leaf's commit would rerender the whole message again.
@@ -81,17 +56,21 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
     committedFragment.current = fragment
     onCommit()
   }, [fragment, onCommit])
-  return <MarkdownNodes parent={fragment} container={container} cwd={cwd} />
+  return flat ? (
+    <MarkdownFragment fragment={fragment} />
+  ) : (
+    <MarkdownNodes parent={fragment} container={container} cwd={cwd} />
+  )
 })
 
 const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
   const { node, parent, priority, container, cwd, onCommit, eager, sanitized } = props
+  const tag = 'tag' in node ? node.tag : null
+  const opening = 'tag' in node ? node.opening : null
   const shell = useMemo(
     () =>
-      'tag' in node
-        ? sanitizedFragment(`${node.opening}</${node.tag}>`, parent, sanitized).firstElementChild
-        : null,
-    [node, parent, sanitized]
+      tag ? sanitizedFragment(`${opening}</${tag}>`, parent, sanitized).firstElementChild : null,
+    [opening, tag, parent, sanitized]
   )
   if ('html' in node)
     return (
@@ -126,6 +105,22 @@ const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
     </MarkdownElement>
   )
 })
+
+type PlanSection =
+  | { index: number; node: MarkdownPlanNode }
+  | { index: number; leaves: { html: string }[] }
+const groupFlatSections = (plan: MarkdownPlanNode[] | null): PlanSection[] => {
+  const sections: PlanSection[] = []
+  for (const [index, node] of (plan ?? []).entries()) {
+    // Embedded React applications retain their own component lifecycle.
+    if ('html' in node && !node.html.includes('data-visualization')) {
+      const previous = sections.at(-1)
+      if (previous && 'leaves' in previous) previous.leaves.push(node)
+      else sections.push({ index, leaves: [node] })
+    } else sections.push({ index, node })
+  }
+  return sections
+}
 
 const noop = (): void => {}
 
@@ -162,10 +157,11 @@ export function ProgressiveMarkdownContent({
   useLayoutEffect(() => {
     committedPlan.current = plan
   }, [plan])
+  const sections = useMemo(() => groupFlatSections(plan), [plan])
   const [failed, setFailed] = useState(false)
   const [revision, setRevision] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
-  const onCommit = useCallback(() => setRevision((value) => value + 1), [])
+  const onCommit = useCallback(() => startTransition(() => setRevision((value) => value + 1)), [])
   const input = useMemo(
     () => ({ content, interactiveFileLinks, footnotePrefix, baseUrl }),
     [content, interactiveFileLinks, footnotePrefix, baseUrl]
@@ -182,8 +178,10 @@ export function ProgressiveMarkdownContent({
       .then((next) => {
         if (current) {
           resolvedInput.current = input
-          setPlan(next)
-          setFailed(false)
+          startTransition(() => {
+            setPlan((previous) => reuseMarkdownPlan(previous, next))
+            setFailed(false)
+          })
         }
       })
       .catch((error) => {
@@ -209,19 +207,30 @@ export function ProgressiveMarkdownContent({
       {failed ? (
         <pre>{content}</pre>
       ) : plan ? (
-        plan.map((node, index) => (
-          <MarkdownPart
-            key={index}
-            node={node}
-            parent="div"
-            priority={index}
-            container={container}
-            cwd={cwd}
-            onCommit={html === undefined ? onCommit : noop}
-            eager={html !== undefined}
-            sanitized={html !== undefined}
-          />
-        ))
+        sections.map((section) =>
+          'leaves' in section ? (
+            <FlatMarkdownSequence
+              key={section.index}
+              leaves={section.leaves}
+              priority={section.index}
+              eager={html !== undefined}
+              sanitized={html !== undefined}
+              onCommit={html === undefined ? onCommit : noop}
+            />
+          ) : (
+            <MarkdownPart
+              key={section.index}
+              node={section.node}
+              parent="div"
+              priority={section.index}
+              container={container}
+              cwd={cwd}
+              onCommit={html === undefined ? onCommit : noop}
+              eager={html !== undefined}
+              sanitized={html !== undefined}
+            />
+          )
+        )
       ) : null}
       {/* The message is already available. Keep a bounded, readable viewport
           until the first formatted part commits instead of inserting another loader. */}

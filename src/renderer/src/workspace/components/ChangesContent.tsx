@@ -1,13 +1,10 @@
-import { memo, useRef } from 'react'
+import { lazy, memo, Suspense, useRef } from 'react'
 import { useFeedbackMotion } from '../../motion/useFeedbackMotion'
 import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { X } from 'lucide-react'
-import { GitHubPullRequests } from '../../components/GitHubPullRequests'
-import { BrowserPanel } from '../../components/BrowserPanel'
 import { Button } from '../../components/Button'
 import { RecentReferencesList } from '../../components/RecentReferencesList'
-import { TerminalPanel } from '../../components/TerminalPanel'
 import {
   ChangesSidebarGitPerformanceWarning,
   ChangesSidebarGitState,
@@ -16,6 +13,17 @@ import {
 } from '../../components/AppStatusStates'
 
 type ChangesContentProps = WorkspaceController['changesContent']
+const GitHubPullRequests = lazy(() =>
+  import('../../components/GitHubPullRequests').then((module) => ({
+    default: module.GitHubPullRequests
+  }))
+)
+const BrowserPanel = lazy(() =>
+  import('../../components/BrowserPanel').then((module) => ({ default: module.BrowserPanel }))
+)
+const TerminalPanel = lazy(() =>
+  import('../../components/TerminalPanel').then((module) => ({ default: module.TerminalPanel }))
+)
 
 // Chat-specific recents and permissions change while the same project tree is
 // visible. Keep those parent updates from rebuilding and reconciling every file.
@@ -85,6 +93,7 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
     setGitChangeLoadRequest,
     terminalChatKey,
     terminalCommandLaunchRequest,
+    terminalOpened,
     terminalWorkspaceKey,
     untrackedFilesAiDisabled,
     untrackedFilesHiddenForPerformance,
@@ -109,12 +118,14 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
       }`}
     >
       {showingPullRequests && (
-        <GitHubPullRequests
-          key={JSON.stringify([changesContainer ?? null, changesProjectCwd ?? changesCwd])}
-          state={gitHubPullRequests}
-          browserEnabled={effectiveAppSettings.browser.enabled}
-          onOpenBrowser={handleOpenBrowserRequest}
-        />
+        <Suspense fallback={<ChangesSidebarGitState active label="Loading pull requests" />}>
+          <GitHubPullRequests
+            key={JSON.stringify([changesContainer ?? null, changesProjectCwd ?? changesCwd])}
+            state={gitHubPullRequests}
+            browserEnabled={effectiveAppSettings.browser.enabled}
+            onOpenBrowser={handleOpenBrowserRequest}
+          />
+        </Suspense>
       )}
       {showingFileContent && (
         <div className="changes-sidebar__content">
@@ -234,22 +245,26 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
           )}
         </div>
       )}
-      <div
-        className={`changes-sidebar__terminal${
-          changesPaneView === 'terminal' ? ' changes-sidebar__terminal--active' : ''
-        }`}
-        aria-hidden={changesPaneView !== 'terminal'}
-      >
-        <TerminalPanel
-          chatKey={terminalChatKey}
-          active={changesPaneView === 'terminal'}
-          commandLaunchRequest={terminalCommandLaunchRequest}
-          container={changesContainer}
-          cwd={changesCwd}
-          projectCwd={changesProjectCwd}
-          workspaceKey={terminalWorkspaceKey}
-        />
-      </div>
+      {terminalOpened && (
+        <div
+          className={`changes-sidebar__terminal${
+            changesPaneView === 'terminal' ? ' changes-sidebar__terminal--active' : ''
+          }`}
+          aria-hidden={changesPaneView !== 'terminal'}
+        >
+          <Suspense fallback={null}>
+            <TerminalPanel
+              chatKey={terminalChatKey}
+              active={changesPaneView === 'terminal'}
+              commandLaunchRequest={terminalCommandLaunchRequest}
+              container={changesContainer}
+              cwd={changesCwd}
+              projectCwd={changesProjectCwd}
+              workspaceKey={terminalWorkspaceKey}
+            />
+          </Suspense>
+        </div>
+      )}
       {browserOpened && effectiveAppSettings.browser.enabled && (
         <div
           className={`changes-sidebar__browser${
@@ -257,15 +272,17 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
           }`}
           aria-hidden={changesPaneView !== 'browser'}
         >
-          <BrowserPanel
-            active={changesPaneView === 'browser'}
-            appZoomLevel={effectiveAppSettings.appearance.zoomLevel}
-            defaultScale={effectiveAppSettings.browser.defaultScale}
-            openRequest={browserOpenRequest}
-            workspaceKey={browserWorkspaceKey}
-            view={effectiveAppSettings.browser.view}
-            cwd={changesProjectCwd ?? changesCwd}
-          />
+          <Suspense fallback={null}>
+            <BrowserPanel
+              active={changesPaneView === 'browser'}
+              appZoomLevel={effectiveAppSettings.appearance.zoomLevel}
+              defaultScale={effectiveAppSettings.browser.defaultScale}
+              openRequest={browserOpenRequest}
+              workspaceKey={browserWorkspaceKey}
+              view={effectiveAppSettings.browser.view}
+              cwd={changesProjectCwd ?? changesCwd}
+            />
+          </Suspense>
         </div>
       )}
     </div>

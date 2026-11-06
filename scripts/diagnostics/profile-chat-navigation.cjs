@@ -32,7 +32,7 @@ function waitForClick() {
       if (
         event.target instanceof Element &&
         event.target.closest(
-          '.chat-list-item__main, button[aria-label="New chat"], button[aria-label="New chat without a project"]'
+          '.chat-list-item__main, .chat-sidebar .ui-segmented-control button, .chat-list-item button[aria-label="Mark chat done"], button[aria-label="New chat"], button[aria-label="New chat without a project"]'
         )
       )
         finish(true)
@@ -56,12 +56,12 @@ async function connect(port, accept) {
   return new Cdp(socket)
 }
 
-function installProbe() {
+function installProbe(startup = false) {
   if (window.__seleNavigationCapture) throw new Error('A navigation capture is already running')
-  const start = performance.now()
+  const start = startup ? 0 : performance.now()
   const data = { start, navigations: [], frameGaps: [], longTasks: [] }
   const marks = []
-  let previous = start
+  let previous = performance.now()
   let frame
   const tick = () => {
     const now = performance.now()
@@ -78,18 +78,26 @@ function installProbe() {
       }))
     )
   })
-  observer.observe({ type: 'longtask' })
+  observer.observe({ type: 'longtask', buffered: startup })
   const onClick = (event) => {
     const button =
       event.target instanceof Element
         ? event.target.closest(
-            '.chat-list-item__main, button[aria-label="New chat"], button[aria-label="New chat without a project"]'
+            '.chat-list-item__main, .chat-sidebar .ui-segmented-control button, .chat-list-item button[aria-label="Mark chat done"], button[aria-label="New chat"], button[aria-label="New chat without a project"]'
           )
         : null
     if (!button) return
+    const sidebarTab = button.closest('.chat-sidebar .ui-segmented-control')
     const navigation = {
       start: performance.now() - start,
-      destination: button.closest('[data-chat-id]')?.dataset.chatId ?? 'new',
+      action: sidebarTab
+        ? 'sidebar-filter'
+        : button.matches('[aria-label="Mark chat done"]')
+          ? 'mark-done'
+          : 'select-chat',
+      destination:
+        button.closest('[data-chat-id]')?.dataset.chatId ??
+        (sidebarTab ? button.getAttribute('aria-label') : 'new'),
       firstFrame: null
     }
     data.navigations.push(navigation)
@@ -107,7 +115,12 @@ function installProbe() {
     document.removeEventListener('click', onClick, true)
     for (const mark of marks) performance.clearMarks(mark)
     delete window.__seleNavigationCapture
-    return data
+    return {
+      ...data,
+      paint: performance
+        .getEntriesByType('paint')
+        .map(({ name, startTime }) => ({ name, startTime }))
+    }
   }
 }
 
@@ -117,12 +130,24 @@ async function capture({
   directory,
   durationMs = 20_000,
   trace = true,
+  traceCategories = 'devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline.stack',
   cpuProfiles = true,
+  startup = false,
+  waitForReload = false,
+  waitTimeoutMs = 90_000,
   onReady = () => {}
 }) {
   await fs.mkdir(directory, { recursive: true })
   let probeInstalled = false
   let tracing = false
+  let startupScript
+  let reloadTimer
+  let resolveReload
+  const reload = waitForReload
+    ? new Promise((resolve) => {
+        resolveReload = resolve
+      })
+    : null
   const profilers = []
   const failures = []
   let traceComplete
@@ -131,8 +156,16 @@ async function capture({
   })
   const stopListening = renderer.on((message) => {
     if (message.method === 'Tracing.tracingComplete') traceComplete(message.params)
+    if (waitForReload && message.method === 'Page.frameNavigated' && !message.params.frame.parentId)
+      resolveReload(true)
   })
   try {
+    if (waitForReload || startup) {
+      await renderer.send('Page.enable')
+      startupScript = await renderer.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: `(${installProbe.toString()})(true)`
+      })
+    }
     for (const [name, client] of cpuProfiles
       ? [
           ['renderer', renderer],
@@ -146,19 +179,34 @@ async function capture({
     }
     if (trace) {
       await renderer.send('Tracing.start', {
-        categories:
-          'devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline.stack',
+        categories: traceCategories,
         transferMode: 'ReturnAsStream'
       })
       tracing = true
     }
-    await evaluate(renderer, `(${installProbe.toString()})()`)
-    probeInstalled = true
+    if (!waitForReload) {
+      const install = `(${installProbe.toString()})(${startup})`
+      await evaluate(renderer, startup ? `window.__seleNavigationCapture || ${install}` : install)
+      probeInstalled = true
+    }
     await onReady()
+    if (waitForReload) {
+      reloadTimer = setTimeout(() => resolveReload(false), waitTimeoutMs)
+      if (!(await reload)) throw new Error('No reload detected; startup capture cancelled')
+      clearTimeout(reloadTimer)
+      probeInstalled = true
+    }
     await sleep(durationMs)
   } catch (error) {
     failures.push(error)
   } finally {
+    clearTimeout(reloadTimer)
+    if (startupScript)
+      await renderer
+        .send('Page.removeScriptToEvaluateOnNewDocument', {
+          identifier: startupScript.identifier
+        })
+        .catch((error) => failures.push(error))
     try {
       if (probeInstalled) {
         const observations = await evaluate(renderer, 'window.__seleNavigationCapture?.() ?? null')
@@ -220,6 +268,8 @@ async function run() {
   const seconds = Number(option('--seconds', 20))
   if (!Number.isFinite(seconds) || seconds < 1 || seconds > 60)
     throw new Error('--seconds must be between 1 and 60')
+  if (args.includes('--wait-for-click') && args.includes('--wait-for-reload'))
+    throw new Error('Choose either --wait-for-click or --wait-for-reload')
   const directory = path.resolve(option('--output', `test-results/navigation-${Date.now()}`))
   const renderer = await connect(
     Number(option('--renderer-port', 9333)),
@@ -236,18 +286,28 @@ async function run() {
   let main = null
   try {
     main = await connect(Number(option('--main-port', 9334)), (target) => target.type === 'node')
-    if (args.includes('--wait-for-click')) {
-      console.log('Armed. Recording will start on your next chat click (waiting up to 3 minutes).')
-      if (!(await evaluate(renderer, `(${waitForClick.toString()})()`, 185_000)))
-        throw new Error('No chat click detected; no recording was started')
-    }
     await capture({
       renderer,
       main,
       directory,
       trace: !args.includes('--no-trace'),
+      waitForReload: args.includes('--wait-for-reload'),
       durationMs: seconds * 1000,
-      onReady: () => console.log(`Recording for ${seconds}s. Switch chats normally now.`)
+      onReady: async () => {
+        if (args.includes('--wait-for-click')) {
+          // Start profilers and tracing before waiting. Starting them after the
+          // click returns loses the very event-handler stall being investigated.
+          console.log('Armed for the next chat/sidebar action (up to 3 minutes).')
+          if (!(await evaluate(renderer, `(${waitForClick.toString()})()`, 185_000)))
+            throw new Error('No chat/sidebar action detected; capture cancelled')
+        } else {
+          console.log(
+            args.includes('--wait-for-reload')
+              ? `Armed for 90s. Reload Sele once; the following ${seconds}s will be recorded.`
+              : `Recording for ${seconds}s. Switch chats normally now.`
+          )
+        }
+      }
     })
     console.log(`Saved navigation timings and CPU profiles to ${directory}`)
   } finally {

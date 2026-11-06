@@ -67,7 +67,8 @@ if (!process.versions.electron) {
         bundle: true,
         platform: 'browser',
         jsx: 'automatic',
-        outfile: path.join(directory, 'editing.js')
+        outfile: path.join(directory, 'editing.js'),
+        plugins: [require('./helpers/pasted-image-worker.cjs')(directory)]
       })
       await fs.writeFile(
         path.join(directory, 'editing.html'),
@@ -213,12 +214,18 @@ if (!process.versions.electron) {
       assert.deepEqual(await run('window.sends[1][2].map(image => image.path)'), ['/only.png'])
       assert.deepEqual(await run('window.previewNames()'), ['Open only.png'])
       // Real clipboard/drop events remain enabled in the edit composer.
-      await run(`(() => {
+      await run(`(async () => {
         window.nextPastedImage = window.image('pasted.png')
-        const data = new DataTransfer(); data.items.add(new File(['image'], 'pasted.png', {type: 'image/png'}))
+        const canvas=document.createElement('canvas');canvas.width=8;canvas.height=8;
+        canvas.getContext('2d').fillRect(0,0,8,8);
+        const png=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+        const data = new DataTransfer(); data.items.add(new File([png], 'pasted.png', {type: 'image/png'}))
         document.querySelector('textarea').dispatchEvent(new ClipboardEvent('paste', {bubbles: true, cancelable: true, clipboardData: data}))
       })()`)
       await settle()
+      await run(`new Promise((resolve,reject)=>{const deadline=performance.now()+5000;
+        function check(){if(window.previewNames().includes('Open pasted.png'))return resolve();
+          if(performance.now()>deadline)return reject(new Error('Paste did not complete: '+document.body.textContent));requestAnimationFrame(check)}check()})`)
       assert.deepEqual(await run('window.previewNames()'), ['Open only.png', 'Open pasted.png'])
       await run(`(() => {
         window.nextAttachments = [window.image('dropped.png')]

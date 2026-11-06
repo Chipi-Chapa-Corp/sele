@@ -7,10 +7,28 @@ import {
   getWorkingStepProgressPolicy
 } from '../../../renderer/src/workingStepDisclosure.ts'
 import { CodexTranscriptProjection, getChatItems } from './CodexItemRenderers.ts'
+import { getNestedToolCalls } from './CodexToolCalls.ts'
 import { updateIndexedTranscriptRecord } from '../transcriptProjection/recordChanges.ts'
 
 const imageSizingMetadata =
   '[Image: original 2380x292, displayed at 2000x245. Multiply coordinates by 1.19 to map to original image.]'
+
+test('large nested tool scripts preserve call offsets, comments and quoted-call modes', () => {
+  const input =
+    'const text = "ordinary transcript output";\n'.repeat(3000) +
+    '// tools.exec_command({})\n/* functions.apply_patch({}) */\n' +
+    'const example = "tools.view_image({})";\n' +
+    'await tools.exec_command({cmd:"cat fixture.ts"});\nawait functions.write_stdin({session_id:1});'
+  const calls = [
+    { name: 'exec_command', offset: input.indexOf('await tools.exec_command') + 6 },
+    { name: 'write_stdin', offset: input.indexOf('await functions.write_stdin') + 6 }
+  ]
+  assert.deepEqual(getNestedToolCalls(input), calls)
+  assert.deepEqual(getNestedToolCalls(input, { includeQuoted: true }), [
+    { name: 'view_image', offset: input.indexOf('tools.view_image') },
+    ...calls
+  ])
+})
 
 test('Codex app reads, searches, and lists render without raw payloads in every call format', () => {
   const cases = [

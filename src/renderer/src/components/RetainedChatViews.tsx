@@ -1,4 +1,5 @@
 import { Activity, useLayoutEffect, useRef, type ReactElement, type RefObject } from 'react'
+import { indexRetainedChatDom } from '../retainedChatDom'
 
 type View = {
   key: string
@@ -7,16 +8,15 @@ type View = {
   retain: boolean
   nodes: number
   turnSizes: Map<HTMLElement, number>
+  activated: number
 }
 
-const maxViews = 3
+const maxViews = 16
 const maxNodes = 30_000
 // These elements have a lifecycle beyond rendering static conversation content.
 // Markdown video thumbnails never play; useMarkdownImages owns their media
 // leases and reconnects them with Activity. Keeping one thumbnail must not force
 // the entire conversation to remount on every return.
-const liveContent =
-  'iframe, video:not(.chat-detail__markdown-video > video), audio, canvas, [data-visualization], .mcp-app'
 
 // Cache the mounted tree as well as its data. Activity pauses effects while hidden
 // and restores the same nodes and component state when the chat becomes visible.
@@ -35,6 +35,7 @@ export function RetainedChatViews({
     activeKey: null,
     views: []
   })
+  const indexes = useRef(new Map<string, ReturnType<typeof indexRetainedChatDom>>())
   const allowed = new Set(cachedChatKeys)
   let views = committed.current.views.filter((view) => {
     if (view.key === activeKey) return true
@@ -44,44 +45,67 @@ export function RetainedChatViews({
     views = views.flatMap((view) => {
       if (view.key !== committed.current.activeKey) return [view]
       const host = view.host.current
+      const indexed = indexes.current.get(view.key)?.read()
       if (
         !host ||
-        host.querySelector(liveContent) ||
+        !indexed ||
+        indexed.live ||
+        indexed.nodes > maxNodes ||
         host.ownerDocument.querySelector('[role="dialog"], [role="alertdialog"]')
       )
         return []
       return [
         {
           ...view,
-          nodes: host.querySelectorAll('*').length
+          nodes: indexed.nodes
         }
       ]
     })
   }
   if (activeKey && children) {
     const existing = views.find((view) => view.key === activeKey)
-    views = [
-      ...views.filter((view) => view.key !== activeKey),
-      {
-        key: activeKey,
-        content: children,
-        host: existing?.host ?? { current: null },
-        retain,
-        nodes: existing?.nodes ?? 0,
-        turnSizes: existing?.turnSizes ?? new Map()
-      }
-    ]
+    const active = {
+      key: activeKey,
+      content: children,
+      host: existing?.host ?? { current: null },
+      retain,
+      nodes: existing?.nodes ?? 0,
+      turnSizes: existing?.turnSizes ?? new Map(),
+      activated:
+        committed.current.activeKey === activeKey && existing
+          ? existing.activated
+          : Math.max(0, ...views.map((view) => view.activated)) + 1
+    }
+    // LRU order must not be DOM order. Moving a retained conversation to the
+    // end on every activation re-inserts thousands of already mounted nodes.
+    views = existing
+      ? views.map((view) => (view.key === activeKey ? active : view))
+      : [...views, active]
   }
   let nodes = views.reduce((total, view) => total + (view.key === activeKey ? 0 : view.nodes), 0)
   // A transient loading view must not evict the warm conversation that it is
   // about to reveal. Count retained conversations separately from that shell.
   while (views.filter((view) => view.retain).length > maxViews || nodes > maxNodes) {
-    const oldest = views.findIndex((view) => view.retain && view.key !== activeKey)
+    const candidate = views
+      .filter((view) => view.retain && view.key !== activeKey)
+      .sort((a, b) => a.activated - b.activated)[0]
+    const oldest = views.findIndex((view) => view === candidate)
     if (oldest < 0) break
     nodes -= views[oldest].nodes
     views.splice(oldest, 1)
   }
   useLayoutEffect(() => {
+    const keys = new Set(views.map((view) => view.key))
+    for (const [key, index] of indexes.current) {
+      if (keys.has(key)) continue
+      index.dispose()
+      indexes.current.delete(key)
+    }
+    for (const view of views) {
+      const host = view.host.current
+      if (host && !indexes.current.has(view.key))
+        indexes.current.set(view.key, indexRetainedChatDom(host))
+    }
     // Reusing DOM alone still makes Chromium lay out the entire hidden history
     // when revealed. Keep measured turn sizes so offscreen turns can skip that
     // work until scrolled into view. Apply only after commit, never during render.
@@ -95,6 +119,13 @@ export function RetainedChatViews({
     // Abandoned concurrent renders must not replace the committed cache.
     committed.current = { activeKey, views }
   })
+  useLayoutEffect(
+    () => () => {
+      for (const index of indexes.current.values()) index.dispose()
+      indexes.current.clear()
+    },
+    []
+  )
   useLayoutEffect(() => {
     const view = committed.current.views.find((view) => view.key === activeKey)
     const host = view?.host.current

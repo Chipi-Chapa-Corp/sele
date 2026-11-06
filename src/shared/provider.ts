@@ -699,7 +699,7 @@ export type ProviderChatListOptions = ProviderSourceOptions & {
 export type ProviderChatPage = {
   chats: ProviderChat[]
   nextCursor: string | null
-  /** Durable opening views, installed before these sidebar rows become selectable. */
+  /** Optional prepared views; ordinary sidebar discovery returns metadata only. */
   conversationViews?: ProviderChatDetail[]
 }
 
@@ -1021,6 +1021,8 @@ export type ProviderChatDetail = {
   historyPreview?: boolean
   /** Sele has processed this conversation and owns a durable opening view. */
   conversationView?: boolean
+  /** Bounded initial display, expanded independently from the full saved/provider history. */
+  openingPreview?: boolean
   conversationViewSourceRevision?: number
   imported?: { providerId: ProviderId; chatId: string }
   id: string
@@ -1535,7 +1537,7 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
   getCachedChat: (
     providerId: ProviderId,
     chatId: string,
-    options?: ProviderSourceOptions
+    options?: ProviderSourceOptions & { opening?: boolean }
   ) => Promise<ProviderChatDetail | null>
   exportChat: (providerId: ProviderId, chatId: string) => Promise<string | null>
   openChatImport: () => Promise<import('./chatArchive').ChatImportPreview | null>

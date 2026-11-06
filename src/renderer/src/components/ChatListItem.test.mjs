@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 const result = await build({
   stdin: {
     contents:
-      "export { ChatListItem } from './ChatListItem'; export { chatTerminalActivity } from '../chatTerminalActivity'; export { ChatReadStateContext } from '../manualChatReadState'; export { getMenuActions } from './Dropdown'",
+      "export { ChatListItem } from './ChatListItem'; export { chatTerminalActivity } from '../chatTerminalActivity'; export { ChatReadStateContext } from '../manualChatReadState'; export { getMenuActions } from './ActionMenu'",
     resolveDir: fileURLToPath(new URL('.', import.meta.url)),
     loader: 'tsx'
   },
@@ -26,13 +26,21 @@ const result = await build({
     {
       name: 'omit-menu-portals',
       setup(build) {
-        build.onResolve({ filter: /^\.\/Dropdown$/ }, () => ({
-          path: 'Dropdown',
+        // Intent loading is exercised by the live-workspace fixture, not SSR.
+        build.onResolve({ filter: /\/chatOpening$/ }, () => ({
+          path: 'intent',
+          namespace: 'intent-fixture'
+        }))
+        build.onLoad({ filter: /.*/, namespace: 'intent-fixture' }, () => ({
+          contents: 'export const prefetchChatOpening=()=>{}'
+        }))
+        build.onResolve({ filter: /^\.\/ActionMenu$/ }, () => ({
+          path: 'ActionMenu',
           namespace: 'fixture'
         }))
         build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
           contents:
-            'let actions; export const getMenuActions = () => actions; export const Dropdown = (props) => { actions = props.menuActions; return null }'
+            'let actions; export const getMenuActions = () => actions; export const ActionMenu = (props) => { actions = props.actions(); return null }'
         }))
       }
     }

@@ -15,7 +15,8 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import * as monaco from 'monaco-editor'
-            import { EditableUnifiedDiff, UnifiedDiff } from './src/renderer/src/components/UnifiedDiff'
+            import { UnifiedDiff } from './src/renderer/src/components/UnifiedDiff'
+            import { EditableUnifiedDiff } from './src/renderer/src/components/EditableUnifiedDiff'
             import { Button } from './src/renderer/src/components/Button'
             const fileDiff = { path: 'sample.txt', kind: 'modify', diff: '@@ -1,3 +1,3 @@\\n alpha\\n-beta\\n+bravo\\n gamma' }
             window.comments = []

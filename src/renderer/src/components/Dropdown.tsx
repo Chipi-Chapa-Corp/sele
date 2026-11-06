@@ -254,7 +254,9 @@ export const Dropdown = <TValue extends string>({
   )
 
   useEffect(() => {
-    setInFloatingPane(Boolean(rootRef.current?.closest('.chat-panel')))
+    // A no-op setter still schedules another render when a transition is
+    // pending. Newly visible sidebar rows used to do this for every menu.
+    if (rootRef.current?.closest('.chat-panel')) setInFloatingPane(true)
   }, [])
 
   useEffect(() => {
@@ -784,7 +786,9 @@ export const Dropdown = <TValue extends string>({
     return <Fragment key={option.value}>{optionElement}</Fragment>
   }
   let optionIndex = 0
-  const menuSurface = (
+  // Closed controls only need the selected label. Building the unused option
+  // tree here made every composer/sidebar update allocate whole menus in dev.
+  const menuSurface = menuOpen ? (
     <MenuSurface className="ui-dropdown__menu">
       {searchable && (
         <div className="ui-dropdown__search">
@@ -890,7 +894,7 @@ export const Dropdown = <TValue extends string>({
             : flattenedOptions.map((option, index) => renderOption(option, index))}
       </div>
     </MenuSurface>
-  )
+  ) : null
   const menu = menuOpen ? (
     menuOnly ? (
       menuSurface

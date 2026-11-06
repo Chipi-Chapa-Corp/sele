@@ -20,9 +20,21 @@ if (!process.versions.electron) {
             import {MarkdownMessage} from './src/renderer/src/components/ChatDetailItem'
             import {buildChatConversationModel} from './src/renderer/src/chatConversationModel'
             import {DeferredChatTurn} from './src/renderer/src/components/DeferredChatTurn'
+            import {useSemanticDateNow} from './src/renderer/src/semanticDateDifference'
+            import {indexRetainedChatDom} from './src/renderer/src/retainedChatDom'
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/App.css'
             const noop=()=>{};
+            ${require('./fixtures/workspace-stall-probes.cjs').source}
+            const datesHost=document.createElement('div');document.body.append(datesHost);
+            const datesRoot=createRoot(datesHost);window.dateRenders={};window.dateSnapshots={};
+            const DateProbe=React.memo(function DateProbe({id}) {
+              window.dateRenders[id]=(window.dateRenders[id]??0)+1;
+              window.dateSnapshots[id]=useSemanticDateNow();return null;
+            });
+            window.renderDates=(count,hidden=false)=>flushSync(()=>datesRoot.render(
+              <Activity mode={hidden?'hidden':'visible'}>{Array.from({length:count},(_,id)=><DateProbe key={id} id={id}/>)}</Activity>));
+            window.indexDom=indexRetainedChatDom;
             window.created=[];window.effects=new Set();window.actions=[];window.bottomAlignments=0;
             const root=createRoot(document.getElementById('root'));
             const probeHost=document.createElement('div');document.body.append(probeHost);
@@ -34,7 +46,7 @@ if (!process.versions.electron) {
                 </DeferredChatTurn>
               </Activity>));
             const histories=new Map();
-            window.allowed=['a','b','c','d','big','embedded','thumbnail','playback'].map(id=>'codex:'+id);
+            window.allowed=['a','b','c','d',...Array.from({length:20},(_,i)=>'small'+i),'big','embedded','thumbnail','playback'].map(id=>'codex:'+id);
             const contentRef={current:null},searchRef={current:null},subagentRef={current:null};
             window.refs={contentRef,searchRef,subagentRef};
             function Turn({turn,version,id,streaming}) {
@@ -75,7 +87,7 @@ if (!process.versions.electron) {
                 selectedChatSubagents:[],sendState:'idle',showChatTurnDownButton:false,
                 subagentChatConversationModel:{turns:[]},subagentContentRef:subagentRef,
                 subagentVisibleChatItems:[],visibleChatItems:items};
-              flushSync(()=>root.render(<ConversationMessages {...props}/>));
+              flushSync(()=>root.render(<ConversationMessages view={new Map([["current",props]])}/>));
             };
           `
         },
@@ -102,7 +114,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<link rel="stylesheet" href="fixture.css"><div class="chat-panel" id="root" style="height:700px"></div><script>window.appApi={};window.providerApi={};</script><script src="fixture.js"></script>'
+        '<link rel="stylesheet" href="fixture.css"><div class="chat-panel" id="root" style="height:700px"></div><script>window.appApi={};window.providerApi={getLimitResetMessages:async()=>[]};</script><script src="fixture.js"></script>'
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
@@ -140,7 +152,43 @@ if (!process.versions.electron) {
         if (event.level === 'error') errors.push(event.message)
       })
       await win.loadFile(path.join(directory, 'index.html'))
-      const run = (source) => win.webContents.executeJavaScript(source)
+      const run = async (source) => {
+        const result = await win.webContents.executeJavaScript(`(async()=>{
+          try{return await (0,eval)(${JSON.stringify(source)})}
+          catch(error){return {fixtureFailure:error.stack??String(error)}}
+        })()`)
+        if(result?.fixtureFailure) throw Error(result.fixtureFailure)
+        return result
+      }
+      await require('./fixtures/workspace-stall-probes.cjs').verify(run)
+      await run('renderDates(1)')
+      const dateBefore = await run('({renders:dateRenders[0],snapshot:dateSnapshots[0]})')
+      await new Promise(resolve=>setTimeout(resolve,20))
+      await run('renderDates(200)')
+      await run('new Promise(resolve=>requestAnimationFrame(resolve))')
+      assert.deepEqual(await run('({renders:dateRenders[0],snapshot:dateSnapshots[0]})'),dateBefore,
+        'mounting date subscribers must not mutate the clock or rerender existing dates')
+      await run('renderDates(200,true);renderDates(200)')
+      assert.equal(await run('dateSnapshots[0]'),dateBefore.snapshot,
+        'Activity reconnects must not advance the shared clock')
+      assert.deepEqual(await run(`(() => {
+        const host=document.createElement('div');document.body.append(host);
+        host.innerHTML='<section><p>Before</p></section><div></div>';
+        const index=indexDom(host),results=[index.read()];
+        const section=host.firstElementChild,other=host.lastElementChild;
+        // Moves and replacements in one mutation batch must not double-count.
+        other.append(section.firstElementChild);section.innerHTML='<i></i><b></b>';
+        results.push(index.read());section.remove();results.push(index.read());
+        other.innerHTML='<button class="chat-detail__markdown-video"><video></video></button>';
+        results.push(index.read());other.firstElementChild.className='playback';
+        results.push(index.read());other.replaceChildren();results.push(index.read());
+        // The full transcript must never be rescanned by read().
+        host.querySelectorAll=()=>{throw Error('Navigation rescanned the transcript')};
+        results.push(index.read());index.dispose();host.remove();return results;
+      })()`),[
+        {nodes:3,live:false},{nodes:5,live:false},{nodes:2,live:false},
+        {nodes:3,live:false},{nodes:3,live:true},{nodes:1,live:false},{nodes:1,live:false}
+      ])
       await run('renderMountProbe();renderMountProbe();renderMountProbe(true);renderMountProbe()')
       assert.equal(
         await run('window.mountNotifications'),
@@ -273,10 +321,15 @@ if (!process.versions.electron) {
       await open('d')
       assert.equal(
         await run(`Boolean(document.querySelector('[data-chat-view="codex:a"]'))`),
-        false,
-        'oldest chat is evicted'
+        true,
+        'a fourth chat must not discard a warm mounted view'
       )
-      assert.ok(await run(`document.querySelectorAll('[data-chat-view]').length<=3`))
+      await run(`window.beforeBig=document.querySelector('[data-chat-view="codex:b"] [data-chat-turn-id="b-9"]')`)
+      for (let i=0;i<20;i++) await open('small'+i)
+      assert.equal(await run(`Boolean(document.querySelector('[data-chat-view="codex:a"]'))`),false,'LRU views still expire')
+      assert.ok(await run(`document.querySelectorAll('[data-chat-view]').length<=16`))
+      await open('b')
+      await run(`window.beforeBig=document.querySelector('[data-chat-view="codex:b"] [data-chat-turn-id="b-9"]')`)
       await open('big', {}, 1)
       await open('b')
       assert.equal(
@@ -284,6 +337,7 @@ if (!process.versions.electron) {
         false,
         'retained DOM has a node budget'
       )
+      assert.equal(await run('beforeBig.isConnected'),true,'an oversized outgoing view must not evict smaller warm chats')
       await open('embedded', {}, 1)
       await open('b')
       assert.equal(

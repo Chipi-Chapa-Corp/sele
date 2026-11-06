@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { assertUniqueProviderChatItemIds } from '../../shared/chatTurns.ts'
+import { getConversationViewSummary } from '../../shared/conversationView.ts'
 
 const source = ts.createSourceFile(
   'conversationViews.ts',
@@ -12,7 +13,11 @@ const source = ts.createSourceFile(
   true
 )
 const declaration = source.statements.find((node) => ts.isClassDeclaration(node))
-const context = vm.createContext({ assertUniqueProviderChatItemIds, console })
+const context = vm.createContext({
+  assertUniqueProviderChatItemIds,
+  getConversationViewSummary,
+  console
+})
 vm.runInContext(
   ts.transpileModule(
     `${declaration.getText(source).replace('export class', 'class')}; globalThis.Views = SqliteConversationViews`,
@@ -49,7 +54,7 @@ test('native prompt predictions remain ephemeral when conversation views are sav
 
 test('reading an older persisted prediction cannot revive it after restart', async () => {
   const query = {
-    selectAll() {
+    select() {
       return this
     },
     where() {

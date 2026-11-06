@@ -221,9 +221,17 @@ export function useWorkspacePresentation({
       changes: changesModel.changes
     }),
     conversationPanel: {
-      selectedChat: state.chatState.selectedChat,
+      selectedChat: state.chatState.selectedChat
+        ? {
+            id: state.chatState.selectedChat.id,
+            providerId: state.chatState.selectedChat.providerId,
+            title: state.chatState.selectedChat.title
+          }
+        : null,
       newChatOpen: state.sourceState.newChatOpen,
       activeSubagentChatView: session.activeSubagentChatView
+        ? { summary: { title: session.activeSubagentChatView.summary.title } }
+        : null
     },
     conversationQuote: {
       visible: Boolean(state.chatState.selectedChat && !session.activeSubagentChatView),

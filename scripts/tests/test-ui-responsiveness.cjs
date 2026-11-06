@@ -7,7 +7,9 @@ if (!process.versions.electron) {
     const directory = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'sele-responsive-'))
     try {
       await require('esbuild').build({
-        entryPoints: [path.resolve(__dirname, '../../src/renderer/src/components/vegvisir.worker.ts')],
+        entryPoints: [
+          path.resolve(__dirname, '../../src/renderer/src/components/vegvisir.worker.ts')
+        ],
         bundle: true,
         outfile: path.join(directory, 'vegvisir.worker.js')
       })
@@ -68,9 +70,18 @@ if (!process.versions.electron) {
         define: { 'process.env.NODE_ENV': '"production"' },
         outfile: path.join(directory, 'fixture.js'),
         plugins: [
+          require('./helpers/pasted-image-worker.cjs')(directory),
           {
             name: 'art-worker',
             setup(build) {
+              // This fixture has no chat navigation/provider; exercise the sidebar and composer only.
+              build.onResolve({ filter: /\/chatOpening$/ }, () => ({
+                path: 'intent',
+                namespace: 'intent-fixture'
+              }))
+              build.onLoad({ filter: /.*/, namespace: 'intent-fixture' }, () => ({
+                contents: 'export const prefetchChatOpening=()=>{}'
+              }))
               build.onResolve({ filter: /vegvisir\.worker\?worker$/ }, () => ({
                 path: 'art-worker',
                 namespace: 'art-worker'

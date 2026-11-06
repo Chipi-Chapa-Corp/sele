@@ -59,6 +59,8 @@ export type ProviderAdapter = {
   recoverRuntime?: (options?: ProviderSourceOptions) => Promise<void>
   /** Release one conversation before changing its credential runtime. */
   releaseChat?: (chatId: string, options?: ProviderSourceOptions) => Promise<void>
+  /** Stop owned work without starting an idle runtime; return descendant session IDs too. */
+  stopChatProcesses?: (chatId: string, options?: ProviderSourceOptions) => Promise<string[]>
   getChatTerminalTasks?: (chatId: string, options?: ProviderSourceOptions) => Promise<string[]>
   /** Import text exchanges while idle, preserving the session's own tool history. */
   importHistory?: (

@@ -4,6 +4,7 @@ import { SqliteConversationViews } from '../../../src/main/database/conversation
 import { PersistentChatHistory } from '../../../src/main/providers/PersistentChatHistory'
 import { createConversationView } from '../../../src/shared/conversationView'
 import type { ProviderChatDetail } from '../../../src/shared/provider'
+import { performance } from 'node:perf_hooks'
 
 const run = async () => {
   const identity = new PersistentChatHistory({ read: async () => null, save: async () => true })
@@ -56,9 +57,16 @@ const run = async () => {
   assert.equal(known.get(scopes[1].key)!.done, true, 'done chats stay known')
   assert.equal(known.get(scopes[2].key)!.items.length, 0, 'empty chats stay known')
   const page = await restarted.list(identity.viewScope('codex', '')!, 0, 100)
-  assert.equal(page.views.length, 100)
+  assert.equal(page.summaries.length, 100)
+  assert.ok(
+    page.summaries.every((summary) => !('items' in summary)),
+    'discovery is metadata only'
+  )
   assert.equal(page.nextCursor, '100')
-  assert.equal((await restarted.list(identity.viewScope('codex', '')!, 100, 100)).views.length, 50)
+  assert.equal(
+    (await restarted.list(identity.viewScope('codex', '')!, 100, 100)).summaries.length,
+    50
+  )
   assert.equal((await restarted.read([identity.viewScope('codex', 'unknown')!])).size, 0)
   const oldScope = scopes[0]
   identity.forgetAccount('codex')
@@ -68,7 +76,7 @@ const run = async () => {
     0,
     'in-flight old-account scopes cannot expose views'
   )
-  assert.equal((await restarted.list(identity.viewScope('codex', '')!, 0, 100)).views.length, 0)
+  assert.equal((await restarted.list(identity.viewScope('codex', '')!, 0, 100)).summaries.length, 0)
   await restarted.write(
     oldScope,
     createConversationView({ id: '0', revision: 999, items: [] } as ProviderChatDetail)
@@ -80,6 +88,123 @@ const run = async () => {
     [...restored.values()][0].items[0].content,
     'Persisted 0',
     'late old-account writes cannot overwrite durable text'
+  )
+  const hugeScope = identity.viewScope('codex', 'huge')!
+  const huge = createConversationView({
+    id: 'huge',
+    title: 'Large saved turn',
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 2,
+    items: [
+      {
+        id: 'large-answer',
+        type: 'message',
+        role: 'assistant',
+        content: 'large body '.repeat(600_000)
+      }
+    ]
+  } as ProviderChatDetail)
+  await restarted.write(hugeScope, huge)
+  const currentDb = await getDatabase()
+  // Include old rows without the summary column populated, as after an upgrade.
+  await currentDb
+    .updateTable('conversation_view')
+    .set({ summary: null, opening: null })
+    .where('scope_key', '=', hugeScope.key)
+    .execute()
+  const openingStart = performance.now()
+  const opening = (await restarted.read([hugeScope], { opening: true })).get(hugeScope.key)!
+  const openingBytes = Buffer.byteLength(JSON.stringify(opening))
+  assert.ok(openingBytes < 20_000, 'opening IPC is bounded even for multi-megabyte turns')
+  assert.equal(opening.items[0].id, huge.items[0].id)
+  assert.ok(opening.items[0].content.endsWith(huge.items[0].content.slice(-8192)))
+  assert.equal(opening.items[0].contentLoaded, false)
+  assert.equal(opening.items[0].contentCharacterCount, huge.items[0].content.length)
+  assert.equal(opening.historyPreview, true)
+  console.log(
+    'Bounded saved opening:',
+    JSON.stringify({
+      openingBytes,
+      originalBytes: huge.items[0].content.length,
+      readMs: performance.now() - openingStart
+    })
+  )
+  const secondOpeningStart = performance.now()
+  const secondOpening = (await restarted.read([hugeScope], { opening: true })).get(hugeScope.key)!
+  assert.equal(secondOpening.items[0].id, huge.items[0].id)
+  const upgraded = await currentDb
+    .selectFrom('conversation_view')
+    .select('opening')
+    .where('scope_key', '=', hugeScope.key)
+    .executeTakeFirstOrThrow()
+  assert.ok(
+    upgraded.opening && upgraded.opening.length < 20_000,
+    'legacy rows acquire a bounded opening without rewriting full history'
+  )
+  console.log(
+    'Warm saved opening:',
+    JSON.stringify({
+      readMs: performance.now() - secondOpeningStart,
+      bytes: upgraded.opening.length
+    })
+  )
+  const toolsScope = identity.viewScope('codex', 'large-tools')!
+  const toolsView = createConversationView({
+    ...huge,
+    id: 'large-tools',
+    items: [
+      { id: 'prompt', type: 'message', role: 'user', content: 'Inspect this' },
+      {
+        id: 'work',
+        type: 'working',
+        status: 'working',
+        items: Array.from({ length: 200 }, (_, i) => ({
+          id: 'tool' + i,
+          type: 'tool',
+          name: 'exec_command',
+          content: 'output'.repeat(2000)
+        }))
+      },
+      { id: 'reply', type: 'message', role: 'assistant', content: 'Done' }
+    ]
+  } as ProviderChatDetail)
+  await restarted.write(toolsScope, toolsView)
+  const toolsOpening = (await restarted.read([toolsScope], { opening: true })).get(toolsScope.key)!
+  assert.deepEqual(
+    toolsOpening.items.map((item) => item.id),
+    ['prompt', 'work', 'reply']
+  )
+  assert.deepEqual(toolsOpening.items[1].items, [])
+  assert.equal(toolsOpening.items[1].itemsLoaded, false)
+  assert.equal(toolsOpening.items[1].itemCount, 200)
+  assert.equal(
+    (await restarted.read([toolsScope])).get(toolsScope.key)!.items[1].items.length,
+    200,
+    'the full stored tool history remains intact'
+  )
+  await currentDb.deleteFrom('conversation_view').where('scope_key', '=', toolsScope.key).execute()
+  const start = performance.now()
+  const metadataPage = await restarted.list(identity.viewScope('codex', '')!, 0, 200)
+  const listMs = performance.now() - start
+  const bytes = Buffer.byteLength(JSON.stringify(metadataPage))
+  assert.equal(metadataPage.summaries.length, 151)
+  assert.ok(bytes < 100_000, 'listing never returns megabytes of saved messages')
+  assert.ok(metadataPage.summaries.every((summary) => !('items' in summary)))
+  assert.equal(metadataPage.summaries.find((summary) => summary.id === 'huge')?.title, huge.title)
+  assert.equal(
+    (await restarted.read([hugeScope])).get(hugeScope.key)!.items[0].content,
+    huge.items[0].content,
+    'metadata-only discovery preserves the complete on-demand opening view'
+  )
+  console.log(
+    'Saved-view discovery:',
+    JSON.stringify({
+      chats: metadataPage.summaries.length,
+      savedTurnBytes: huge.items[0].content.length,
+      metadataBytes: bytes,
+      listMs
+    })
   )
   await disposeDatabase()
   console.log(

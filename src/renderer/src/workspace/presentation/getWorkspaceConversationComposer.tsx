@@ -89,7 +89,14 @@ export function getWorkspaceConversationComposer({
     accountUsage: session.accountUsage,
     accountUsageError: session.accountUsageError,
     accountUsageState: session.accountUsageState,
-    activeSubagentChatView: session.activeSubagentChatView,
+    activeSubagentChatView: session.activeSubagentChatView
+      ? {
+          summary: {
+            id: session.activeSubagentChatView.summary.id,
+            canMessage: session.activeSubagentChatView.summary.canMessage
+          }
+        }
+      : null,
     agentModes: providerState.agentModes,
     agentModesLoading: providerState.agentModesLoading,
     appSettings: preferences.appSettings,
@@ -204,7 +211,9 @@ export function getWorkspaceConversationComposer({
     resetAccountRateLimits: session.resetAccountRateLimits,
     resolveSelectedUserInput: messaging.resolveSelectedUserInput,
     sandboxModes: providerState.sandboxModes,
-    selectedChat: chatState.selectedChat,
+    selectedChat: chatState.selectedChat
+      ? { id: chatState.selectedChat.id, providerId: chatState.selectedChat.providerId }
+      : null,
     selectedChatKey: session.selectedChatKey,
     selectedReview: dialogState.selectedReview,
     sendState: chatState.sendState,

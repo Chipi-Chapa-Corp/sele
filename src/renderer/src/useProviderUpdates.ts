@@ -1,5 +1,5 @@
 import { usePreferenceState } from './usePreferenceState'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderId, ProviderUpdateAvailability } from '../../shared/provider'
 import { isProviderId } from '../../shared/provider'
@@ -99,12 +99,20 @@ export function useProviderUpdates({
           )
         )
       })
-      setSnapshot({ sourceKey: containerKey, items: next })
+      startTransition(() =>
+        setSnapshot((current) =>
+          current.sourceKey === containerKey && !current.items.length && !next.length
+            ? current
+            : { sourceKey: containerKey, items: next }
+        )
+      )
     }
-    setSnapshot((current) =>
-      current.sourceKey === containerKey
-        ? { ...current, items: current.items.filter((item) => providers.includes(item.providerId)) }
-        : { sourceKey: containerKey, items: [] }
+    startTransition(() =>
+      setSnapshot((current) => {
+        if (current.sourceKey !== containerKey) return { sourceKey: containerKey, items: [] }
+        const items = current.items.filter((item) => providers.includes(item.providerId))
+        return items.length === current.items.length ? current : { ...current, items }
+      })
     )
     void check()
     const timer = window.setInterval(() => void check(), 5 * 60_000)

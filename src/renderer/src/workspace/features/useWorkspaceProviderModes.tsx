@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { startTransition, useEffect } from 'react'
 import {
   fallbackProviderApprovalModes,
   fallbackProviderSandboxModes
@@ -24,9 +24,11 @@ export function useWorkspaceProviderModes({
 
     if (provider.configProviderId !== 'copilot' || !provider.configProviderModelsReady) {
       queueMicrotask(() => {
-        if (!active) return
-        providerState.setAgentModes([])
-        providerState.setAgentModesLoading(false)
+        startTransition(() => {
+          if (!active) return
+          providerState.setAgentModes((current) => (current.length ? [] : current))
+          providerState.setAgentModesLoading(false)
+        })
       })
 
       return () => {
@@ -36,23 +38,29 @@ export function useWorkspaceProviderModes({
 
     const container = normalizeContainerTarget(provider.configProviderContainerRef.current)
     queueMicrotask(() => {
-      if (!active) return
-      providerState.setAgentModes([])
-      providerState.setAgentModesLoading(true)
+      startTransition(() => {
+        if (!active) return
+        providerState.setAgentModes((current) => (current.length ? [] : current))
+        providerState.setAgentModesLoading(true)
+      })
     })
 
     providerApi
       .getAgentModes(provider.configProviderId, { container })
       .then((nextAgentModes) => {
-        if (!active) return
-        providerState.setAgentModes(nextAgentModes)
-        providerState.setAgentModesLoading(false)
+        startTransition(() => {
+          if (!active) return
+          providerState.setAgentModes(nextAgentModes)
+          providerState.setAgentModesLoading(false)
+        })
       })
       .catch((error: unknown) => {
-        console.error('Unable to load provider agent modes.', error)
-        if (!active) return
-        providerState.setAgentModes([])
-        providerState.setAgentModesLoading(false)
+        startTransition(() => {
+          console.error('Unable to load provider agent modes.', error)
+          if (!active) return
+          providerState.setAgentModes((current) => (current.length ? [] : current))
+          providerState.setAgentModesLoading(false)
+        })
       })
 
     return () => {
@@ -70,13 +78,15 @@ export function useWorkspaceProviderModes({
 
     let active = true
     queueMicrotask(() => {
-      if (!active) return
-      providerState.setAgentMode((currentMode) => {
-        if (providerState.agentModes.some((mode) => mode.id === currentMode)) return currentMode
-        return (
-          providerState.agentModes.find((mode) => mode.isDefault)?.id ??
-          providerState.agentModes[0]!.id
-        )
+      startTransition(() => {
+        if (!active) return
+        providerState.setAgentMode((currentMode) => {
+          if (providerState.agentModes.some((mode) => mode.id === currentMode)) return currentMode
+          return (
+            providerState.agentModes.find((mode) => mode.isDefault)?.id ??
+            providerState.agentModes[0]!.id
+          )
+        })
       })
     })
 
@@ -91,13 +101,17 @@ export function useWorkspaceProviderModes({
     providerApi
       .getApprovalModes(provider.configProviderId)
       .then((nextApprovalModes) => {
-        if (!active || nextApprovalModes.length === 0) return
+        startTransition(() => {
+          if (!active || nextApprovalModes.length === 0) return
 
-        providerState.setApprovalModes(nextApprovalModes)
+          providerState.setApprovalModes(nextApprovalModes)
+        })
       })
       .catch((error: unknown) => {
-        console.error('Unable to load provider approval modes.', error)
-        if (active) providerState.setApprovalModes(fallbackProviderApprovalModes)
+        startTransition(() => {
+          console.error('Unable to load provider approval modes.', error)
+          if (active) providerState.setApprovalModes(fallbackProviderApprovalModes)
+        })
       })
 
     return () => {
@@ -133,13 +147,17 @@ export function useWorkspaceProviderModes({
     providerApi
       .getSandboxModes(provider.configProviderId)
       .then((nextSandboxModes) => {
-        if (!active || nextSandboxModes.length === 0) return
+        startTransition(() => {
+          if (!active || nextSandboxModes.length === 0) return
 
-        providerState.setSandboxModes(nextSandboxModes)
+          providerState.setSandboxModes(nextSandboxModes)
+        })
       })
       .catch((error: unknown) => {
-        console.error('Unable to load provider sandbox modes.', error)
-        if (active) providerState.setSandboxModes(fallbackProviderSandboxModes)
+        startTransition(() => {
+          console.error('Unable to load provider sandbox modes.', error)
+          if (active) providerState.setSandboxModes(fallbackProviderSandboxModes)
+        })
       })
 
     return () => {

@@ -1,4 +1,5 @@
-import { ChevronRight, LoaderCircle } from 'lucide-react'
+import { Spinner } from './Spinner'
+import { ChevronRight } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useMemo, useRef, useState } from 'react'
 import 'react-diff-view/style/index.css'
@@ -181,10 +182,7 @@ export const WorkingStep: React.FC<{
   const heading = (
     <span className="chat-detail__working-label">
       {active && (
-        <LoaderCircle
-          className="app-loading-spinner chat-detail__working-spinner"
-          aria-hidden="true"
-        />
+        <Spinner className="app-loading-spinner chat-detail__working-spinner" aria-hidden="true" />
       )}
       <span>
         {label}
@@ -292,7 +290,7 @@ export const WorkingStep: React.FC<{
           >
             {heading}
             {loadState === 'loading' ? (
-              <LoaderCircle
+              <Spinner
                 className="app-loading-spinner chat-detail__working-spinner"
                 aria-hidden="true"
               />
@@ -341,7 +339,16 @@ export const WorkingStep: React.FC<{
           if (nextOpen !== open) setOpenState({ key: disclosureKey, open: nextOpen })
         }}
       >
-        <summary onClick={onDisclosureToggle}>
+        <summary
+          onClick={(event) => {
+            // Commit the disclosure and its contents together. Waiting for the
+            // browser's queued toggle event can leave an opened section empty.
+            event.preventDefault()
+            setOpenAfterLoad(false)
+            setOpenState({ key: disclosureKey, open: !open })
+            onDisclosureToggle?.()
+          }}
+        >
           {heading}
           <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
         </summary>

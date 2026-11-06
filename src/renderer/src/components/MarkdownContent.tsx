@@ -1,8 +1,14 @@
 import { createElement, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import type { AppContainerTarget } from '../../../shared/app'
-import { usePatchedHtml } from '../markdownDomPatch'
+import { usePatchedFragment, usePatchedHtml } from '../markdownDomPatch'
 import { decodeVisualizationReference } from '../visualizationReference'
 import { Visualization } from './Visualization'
+
+export function MarkdownFragment({ fragment }: { fragment: DocumentFragment }): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  usePatchedFragment(ref, fragment)
+  return <div className="chat-detail__markdown-part" ref={ref} />
+}
 
 // Keep each Markdown block separate so updating the streaming tail never replaces
 // an iframe's ancestors. Moving even an existing iframe through detached DOM reloads it.
@@ -18,16 +24,19 @@ export function MarkdownElement({
   const voidElement =
     /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/.test(tag)
   const ownsChildren = children === undefined && !voidElement
+  const applied = useRef<{ node: HTMLElement; element: Element } | null>(null)
   usePatchedHtml(ref, ownsChildren ? element.innerHTML : null)
   useLayoutEffect(() => {
     const node = ref.current
     if (!node) return
+    if (applied.current?.node === node && applied.current.element === element) return
     for (const { name } of Array.from(node.attributes)) {
       if (!element.hasAttribute(name)) node.removeAttribute(name)
     }
     for (const { name, value } of Array.from(element.attributes)) {
       if (node.getAttribute(name) !== value) node.setAttribute(name, value)
     }
+    applied.current = { node, element }
   }, [element])
 
   return createElement(tag, { ref }, children)

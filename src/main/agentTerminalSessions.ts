@@ -14,6 +14,7 @@ type Options = Omit<
 }
 type Listener = { data: (data: string) => void; exit: (code: number) => void }
 const maximumOutput = 512 * 1024
+const completedRetentionMs = 120_000
 export const longTerminalCommandMs = 2000
 
 /** Observes the provider's original process. Attaching never launches another command. */
@@ -42,6 +43,47 @@ export const createAgentTerminalSessions = (now = Date.now) => {
   // Release provider callbacks after completion without discarding the text of retained tabs.
   const completedOutput = new Map<string, { output: string; exitCode: number }>()
   const indexes = new Map<string, number>()
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined
+  let cleanupAt = Infinity
+  const scheduleCleanup = (delay = completedRetentionMs + 1): void => {
+    const at = now() + Math.max(1, delay)
+    if (cleanupTimer && cleanupAt <= at) return
+    if (cleanupTimer) clearTimeout(cleanupTimer)
+    cleanupAt = at
+    cleanupTimer = setTimeout(
+      () => {
+        cleanupTimer = undefined
+        cleanupAt = Infinity
+        expireCompleted()
+      },
+      Math.max(1, delay)
+    )
+    cleanupTimer.unref?.()
+  }
+  const expireCompleted = (): void => {
+    let next = Infinity
+    const time = now()
+    for (const [id, entry] of entries) {
+      if (entry.endedAt == null || entry.listeners.size) continue
+      const remaining = completedRetentionMs - (time - entry.endedAt)
+      if (remaining >= 0) {
+        next = Math.min(next, remaining + 1)
+        continue
+      }
+      if (entry.info.index && !entry.dismissed) {
+        completedOutput.set(id, { output: entry.output, exitCode: entry.exitCode ?? 0 })
+        if (completedOutput.size > 64) completedOutput.delete(completedOutput.keys().next().value!)
+      }
+      entries.delete(id)
+      keys.delete(entry.key)
+    }
+    if (next !== Infinity) scheduleCleanup(next)
+    else if (cleanupTimer) {
+      clearTimeout(cleanupTimer)
+      cleanupTimer = undefined
+      cleanupAt = Infinity
+    }
+  }
   const append = (id: string, data: string) => {
     const entry = entries.get(id)
     if (!entry || !data) return
@@ -92,6 +134,7 @@ export const createAgentTerminalSessions = (now = Date.now) => {
     entry.info = { ...entry.info, status: 'exited' }
     entry.exitCode = entry.reportedExitCode ?? code
     entry.endedAt = now()
+    scheduleCleanup()
     for (const listener of entry.listeners) listener.exit(entry.exitCode)
   }
   return {
@@ -155,18 +198,9 @@ export const createAgentTerminalSessions = (now = Date.now) => {
       }
     },
     list: (): AgentTerminalSession[] => {
+      expireCompleted()
       const result: AgentTerminalSession[] = []
-      for (const [id, entry] of entries) {
-        if (entry.endedAt != null && !entry.listeners.size && now() - entry.endedAt > 120_000) {
-          if (entry.info.index && !entry.dismissed) {
-            completedOutput.set(id, { output: entry.output, exitCode: entry.exitCode ?? 0 })
-            if (completedOutput.size > 64)
-              completedOutput.delete(completedOutput.keys().next().value!)
-          }
-          entries.delete(id)
-          keys.delete(entry.key)
-          continue
-        }
+      for (const entry of entries.values()) {
         const elapsed = (entry.endedAt ?? now()) - entry.startedAt
         if (!entry.dismissed && (entry.background || elapsed >= longTerminalCommandMs)) {
           if (!entry.info.index) {
@@ -193,6 +227,8 @@ export const createAgentTerminalSessions = (now = Date.now) => {
       return () => {
         if (timer) clearInterval(timer)
         entry.listeners.delete(listener)
+        if (entry.endedAt != null)
+          scheduleCleanup(completedRetentionMs + 1 - (now() - entry.endedAt))
       }
     },
     stop: async (id: string) => {
@@ -200,6 +236,22 @@ export const createAgentTerminalSessions = (now = Date.now) => {
       if (!entry || entry.info.status === 'exited') return
       await entry.options.stop()
       await finish(id, 130)
+    },
+    stopChats: async (chatIds: string[]) => {
+      const ids = new Set(chatIds)
+      const results = await Promise.allSettled(
+        [...entries].map(async ([id, entry]) => {
+          if (!ids.has(entry.info.chatId) || entry.info.status === 'exited') return
+          await entry.options.stop()
+          await finish(id, 130)
+        })
+      )
+      const failures = results.filter((result) => result.status === 'rejected')
+      if (failures.length)
+        throw new AggregateError(
+          failures.map((result) => result.reason),
+          'Unable to stop chat terminals.'
+        )
     },
     write: async (id: string, data: string) => {
       const entry = entries.get(id)

@@ -233,6 +233,16 @@ npm install
 npm run dev
 ```
 
+Renderer edits use React Fast Refresh. Compatible component and helper edits retain
+UI state, and updates reaching the renderer entry reuse the mounted React root and
+replace its listeners. Changing hook order or component identity can still reset
+the affected component. Refresh tracks signatures in custom `.ts` and hook-only `.tsx`
+modules so hook additions remount their consumers safely. Main-process and preload changes require a restart or reload.
+Restart `npm run dev` after changing `electron.vite.config.ts`, `vite.renderer.ts`, or its
+plugins. Reloading the window alone keeps the running server's dependency configuration.
+`npm run test:renderer-hmr` checks drafts, selection, focus, and scrolling across real
+Vite updates; run this GUI fixture on the `isolated-gui` private display.
+
 Run the project checks with:
 
 ```bash

@@ -7,6 +7,12 @@ import { appRecentsMessageLimitDefault } from '../performanceSettings'
 import { useShallowStable } from './stableProps'
 
 const emptyReferences: RecentChatReference[] = []
+// Switching back to the same immutable history must not reparse links or enqueue
+// another workspace update. Weak keys release results with the history snapshot.
+const referencesByItems = new WeakMap<
+  readonly ProviderChatItem[],
+  Map<number, RecentChatReference[]>
+>()
 
 const equalReferences = (before: RecentChatReference[], after: RecentChatReference[]): boolean =>
   before.length === after.length &&
@@ -32,6 +38,7 @@ export function useRecentChatReferences(
   messageLimit: number,
   chatKey: string | null
 ): RecentChatReference[] {
+  const cached = referencesByItems.get(items)?.get(messageLimit)
   const [snapshot, setSnapshot] = useState<{
     chatKey: string | null
     references: RecentChatReference[]
@@ -52,11 +59,14 @@ export function useRecentChatReferences(
       return recent.reverse()
     }, [items, messageLimit])
   )
+  // biome-ignore lint/correctness/useExhaustiveDependencies: snapshot is the prior result, not a worker input
   useEffect(() => {
-    if (!chatKey) return
+    if (!chatKey || cached) return
     if (!messages.length) {
-      setSnapshot((current) =>
-        current?.references.length ? { chatKey, references: emptyReferences } : current
+      startTransition(() =>
+        setSnapshot((current) =>
+          current?.references.length ? { chatKey, references: emptyReferences } : current
+        )
       )
       return
     }
@@ -80,13 +90,14 @@ export function useRecentChatReferences(
     void request.result
       .then((references) => {
         if (!active) return
-        startTransition(() =>
-          setSnapshot((current) =>
-            current?.chatKey === chatKey && equalReferences(current.references, references)
-              ? current
-              : { chatKey, references }
-          )
-        )
+        const resolved =
+          snapshot?.chatKey === chatKey && equalReferences(snapshot.references, references)
+            ? snapshot.references
+            : references
+        const entries = referencesByItems.get(items) ?? new Map<number, RecentChatReference[]>()
+        entries.set(messageLimit, resolved)
+        referencesByItems.set(items, entries)
+        startTransition(() => setSnapshot({ chatKey, references: resolved }))
       })
       .catch((error: unknown) => {
         if (active) console.error('Unable to read recent chat references.', error)
@@ -95,6 +106,6 @@ export function useRecentChatReferences(
       active = false
       request.cancel()
     }
-  }, [chatKey, messages, messageLimit])
-  return snapshot?.chatKey === chatKey ? snapshot.references : emptyReferences
+  }, [chatKey, messages, messageLimit, items, cached])
+  return cached ?? (snapshot?.chatKey === chatKey ? snapshot.references : emptyReferences)
 }

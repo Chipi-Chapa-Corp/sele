@@ -1,5 +1,6 @@
 import { startTransition, useCallback, useRef } from 'react'
 import type { ProviderChat } from '../../../../shared/provider'
+import { prefetchChatOpening } from '../../chatOpening'
 import { readChatScrollAnchor } from '../../chatLayout'
 import { scrollChatSearchMatchIntoView, setChatSearchHighlights } from '../../chatSearch'
 import { type ChatListGroupData } from '../../components/ChatListGroup'
@@ -50,7 +51,8 @@ export function useWorkspaceNavigation({
 }: WorkspaceNavigationDependencies) {
   const { activeSubagentChatView } = session
 
-  const handleSelectChat = (chat: ProviderChat): void =>
+  const handleSelectChat = (chat: ProviderChat): void => {
+    prefetchChatOpening(chat, false)
     startTransition(() => {
       onConversationRequested?.()
       chatState.setManuallyUnreadChatKeys((current) => {
@@ -112,6 +114,7 @@ export function useWorkspaceNavigation({
         chatState.setChatLoadRequest((currentRequest) => currentRequest + 1)
       }
     })
+  }
 
   const handleOpenLinkedChat = (reference: LinkedChatReference): void => {
     const listedChat = chatState.chatsRef.current.find(

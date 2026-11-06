@@ -17,13 +17,9 @@ import {
 import { languages } from '@codemirror/language-data'
 import { unifiedMergeView } from '@codemirror/merge'
 import { tags } from '@lezer/highlight'
-import {
-  getOriginalContents,
-  groupReviewComments,
-  ReviewMarkers,
-  type ReviewMarker,
-  type EditableUnifiedDiff
-} from './UnifiedDiff'
+import { getOriginalContents } from './diffOriginalContents'
+import { groupReviewComments, ReviewMarkers, type ReviewMarker } from './diffReview'
+import type { EditableUnifiedDiff } from './EditableUnifiedDiff'
 import { Button } from './Button'
 import { Textarea } from './Textarea'
 import './MobileCodeEditor.css'

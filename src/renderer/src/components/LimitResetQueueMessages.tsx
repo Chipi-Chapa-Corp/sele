@@ -6,7 +6,7 @@ import type {
 } from '../../../shared/provider'
 import { providerApi } from '../providerApi'
 import { formatSemanticLexicalDateDifference, useSemanticDateNow } from '../semanticDateDifference'
-import { ChatDetailItem } from './ChatDetailItem'
+import { LazyChatDetailItem as ChatDetailItem } from './LazyChatDetailItem'
 import './LimitResetQueueMessages.css'
 
 export function LimitResetQueueMessages({

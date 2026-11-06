@@ -123,6 +123,21 @@ test('discovery recovers each bound account in the background without opening ch
   assert.equal((await h.adapter.getChats()).chats[0].status, 'active')
 })
 
+test('done cleanup reaches existing account workers without binding chats or creating workers', async () => {
+  const h = setup()
+  assert.deepEqual(await h.adapter.stopChatProcesses('unknown'), [])
+  assert.equal(h.runtimes.size, 0)
+  assert.equal(h.stored.has('unknown'), false)
+  await h.adapter.continueChat('existing', 'work')
+  const calls = []
+  h.runtimes.get('a').stopChatProcesses = async (id) => {
+    calls.push(id)
+    return [id]
+  }
+  assert.deepEqual(await h.adapter.stopChatProcesses('existing'), ['existing'])
+  assert.deepEqual(calls, ['existing'])
+})
+
 test('discovery recovery is scoped by execution environment and account', async () => {
   const remote = { kind: 'container', tool: 'ssh', name: 'remote' }
   const recoveries = []

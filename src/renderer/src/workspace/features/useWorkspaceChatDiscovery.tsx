@@ -1,6 +1,6 @@
-import { useCallback, useEffect } from 'react'
+import { startTransition, useCallback, useEffect, type SetStateAction } from 'react'
 import type { AppContainerTarget } from '../../../../shared/app'
-import type { ProviderId } from '../../../../shared/provider'
+import type { ProviderChat, ProviderId } from '../../../../shared/provider'
 import { appApi } from '../../appApi'
 import {
   getContainerTargetFromSuggestion,
@@ -10,7 +10,7 @@ import {
 import { conversationViews } from '../../conversationViews'
 import { providerApi } from '../../providerApi'
 import { areContainerTargetsEqual, getChatKey, mergeChats } from '../chatControllerUtils'
-import { chatListFetchPageSize } from '../controllerTypes'
+import { chatListFetchPageSize, type LoadState } from '../controllerTypes'
 import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
 import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
@@ -26,6 +26,21 @@ export function useWorkspaceChatDiscovery({
   searchState,
   sourceState
 }: WorkspaceChatDiscoveryDependencies) {
+  // Discovery can return thousands of summaries at once. Its state updates
+  // must remain interruptible while the first workspace controls are mounting.
+  const publishChats = useCallback(
+    (update: SetStateAction<ProviderChat[]>) => {
+      startTransition(() => chatState.setChats(update))
+    },
+    [chatState.setChats]
+  )
+  const publishLoadState = useCallback(
+    (state: LoadState) => {
+      startTransition(() => chatState.setLoadState(state))
+    },
+    [chatState.setLoadState]
+  )
+
   const clearSelectedChatIfUnavailableInSource = useCallback(
     (availableProviderIds: ProviderId[], container: AppContainerTarget | null): void => {
       const currentChat = chatState.selectedChatRef.current
@@ -61,7 +76,7 @@ export function useWorkspaceChatDiscovery({
       const container = normalizeContainerTarget(sourceState.newSessionContainer)
       if (sourceState.newSessionAvailableProviderIds.length === 0) {
         clearSelectedChatIfUnavailableInSource([], container)
-        chatState.setLoadState('ready')
+        publishLoadState('ready')
         return
       }
 
@@ -80,7 +95,7 @@ export function useWorkspaceChatDiscovery({
         ])
       )
       clearSelectedChatIfUnavailableInSource(sourceState.newSessionAvailableProviderIds, container)
-      chatState.setLoadState('loading')
+      publishLoadState('loading')
 
       let settledProviderCount = 0
       let loadedProviderCount = 0
@@ -90,7 +105,7 @@ export function useWorkspaceChatDiscovery({
           settledProviderCount === sourceState.newSessionAvailableProviderIds.length &&
           loadedProviderCount === 0
         ) {
-          chatState.setLoadState('error')
+          publishLoadState('error')
         }
       }
 
@@ -109,8 +124,8 @@ export function useWorkspaceChatDiscovery({
               loadedProviderCount += 1
               const initial = initialChatKeysByProvider.get(providerId)
               known.chats.forEach((chat) => initial?.add(getChatKey(chat)))
-              chatState.setChats((current) => mergeChats(current, known.chats))
-              chatState.setLoadState('ready')
+              publishChats((current) => mergeChats(current, known.chats))
+              publishLoadState('ready')
             }
             knownCursor = known.nextCursor
           } while (knownCursor)
@@ -132,8 +147,8 @@ export function useWorkspaceChatDiscovery({
             if (firstPage) loadedProviderCount += 1
             page.chats.forEach((chat) => loadedProviderChatKeys.add(getChatKey(chat)))
             // Keep the previous snapshot mounted while later pages are still loading.
-            chatState.setChats((currentChats) => mergeChats(currentChats, page.chats))
-            chatState.setLoadState('ready')
+            publishChats((currentChats) => mergeChats(currentChats, page.chats))
+            publishLoadState('ready')
 
             firstPage = false
             cursor = page.nextCursor
@@ -143,7 +158,7 @@ export function useWorkspaceChatDiscovery({
 
           const initialProviderChatKeys = initialChatKeysByProvider.get(providerId) ?? new Set()
           // Once every page is present, discard only stale entries from the original snapshot.
-          chatState.setChats((currentChats) =>
+          publishChats((currentChats) =>
             mergeChats(
               currentChats.filter(
                 (chat) =>
@@ -173,6 +188,8 @@ export function useWorkspaceChatDiscovery({
     }
   }, [
     clearSelectedChatIfUnavailableInSource,
+    publishChats,
+    publishLoadState,
     sourceState.newSessionAvailableProviderIds,
     sourceState.newSessionContainer,
     sourceState.newSessionSourceAvailabilityReady
@@ -242,7 +259,7 @@ export function useWorkspaceChatDiscovery({
             if (!active) return
             conversationViews.install(providerId, known.conversationViews ?? [])
             known.chats.forEach((chat) => initialChatKeys.add(getChatKey(chat)))
-            chatState.setChats((current) => mergeChats(current, known.chats))
+            publishChats((current) => mergeChats(current, known.chats))
             knownCursor = known.nextCursor
           } while (knownCursor)
           const seenCursors = new Set<string>()
@@ -258,14 +275,14 @@ export function useWorkspaceChatDiscovery({
 
             conversationViews.install(providerId, page.conversationViews ?? [])
             page.chats.forEach((chat) => loadedChatKeys.add(getChatKey(chat)))
-            chatState.setChats((currentChats) => mergeChats(currentChats, page.chats))
+            publishChats((currentChats) => mergeChats(currentChats, page.chats))
 
             cursor = page.nextCursor
             if (cursor && seenCursors.has(cursor)) break
             if (cursor) seenCursors.add(cursor)
           } while (cursor)
 
-          chatState.setChats((currentChats) =>
+          publishChats((currentChats) =>
             mergeChats(
               currentChats.filter(
                 (chat) =>
@@ -296,6 +313,7 @@ export function useWorkspaceChatDiscovery({
       active = false
     }
   }, [
+    publishChats,
     sourceState.containerSelectionReady,
     sourceState.containerSuggestions,
     sourceState.sshEnvironments,

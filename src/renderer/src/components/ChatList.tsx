@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useContext,
   type ComponentProps,
   type ReactNode
 } from 'react'
@@ -14,8 +15,12 @@ import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/pro
 import { ChatListItem } from './ChatListItem'
 import { linkedChatDragType, serializeLinkedChatDrag } from '../linkedChats'
 import './ChatList.css'
+import { ChatListDragContext } from './ChatListDragContext'
 
 type ChatListProps = {
+  /** Virtual rows keep only their own chat in props; drag ordering reads the group on demand. */
+  getReorderChats?: () => ProviderChat[]
+  reorderOffset?: number
   ariaLabel?: string
   chats: ProviderChat[]
   selectedChatKey: string | null
@@ -49,12 +54,18 @@ const ChatListRow = memo(
   forwardRef<
     HTMLDivElement,
     ComponentProps<typeof ChatListItem> & {
-      order: string
       layoutDisabled: boolean
+      virtual?: boolean
     }
-  >(function ChatListRow({ order, layoutDisabled, ...props }, ref) {
+  >(function ChatListRow({ layoutDisabled, virtual, ...props }, ref) {
+    if (virtual)
+      return (
+        <div ref={ref}>
+          <ChatListItem {...props} />
+        </div>
+      )
     return (
-      <MotionListItem ref={ref} order={order} popLayout disabled={layoutDisabled}>
+      <MotionListItem ref={ref} popLayout disabled={layoutDisabled}>
         <ChatListItem {...props} />
       </MotionListItem>
     )
@@ -62,6 +73,8 @@ const ChatListRow = memo(
 )
 
 export const ChatList = memo(function ChatList({
+  getReorderChats,
+  reorderOffset = 0,
   ariaLabel = 'Chats',
   chats,
   selectedChatKey,
@@ -83,8 +96,22 @@ export const ChatList = memo(function ChatList({
   selectedChatChildren = null,
   selectedChatChildOpen = false
 }: ChatListProps) {
-  const [draggedChatKey, setDraggedChatKey] = useState<string | null>(null)
-  const [dropInsertionIndex, setDropInsertionIndex] = useState<number | null>(null)
+  const sharedDrag = useContext(ChatListDragContext)
+  const [localDraggedChatKey, setLocalDraggedChatKey] = useState<string | null>(null)
+  const [localDropInsertionIndex, setLocalDropInsertionIndex] = useState<number | null>(null)
+  const draggedChatKey = sharedDrag
+    ? sharedDrag.key &&
+      (getReorderChats?.() ?? chats).some((chat) => getChatKey(chat) === sharedDrag.key)
+      ? sharedDrag.key
+      : null
+    : localDraggedChatKey
+  const dropInsertionIndex = sharedDrag
+    ? draggedChatKey
+      ? sharedDrag.index
+      : null
+    : localDropInsertionIndex
+  const setDraggedChatKey = sharedDrag?.setKey ?? setLocalDraggedChatKey
+  const setDropInsertionIndex = sharedDrag?.setIndex ?? setLocalDropInsertionIndex
 
   const resetDrag = (): void => {
     setDraggedChatKey(null)
@@ -121,7 +148,9 @@ export const ChatList = memo(function ChatList({
     }
 
     const bounds = event.currentTarget.getBoundingClientRect()
-    const targetIndex = chats.findIndex((candidate) => getChatKey(candidate) === targetChatKey)
+    const targetIndex = (getReorderChats?.() ?? chats).findIndex(
+      (candidate) => getChatKey(candidate) === targetChatKey
+    )
     if (targetIndex < 0) return
 
     const insertionIndex = targetIndex + (event.clientY < bounds.top + bounds.height / 2 ? 0 : 1)
@@ -131,15 +160,16 @@ export const ChatList = memo(function ChatList({
   const handleDrop = (event: React.DragEvent<HTMLElement>): void => {
     event.preventDefault()
     if (draggedChatKey && dropInsertionIndex !== null) {
-      const draggedIndex = chats.findIndex((chat) => getChatKey(chat) === draggedChatKey)
+      const source = getReorderChats?.() ?? chats
+      const draggedIndex = source.findIndex((chat) => getChatKey(chat) === draggedChatKey)
       if (draggedIndex >= 0) {
-        const nextChats = [...chats]
+        const nextChats = [...source]
         const [draggedChat] = nextChats.splice(draggedIndex, 1)
         const insertionIndex =
           draggedIndex < dropInsertionIndex ? dropInsertionIndex - 1 : dropInsertionIndex
         nextChats.splice(insertionIndex, 0, draggedChat)
         const orderChanged = nextChats.some(
-          (chat, index) => getChatKey(chat) !== getChatKey(chats[index])
+          (chat, index) => getChatKey(chat) !== getChatKey(source[index])
         )
         if (orderChanged) onReorder?.(nextChats)
       }
@@ -185,10 +215,60 @@ export const ChatList = memo(function ChatList({
     selectedChatChildren != null &&
     selectedChatKey != null &&
     chats.some((chat) => getChatKey(chat) === selectedChatKey)
-  const order = chats
-    .map(getChatKey)
-    .join('\n')
-    .concat(showSelectedChatChildren ? `\n${selectedChatKey}:children` : '')
+
+  const renderRow = (chat: ProviderChat, index: number): ReactNode => {
+    index += reorderOffset
+    const chatKey = getChatKey(chat)
+    const dropPosition =
+      dropInsertionIndex === index
+        ? 'before'
+        : index === (getReorderChats?.() ?? chats).length - 1 &&
+            dropInsertionIndex === (getReorderChats?.() ?? chats).length
+          ? 'after'
+          : null
+
+    const row = (
+      <ChatListRow
+        key={chatKey}
+        virtual={getReorderChats !== undefined}
+        layoutDisabled={Boolean(draggedChatKey) || getReorderChats !== undefined}
+        chat={chat}
+        projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
+        projectIcon={projectIconsByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
+        selected={chatKey === selectedChatKey && !selectedChatChildOpen}
+        childOpen={chatKey === selectedChatKey && selectedChatChildOpen}
+        descendantWorking={workingSubagentChatKeys?.has(chatKey)}
+        committing={committingChatKeys?.has(chatKey)}
+        latestCommitFinishedAt={latestCommitFinishedAtByChatKey?.get(chatKey)}
+        canMarkDone={canMarkDone}
+        canMarkUndone={canMarkUndone}
+        draggable={reorderable}
+        linkDraggable
+        dragging={chatKey === draggedChatKey}
+        dropPosition={dropPosition}
+        approvalDecisionInFlight={
+          chat.pendingApproval && chat.pendingApproval.id === resolvingApprovalId ? 'allow' : null
+        }
+        {...rowActions}
+      />
+    )
+    return showSelectedChatChildren && chatKey === selectedChatKey
+      ? [
+          row,
+          getReorderChats ? (
+            <div key={`${chatKey}:children`}>{selectedChatChildren}</div>
+          ) : (
+            <MotionListItem
+              key={`${chatKey}:children`}
+              popLayout
+              disabled={Boolean(draggedChatKey)}
+            >
+              {selectedChatChildren}
+            </MotionListItem>
+          )
+        ]
+      : row
+  }
 
   return (
     <section
@@ -201,59 +281,14 @@ export const ChatList = memo(function ChatList({
       }}
       onDrop={handleDrop}
     >
-      {/* Row order explicitly drives layout; selection must not invalidate every presence consumer. */}
-      <AnimatePresence initial={false} mode="sync" presenceAffectsLayout={false}>
-        {chats.map((chat, index) => {
-          const chatKey = getChatKey(chat)
-          const dropPosition =
-            dropInsertionIndex === index
-              ? 'before'
-              : index === chats.length - 1 && dropInsertionIndex === chats.length
-                ? 'after'
-                : null
-
-          const row = (
-            <ChatListRow
-              key={chatKey}
-              order={order}
-              layoutDisabled={Boolean(draggedChatKey)}
-              chat={chat}
-              projectDisplayName={projectNamesByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
-              projectIcon={projectIconsByCwd?.get(chat.projectCwd ?? chat.cwd ?? '')}
-              selected={chatKey === selectedChatKey && !selectedChatChildOpen}
-              childOpen={chatKey === selectedChatKey && selectedChatChildOpen}
-              descendantWorking={workingSubagentChatKeys?.has(chatKey)}
-              committing={committingChatKeys?.has(chatKey)}
-              latestCommitFinishedAt={latestCommitFinishedAtByChatKey?.get(chatKey)}
-              canMarkDone={canMarkDone}
-              canMarkUndone={canMarkUndone}
-              draggable={reorderable}
-              linkDraggable
-              dragging={chatKey === draggedChatKey}
-              dropPosition={dropPosition}
-              approvalDecisionInFlight={
-                chat.pendingApproval && chat.pendingApproval.id === resolvingApprovalId
-                  ? 'allow'
-                  : null
-              }
-              {...rowActions}
-            />
-          )
-          return showSelectedChatChildren && chatKey === selectedChatKey
-            ? [
-                row,
-                <MotionListItem
-                  key={`${chatKey}:children`}
-                  order={order}
-                  popLayout
-                  disabled={Boolean(draggedChatKey)}
-                >
-                  {selectedChatChildren}
-                </MotionListItem>
-              ]
-            : row
-        })}
-      </AnimatePresence>
+      {/* Presence controls only local enter/exit motion, without a layout projection tree. */}
+      {getReorderChats ? (
+        chats.map(renderRow)
+      ) : (
+        <AnimatePresence initial={false} mode="sync" presenceAffectsLayout={false}>
+          {chats.map(renderRow)}
+        </AnimatePresence>
+      )}
     </section>
   )
 })

@@ -23,6 +23,8 @@ export type LocalDatabase = {
     scope_key: string
     format_version: number
     payload: string
+    summary: string | null
+    opening: string | null
     updated_at: number
   }
   chat_history_page: {
@@ -199,8 +201,16 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('scope_key', 'text', (c) => c.primaryKey())
     .addColumn('format_version', 'integer', (c) => c.notNull())
     .addColumn('payload', 'text', (c) => c.notNull())
+    .addColumn('summary', 'text')
+    .addColumn('opening', 'text')
     .addColumn('updated_at', 'integer', (c) => c.notNull())
     .execute()
+  await ensureColumn(db, 'conversation_view', 'summary', () =>
+    db.schema.alterTable('conversation_view').addColumn('summary', 'text').execute()
+  )
+  await ensureColumn(db, 'conversation_view', 'opening', () =>
+    db.schema.alterTable('conversation_view').addColumn('opening', 'text').execute()
+  )
   await db.schema
     .createTable('chat_history_page')
     .ifNotExists()
@@ -403,14 +413,14 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
       // Codex and Claude share native history across credentials. Preserve the newest
       // opening view when moving from a global-account namespace to chat-owned accounts.
       const scope = JSON.stringify([['chat-accounts', null]])
-      await sql`insert into conversation_view (scope_key, format_version, payload, updated_at)
-        select json_set(scope_key, '$[1]', ${scope}), format_version, payload, updated_at
+      await sql`insert into conversation_view (scope_key, format_version, payload, summary, opening, updated_at)
+        select json_set(scope_key, '$[1]', ${scope}), format_version, payload, summary, opening, updated_at
         from conversation_view
         where (json_extract(scope_key, '$[0]') like '["codex",%'
           or json_extract(scope_key, '$[0]') like '["claude",%')
           and json_extract(scope_key, '$[1]') != ${scope}
         on conflict(scope_key) do update set
-          format_version = excluded.format_version, payload = excluded.payload,
+          format_version = excluded.format_version, payload = excluded.payload, summary = excluded.summary, opening = excluded.opening,
           updated_at = excluded.updated_at
         where excluded.updated_at > conversation_view.updated_at`.execute(transaction)
       await sql`delete from conversation_view

@@ -1,16 +1,17 @@
-import { ChevronRight,Image as ImageIcon,LoaderCircle } from 'lucide-react'
+import { Spinner } from './Spinner'
+import { ChevronRight, Image as ImageIcon } from 'lucide-react'
 import { useState } from 'react'
 import 'react-diff-view/style/index.css'
 import type {
-ProviderToolActivity,
-ProviderWorkingItem,
-ProviderWorkingTool
+  ProviderToolActivity,
+  ProviderWorkingItem,
+  ProviderWorkingTool
 } from '../../../shared/provider'
 import { chatMediaId } from '../chatMedia'
 import { getToolDisplayLabel } from '../toolDisplayLabel'
 import './ChatDetailItem.css'
 import { McpApp } from './McpApp'
-import { CommandContent,DiffContent,hasToolValue,RawContent } from './ToolActivityContent'
+import { CommandContent, DiffContent, hasToolValue, RawContent } from './ToolActivityContent'
 import { ToolStatusIcon } from './ToolActivityIcon'
 import './UnifiedDiff.css'
 
@@ -231,7 +232,7 @@ export const ToolItem: React.FC<{
             {loadState === 'error' ? `Retry loading ${label}` : label}
           </span>
           {loadState === 'loading' ? (
-            <LoaderCircle
+            <Spinner
               className="app-loading-spinner chat-detail__working-spinner"
               aria-hidden="true"
             />

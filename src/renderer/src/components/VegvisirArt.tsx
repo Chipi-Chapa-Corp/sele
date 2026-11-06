@@ -18,6 +18,7 @@ export function VegvisirArt({ active = true }: { active?: boolean }): ReactEleme
   const compact = useCompactLayout()
   const hostRef = useRef<HTMLDivElement>(null)
   const workerRef = useRef<Worker | null>(null)
+  const [workerReady, setWorkerReady] = useState(false)
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
   )
@@ -60,32 +61,43 @@ export function VegvisirArt({ active = true }: { active?: boolean }): ReactEleme
     const host = hostRef.current
     if (!host || svgArt) return
 
-    // A transferred canvas cannot be reused, including on Strict Mode's effect replay.
-    const canvas = document.createElement('canvas')
-    canvas.setAttribute('aria-hidden', 'true')
-    host.append(canvas)
+    // Allocate the surface after the first UI paint. Cancelling this idle job
+    // also prevents Strict Mode's effect replay from allocating two surfaces.
+    let canvas: HTMLCanvasElement | undefined
     let worker: Worker | undefined
     const dispose = (): void => {
       worker?.terminate()
       if (workerRef.current === worker) workerRef.current = null
-      canvas.remove()
+      canvas?.remove()
     }
-    try {
-      worker = new VegvisirWorker()
-      workerRef.current = worker
-      worker.onerror = (event) => {
-        console.error('Unable to animate new-chat artwork:', event.message)
+    const initialize = (): void => {
+      canvas = document.createElement('canvas')
+      canvas.setAttribute('aria-hidden', 'true')
+      host.append(canvas)
+      try {
+        worker = new VegvisirWorker()
+        workerRef.current = worker
+        worker.onerror = (event) => {
+          console.error('Unable to animate new-chat artwork:', event.message)
+          dispose()
+          setWorkerUnavailable(true)
+        }
+        const surface = canvas.transferControlToOffscreen()
+        worker.postMessage({ type: 'init', canvas: surface, lengths: getStrokeLengths() }, [
+          surface
+        ])
+        setWorkerReady(true)
+      } catch (error) {
+        console.error('Unable to initialize new-chat artwork:', error)
         dispose()
         setWorkerUnavailable(true)
       }
-      const surface = canvas.transferControlToOffscreen()
-      worker.postMessage({ type: 'init', canvas: surface, lengths: getStrokeLengths() }, [surface])
-    } catch (error) {
-      console.error('Unable to initialize new-chat artwork:', error)
-      dispose()
-      setWorkerUnavailable(true)
     }
-    return dispose
+    const job = window.requestIdleCallback(initialize, { timeout: 1000 })
+    return () => {
+      window.cancelIdleCallback(job)
+      dispose()
+    }
   }, [svgArt])
 
   useEffect(() => {
@@ -118,7 +130,7 @@ export function VegvisirArt({ active = true }: { active?: boolean }): ReactEleme
       themeObserver.disconnect()
       window.removeEventListener('resize', updateAppearance)
     }
-  }, [active, svgArt])
+  }, [active, svgArt, workerReady])
 
   return (
     <div

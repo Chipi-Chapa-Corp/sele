@@ -39,7 +39,10 @@ import { useWorkspaceSwipe } from './useWorkspaceSwipe'
 const MemoChatSidebar = memo(ChatSidebar)
 const MemoConversationHeader = memo(ConversationHeader)
 const MemoConversationSearch = memo(ConversationSearch)
-const MemoConversationMessages = memo(ConversationMessages)
+const MemoConversationMessages = memo(
+  ConversationMessages,
+  (previous, next) => previous.view.get('current') === next.view.get('current')
+)
 const MemoConversationQuoteAction = memo(ConversationQuoteAction)
 const MemoConversationPlan = memo(ConversationPlan)
 const MemoConversationComposer = memo(ConversationComposer)
@@ -50,7 +53,8 @@ const MemoChangesFooter = memo(ChangesFooter)
 const sidebarOptions = {
   nested: ['usageIndicator', 'providerAccount', 'openCode', 'sidebarSearch']
 }
-const messagesOptions = { nested: ['effectiveChatTurnWindow'] }
+const messagesOptions = { nested: ['effectiveChatTurnWindow', 'selectedChat'] }
+const composerOptions = { nested: ['selectedChat', 'activeSubagentChatView', 'summary'] }
 
 export const App: React.FC = () => {
   const compact = useCompactLayout()
@@ -172,9 +176,16 @@ export const App: React.FC = () => {
       cleanup?.()
     }
   }, [])
+  const mobileSelection = useRef(selectedId)
   useEffect(() => {
-    if (selectedId) openConversation()
-  }, [selectedId, openConversation])
+    if (mobileSelection.current === selectedId) return
+    mobileSelection.current = selectedId
+    // A desktop chat switch must not enqueue mobile navigation setters. Even
+    // unchanged values force a synchronous workspace render during transitions.
+    if (!compact || !selectedId) return
+    if (mobilePage !== 'conversation') setMobilePage('conversation')
+    if (sidebarOpen) setSidebarOpen(false)
+  }, [selectedId, compact, mobilePage, sidebarOpen])
   useEffect(() => {
     if (!compact || !sidebarOpen) return
     const sidebar = document.getElementById('sidebar')
@@ -276,9 +287,10 @@ export const App: React.FC = () => {
   const conversationHeader = useStableProps(workspace.conversationHeader)
   const conversationSearch = useStableProps(workspace.conversationSearch)
   const conversationMessages = useStableProps(workspace.conversationMessages, messagesOptions)
+  const messageView = new Map([['current' as const, conversationMessages]])
   const conversationQuote = useStableProps(workspace.conversationQuote)
   const conversationPlan = useStableProps(workspace.conversationPlan)
-  const conversationComposer = useStableProps(workspace.conversationComposer)
+  const conversationComposer = useStableProps(workspace.conversationComposer, composerOptions)
   const changesHeader = useStableProps(workspace.changesHeader)
   const changesContent = useStableProps(workspace.changesContent)
   const changesFooter = useStableProps(workspace.changesFooter)
@@ -319,7 +331,7 @@ export const App: React.FC = () => {
                 inert={compact && sidebarOpen}
                 header={<MemoConversationHeader {...conversationHeader} />}
                 search={<MemoConversationSearch {...conversationSearch} />}
-                messages={<MemoConversationMessages {...conversationMessages} />}
+                messages={<MemoConversationMessages view={messageView} />}
                 quoteAction={<MemoConversationQuoteAction {...conversationQuote} />}
                 emptyState={<ConversationEmptyState {...workspace.conversationEmptyState} />}
                 plan={<MemoConversationPlan {...conversationPlan} />}

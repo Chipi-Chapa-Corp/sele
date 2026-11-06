@@ -97,6 +97,24 @@ export class ChatAccounts {
       this.usageListeners.forEach((listener) => listener(observation))
     )
     const overrides: Partial<ProviderAdapter> = {
+      stopChatProcesses: async (id, options) => {
+        this.assertOpen()
+        // Completion must not bind an unknown chat or create credential runtimes.
+        const results = await Promise.allSettled(
+          [...new Set([base, ...this.runtimes.values()])].map((runtime) =>
+            runtime.stopChatProcesses?.(id, options)
+          )
+        )
+        const failures = results.filter((result) => result.status === 'rejected')
+        if (failures.length)
+          throw new AggregateError(
+            failures.map((result) => result.reason),
+            'Unable to stop account chat processes.'
+          )
+        return results.flatMap((result) =>
+          result.status === 'fulfilled' ? (result.value ?? []) : []
+        )
+      },
       onChatUpdated: (listener) => {
         this.listeners.add(listener)
         return () => {

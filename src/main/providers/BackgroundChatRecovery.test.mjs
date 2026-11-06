@@ -217,21 +217,30 @@ const serviceFixture = () => {
     persistentChatHistory: {
       viewScope: scopeFor,
       accountEpoch: () => 0,
-      preview: async () => null
+      preview: async () => null,
+      observe() {}
     },
     providerApi: { getAccounts: async () => assert.fail('credentials already scoped') },
     durableConversationViews: {
       read: async () => new Map(),
-      list: async () => ({ views: [{ ...chat('known'), providerId: 'claude' }], nextCursor: null })
+      list: async () => ({
+        summaries: [{ ...chat('known'), providerId: 'claude' }],
+        nextCursor: null
+      })
     },
     getChatUpdateSummary: (view) => view,
     applyMetadataToChats: async (chats) => chats,
+    normalizeCwd: (value) => value ?? null,
     knownConversationScopes: new Set(),
     enqueueProviderChatUpdate: (provider, detail) => published.push([provider, detail]),
     adapters: Object.fromEntries(
       ['codex', 'claude', 'copilot', 'opencode-v2'].map((provider) => [
         provider,
         {
+          getChats: async (options) => ({
+            chats: [chat(provider, { container: options?.container })],
+            nextCursor: null
+          }),
           getChatWindow: async (id, window, options) => {
             reads.push([provider, id, { ...window }, { ...options }])
             return { ...chat(id), revision: 1, items: [] }
@@ -241,17 +250,20 @@ const serviceFixture = () => {
       ])
     )
   })
-  for (const name of [
-    'backgroundChatRecovery',
-    'getProviderConversationViews',
-    'getProviderKnownChats'
-  ])
+  for (const name of ['backgroundChatRecovery', 'getProviderKnownChats'])
     context[name] = vm.runInContext(
       ts.transpile(`(${declarations.get(name).getText(source)})`, {
         target: ts.ScriptTarget.ES2022
       }),
       context
     )
+  const getChats = declarations
+    .get('providerApi')
+    .properties.find((property) => property.name?.getText(source) === 'getChats').initializer
+  context.providerApi.getChats = vm.runInContext(
+    ts.transpile(`(${getChats.getText(source)})`, { target: ts.ScriptTarget.ES2022 }),
+    context
+  )
   return { context, reads, published }
 }
 
@@ -259,7 +271,7 @@ test('native discovery schedules bounded recovery through each provider adapter'
   const h = serviceFixture()
   const remote = { kind: 'container', tool: 'ssh', name: 'remote' }
   for (const provider of ['codex', 'claude', 'copilot', 'opencode-v2'])
-    await h.context.getProviderConversationViews(provider, [chat(provider, { container: remote })])
+    await h.context.providerApi.getChats(provider, { container: remote })
   await tick()
   assert.equal(h.reads.length, 4)
   assert.equal(h.published.length, 4)

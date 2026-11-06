@@ -71,7 +71,8 @@ if (!process.versions.electron) {
         platform: 'browser',
         jsx: 'automatic',
         loader: { '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl', '.svg': 'dataurl' },
-        outfile: path.join(directory, 'linked.js')
+        outfile: path.join(directory, 'linked.js'),
+        plugins: [require('./helpers/pasted-image-worker.cjs')(directory)]
       })
       await fs.writeFile(
         path.join(directory, 'linked.html'),

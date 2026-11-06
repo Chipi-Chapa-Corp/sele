@@ -62,12 +62,10 @@ import {
 } from '../../shared/provider'
 import { providerSubagentTurnPageSize } from '../../shared/provider'
 import { requireContainerTarget } from '../containerTarget'
-import { createConversationView } from '../../shared/conversationView'
 import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
 import {
   getChatUpdateSummary,
   getProviderCachedChat,
-  getProviderConversationViews,
   getProviderKnownChats,
   beginProviderConversationRead,
   saveProviderConversationView,
@@ -258,6 +256,12 @@ const getChatUpdateDeliveryState = (client: RendererClient): ChatUpdateDeliveryS
   }
   chatUpdateDeliveryByClientId.set(client.id, state)
   chatUpdateClients.set(client.id, client)
+  // A reload can fail before React installs (or cleans up) its subscription.
+  // WebContents survives navigation, so its old ready flag is not a live consumer.
+  client.on('render-process-gone', () => suspendChatUpdateDelivery(client, state))
+  client.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) suspendChatUpdateDelivery(client, state)
+  })
   client.once('destroyed', () => {
     clearChatAcknowledgmentTimer(state)
     setChatUpdateInterest(client.id, null)
@@ -272,13 +276,38 @@ const clearChatAcknowledgmentTimer = (state: ChatUpdateDeliveryState): void => {
   state.acknowledgmentTimer = null
 }
 
+const resetChatUpdateAcknowledgment = (state: ChatUpdateDeliveryState): void => {
+  clearChatAcknowledgmentTimer(state)
+  const inFlight = state.inFlightUpdate
+  if (inFlight) {
+    const latest = state.pendingByChatKey.get(inFlight.chatKey) ?? inFlight.update
+    state.pendingByChatKey.set(inFlight.chatKey, {
+      ...latest,
+      detail: state.viewedChatKey === inFlight.chatKey ? latest.detail : null,
+      turnCompleted: latest.turnCompleted || inFlight.update.turnCompleted
+    })
+  }
+  state.inFlightUpdate = null
+  state.acknowledgedDetail = null
+}
+
+const suspendChatUpdateDelivery = (
+  client: RendererClient,
+  state: ChatUpdateDeliveryState
+): void => {
+  state.ready = false
+  setChatUpdateInterest(client.id, null)
+  // Keep only the latest update per chat, including any completion being delivered.
+  // A recovered consumer must not need another provider event to see that result.
+  resetChatUpdateAcknowledgment(state)
+}
+
 const watchChatAcknowledgment = (client: RendererClient, state: ChatUpdateDeliveryState): void => {
   if (state.acknowledgmentTimer !== null || !state.inFlightUpdate) return
   const sequence = state.inFlightUpdate.sequence
   state.acknowledgmentTimer = setTimeout(() => {
     state.acknowledgmentTimer = null
     if (client.isDestroyed() || state.inFlightUpdate?.sequence !== sequence) return
-    if (state.pendingByChatKey.size === 0) return
     // Record delivery state only, never message/tool content. This distinguishes a renderer
     // acknowledgment stall from a provider that has stopped producing updates.
     logDiagnostic('warn', 'chat-update-delivery', {
@@ -299,16 +328,9 @@ const watchChatAcknowledgment = (client: RendererClient, state: ChatUpdateDelive
     // A lost acknowledgment must not block every chat in this window indefinitely. Retry
     // the latest coalesced snapshot with a fresh sequence and no delta base. A late ack for
     // the superseded sequence is ignored by the normal acknowledgment handler.
-    const stalled = state.inFlightUpdate
-    const pending = state.pendingByChatKey.get(stalled.chatKey)
-    const latest = pending ?? stalled.update
-    state.pendingByChatKey.set(stalled.chatKey, {
-      ...latest,
-      detail: state.viewedChatKey === stalled.chatKey ? latest.detail : null,
-      turnCompleted: latest.turnCompleted || stalled.update.turnCompleted
-    })
-    state.acknowledgedDetail = null
-    state.inFlightUpdate = null
+    // Retry even the final packet: there may never be a queued successor to
+    // restart delivery after a lost completion or a failed renderer commit.
+    resetChatUpdateAcknowledgment(state)
     sendNextChatUpdate(client, state)
   }, 2_000)
   state.acknowledgmentTimer.unref?.()
@@ -400,12 +422,6 @@ const queueChatUpdateForWindow = (
     providerId: event.providerId,
     chatId: event.chatId,
     detail: state.viewedChatKey === chatKey ? event.detail : null,
-    conversationView:
-      event.conversationKnown &&
-      state.viewedChatKey !== chatKey &&
-      (latestRevision === undefined || event.turnCompleted || pendingUpdate?.turnCompleted)
-        ? prepareChatDetailForRenderer(createConversationView(event.detail))
-        : pendingUpdate?.conversationView,
     summary: event.summary,
     turnCompleted: event.turnCompleted || pendingUpdate?.turnCompleted === true
   } satisfies QueuedWindowChatUpdate
@@ -1297,6 +1313,9 @@ export const registerProviderIpc = (): void => {
 
   onClientMessage(providerIpcChannels.chatUpdatesReady, (event) => {
     const state = getChatUpdateDeliveryState(event.sender)
+    // React/HMR can replace a listener without a successful teardown. Never let
+    // the new consumer inherit an old in-flight sequence or transcript delta base.
+    resetChatUpdateAcknowledgment(state)
     state.ready = true
     setChatUpdateInterest(event.sender.id, state.viewedChatKey)
     sendNextChatUpdate(event.sender, state)
@@ -1304,12 +1323,7 @@ export const registerProviderIpc = (): void => {
 
   onClientMessage(providerIpcChannels.chatUpdatesStopped, (event) => {
     const state = getChatUpdateDeliveryState(event.sender)
-    state.ready = false
-    setChatUpdateInterest(event.sender.id, null)
-    clearChatAcknowledgmentTimer(state)
-    state.inFlightUpdate = null
-    state.acknowledgedDetail = null
-    state.pendingByChatKey.clear()
+    suspendChatUpdateDelivery(event.sender, state)
   })
 
   onClientMessage(
@@ -1386,10 +1400,12 @@ export const registerProviderIpc = (): void => {
   handleClientRequest(
     providerIpcChannels.reauthenticateAccount,
     (_, providerId: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.reauthenticateAccount(
-        requireProviderId(providerId),
-        requireSourceOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.reauthenticateAccount(
+          requireProviderId(providerId),
+          requireSourceOptions(options)
+        )
+      )
   )
 
   handleClientRequest(providerIpcChannels.getAccounts, (_, providerId: unknown, options: unknown) =>
@@ -1399,18 +1415,22 @@ export const registerProviderIpc = (): void => {
   handleClientRequest(
     providerIpcChannels.createAccount,
     (_, providerId: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.createAccount(requireProviderId(providerId), requireSourceOptions(options)))
+      withWorkspaceUpdate(
+        providerApi.createAccount(requireProviderId(providerId), requireSourceOptions(options))
+      )
   )
 
   handleClientRequest(
     providerIpcChannels.completeAccountCreation,
     (_, providerId: unknown, accountId: unknown, loginId: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.completeAccountCreation(
-        requireProviderId(providerId),
-        requireProviderResourceString(accountId, 'account ID', 128),
-        requireOptionalProviderResourceString(loginId, 'login ID', 128),
-        requireSourceOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.completeAccountCreation(
+          requireProviderId(providerId),
+          requireProviderResourceString(accountId, 'account ID', 128),
+          requireOptionalProviderResourceString(loginId, 'login ID', 128),
+          requireSourceOptions(options)
+        )
+      )
   )
 
   handleClientRequest(
@@ -1438,21 +1458,25 @@ export const registerProviderIpc = (): void => {
   handleClientRequest(
     providerIpcChannels.useAccount,
     (_, providerId: unknown, accountId: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.useAccount(
-        requireProviderId(providerId),
-        requireProviderResourceString(accountId, 'account ID', 128),
-        requireSourceOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.useAccount(
+          requireProviderId(providerId),
+          requireProviderResourceString(accountId, 'account ID', 128),
+          requireSourceOptions(options)
+        )
+      )
   )
 
   handleClientRequest(
     providerIpcChannels.deleteAccount,
     (_, providerId: unknown, accountId: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.deleteAccount(
-        requireProviderId(providerId),
-        requireProviderResourceString(accountId, 'account ID', 128),
-        requireSourceOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.deleteAccount(
+          requireProviderId(providerId),
+          requireProviderResourceString(accountId, 'account ID', 128),
+          requireSourceOptions(options)
+        )
+      )
   )
 
   handleClientRequest(
@@ -1536,12 +1560,14 @@ export const registerProviderIpc = (): void => {
   handleClientRequest(
     providerIpcChannels.completeConnection,
     (_, providerId: unknown, attemptId: unknown, code: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.completeConnection(
-        requireProviderId(providerId),
-        requireConnectionString(attemptId),
-        requireConnectionString(code),
-        requireSourceOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.completeConnection(
+          requireProviderId(providerId),
+          requireConnectionString(attemptId),
+          requireConnectionString(code),
+          requireSourceOptions(options)
+        )
+      )
   )
   handleClientRequest(
     providerIpcChannels.cancelConnection,
@@ -1555,11 +1581,13 @@ export const registerProviderIpc = (): void => {
   handleClientRequest(
     providerIpcChannels.deleteConnection,
     (_, providerId: unknown, credentialId: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.deleteConnection(
-        requireProviderId(providerId),
-        requireConnectionString(credentialId),
-        requireSourceOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.deleteConnection(
+          requireProviderId(providerId),
+          requireConnectionString(credentialId),
+          requireSourceOptions(options)
+        )
+      )
   )
 
   handleClientRequest(providerIpcChannels.getConfig, (_, providerId: unknown, options: unknown) =>
@@ -1577,13 +1605,15 @@ export const registerProviderIpc = (): void => {
       )
         throw new Error('Invalid setting path')
       // The adapter validates values against the schema before writing.
-      return withWorkspaceUpdate(providerApi.setConfigValue(
-        requireProviderId(providerId),
-        name,
-        path,
-        value as ProviderConfigValue,
-        requireSourceOptions(options)
-      ))
+      return withWorkspaceUpdate(
+        providerApi.setConfigValue(
+          requireProviderId(providerId),
+          name,
+          path,
+          value as ProviderConfigValue,
+          requireSourceOptions(options)
+        )
+      )
     }
   )
   handleClientRequest(
@@ -1591,12 +1621,14 @@ export const registerProviderIpc = (): void => {
     (_, providerId: unknown, name: unknown, enabled: unknown, options: unknown) => {
       if (typeof name !== 'string' || !/^[a-z][a-z0-9_]*$/.test(name))
         throw new Error('Invalid feature name')
-      return withWorkspaceUpdate(providerApi.setConfigFeature(
-        requireProviderId(providerId),
-        name,
-        requireBoolean(enabled),
-        requireSourceOptions(options)
-      ))
+      return withWorkspaceUpdate(
+        providerApi.setConfigFeature(
+          requireProviderId(providerId),
+          name,
+          requireBoolean(enabled),
+          requireSourceOptions(options)
+        )
+      )
     }
   )
 
@@ -1607,36 +1639,42 @@ export const registerProviderIpc = (): void => {
   handleClientRequest(
     providerIpcChannels.setSkillEnabled,
     (_, providerId: unknown, path: unknown, enabled: unknown, cwd: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.setSkillEnabled(
-        requireProviderId(providerId),
-        requireProviderSkillPath(path),
-        requireBoolean(enabled),
-        requireOptionalCwd(cwd),
-        requireProviderResourceUpdateOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.setSkillEnabled(
+          requireProviderId(providerId),
+          requireProviderSkillPath(path),
+          requireBoolean(enabled),
+          requireOptionalCwd(cwd),
+          requireProviderResourceUpdateOptions(options)
+        )
+      )
   )
 
   handleClientRequest(
     providerIpcChannels.setSkillsEnabled,
     (_, providerId: unknown, paths: unknown, enabled: unknown, cwd: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.setSkillsEnabled(
-        requireProviderId(providerId),
-        requireProviderSkillPaths(paths),
-        requireBoolean(enabled),
-        requireOptionalCwd(cwd),
-        requireProviderResourceUpdateOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.setSkillsEnabled(
+          requireProviderId(providerId),
+          requireProviderSkillPaths(paths),
+          requireBoolean(enabled),
+          requireOptionalCwd(cwd),
+          requireProviderResourceUpdateOptions(options)
+        )
+      )
   )
 
   handleClientRequest(
     providerIpcChannels.setAppEnabled,
     (_, providerId: unknown, appId: unknown, enabled: unknown, options: unknown) =>
-      withWorkspaceUpdate(providerApi.setAppEnabled(
-        requireProviderId(providerId),
-        requireProviderAppId(appId),
-        requireBoolean(enabled),
-        requireProviderResourceUpdateOptions(options)
-      ))
+      withWorkspaceUpdate(
+        providerApi.setAppEnabled(
+          requireProviderId(providerId),
+          requireProviderAppId(appId),
+          requireBoolean(enabled),
+          requireProviderResourceUpdateOptions(options)
+        )
+      )
   )
 
   handleClientRequest(
@@ -1680,11 +1718,10 @@ export const registerProviderIpc = (): void => {
   handleClientRequest(providerIpcChannels.getChats, (_, providerId: unknown, options: unknown) => {
     const requiredProviderId = requireProviderId(providerId)
     const requiredOptions = requireChatListOptions(options)
-    return runShutdownTolerantProviderRead(async () => {
-      const page = await providerApi.getChats(requiredProviderId, requiredOptions)
-      const conversationViews = await getProviderConversationViews(requiredProviderId, page.chats)
-      return { ...page, conversationViews }
-    }, getEmptyProviderChatPage)
+    return runShutdownTolerantProviderRead(
+      () => providerApi.getChats(requiredProviderId, requiredOptions),
+      getEmptyProviderChatPage
+    )
   })
 
   handleClientRequest(
@@ -1693,7 +1730,12 @@ export const registerProviderIpc = (): void => {
       getProviderCachedChat(
         requireProviderId(providerId),
         requireChatId(chatId),
-        requireSourceOptions(options)
+        options && typeof options === 'object' && 'opening' in options
+          ? {
+              ...requireSourceOptions(options),
+              opening: requireBoolean(options.opening)
+            }
+          : requireSourceOptions(options)
       ).catch((error: unknown) => {
         console.warn('Unable to read prepared chat history.', error)
         return null

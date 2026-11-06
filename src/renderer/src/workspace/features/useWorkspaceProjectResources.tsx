@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { startTransition, useEffect, useMemo } from 'react'
 import { isExpectedFileAbsenceError } from '../../../../shared/expectedAbsence.ts'
 import { appApi } from '../../appApi'
 import { providerApi } from '../../providerApi'
@@ -24,6 +24,8 @@ export function useWorkspaceProjectResources({
   sidebarModel,
   projectState
 }: WorkspaceProjectResourcesDependencies) {
+  const { loadingCwdNotesRef, loadingProjectIconsRef, setCwdNotesByGroup, setProjectIconsByGroup } =
+    projectState
   const messageBoxNotesCwd = chatState.selectedChat
     ? session.changesProjectCwd
     : sourceState.newSessionCwd
@@ -43,6 +45,11 @@ export function useWorkspaceProjectResources({
   )
 
   useEffect(() => {
+    // Keep requests pending until their transitioned state is committed.
+    // An urgent sidebar update can otherwise request the same resource again.
+    for (const key of loadingCwdNotesRef.current) {
+      if (key in projectState.cwdNotesByGroup) loadingCwdNotesRef.current.delete(key)
+    }
     const notesGroups = new Map(
       sidebarModel.activeChatGroups.map((group) => [group.key, { key: group.key, cwd: group.cwd }])
     )
@@ -54,12 +61,11 @@ export function useWorkspaceProjectResources({
     }
     const groupsToLoad = Array.from(notesGroups.values()).filter(
       (group) =>
-        !(group.key in projectState.cwdNotesByGroup) &&
-        !projectState.loadingCwdNotesRef.current.has(group.key)
+        !(group.key in projectState.cwdNotesByGroup) && !loadingCwdNotesRef.current.has(group.key)
     )
     if (groupsToLoad.length === 0) return
 
-    groupsToLoad.forEach((group) => projectState.loadingCwdNotesRef.current.add(group.key))
+    groupsToLoad.forEach((group) => loadingCwdNotesRef.current.add(group.key))
 
     void Promise.all(
       groupsToLoad.map((group) =>
@@ -75,19 +81,28 @@ export function useWorkspaceProjectResources({
           })
       )
     ).then((groupNotes) => {
-      groupNotes.forEach(({ key }) => projectState.loadingCwdNotesRef.current.delete(key))
-
-      projectState.setCwdNotesByGroup((currentNotes) => {
-        const nextNotes = { ...currentNotes }
-        groupNotes.forEach(({ key, notes }) => {
-          nextNotes[key] = notes
+      startTransition(() => {
+        setCwdNotesByGroup((currentNotes) => {
+          const nextNotes = { ...currentNotes }
+          groupNotes.forEach(({ key, notes }) => {
+            nextNotes[key] = notes
+          })
+          return nextNotes
         })
-        return nextNotes
       })
     })
-  }, [sidebarModel.activeChatGroups, projectState.cwdNotesByGroup, messageBoxNotesGroup])
+  }, [
+    sidebarModel.activeChatGroups,
+    projectState.cwdNotesByGroup,
+    messageBoxNotesGroup,
+    loadingCwdNotesRef,
+    setCwdNotesByGroup
+  ])
 
   useEffect(() => {
+    for (const key of loadingProjectIconsRef.current) {
+      if (key in projectState.projectIconsByGroup) loadingProjectIconsRef.current.delete(key)
+    }
     const entriesByKey = new Map<string, { key: string; cwd: string | null }>()
     const addProjectIconEntry = (cwd: string | null): void => {
       const key = getChatCwdGroupKey(cwd)
@@ -102,11 +117,11 @@ export function useWorkspaceProjectResources({
     const iconsToLoad = projectIconEntries.filter(
       (entry) =>
         !(entry.key in projectState.projectIconsByGroup) &&
-        !projectState.loadingProjectIconsRef.current.has(entry.key)
+        !loadingProjectIconsRef.current.has(entry.key)
     )
     if (iconsToLoad.length === 0) return
 
-    iconsToLoad.forEach((entry) => projectState.loadingProjectIconsRef.current.add(entry.key))
+    iconsToLoad.forEach((entry) => loadingProjectIconsRef.current.add(entry.key))
 
     void Promise.all(
       iconsToLoad.map((entry) =>
@@ -123,21 +138,23 @@ export function useWorkspaceProjectResources({
           })
       )
     ).then((groupIcons) => {
-      groupIcons.forEach(({ key }) => projectState.loadingProjectIconsRef.current.delete(key))
-
-      projectState.setProjectIconsByGroup((currentIcons) => {
-        const nextIcons = { ...currentIcons }
-        groupIcons.forEach(({ key, icon }) => {
-          nextIcons[key] = icon
+      startTransition(() => {
+        setProjectIconsByGroup((currentIcons) => {
+          const nextIcons = { ...currentIcons }
+          groupIcons.forEach(({ key, icon }) => {
+            nextIcons[key] = icon
+          })
+          return nextIcons
         })
-        return nextIcons
       })
     })
   }, [
     sidebarModel.activeChatGroups,
     sourceState.newSessionCwd,
     projectState.projects,
-    projectState.projectIconsByGroup
+    projectState.projectIconsByGroup,
+    loadingProjectIconsRef,
+    setProjectIconsByGroup
   ])
   return { messageBoxNotesGroup }
 }

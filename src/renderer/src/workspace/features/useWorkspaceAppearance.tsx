@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from 'react'
+import { startTransition, useEffect, useLayoutEffect } from 'react'
 import { isExpectedCommandAbsenceError } from '../../../../shared/expectedAbsence.ts'
 import { appApi } from '../../appApi'
 import { applyFontAppearancePreferences } from '../../fontAppearance'
@@ -26,14 +26,18 @@ export function useWorkspaceAppearance({ settings, preferences }: WorkspaceAppea
     void appApi
       .getInstalledFontFamilies()
       .then((families) => {
-        if (active) preferences.setInstalledFontFamilies(families)
+        startTransition(() => {
+          if (active) preferences.setInstalledFontFamilies(families)
+        })
       })
       .catch((error: unknown) => {
         if (isExpectedCommandAbsenceError(error)) return
         console.error('Unable to load installed font families.', error)
       })
       .finally(() => {
-        if (active) preferences.setInstalledFontsLoaded(true)
+        startTransition(() => {
+          if (active) preferences.setInstalledFontsLoaded(true)
+        })
       })
 
     return () => {

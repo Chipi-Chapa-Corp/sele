@@ -168,7 +168,8 @@ export const parseStoredComposerDrafts = (
               kind: 'image',
               name: attachment.name,
               path: attachment.path,
-              dataUrl
+              dataUrl,
+              ...(attachment.previewOnly === true ? { previewOnly: true } : {})
             }
             storedImageKeys.set(image, attachment.imageKey)
             attachments.push(image)
@@ -234,7 +235,13 @@ export const writeStoredComposerDrafts = (state: ComposerDraftState): void => {
           storedImageKeys.set(attachment, imageKey)
         }
         imageKeys.add(imageKey)
-        return { kind: attachment.kind, name: attachment.name, path: attachment.path, imageKey }
+        return {
+          kind: attachment.kind,
+          name: attachment.name,
+          path: attachment.path,
+          imageKey,
+          ...(attachment.previewOnly ? { previewOnly: true } : {})
+        }
       })
     }
   ])

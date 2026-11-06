@@ -61,7 +61,13 @@ export const getNestedToolCalls = (
       continue
     }
 
-    if (!quote || options.includeQuoted) {
+    // Large tool scripts are reparsed during transcript projection. Avoid a
+    // suffix allocation and regex match for every ordinary character.
+    if (
+      (!quote || options.includeQuoted) &&
+      ((character === 't' && input.startsWith('tools.', index)) ||
+        (character === 'f' && input.startsWith('functions.', index)))
+    ) {
       const name = getToolCallNameAt(input, index)
       if (name) calls.push({ name, offset: index })
     }

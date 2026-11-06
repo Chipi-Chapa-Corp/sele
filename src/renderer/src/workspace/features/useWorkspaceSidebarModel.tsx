@@ -216,12 +216,10 @@ export function useWorkspaceSidebarModel({
     ]
   }, [chatGroups])
 
-  const generalChatGroups = activeChatGroups.filter((group) => group.key === noProjectGroupKey)
-
-  const projectChatGroups = activeChatGroups.filter((group) => group.key !== noProjectGroupKey)
-
-  const displayedActiveChatGroups =
-    projectState.chatGroupingPreference === 'grouped' || activeChatGroups.length === 0
+  const displayedActiveChatGroups = useMemo(() => {
+    const generalChatGroups = activeChatGroups.filter((group) => group.key === noProjectGroupKey)
+    const projectChatGroups = activeChatGroups.filter((group) => group.key !== noProjectGroupKey)
+    return projectState.chatGroupingPreference === 'grouped' || activeChatGroups.length === 0
       ? activeChatGroups
       : [
           ...generalChatGroups,
@@ -237,6 +235,7 @@ export function useWorkspaceSidebarModel({
               ]
             : [])
         ]
+  }, [activeChatGroups, projectState.chatGroupingPreference])
 
   const unfilteredDoneChatGroup = chatGroups.find((group) => group.kind === 'done') ?? null
 
@@ -255,7 +254,24 @@ export function useWorkspaceSidebarModel({
           },
     [projectState.doneProjectFilterValue, unfilteredDoneChatGroup]
   )
+  // Catalog snapshots are maps, so React's dev changed-props diagnostics do
+  // not recursively format thousands of chats for each sidebar component.
+  const sidebarGroups = useMemo(() => {
+    const ordered = [
+      pinnedChatGroup,
+      importedChatGroup,
+      ...displayedActiveChatGroups,
+      doneChatGroup
+    ]
+    return new Map(
+      ordered
+        .filter((group): group is ChatListGroupData => group != null)
+        .map((group) => [group.key, group])
+    )
+  }, [pinnedChatGroup, importedChatGroup, displayedActiveChatGroups, doneChatGroup])
+
   return {
+    sidebarGroups,
     searchTerms,
     sidebarSearch,
     chatReadState,

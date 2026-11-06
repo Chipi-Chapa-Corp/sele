@@ -54,54 +54,57 @@ if (!process.versions.electron) {
         jsx: 'automatic',
         define: { 'process.env.NODE_ENV': '"development"' },
         outfile: path.join(directory, 'fixture.js'),
-        plugins: process.argv.includes('--baseline')
-          ? [
-              {
-                name: 'baseline',
-                setup(build) {
-                  build.onLoad(
-                    { filter: /(?:MessageBox|MessageSelectionQuoteButton)\.tsx$/ },
-                    (args) => ({
-                      contents: require('node:child_process').execFileSync(
-                        'git',
-                        [
-                          'show',
-                          'HEAD:' + path.relative(path.resolve(__dirname, '../..'), args.path)
-                        ],
-                        { encoding: 'utf8' }
+        plugins: [
+          require('./helpers/pasted-image-worker.cjs')(directory),
+          ...(process.argv.includes('--baseline')
+            ? [
+                {
+                  name: 'baseline',
+                  setup(build) {
+                    build.onLoad(
+                      { filter: /(?:MessageBox|MessageSelectionQuoteButton)\.tsx$/ },
+                      (args) => ({
+                        contents: require('node:child_process').execFileSync(
+                          'git',
+                          [
+                            'show',
+                            'HEAD:' + path.relative(path.resolve(__dirname, '../..'), args.path)
+                          ],
+                          { encoding: 'utf8' }
+                        ),
+                        loader: 'tsx'
+                      })
+                    )
+                  }
+                }
+              ]
+            : [
+                {
+                  name: 'count-settings-renders',
+                  setup(build) {
+                    build.onLoad({ filter: /ComposerSettings\.tsx$/ }, async (args) => ({
+                      contents: (await fs.readFile(args.path, 'utf8')).replace(
+                        '}: ComposerSettingsProps) {',
+                        '}: ComposerSettingsProps) { window.settingsRenders = (window.settingsRenders ?? 0) + 1;'
                       ),
                       loader: 'tsx'
-                    })
-                  )
+                    }))
+                    build.onLoad({ filter: /ComposerContextControls\.tsx$/ }, async (args) => ({
+                      contents: (await fs.readFile(args.path, 'utf8'))
+                        .replace(
+                          '  const {',
+                          '  window.workspaceControlRenders = (window.workspaceControlRenders ?? 0) + 1;\n  const {'
+                        )
+                        .replace(
+                          '  const selectedModel =',
+                          '  window.usageControlRenders = (window.usageControlRenders ?? 0) + 1;\n  const selectedModel ='
+                        ),
+                      loader: 'tsx'
+                    }))
+                  }
                 }
-              }
-            ]
-          : [
-              {
-                name: 'count-settings-renders',
-                setup(build) {
-                  build.onLoad({ filter: /ComposerSettings\.tsx$/ }, async (args) => ({
-                    contents: (await fs.readFile(args.path, 'utf8')).replace(
-                      '}: ComposerSettingsProps) {',
-                      '}: ComposerSettingsProps) { window.settingsRenders = (window.settingsRenders ?? 0) + 1;'
-                    ),
-                    loader: 'tsx'
-                  }))
-                  build.onLoad({ filter: /ComposerContextControls\.tsx$/ }, async (args) => ({
-                    contents: (await fs.readFile(args.path, 'utf8'))
-                      .replace(
-                        '  const {',
-                        '  window.workspaceControlRenders = (window.workspaceControlRenders ?? 0) + 1;\n  const {'
-                      )
-                      .replace(
-                        '  const selectedModel =',
-                        '  window.usageControlRenders = (window.usageControlRenders ?? 0) + 1;\n  const selectedModel ='
-                      ),
-                    loader: 'tsx'
-                  }))
-                }
-              }
-            ]
+              ])
+        ]
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),

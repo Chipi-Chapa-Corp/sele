@@ -39,6 +39,9 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import { MessageBox } from './src/renderer/src/components/MessageBox'
+            import { UsageIndicator } from './src/renderer/src/components/UsageIndicator'
+            // Usage lives in the sidebar now; compose its real component explicitly.
+            function ComposerWithUsage(props){return <><MessageBox {...props}/><UsageIndicator {...props}/></>}
             import { WorkingElapsedTime } from './src/renderer/src/components/WorkingElapsedTime'
             import { fallbackProviderModels, fallbackProviderApprovalModes, fallbackProviderSandboxModes } from './src/shared/provider'
             import './src/renderer/src/assets/styles/tokens.css'
@@ -64,7 +67,7 @@ if (!process.versions.electron) {
                 <div className="chat-panel__composer">
                   <div className="chat-panel__composer-input">
                     <div className="chat-panel__composer-inner">
-              <MessageBox draftScopeKey="chat" chatId={chatId}
+              <ComposerWithUsage draftScopeKey="chat" chatId={chatId}
                 providerId={provider} model={fallbackProviderModels[0].id} models={fallbackProviderModels}
                 agentMode="interactive" agentModes={[]} approvalMode="never" approvalModes={fallbackProviderApprovalModes}
                 reasoningEffort="medium" serviceTier={null} sandboxMode="danger-full-access" sandboxModes={fallbackProviderSandboxModes}
@@ -88,7 +91,8 @@ if (!process.versions.electron) {
         bundle: true,
         platform: 'browser',
         jsx: 'automatic',
-        outfile: path.join(directory, 'usage.js')
+        outfile: path.join(directory, 'usage.js'),
+        plugins: [require('./helpers/pasted-image-worker.cjs')(directory)]
       })
       await fs.writeFile(
         path.join(directory, 'usage.html'),
@@ -1041,13 +1045,12 @@ if (!process.versions.electron) {
           await run(`(() => {
             const popup = document.querySelector('.message-box__usage-popover')
             const rect = popup.getBoundingClientRect()
-            const composer = document.querySelector('.chat-panel__composer').getBoundingClientRect()
-            return rect.top < composer.top &&
-              [rect.top + 12, composer.top - 20].every(y =>
+            return rect.top >= 0 && rect.bottom <= innerHeight &&
+              [rect.top + 12, rect.bottom - 12].every(y =>
                 popup.contains(document.elementFromPoint(rect.right - 20, y)))
           })()`),
           true,
-          'usage popup stays visible and receives pointer input above the composer and chat controls'
+          'usage popup stays inside the viewport and receives pointer input across its bounds'
         )
         await run('new Promise(resolve => setTimeout(resolve, 350))')
         await fs.writeFile(

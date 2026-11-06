@@ -20,6 +20,7 @@ if (!process.versions.electron) {
             import { SidebarProviderAccount } from './src/renderer/src/workspace/components/SidebarProviderAccount'
             import { renderSettingsPanel } from './src/renderer/src/components/SettingsPanel'
             import { defaultAppSettings, readStoredAppSettings, writeStoredAppSettings } from './src/renderer/src/settings'
+            import { readChatSidebarTabs } from './src/renderer/src/chatSidebarFilter'
             import './src/renderer/src/App.css'
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/workspace/styles/chat-sidebar.css'
@@ -35,11 +36,12 @@ if (!process.versions.electron) {
               const contextUsage=s.context ? {source:'exact',usedTokens:20000,maxTokens:100000} : {source:'unavailable',usedTokens:null,maxTokens:null}
               if (s.sidebar) {
                 flushSync(()=>root.render(<ChatSidebar
-                  chats={[]} chromeControlTheme="transparent" displayedActiveChatGroups={[]} pinnedChatGroup={null} importedChatGroup={null} doneChatGroup={null}
+                  chatCount={0} chromeControlTheme="transparent" sidebarGroups={new Map()}
+                  chatSidebarTabs={readChatSidebarTabs()} chatSidebarFilter="all" hasWorkingChats={false} handleChatSidebarFilterChange={noop}
                   loadState="ready" searchOpen={false} searchQuery="" searchInputRef={{current:null}}
                   sidebarSearch={{loading:false,error:null,hasMore:false}} renderWindowControls={()=>null}
                   renderSettingsButton={()=><button aria-label="Settings">Settings</button>} renderChatGroup={()=>null}
-                  handleNewChat={noop} handleCloseSearch={noop} handleProjectDrop={noop} handleProjectStackDragOver={noop} handleImportedChat={noop}
+                  handleNewChat={noop} handleNewChatNoProject={noop} handleCloseSearch={noop} handleProjectDrop={noop} handleProjectStackDragOver={noop} handleImportedChat={noop}
                   setSearchOpen={noop} setSearchQuery={noop}
                   providerAccount={{openCode:{loading:s.providersLoading??false,providers:s.providers??[],selectedId:s.selectedProvider??'',error:null,manageOpen:false,onManage:noop,onClose:noop,onChanged:noop,onSelect:id=>window.renderFixture({selectedProvider:id})},key:'fixture:'+s.accountRevision,providerId:s.provider,chatId:s.chatId,container:s.container??null,available:true,updating:false,onSelect:async id=>{if(s.chatId)window.chatAccounts[s.chatId]=id;else window.activeAccount=id},onCreate:()=>window.createAccount(s.provider),onDelete:id=>window.deleteAccount(s.provider,id)}}
                   usageIndicator={{chatId:s.chatId,providerId:s.provider,accountUsage:s.usageLoading?null:{rateLimits:s.limits,errors:[],updatedAt:1},accountUsageError:null,accountUsageState:s.usageLoading?'loading':'ready',contextUsage,displayUsage:s.settings.chat.displayUsage}}
@@ -48,6 +50,7 @@ if (!process.versions.electron) {
               }
               const settingsProps = {
                 settingsTab:s.tab,settingsPanelSettings:s.settings,groupChatsByProject:s.groupChatsByProject,
+                chatSidebarTabs:readChatSidebarTabs(),handleChatSidebarTabChange:noop,
                 handleGroupChatsByProjectChange:enabled=>window.renderFixture({groupChatsByProject:enabled}),
                 getSettingsFieldClassName:(...classes)=>['settings-dialog__field',...classes].join(' '),
                 renderProjectSettingAction:()=>null,isScopedSettingControlDisabled:()=>false,
@@ -111,7 +114,7 @@ if (!process.versions.electron) {
         window.providerApi={getTokenUsage:async()=>({chat:{inputTokens:1000,cachedInputTokens:0,outputTokens:100,cost:{input:0.3,cachedInput:0,output:0.12,total:0.42}},week:{inputTokens:0,cachedInputTokens:0,outputTokens:0},month:{inputTokens:0,cachedInputTokens:0,outputTokens:0},updatedAt:1}),openChatImport:async()=>{window.importCalls++;return null},getAccounts:async (provider,options)=>{
           const selected=options?.chatId ? (window.chatAccounts[options.chatId]??window.activeAccount) : window.activeAccount;
           window.accountReads++;
-          const response={available:provider==='codex'||provider==='claude',unavailableMessage:null,accounts:provider==='opencode' ? [{id:'default',displayName:'Default Account',active:true}] : [{id:'default',displayName:provider==='claude'?'Claude Name':'Jane Doe',active:selected==='default'},{id:'work',displayName:provider==='claude'?'Claude at Work':'Jane at Work',active:selected==='work'}].filter(account=>account.id!=='work'||!window.removedWork)};
+          const response={available:provider==='codex'||provider==='claude',unavailableMessage:null,accounts:provider==='opencode-v2' ? [{id:'default',displayName:'Default Account',active:true}] : [{id:'default',displayName:provider==='claude'?'Claude Name':'Jane Doe',active:selected==='default'},{id:'work',displayName:provider==='claude'?'Claude at Work':'Jane at Work',active:selected==='work'}].filter(account=>account.id!=='work'||!window.removedWork)};
           if(window.accountDelay) await new Promise(resolve=>setTimeout(resolve,window.accountDelay));
           return response;
         }};
@@ -119,7 +122,7 @@ if (!process.versions.electron) {
       )
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<!doctype html><html data-color-scheme="dark"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="bootstrap.js"></script><script src="fixture.js"></script></html>'
+        '<!doctype html><html data-color-scheme="dark"><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="bootstrap.js"></script><script src="fixture.js"></script></html>'
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
@@ -166,7 +169,7 @@ if (!process.versions.electron) {
           if (await run(source)) return
           await new Promise((resolve) => setTimeout(resolve, 25))
         }
-        throw new Error('Timed out: ' + source)
+        throw new Error('Timed out: ' + source + '; renderer errors: ' + errors.join('\n'))
       }
       const badges = () =>
         run(
@@ -207,13 +210,12 @@ if (!process.versions.electron) {
         'document.querySelector(".settings-dialog__limit-toggle input[aria-label=Context]").click()'
       )
       assert.deepEqual(await badges(), ['context', 'short', 'long'])
+      const badgePositions = await run(
+        'Array.from(document.querySelectorAll("[data-usage-limit]:not([inert])")).map(node=>node.getBoundingClientRect().left)'
+      )
       assert.deepEqual(
-        await run(
-          'Array.from(document.querySelectorAll("[data-usage-limit]:not([inert])")).map(node=>node.getBoundingClientRect().left)'
-        ),
-        await run(
-          'Array.from(document.querySelectorAll("[data-usage-limit]:not([inert])")).map(node=>node.getBoundingClientRect().left).sort((a,b)=>a-b)'
-        )
+        badgePositions,
+        [...badgePositions].sort((a, b) => a - b)
       )
       await run(
         'window.renderFixture({limits:window.fixture.limits.filter(limit=>limit.windowMinutes===10080),context:false})'
@@ -258,7 +260,7 @@ if (!process.versions.electron) {
       await run('window.renderFixture({modelProviderId:undefined,balances:[]})')
       // OpenCode: the chat cost opens a popover with no tabs and a "This chat" row.
       await run(
-        'window.renderFixture({provider:"opencode",chatId:"chat-1",modelProviderId:"anthropic",balances:[{id:"anthropic:month",modelProviderId:"anthropic",modelProviderName:"Anthropic",label:"This month (organization)",kind:"spent",amount:9.7,currency:"USD"}]})'
+        'window.renderFixture({provider:"opencode-v2",chatId:"chat-1",modelProviderId:"anthropic",balances:[{id:"anthropic:month",modelProviderId:"anthropic",modelProviderName:"Anthropic",label:"This month (organization)",kind:"spent",amount:9.7,currency:"USD"}]})'
       )
       await waitFor('document.querySelector("[data-usage-balance=spent]:not([inert])")')
       assert.match(
@@ -294,7 +296,7 @@ if (!process.versions.electron) {
       await waitFor(
         'document.querySelector("[aria-label=\\"Codex account\\"]")?.textContent.includes("Jane at Work")'
       )
-      await run('window.renderFixture({provider:"opencode"})')
+      await run('window.renderFixture({provider:"opencode-v2"})')
       await waitFor('!document.querySelector("[aria-label=\\"OpenCode account\\"]")')
       await run('window.renderFixture({context:true})')
       await waitFor(
@@ -465,6 +467,26 @@ if (!process.versions.electron) {
       )
       await run(`window.longBadge.click()`)
       await waitFor(`document.querySelector('[role=dialog][aria-label=Usage]')`)
+      await waitFor(
+        `getComputedStyle(document.querySelector('[role=dialog][aria-label=Usage]')).visibility==='visible'`
+      )
+      assert.equal(
+        await run(`(()=>{
+        const p=document.querySelector('[role=dialog][aria-label=Usage]').getBoundingClientRect();
+        return p.left>=0 && p.top>=0 && p.right<=innerWidth+1 && p.bottom<=innerHeight+1;
+      })()`),
+        true,
+        'usage placement remains within the viewport'
+      )
+      await run('window.renderFixture({})')
+      await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+      assert.equal(
+        await run(
+          `getComputedStyle(document.querySelector('[role=dialog][aria-label=Usage]')).visibility`
+        ),
+        'visible',
+        'unrelated renders must preserve measured placement'
+      )
       await run(`window.renderFixture({chatId:'other-chat'})`)
       await waitFor(`!document.querySelector('[role=dialog][aria-label=Usage]')`)
       assert.equal(
@@ -557,7 +579,7 @@ if (!process.versions.electron) {
       // Crossing the account/provider boundary must retain the trigger, even without usage badges.
       await run(`
         window.accountAnimations=[];
-        window.renderFixture({provider:'opencode',limits:[],context:false,providersLoading:true});
+        window.renderFixture({provider:'opencode-v2',limits:[],context:false,providersLoading:true});
       `)
       assert.equal(
         await run(
@@ -613,7 +635,7 @@ if (!process.versions.electron) {
       assert.equal(await run('window.accountLabel.textContent.trim()'), 'Anthropic')
       assert.equal(await run('window.accountButton.disabled'), true)
       // Navigate away before that lookup resolves; stale results cannot change the provider label.
-      await run(`window.renderFixture({provider:'opencode'})`)
+      await run(`window.renderFixture({provider:'opencode-v2'})`)
       await new Promise((resolve) => setTimeout(resolve, 150))
       assert.equal(await run('window.accountLabel.textContent.trim()'), 'Anthropic')
       assert.equal(
@@ -631,7 +653,7 @@ if (!process.versions.electron) {
         ),
         true
       )
-      await run(`window.renderFixture({provider:'opencode',providers:[],selectedProvider:''})`)
+      await run(`window.renderFixture({provider:'opencode-v2',providers:[],selectedProvider:''})`)
       assert.equal(await run('window.accountLabel.textContent.trim()'), 'Providers')
       assert.equal(
         await run(

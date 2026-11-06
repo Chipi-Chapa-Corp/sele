@@ -2,6 +2,34 @@ export type MarkdownPlanNode =
   | { html: string }
   | { tag: string; opening: string; children: MarkdownPlanNode[] }
 
+/** Worker replies are structured clones. Reuse unchanged blocks before publishing them to React. */
+export const reuseMarkdownPlan = (
+  previous: MarkdownPlanNode[] | null,
+  incoming: MarkdownPlanNode[]
+): MarkdownPlanNode[] => {
+  if (!previous) return incoming
+  let changed = previous.length !== incoming.length
+  const result = incoming.map((node, index) => {
+    const before = previous[index]
+    let next = node
+    if (before === node) return before
+    if (before && 'html' in before && 'html' in node && before.html === node.html) next = before
+    else if (
+      before &&
+      'tag' in before &&
+      'tag' in node &&
+      before.tag === node.tag &&
+      before.opening === node.opening
+    ) {
+      const children = reuseMarkdownPlan(before.children, node.children)
+      next = children === before.children ? before : { ...node, children }
+    }
+    if (next !== before) changed = true
+    return next
+  })
+  return changed ? result : previous
+}
+
 export const markdownPartCharacters = 8_192
 export const markdownPartElements = 100
 const voidTags = new Set([

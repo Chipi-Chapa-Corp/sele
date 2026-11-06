@@ -18,7 +18,17 @@ if (!process.versions.electron) {
       )
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        `<html><body><script type="module">
+        `<html><body><script>window.imageRequests=[];window.appApi={getClipboardImage:async input=>{imageRequests.push({bytes:input.data.byteLength,offset:input.offset});return {kind:'image',name:'fixture.png',path:'/fixture.png',dataUrl:input.previewDataUrl,previewOnly:true}}}</script><script type="module">
+          import {readPastedImage} from '/@fs/${root}/src/renderer/src/composer/pastedImage.ts'
+          window.pasteFixtureImage=async()=>{
+            const canvas=document.createElement('canvas');canvas.width=800;canvas.height=400;
+            const ctx=canvas.getContext('2d');ctx.fillStyle='blue';ctx.fillRect(0,0,800,400);
+            const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+            const pasted=await readPastedImage(new File([blob],'clipboard.png',{type:'image/png'}));
+            const decoded=await createImageBitmap(await (await fetch(pasted.dataUrl)).blob());
+            const result={width:decoded.width,height:decoded.height,path:pasted.path,previewOnly:pasted.previewOnly,requests:imageRequests};decoded.close();return result;
+          }
+
           import MarkdownWorker from '/@fs/${root}/src/renderer/src/chatMarkdown.worker.ts?worker'
           window.renderMarkdown = content => new Promise((resolve, reject) => {
             const worker = new MarkdownWorker()
@@ -117,6 +127,16 @@ if (!process.versions.electron) {
       assert.match(html, /<strong>Rat 79<\/strong>/)
       assert.match(html, /data-file-link-path="\/fixture\/enemies.ts"/)
       assert.match(html, /class="token keyword"/)
+      const image = await win.webContents.executeJavaScript('window.pasteFixtureImage()')
+      assert.equal(image.width, 192)
+      assert.equal(image.height, 96)
+      assert.equal(image.path, '/fixture.png')
+      assert.equal(image.previewOnly, true)
+      assert.equal(image.requests.length, 1)
+      assert.equal(image.requests[0].offset, 0)
+      console.log(
+        'Vite image paste worker: correct preview aspect ratio and binary attachment request'
+      )
       console.log(
         'Vite development worker renders tables, emphasis, file icons and highlighted code'
       )

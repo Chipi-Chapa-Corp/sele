@@ -135,7 +135,7 @@
 
 .chat-detail__message-attachment-file:not(:disabled):hover,
 .chat-detail__message-attachment-review:hover,
-.chat-detail__message-attachment-review[aria-expanded='true'] {
+.chat-detail__message-attachment-review[aria-expanded="true"] {
   border-color: var(--secondary-border-colors-hover);
   color: var(--ink);
   background: var(--secondary-surface-hover);
@@ -214,11 +214,12 @@
   box-shadow: var(--user-message-shadow);
 }
 
-:root[data-color-scheme='dark'] :is(.chat-detail__message--user, .chat-detail__message--bubble) {
+:root[data-color-scheme="dark"] :is(.chat-detail__message--user, .chat-detail__message--bubble) {
   --user-message-border-colors: var(--user-message-background);
 }
 
-:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) {
+:root:not([data-color-scheme="dark"])
+  :is(.chat-detail__message--user, .chat-detail__message--bubble) {
   --user-message-border-colors: var(--primary-border-colors);
   --user-message-color: var(--accent-ink);
   --user-message-shadow: var(--primary-shadow);
@@ -251,7 +252,7 @@
 
 .chat-detail__context-compaction::before,
 .chat-detail__context-compaction::after {
-  content: '';
+  content: "";
   display: block;
   height: 0.0625rem;
   min-width: 1.2rem;
@@ -372,7 +373,7 @@
 .chat-detail__thought > summary::marker,
 .chat-detail__tool-sequence > summary::marker,
 .chat-detail__tool-group > summary::marker {
-  content: '';
+  content: "";
 }
 
 details.chat-detail__step:not([open]) > :not(summary),
@@ -561,6 +562,10 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   max-width: 100%;
 }
 
+.chat-detail__markdown-part {
+  display: contents;
+}
+
 .chat-detail__message-markdown :where(img, video),
 .chat-detail__working-message :where(img, video) {
   max-width: 100%;
@@ -568,11 +573,21 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
 }
 
 .chat-detail__message-markdown > :first-child,
+.chat-detail__message-markdown > .chat-detail__markdown-part:first-child > :first-child,
+.chat-detail__message-markdown
+  > .chat-detail__markdown-sequence:first-child
+  > .chat-detail__markdown-part:first-child
+  > :first-child,
 .chat-detail__working-message > :first-child {
   margin-top: 0;
 }
 
 .chat-detail__message-markdown > :last-child,
+.chat-detail__message-markdown > .chat-detail__markdown-part:last-child > :last-child,
+.chat-detail__message-markdown
+  > .chat-detail__markdown-sequence:last-child
+  > .chat-detail__markdown-part:last-child
+  > :last-child,
 .chat-detail__working-message > :last-child {
   margin-bottom: 0;
 }
@@ -608,8 +623,8 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   border-top: 0.0625rem solid color-mix(in srgb, var(--muted) 45%, transparent);
 }
 
-.chat-detail__message input[type='checkbox'],
-.chat-detail__working-message input[type='checkbox'] {
+.chat-detail__message input[type="checkbox"],
+.chat-detail__working-message input[type="checkbox"] {
   position: relative;
   display: inline-block;
   width: 0.95em;
@@ -623,13 +638,13 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   opacity: 1;
 }
 
-.chat-detail__message input[type='checkbox']:checked,
-.chat-detail__working-message input[type='checkbox']:checked {
+.chat-detail__message input[type="checkbox"]:checked,
+.chat-detail__working-message input[type="checkbox"]:checked {
   background: var(--accent);
 }
 
-.chat-detail__message input[type='checkbox']:checked::after,
-.chat-detail__working-message input[type='checkbox']:checked::after {
+.chat-detail__message input[type="checkbox"]:checked::after,
+.chat-detail__working-message input[type="checkbox"]:checked::after {
   position: absolute;
   top: 0.08em;
   left: 0.22em;
@@ -638,7 +653,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   border: solid var(--accent-ink);
   border-width: 0 0.13em 0.13em 0;
   transform: rotate(45deg);
-  content: '';
+  content: "";
 }
 
 .chat-detail__message details,
@@ -830,7 +845,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
     box-shadow 160ms ease;
 }
 
-.chat-detail__markdown-image:hover:not([aria-disabled='true']) {
+.chat-detail__markdown-image:hover:not([aria-disabled="true"]) {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--glass-line));
   box-shadow: var(--glass-shadow-hover);
 }
@@ -874,10 +889,19 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   }
 }
 
-:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) a,
-:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) blockquote,
-:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) li::marker,
-:root:not([data-color-scheme='dark']) :is(.chat-detail__message--user, .chat-detail__message--bubble) details > summary::marker {
+:root:not([data-color-scheme="dark"])
+  :is(.chat-detail__message--user, .chat-detail__message--bubble)
+  a,
+:root:not([data-color-scheme="dark"])
+  :is(.chat-detail__message--user, .chat-detail__message--bubble)
+  blockquote,
+:root:not([data-color-scheme="dark"])
+  :is(.chat-detail__message--user, .chat-detail__message--bubble)
+  li::marker,
+:root:not([data-color-scheme="dark"])
+  :is(.chat-detail__message--user, .chat-detail__message--bubble)
+  details
+  > summary::marker {
   color: inherit;
 }
 
@@ -1165,28 +1189,28 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   font-style: italic;
 }
 
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   .token.comment,
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   .token.prolog,
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   .token.doctype,
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   .token.cdata {
   color: #898984;
 }
 
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   .token.punctuation {
   color: #b4b4af;
 }
 
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   :is(
     .token.property,
@@ -1200,7 +1224,7 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   color: #ee8580;
 }
 
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   :is(
     .token.selector,
@@ -1213,29 +1237,29 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   color: #8fc89d;
 }
 
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   :is(.token.operator, .token.entity, .token.url, .token.variable),
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   :is(.language-css, .style)
   .token.string {
   color: #ddb278;
 }
 
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   :is(.token.atrule, .token.attr-value, .token.function, .token.class-name) {
   color: #d8ac7e;
 }
 
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   .token.keyword {
   color: #d49ae2;
 }
 
-:root[data-color-scheme='dark']
+:root[data-color-scheme="dark"]
   :is(.chat-detail__activity-content, .chat-detail__message-markdown)
   :is(.token.regex, .token.important) {
   color: #e99b65;
@@ -1558,4 +1582,8 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   text-shadow: 0 1px 5px black;
   font-size: 1.8rem;
   pointer-events: none;
+}
+
+.chat-detail__markdown-sequence {
+  display: contents;
 }

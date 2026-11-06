@@ -124,6 +124,20 @@ test('v2 model pricing tiers map to the catalog consumed by Sele', async () => {
   )
 })
 
+test('v2 prompts tag their session shell environment before work starts', async () => {
+  const f = transport((call) =>
+    call.path.endsWith('/prompt') ? json({}) : new Response(null, { status: 204 })
+  )
+  await f.client.session.promptAsync({
+    sessionID: 'ses_fixture',
+    parts: [{ type: 'text', text: 'Work' }]
+  })
+  const environment = f.calls.findIndex((call) => call.path.endsWith('/environment'))
+  const prompt = f.calls.findIndex((call) => call.path.endsWith('/prompt'))
+  assert.ok(environment >= 0 && prompt > environment)
+  assert.deepEqual(f.calls[environment].body, { variables: { SELE_CHAT_ID: 'ses_fixture' } })
+})
+
 test('structural v2 records do not shrink visible history and cursor queries keep their original filters', async () => {
   let pages = 0
   const f = transport((call) => {

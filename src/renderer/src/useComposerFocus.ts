@@ -16,6 +16,42 @@ export function useComposerFocus(
 ): void {
   const actionOrigin = useRef<Element | null>(null)
   const compact = useCompactLayout()
+  const overlays = useRef(new Set<Element>())
+  const mutationHandler = useRef<(() => void) | null>(null)
+  // Index the small set of focus-owning overlays once per mounted composer.
+  // Restoring focus must not query every node in several retained transcripts.
+  useEffect(() => {
+    const input = inputRef.current
+    if (!input || compact) return
+    const document = input.ownerDocument
+    const nodes = new Set(document.querySelectorAll(overlaySelector))
+    overlays.current = nodes
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === 'attributes' && record.target instanceof Element) {
+          if (record.target.matches(overlaySelector)) nodes.add(record.target)
+          else nodes.delete(record.target)
+        }
+        for (const node of record.addedNodes) {
+          if (!(node instanceof Element)) continue
+          if (node.matches(overlaySelector)) nodes.add(node)
+          node.querySelectorAll(overlaySelector).forEach((overlay) => nodes.add(overlay))
+        }
+      }
+      for (const node of nodes) if (!node.isConnected) nodes.delete(node)
+      mutationHandler.current?.()
+    })
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['role', 'open', 'hidden', 'inert', 'aria-hidden']
+    })
+    return () => {
+      observer.disconnect()
+      nodes.clear()
+    }
+  }, [inputRef, compact])
   // biome-ignore lint/correctness/useExhaustiveDependencies: Chat navigation and reopening must refocus a retained textarea.
   useEffect(() => {
     // Touch users choose when to open the keyboard. Desktop caret restoration
@@ -51,8 +87,7 @@ export function useComposerFocus(
         !input.isConnected ||
         input.disabled ||
         !document.hasFocus() ||
-        document.visibilityState === 'hidden' ||
-        !visible(input)
+        document.visibilityState === 'hidden'
       )
         return
       const active = document.activeElement
@@ -64,6 +99,7 @@ export function useComposerFocus(
         actionOrigin.current = null
         return
       }
+      if (!visible(input)) return
       if (
         active &&
         active !== input &&
@@ -72,7 +108,7 @@ export function useComposerFocus(
         (active.matches(editingSelector) || active.closest(focusOwnerSelector))
       )
         return
-      if ([...document.querySelectorAll(overlaySelector)].some(visible) || hasSelection()) return
+      if ([...overlays.current].some(visible) || hasSelection()) return
 
       actionOrigin.current = null
       input.focus({ preventScroll: true })
@@ -147,13 +183,7 @@ export function useComposerFocus(
       // The usual streaming path exits here without reading selection or measuring layout.
       if (document.activeElement !== input && !navigatingWithTab) schedule()
     }
-    const observer = new MutationObserver(onMutation)
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['open', 'hidden', 'inert', 'aria-hidden']
-    })
+    mutationHandler.current = onMutation
     document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('mousedown', onMouseDown, true)
     document.addEventListener('pointerup', onPointerUp, true)
@@ -168,7 +198,7 @@ export function useComposerFocus(
     window.addEventListener('focus', onWindowFocus)
     schedule()
     return () => {
-      observer.disconnect()
+      if (mutationHandler.current === onMutation) mutationHandler.current = null
       if (frame !== null) window.cancelAnimationFrame(frame)
       document.removeEventListener('pointerdown', onPointerDown, true)
       document.removeEventListener('mousedown', onMouseDown, true)

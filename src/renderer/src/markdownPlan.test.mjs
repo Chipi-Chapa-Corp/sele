@@ -1,6 +1,43 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createMarkdownPlan, markdownPartCharacters, markdownPartElements } from './markdownPlan.ts'
+import {
+  createMarkdownPlan,
+  reuseMarkdownPlan,
+  markdownPartCharacters,
+  markdownPartElements
+} from './markdownPlan.ts'
+
+test('streamed worker clones preserve unchanged prefixes and nested block identities', () => {
+  const before = [
+    {
+      tag: 'details',
+      opening: '<details open>',
+      children: Array.from({ length: 1000 }, (_, i) => ({ html: `<p>Block ${i}</p>` }))
+    }
+  ]
+  const clone = structuredClone(before)
+  assert.equal(
+    reuseMarkdownPlan(before, clone),
+    before,
+    'equivalent replies do not schedule a new tree'
+  )
+  clone[0].children[999].html = '<p>Growing tail</p>'
+  const next = reuseMarkdownPlan(before, clone)
+  assert.notEqual(next, before)
+  assert.notEqual(next[0], before[0])
+  for (let i = 0; i < 999; i++) assert.equal(next[0].children[i], before[0].children[i])
+  assert.equal(next[0].children[999].html, '<p>Growing tail</p>')
+  assert.equal(before[0].children[999].html, '<p>Block 999</p>')
+  const appended = reuseMarkdownPlan(next, [...structuredClone(next), { html: '<p>New block</p>' }])
+  assert.equal(appended[0], next[0])
+  const changedShell = structuredClone(appended)
+  changedShell[0].opening = '<details>'
+  assert.notEqual(
+    reuseMarkdownPlan(appended, changedShell)[0],
+    appended[0],
+    'changed attributes must be applied'
+  )
+})
 
 const flatten = (nodes) =>
   nodes

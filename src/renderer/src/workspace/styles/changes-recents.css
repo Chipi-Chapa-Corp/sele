@@ -357,7 +357,19 @@ button.changes-sidebar__recent-row:not(:disabled) {
 
 .changes-sidebar__pull-request-heading {
   flex: none;
-  padding: 0.4rem 0.7rem;
+  padding: 0.4rem 0;
+}
+
+.changes-sidebar__pull-request-detail .chat-detail__pending-message-label {
+  padding-inline: 0.8rem;
+}
+
+.changes-sidebar__pull-request-comment-actions > .ui-button-group .ui-button__icon {
+  color: var(--success);
+}
+
+.changes-sidebar__pull-request-merge-options .message-box__chat-config-check {
+  color: var(--success);
 }
 
 .changes-sidebar__pull-request-detail > .chat-panel {
@@ -473,4 +485,65 @@ button.changes-sidebar__recent-row:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+}
+
+.changes-sidebar__pull-request-ci {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--quiet);
+}
+
+.changes-sidebar__pull-request-ci > svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}
+
+.changes-sidebar__pull-request-ci[data-status="success"] > svg {
+  color: var(--success);
+}
+
+.changes-sidebar__pull-request-ci[data-status="failure"] > svg {
+  color: var(--error);
+}
+
+.changes-sidebar__pull-request-comment-actions,
+.changes-sidebar__pull-request-comment-actions-right {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.changes-sidebar__pull-request-comment-actions {
+  justify-content: space-between;
+}
+
+.changes-sidebar__pull-request-comment-actions-right {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.changes-sidebar__pull-request-merge-options {
+  --chat-config-icon-size: var(--control-icon-size);
+}
+
+.changes-sidebar__pull-request-detail .chat-detail__context-compaction > .ui-button {
+  max-width: 100%;
+}
+
+.changes-sidebar__pull-request-detail
+  .chat-detail__context-compaction
+  > .ui-button
+  .ui-button__label,
+.changes-sidebar__pull-request-detail
+  .chat-detail__context-compaction
+  > .ui-button
+  .changes-sidebar__recent-label {
+  max-width: none;
+  min-width: 0;
+  flex: 0 1 auto;
 }

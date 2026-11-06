@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { ArrowUpRight, ChevronRight, GripVertical, Link2, Pin, PinOff } from 'lucide-react'
 import { FileIcon as SymbolsFileIcon } from './SymbolIcons'
 import type { AppContainerTarget } from '../../../shared/app'
@@ -11,7 +11,9 @@ import {
 import type { RecentlyOpenedFile } from '../recentlyOpenedFiles'
 import type { PinnedRecentReference } from '../recentReferencePins'
 import { Button } from './Button'
-import { MarkdownMessage } from './MarkdownMessage'
+const MarkdownMessage = lazy(() =>
+  import('./MarkdownMessage').then(({ MarkdownMessage }) => ({ default: MarkdownMessage }))
+)
 
 type RecentReferenceListItem = PinnedRecentReference
 type RecentReferenceFile = RecentChatFileReference | RecentlyOpenedFile
@@ -129,14 +131,18 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
             />
           </button>
           {textExpanded ? (
-            <MarkdownMessage
-              className="changes-sidebar__recent-text-content changes-sidebar__recent-text-content--expanded chat-detail__message"
-              content={content}
-              localImageContainer={container}
-              localImageCwd={cwd}
-              onOpenFileLink={handleOpenFileLink}
-              preserveLineBreaks={reference.role === 'user'}
-            />
+            <Suspense
+              fallback={<span className="changes-sidebar__recent-text-content">{firstLine}</span>}
+            >
+              <MarkdownMessage
+                className="changes-sidebar__recent-text-content changes-sidebar__recent-text-content--expanded chat-detail__message"
+                content={content}
+                localImageContainer={container}
+                localImageCwd={cwd}
+                onOpenFileLink={handleOpenFileLink}
+                preserveLineBreaks={reference.role === 'user'}
+              />
+            </Suspense>
           ) : (
             <span className="changes-sidebar__recent-text-content">{firstLine}</span>
           )}

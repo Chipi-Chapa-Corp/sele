@@ -153,6 +153,79 @@ test('goal boundaries survive live checkpoints and final-only continuation turns
   assert.equal(finalOnly[0].startsTurn, true)
 })
 
+for (const goalPrompt of [undefined, { id: 'goal-prompt', text: 'Continue the goal.' }]) {
+  test(`goal steering follows prior activity with ${goalPrompt ? 'known' : 'unavailable'} goal metadata`, () => {
+    const projection = new CodexTranscriptProjection()
+    const completedProjection = new CodexTranscriptProjection()
+    let turn = { id: 'turn', status: 'inProgress', goalPrompt, items: [] }
+    const records = [
+      answer('before', 'Working on the goal.', 'commentary'),
+      tool('before-tool'),
+      { ...user('steer'), startedAtMs: 2000 },
+      answer('after', 'Following the steering.', 'commentary'),
+      user('steer-again'),
+      answer('final', 'Done.', 'final_answer')
+    ]
+    for (const record of records) {
+      turn = update(turn, turn.items.length, record)
+      compare(projection, turn)
+      if (turn.items.length < 3) continue
+      for (const status of ['inProgress', 'completed']) {
+        const snapshot = { ...turn, status }
+        const items = getChatItems(
+          [snapshot],
+          null,
+          options,
+          status === 'inProgress' ? projection : completedProjection
+        )
+        assert.deepEqual(items, getChatItems([snapshot], null, options))
+        const before = items.findIndex((item) => item.id === 'turn:working')
+        const steer = items.findIndex((item) => item.id === 'turn:steer')
+        assert.ok(before >= 0 && before < steer, 'existing activity stays above fresh steering')
+        assert.equal(items[before].status, 'worked')
+        assert.equal(items[before].items[0].content, 'Working on the goal.')
+        assert.equal(items[steer].kind, 'steering')
+        assert.equal(items[steer].editTargetId, 'turn:steer')
+        assert.equal(items[steer].createdAt, 2000)
+        if (turn.items.length >= 4) {
+          const after = items.findIndex((item) => item.id === 'turn:working:1')
+          assert.ok(after > steer, 'subsequent activity stays below steering')
+          assert.equal(items[after].items[0].content, 'Following the steering.')
+        }
+      }
+    }
+  })
+}
+
+test('steering in an empty known goal continuation is an inline follow-up', () => {
+  const items = getChatItems([
+    {
+      id: 'turn',
+      status: 'inProgress',
+      goalPrompt: { id: 'goal-prompt', text: 'Continue the goal.' },
+      items: [user('steer')]
+    }
+  ])
+  assert.equal(items[0].type, 'goalContinuation')
+  assert.equal(items[1].kind, 'steering')
+  assert.equal(items[1].editTargetId, 'turn:steer')
+})
+
+test('a completed goal answer remains above steering received at the end of the turn', () => {
+  const items = getChatItems([
+    {
+      id: 'turn',
+      status: 'completed',
+      items: [answer('final', 'Progress so far.', 'final_answer'), user('steer')]
+    }
+  ])
+  assert.deepEqual(
+    items.map((item) => item.id),
+    ['turn:final', 'turn:steer']
+  )
+  assert.equal(items[1].kind, 'steering')
+})
+
 test('promotes the live final tail and restores activity if more work follows', () => {
   const projection = new CodexTranscriptProjection()
   let turn = { id: 'turn', status: 'inProgress', items: [user('u')] }

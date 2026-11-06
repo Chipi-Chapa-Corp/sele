@@ -5,6 +5,7 @@ import { appApi } from '../appApi'
 import {
   collapseProjectGroups,
   getExpandedProjectGroupKeys,
+  getProjectDropInsertionIndex,
   restoreExpandedProjectGroups
 } from '../chatSidebarOrder'
 import { providerApi } from '../providerApi'
@@ -303,17 +304,17 @@ export function useChatListController(dependencies: ChatListControllerDependenci
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
     const projectElements = Array.from(
-      event.currentTarget.querySelectorAll<HTMLElement>(':scope > [data-project-group-key]')
+      event.currentTarget.querySelectorAll<HTMLElement>('[data-project-group-key]')
     )
-    let insertionIndex = projectElements.length
-
-    for (let index = 0; index < projectElements.length; index += 1) {
-      const bounds = projectElements[index].getBoundingClientRect()
-      if (event.clientY < bounds.top + bounds.height / 2) {
-        insertionIndex = index
-        break
-      }
-    }
+    const insertionIndex = getProjectDropInsertionIndex(
+      activeChatGroups.map((group) => group.key),
+      projectElements.map((element) => {
+        const { top, height } = element.getBoundingClientRect()
+        return { key: element.dataset.projectGroupKey!, top, height }
+      }),
+      event.clientY
+    )
+    if (insertionIndex === null) return
 
     projectDropInsertionIndexRef.current = insertionIndex
     setProjectDropInsertionIndex(insertionIndex)

@@ -260,6 +260,12 @@ if (!process.versions.electron) {
         'only the latest queued revision should reach the worker'
       )
       assert.equal(await run('window.references[0].messageId'), 'new')
+      const cachedJobs = await run('window.postedJobs.length')
+      await run(`window.holdWorker=true;renderFixture({chatKey:'first-chat',items:window.items})`)
+      assert.equal(await run('window.references.length'),300,'a warm chat restores its links in the selection render')
+      await run('new Promise(resolve=>setTimeout(resolve,50))')
+      assert.equal(await run('window.postedJobs.length'),cachedJobs,'warm navigation does not post another parser job')
+      await run('window.holdWorker=false')
       await run(`renderFixture({items:[{type:'message',id:'image',role:'user',content:'',attachments:[
         {kind:'image',name:'Screenshot',path:'/shot.png',dataUrl:'data:image/png;base64,'+'A'.repeat(100000)}
       ]}]})`)

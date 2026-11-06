@@ -171,9 +171,9 @@ export function getWorkspaceChatSidebar({
           chatState.selectedChat?.id
         )
     },
-    importedChatGroup: sidebarModel.importedChatGroup,
     chatSidebarFilter: chatState.activeChatSidebarFilter,
     chatSidebarTabs: chatState.chatSidebarTabs,
+    hasWorkingChats: sidebarPresentation.hasWorkingChats,
     chatReadState: sidebarModel.chatReadState,
     handleChatSidebarFilterChange: (filter: ChatSidebarFilter) => {
       chatState.setChatSidebarFilter(filter)
@@ -185,18 +185,15 @@ export function getWorkspaceChatSidebar({
       projectState.setCollapsedCwdGroups((current) => ({ ...current, imported: false }))
       navigation.handleSelectChat(chat)
     },
-    chats: chatState.chats,
+    chatCount: chatState.chats.length,
     chromeControlTheme: chrome.chromeControlTheme,
-    displayedActiveChatGroups: sidebarModel.displayedActiveChatGroups,
-    doneChatGroup: sidebarModel.doneChatGroup,
-    filteredChats: sidebarModel.filteredChats,
+    sidebarGroups: sidebarModel.sidebarGroups,
     handleCloseSearch: navigation.handleCloseSearch,
     handleNewChat: navigation.handleNewChat,
     handleNewChatNoProject: navigation.handleNewChatNoProject,
     handleProjectDrop: listActions.handleProjectDrop,
     handleProjectStackDragOver: listActions.handleProjectStackDragOver,
     loadState: chatState.loadState,
-    pinnedChatGroup: sidebarModel.pinnedChatGroup,
     renderChatGroup: sidebarPresentation.renderSidebarChatGroup,
     renderSettingsButton: chrome.renderSettingsButton,
     renderWindowControls: chrome.renderWindowControls,

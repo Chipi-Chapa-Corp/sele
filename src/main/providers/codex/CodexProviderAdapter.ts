@@ -4474,6 +4474,51 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
   }
 
+  stopChatProcesses = (chatId: string, options: ProviderSourceOptions = {}): Promise<string[]> =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      const client = this.clients.get(
+        getContainerTargetKey(this.getThreadContainer(chatId, options))
+      )
+      if (!client?.connectionIdentity) return []
+      const root = this.threads.get(chatId)
+      const ids = new Set([
+        chatId,
+        ...(root
+          ? this.getThreadSubagents(root, this.getRenderableTurns(root)).map((agent) => agent.id)
+          : [])
+      ])
+      // Descendant ownership must survive a restart or an unopened parent transcript.
+      let cursor: string | null = null
+      const cursors = new Set<string>()
+      do {
+        const page: ThreadListResponse = await client.request('thread/list', {
+          ancestorThreadId: chatId,
+          sourceKinds: ['subAgentThreadSpawn'],
+          cursor,
+          limit: 100,
+          useStateDbOnly: true
+        })
+        for (const child of page.data) ids.add(child.id)
+        cursor = page.nextCursor
+        if (cursor && cursors.has(cursor)) throw new Error('Repeated descendant chat cursor')
+        if (cursor) cursors.add(cursor)
+      } while (cursor)
+      for (const id of ids) {
+        this.completionCoordinator.cancel(id)
+        if (
+          this.activeTurnIds.has(id) ||
+          this.pendingTurnIds.has(id) ||
+          this.pendingTurnStarts.has(id) ||
+          this.queuedTurnsByThread.get(id)?.length
+        )
+          await this.stopActiveTurn(id, { startQueuedTurn: false })
+        else if (id !== chatId && client.ownsThread(id))
+          await this.cancelSubagentInContext(chatId, id)
+        await this.getChatTerminalTasks(id, options)
+      }
+      return [...ids]
+    })
+
   stopChat = (chatId: string): Promise<ProviderChatDetail> =>
     this.runWithContainer(this.getThreadContainer(chatId), () => this.stopChatInContext(chatId))
 

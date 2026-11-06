@@ -109,6 +109,7 @@ export type WorkspaceSelectionDependencies = {
   ) => void
   selectedChatUpdatedAtRef: React.RefObject<number | null>
   setChatDetail: React.Dispatch<React.SetStateAction<ProviderChatDetail | null>>
+  chatLoadState: LoadState
   setChatLoadState: React.Dispatch<React.SetStateAction<LoadState>>
   setChatLoadError: React.Dispatch<
     React.SetStateAction<{ chatKey: string; message: string } | null>

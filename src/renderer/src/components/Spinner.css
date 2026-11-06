@@ -1,0 +1,26 @@
+.ui-spinner {
+  display: inline-flex;
+  contain: strict;
+  will-change: transform;
+  width: var(--control-icon-size, 1em);
+  height: var(--control-icon-size, 1em);
+  flex: none;
+  vertical-align: middle;
+  background: currentColor;
+  mask-position: center;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  animation: ui-spinner-turn 900ms linear infinite;
+}
+
+@keyframes ui-spinner-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-spinner {
+    animation: none;
+  }
+}

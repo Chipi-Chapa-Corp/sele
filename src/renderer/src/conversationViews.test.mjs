@@ -174,3 +174,132 @@ test('active, stale and historical sidebar outcomes cannot stop a different view
     )
   }
 })
+
+const deferred = () => {
+  let resolve, reject
+  const promise = new Promise((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
+}
+
+test('intent and selection share a local read, and the result is synchronous before selection', async () => {
+  const views = createConversationViews()
+  const disk = deferred()
+  let reads = 0
+  const load = () => {
+    reads++
+    return disk.promise
+  }
+  const hover = views.read(chat(), load, true)
+  const selection = views.read(chat(), load)
+  assert.equal(hover, selection)
+  await Promise.resolve()
+  assert.equal(reads, 1)
+  disk.resolve(createConversationView(detail()))
+  await hover
+  assert.equal(views.get(chat()).items.at(-1).content, 'Answer')
+  await views.read(chat(), load)
+  assert.equal(reads, 1, 'warm views do not hit disk')
+})
+
+test('speculative reads are bounded, selected reads are not blocked, and failures can retry', async () => {
+  const views = createConversationViews()
+  const disks = [deferred(), deferred(), deferred()]
+  const pending = disks
+    .slice(0, 2)
+    .map((disk, i) => views.read(chat(String(i)), () => disk.promise, true))
+  let extraReads = 0
+  const load = () => {
+    extraReads++
+    return disks[2].promise
+  }
+  assert.equal(await views.read(chat('2'), load, true), null)
+  assert.equal(extraReads, 0)
+  const selection = views.read(chat('2'), load)
+  await Promise.resolve()
+  assert.equal(extraReads, 1)
+  disks[2].reject(new Error('Disk failed'))
+  await assert.rejects(selection, /Disk failed/)
+  assert.equal(await views.read(chat('2'), async () => null, true), null)
+  disks[0].resolve(null)
+  disks[1].resolve(null)
+  await Promise.all(pending)
+  await views.read(chat('2'), async () => createConversationView(detail('2')), true)
+  assert.equal(views.has(chat('2')), true)
+})
+
+test('late speculative replies cannot cross an account reset or erase a newer pending read', async () => {
+  const views = createConversationViews()
+  const oldDisk = deferred(),
+    newDisk = deferred()
+  const oldRead = views.read(chat(), () => oldDisk.promise, true)
+  views.clear()
+  const newRead = views.read(chat(), () => newDisk.promise, true)
+  oldDisk.resolve(createConversationView(detail('one', { title: 'Old account' })))
+  assert.equal(await oldRead, null)
+  assert.equal(views.has(chat()), false)
+  assert.equal(
+    views.read(chat(), () => {
+      throw Error('Duplicated read')
+    }),
+    newRead
+  )
+  newDisk.resolve(createConversationView(detail('one', { title: 'New account' })))
+  await newRead
+  assert.equal(views.get(chat()).items.at(-1).content, 'Answer')
+})
+
+test('late local reads cannot roll back live data or install a different source', async () => {
+  const views = createConversationViews(),
+    disk = deferred()
+  const read = views.read(chat(), () => disk.promise, true)
+  views.install('codex', [
+    detail('one', { items: [{ id: 'live', type: 'message', role: 'user', content: 'Live' }] })
+  ])
+  disk.resolve(createConversationView(detail()))
+  await read
+  assert.equal(views.get(chat()).items[0].content, 'Live')
+  views.clear()
+  assert.equal(await views.read(chat(), async () => createConversationView(detail('wrong'))), null)
+  assert.equal(
+    await views.read(chat(), async () =>
+      createConversationView(
+        detail('one', { container: { kind: 'container', tool: 'ssh', name: 'remote' } })
+      )
+    ),
+    null
+  )
+  assert.equal(views.has(chat()), false)
+})
+
+test('the persistent renderer opening registry cannot retain complete large tool transcripts', () => {
+  const views = createConversationViews()
+  const input = detail('large', {
+    items: [
+      { id: 'prompt', type: 'message', role: 'user', content: 'Inspect' },
+      {
+        id: 'work',
+        type: 'working',
+        status: 'worked',
+        items: [{ id: 'tool', type: 'tool', name: 'exec_command', output: 'output'.repeat(100000) }]
+      },
+      { id: 'answer', type: 'message', role: 'assistant', content: 'Answer '.repeat(100000) }
+    ]
+  })
+  views.install('codex', [input])
+  const opening = views.get(chat('large'))
+  assert.ok(JSON.stringify(opening).length < 20000)
+  assert.equal(opening.items[1].itemCount, 1)
+  assert.deepEqual(opening.items[1].items, [])
+  assert.equal(opening.items[2].contentCharacterCount, input.items[2].content.length)
+  assert.equal(opening.items[2].contentLoaded, false)
+  assert.ok(opening.items[2].content.endsWith(input.items[2].content.slice(-8192)))
+  assert.equal(
+    input.items[1].items[0].output.length,
+    600000,
+    'full source remains available in the separate history cache'
+  )
+  assert.equal(input.items[2].content.length, 700000)
+})

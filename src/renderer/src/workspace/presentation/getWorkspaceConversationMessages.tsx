@@ -76,7 +76,9 @@ export function getWorkspaceConversationMessages({
     renderChatTurn: turnRendering.renderChatTurn,
     renderSubagentChatTurn: turnRendering.renderSubagentChatTurn,
     renderedChatTurns: conversation.renderedChatTurns,
-    selectedChat: chatState.selectedChat,
+    selectedChat: chatState.selectedChat
+      ? { id: chatState.selectedChat.id, providerId: chatState.selectedChat.providerId }
+      : null,
     selectedChatCommitMarkers: session.selectedChatCommitMarkers,
     selectedChatKey: session.selectedChatKey,
     selectedChatSubagents: session.selectedChatSubagents,

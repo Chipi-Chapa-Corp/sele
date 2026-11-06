@@ -35,7 +35,7 @@ const extract = (path, name, effectMarker) => {
   }
   visit(source)
   assert.ok(expression)
-  return ts.transpile(`globalThis.callback = ${expression}`, { target: ts.ScriptTarget.ES2022 })
+  return ts.transpile(`globalThis.startTransition ??= (update) => update(); globalThis.callback = ${expression}`, { target: ts.ScriptTarget.ES2022 })
 }
 const scrollCode = extract(
   './workspace/useChatInteractionController.tsx',

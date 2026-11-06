@@ -2,21 +2,25 @@ import { useEffect, useState } from 'react'
 import type {
   AppContainerTarget,
   AppGitHubPullRequest,
-  AppGitHubPullRequestDetail
+  AppGitHubPullRequestDetail,
+  AppGitHubPullRequestState
 } from '../../../shared/app'
 import type { ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { useStableProps } from './stableProps'
 
 export function useGitHubPullRequest({
   active,
   cwd,
   container,
-  repository
+  repository,
+  onUpdated
 }: {
   active: boolean
   cwd: string | null
   container?: AppContainerTarget | null
   repository: string | null
+  onUpdated?: () => void
 }) {
   const scope = JSON.stringify([container ?? null, cwd, repository])
   const [selection, setSelection] = useState<{ scope: string; pr: AppGitHubPullRequest } | null>(
@@ -27,10 +31,14 @@ export function useGitHubPullRequest({
     Record<string, { body: string; comments: ProviderReviewComment[]; commitId: string | null }>
   >({})
   const draftKey = JSON.stringify([scope, selected?.number])
+  const [commitReview, setCommitReview] = useState<{ key: string; sha: string } | null>(null)
   const reviewDraft = drafts[draftKey] ?? { body: '', comments: [], commitId: null }
   const [version, setVersion] = useState(0)
-  const key = JSON.stringify([scope, selected?.number, version])
+  const [filesVersion, setFilesVersion] = useState(0)
+  const identity = JSON.stringify([scope, selected?.number])
+  const key = JSON.stringify([identity, version])
   const [response, setResponse] = useState<{
+    identity: string
     key: string
     result: AppGitHubPullRequestDetail | null
     error: string | null
@@ -38,8 +46,9 @@ export function useGitHubPullRequest({
 
   // Forget selection when its project or repository disappears, including a switch back later.
   useEffect(() => {
+    if (!selection || selection.scope === scope) return
     setSelection((current) => (current?.scope === scope ? current : null))
-  }, [scope])
+  }, [scope, selection])
 
   const number = selected?.number
   useEffect(() => {
@@ -48,40 +57,66 @@ export function useGitHubPullRequest({
     const load = async () => {
       try {
         const result = await appApi.getGitHubPullRequest({ cwd, container, repository, number })
-        if (current) setResponse({ key, result, error: null })
+        if (current) setResponse({ identity, key, result, error: null })
       } catch (error) {
         if (current)
-          setResponse({
+          setResponse((previous) => ({
+            identity,
             key,
-            result: null,
+            result: previous?.identity === identity ? previous.result : null,
             error: error instanceof Error ? error.message : String(error)
-          })
+          }))
       }
     }
     void load()
     return () => {
       current = false
     }
-  }, [active, cwd, container, repository, number, key])
+  }, [active, cwd, container, repository, number, identity, key])
 
   const matches = response?.key === key
-  return {
-    selected,
-    cwd,
-    container,
-    reviewDraft,
-    setReviewDraft: (draft: typeof reviewDraft) =>
-      setDrafts((current) => ({ ...current, [draftKey]: draft })),
-    result: matches ? response.result : null,
-    error: matches ? response.error : null,
-    loading: !!selected && (!matches || (!response.result && !response.error)),
-    open: (pr: AppGitHubPullRequest) => setSelection({ scope, pr }),
-    close: () => {
-      setSelection(null)
-      setResponse(null)
+  const result = response?.identity === identity ? response.result : null
+  return useStableProps(
+    {
+      selected,
+      cwd,
+      container,
+      reviewDraft,
+      filesVersion,
+      reviewCommit: commitReview?.key === draftKey ? commitReview.sha : null,
+      openCommit: (sha: string) => setCommitReview({ key: draftKey, sha }),
+      closeCommit: () => setCommitReview(null),
+      setReviewDraft: (draft: typeof reviewDraft) =>
+        setDrafts((current) => ({ ...current, [draftKey]: draft })),
+      result,
+      error: matches ? response.error : null,
+      loading: !!selected && !result && (!matches || !response.error),
+      refreshing: !!selected && !!result && !matches,
+      open: (pr: AppGitHubPullRequest) => setSelection({ scope, pr }),
+      close: () => {
+        if (result && selected && result.state !== selected.state) onUpdated?.()
+        setSelection(null)
+        setResponse(null)
+      },
+      refreshDiscussion: (nextState?: AppGitHubPullRequestState) => {
+        if (nextState) {
+          setResponse((previous) =>
+            previous?.identity === identity && previous.result
+              ? { ...previous, result: { ...previous.result, state: nextState } }
+              : previous
+          )
+        }
+        setVersion((value) => value + 1)
+        onUpdated?.()
+      },
+      refresh: () => {
+        setVersion((value) => value + 1)
+        setFilesVersion((value) => value + 1)
+        onUpdated?.()
+      }
     },
-    refresh: () => setVersion((value) => value + 1)
-  }
+    { nested: ['reviewDraft'] }
+  )
 }
 
 export type GitHubPullRequestDetailState = ReturnType<typeof useGitHubPullRequest>

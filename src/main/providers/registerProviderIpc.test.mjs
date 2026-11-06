@@ -214,6 +214,9 @@ test('opening records renderer-prepared pages and cached IPC preserves source va
   assert.equal(await read({}, 'codex', 'chat', { container: { kind: 'host' } }), null)
   assert.equal(scopes[0][0], 'codex')
   assert.equal(scopes[0][2].container.kind, 'host')
+  await read({}, 'codex', 'chat', { container: { kind: 'host' }, opening: true })
+  assert.equal(scopes[1][2].opening, true)
+  assert.throws(() => read({}, 'codex', 'chat', { opening: 'invalid' }))
   assert.throws(() => read({}, 'invalid-provider', 'chat'))
   assert.throws(() => read({}, 'codex', 'chat', { container: { kind: 'invalid' } }))
 })
@@ -239,7 +242,7 @@ test('local known-chat listing returns views while native discovery is unavailab
   assert.equal(page.chats[0].id, 'known')
 })
 
-test('processed background updates deliver a ready view without requiring a selected transcript', () => {
+test('processed background updates deliver metadata without transferring an unopened transcript', () => {
   const h = setup()
   h.harness.publish({
     providerId: 'codex',
@@ -250,12 +253,14 @@ test('processed background updates deliver a ready view without requiring a sele
     detail: {
       id: 'background',
       revision: 1,
-      items: [{ type: 'message', id: 'u', role: 'user', content: 'Background message' }]
+      items: [
+        { type: 'message', id: 'u', role: 'user', content: 'Background message'.repeat(100_000) }
+      ]
     }
   })
   assert.equal(h.sent[0].event.detail, null)
-  assert.equal(h.sent[0].event.conversationView.conversationView, true)
-  assert.equal(h.sent[0].event.conversationView.items[0].content, 'Background message')
+  assert.equal(h.sent[0].event.conversationView, undefined)
+  assert.ok(JSON.stringify(h.sent[0].event).length < 1000)
 })
 
 test('first processing commits its durable view before replying, and discovery attaches known views', async () => {
@@ -287,9 +292,12 @@ test('first processing commits its durable view before replying, and discovery a
     chats: [{ id: 'unknown', providerId: 'codex' }],
     nextCursor: null
   })
-  h.harness.getConversationViews = async () => [view]
+  h.harness.getConversationViews = async () =>
+    assert.fail('listing must not hydrate saved transcripts')
   const discovered = await h.harness.handlers.get(channels.getChats)({}, 'codex', {})
-  assert.equal(discovered.conversationViews[0], view)
+  assert.equal(discovered.conversationViews, undefined)
+  h.harness.getCachedChat = async () => view
+  assert.equal(await h.harness.handlers.get(channels.getCachedChat)({}, 'codex', 'unknown'), view)
 })
 
 test('subagent IPC bounds a long transcript and serves exact older windows', async () => {
@@ -472,12 +480,132 @@ test('a stalled background chat cannot block the viewed Claude chat or lose its 
   assert.equal(h.sent[2].event.detail, null)
 })
 
-test('an unacknowledged update with no queued successor does not report a streaming stall', () => {
+test('a lost final acknowledgment retries the full completion without a queued successor', () => {
   const h = setup()
   h.publish(1)
-  h.expire()
-  assert.equal(h.harness.logs.length, 0)
+  h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, true)
   h.publish(2, true)
+  const original = h.sent[1].event
+  assert.equal(original.detail.baseRevision, 1)
+  h.expire()
+  const retry = h.sent[2].event
+  assert.notEqual(retry.sequence, original.sequence)
+  assert.equal(retry.detail.revision, 2)
+  assert.equal(retry.detail.baseRevision, null)
+  assert.equal(retry.turnCompleted, true)
+  assert.equal(h.harness.logs[0][2].pendingChatCount, 0)
+  h.emit(channels.chatUpdateAcknowledged, original.sequence, true)
+  assert.equal(h.timers.size, 1, 'the abandoned sequence cannot acknowledge its retry')
+  h.emit(channels.chatUpdateAcknowledged, retry.sequence, true)
+  assert.equal(h.timers.size, 0)
+})
+
+test('a replacement listener immediately replays the latest update without an old cleanup or timer', () => {
+  const h = setup()
+  h.publish(1)
+  const originalSequence = h.sent[0].event.sequence
+  h.publish(2, true)
+  h.emit(channels.chatUpdatesReady)
+  assert.equal(h.sent.length, 2)
+  const replay = h.sent[1].event
+  assert.notEqual(replay.sequence, originalSequence)
+  assert.equal(replay.detail.revision, 2)
+  assert.equal(replay.detail.baseRevision, null)
+  assert.equal(replay.turnCompleted, true)
+  h.emit(channels.chatUpdateAcknowledged, originalSequence, true)
+  assert.equal(h.timers.size, 1)
+  h.emit(channels.chatUpdateAcknowledged, replay.sequence, true)
+  assert.equal(h.timers.size, 0)
+})
+
+test('failed reloads and renderer exits suspend delivery and replay the latest completion on recovery', () => {
+  for (const suspend of [
+    (h) => h.emit(channels.chatUpdatesStopped),
+    (h) => h.contents.emit('render-process-gone'),
+    (h) => h.contents.emit('did-start-navigation', {}, 'http://localhost:5173', false, true)
+  ]) {
+    const h = setup()
+    h.publish(1)
+    h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, true)
+    h.publish(2)
+    const abandonedSequence = h.sent[1].event.sequence
+    assert.equal(h.sent[1].event.detail.baseRevision, 1)
+    suspend(h)
+    assert.equal(h.timers.size, 0)
+    h.publish(3, true)
+    h.publish(4) // A later active turn must not erase the completion signal.
+    h.expire()
+    assert.equal(h.sent.length, 2, 'a failed bootstrap has no consumer to send to')
+    assert.equal(h.harness.logs.length, 0)
+    h.emit(channels.chatUpdatesReady)
+    assert.equal(h.sent.length, 3)
+    const recovered = h.sent[2].event
+    assert.equal(recovered.detail.revision, 4)
+    assert.equal(recovered.detail.baseRevision, null)
+    assert.equal(recovered.turnCompleted, true)
+    h.emit(channels.chatUpdateAcknowledged, abandonedSequence, true)
+    assert.equal(h.timers.size, 1)
+    h.emit(channels.chatUpdateAcknowledged, recovered.sequence, true)
+    assert.equal(h.timers.size, 0)
+  }
+})
+
+test('resubscribing preserves a sole unacknowledged completion even without provider activity', () => {
+  const h = setup()
+  h.publish(1, true)
+  h.emit(channels.chatUpdatesStopped)
+  h.emit(channels.chatUpdatesReady)
+  assert.equal(h.sent.length, 2)
+  assert.equal(h.sent[1].event.detail.revision, 1)
+  assert.equal(h.sent[1].event.turnCompleted, true)
+  assert.equal(h.sent[1].event.detail.baseRevision, null)
+})
+
+test('a new subscription forgets the previous consumer delta base even when nothing is in flight', () => {
+  const h = setup()
+  h.publish(1)
+  h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, true)
+  h.emit(channels.chatUpdatesReady)
+  h.publish(2, true)
+  assert.equal(h.sent[1].event.detail.baseRevision, null)
+  assert.equal(h.sent[1].event.detail.changedItems.length, 2)
+})
+
+test('a failed desktop reload does not pause another client watching the same chat', () => {
+  const h = setup()
+  const remoteSent = []
+  const remote = Object.assign(new EventEmitter(), {
+    id: -2,
+    isDestroyed: () => false,
+    send: (channel, event) => remoteSent.push({ channel, event })
+  })
+  const emit = (channel, ...args) => h.ipcMain.emit(channel, { sender: remote }, ...args)
+  emit(channels.chatUpdatesReady)
+  emit(channels.viewedChatChanged, 'claude', 'first-chat')
+  h.publish(1)
+  emit(channels.chatUpdateAcknowledged, remoteSent[0].event.sequence, true)
+  h.contents.emit('did-start-navigation', {}, 'http://localhost:5173', false, true)
+  h.publish(2, true)
+  assert.equal(h.sent.length, 1)
+  assert.equal(remoteSent.length, 2)
+  assert.equal(remoteSent[1].event.detail.baseRevision, 1)
+  assert.equal(remoteSent[1].event.turnCompleted, true)
+  emit(channels.chatUpdateAcknowledged, remoteSent[1].event.sequence, true)
+  assert.equal(h.timers.size, 0)
+  h.emit(channels.chatUpdatesReady)
+  assert.equal(h.sent[1].event.detail.revision, 2)
+  assert.equal(h.sent[1].event.detail.baseRevision, null)
+})
+
+test('subframe and in-place navigation preserve the current subscription and delta base', () => {
+  const h = setup()
+  h.publish(1)
+  h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, true)
+  h.contents.emit('did-start-navigation', {}, 'http://localhost:5173/#hash', true, true)
+  h.contents.emit('did-start-navigation', {}, 'about:blank', false, false)
+  h.publish(2)
+  assert.equal(h.sent.length, 2)
+  assert.equal(h.sent[1].event.detail.baseRevision, 1)
   h.expire()
   assert.equal(h.harness.logs.length, 1)
 })

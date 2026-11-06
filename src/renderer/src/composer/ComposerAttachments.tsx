@@ -87,7 +87,7 @@ export const ComposerAttachments = memo(function ComposerAttachments({
                   title={`Open ${attachment.name}`}
                   onClick={() => handleOpenAttachment(attachment)}
                 >
-                  <img src={attachment.dataUrl} alt="" />
+                  <img src={attachment.dataUrl} alt="" decoding="async" />
                 </button>
                 <Button
                   aria-label={`Remove ${attachment.name}`}

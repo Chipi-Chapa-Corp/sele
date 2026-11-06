@@ -1,3 +1,5 @@
+import { prefetchChatOpening } from '../chatOpening'
+import { Spinner } from './Spinner'
 import { useCompactLayout } from '../useCompactLayout'
 import { useProviderLabels } from '../providerLabels'
 import { isNoProjectChat, isNoProjectCwd } from '../../../shared/noProject'
@@ -9,7 +11,6 @@ import {
   GitCommitHorizontal,
   GitFork,
   GripVertical,
-  LoaderCircle,
   Mail,
   MailOpen,
   MessageSquare,
@@ -47,7 +48,7 @@ import { Button } from './Button'
 import { Input } from './Input'
 import { ProviderIcon } from './ProviderIcon'
 import './ChatListItem.css'
-import { Dropdown } from './Dropdown'
+import { ActionMenu } from './ActionMenu'
 import { providerApi } from '../providerApi'
 import { useChatTerminalStatus } from '../useChatTerminalActivity'
 import {
@@ -356,6 +357,7 @@ export const ChatListItem = memo(function ChatListItem({
         onDragStart?.(event, chat)
       }}
       onFocusCapture={(event) => {
+        if (!editingName) prefetchChatOpening(chat)
         if (editingName) {
           setDetailFocused(false)
           return
@@ -379,6 +381,7 @@ export const ChatListItem = memo(function ChatListItem({
       onContextMenu={holdActions.onContextMenu}
       onKeyDown={holdActions.onKeyDown}
       onPointerEnter={(event) => {
+        prefetchChatOpening(chat)
         if (event.pointerType === 'mouse' && window.matchMedia('(hover: hover)').matches)
           setDetailHovered(true)
       }}
@@ -419,7 +422,7 @@ export const ChatListItem = memo(function ChatListItem({
               className="chat-list-item__status-container chat-list-item__status-container--leading"
               title={statusLabels[workingStatus]}
             >
-              <LoaderCircle
+              <Spinner
                 className="app-loading-spinner chat-list-item__loading"
                 aria-label={statusLabels[workingStatus]}
               />
@@ -569,23 +572,18 @@ export const ChatListItem = memo(function ChatListItem({
               icon={<Undo2 aria-hidden="true" />}
             />
           )}
-          <Dropdown
+          <ActionMenu
             className="chat-list-item__menu"
-            appearance="inline"
-            size="small"
-            menuAlign="end"
-            value=""
-            aria-label="Chat menu"
-            title="Chat menu"
-            valueContent={
+            label="Chat menu"
+            content={
               exporting ? (
-                <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
+                <Spinner className="app-loading-spinner" aria-hidden="true" />
               ) : (
                 <Menu aria-hidden="true" />
               )
             }
             disabled={exporting}
-            menuActions={[
+            actions={() => [
               ...(sleepActionsEnabled
                 ? [
                     {
@@ -626,7 +624,6 @@ export const ChatListItem = memo(function ChatListItem({
                   ]
                 : [])
             ]}
-            onChange={() => {}}
           />
         </span>
       )}

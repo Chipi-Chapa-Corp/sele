@@ -1,6 +1,37 @@
-import type { ProviderChat, ProviderChatDetail } from './provider'
+import type { ProviderChat, ProviderChatDetail, ProviderChatItem } from './provider'
 import { getProviderChatTurns, startsProviderChatTurn } from './chatTurns.ts'
 import { asChatPreview } from './chatPreview.ts'
+
+/** Sidebar discovery must not carry a saved transcript or other detail payloads. */
+export const getConversationViewSummary = (
+  view: ProviderChatDetail
+): Omit<ProviderChat, 'providerId'> => ({
+  id: view.id,
+  accountId: view.accountId,
+  imported: view.imported,
+  noProject: view.noProject,
+  title: view.title,
+  preview: (view.items.findLast((item) => item.type === 'message')?.content ?? '')
+    .trim()
+    .slice(0, 500),
+  createdAt: view.createdAt,
+  updatedAt: view.updatedAt ?? view.createdAt,
+  cwd: view.cwd,
+  cwdKind: view.cwdKind,
+  projectCwd: view.projectCwd,
+  branchName: view.branchName,
+  worktreeBaseBranchName: view.worktreeBaseBranchName,
+  status: view.status,
+  lastTurnOutcome: view.lastTurnOutcome,
+  pinned: view.pinned,
+  sidebarOrder: view.sidebarOrder,
+  done: view.done,
+  doneAt: view.doneAt,
+  seenUpdatedAt: view.seenUpdatedAt,
+  purpose: view.purpose,
+  container: view.container,
+  pendingApproval: null
+})
 
 /** Sidebar recovery can observe an interruption before the saved viewport is refreshed. */
 export const restoreConversationView = (
@@ -57,5 +88,51 @@ export const createConversationView = (detail: ProviderChatDetail): ProviderChat
     items: latest?.items ?? [],
     itemsStartTurnIndex: (detail.itemsStartTurnIndex ?? 0) + Math.max(0, turns.length - 1),
     turnCount: detail.turnCount ?? turns.length
+  }
+}
+
+/** Readable first viewport. Full turns remain in the durable view/history pages. */
+export const createConversationOpening = (view: ProviderChatDetail): ProviderChatDetail => {
+  const items: ProviderChatItem[] = []
+  let messages = 0
+  let working = false
+  for (let index = view.items.length - 1; index >= 0; index--) {
+    const item = view.items[index]
+    if ((item.type === 'message' || item.type === 'pendingMessage') && messages < 2) {
+      const truncated = item.content.length > 8192
+      items.push({
+        id: item.id,
+        type: item.type,
+        ...(item.type === 'message' ? { role: item.role } : { kind: item.kind, editable: false }),
+        content: (truncated ? '…\n' : '') + item.content.slice(-8192),
+        contentLoaded: truncated ? false : item.contentLoaded,
+        contentTruncated: truncated || item.contentTruncated,
+        contentCharacterCount: item.contentCharacterCount ?? item.content.length,
+        createdAt: item.createdAt
+      } as ProviderChatItem)
+      messages++
+    } else if (item.type === 'working' && !working) {
+      items.push({
+        type: 'working',
+        id: item.id,
+        status: item.status,
+        failureReason: item.failureReason,
+        items: [],
+        itemsLoaded: false,
+        itemCount: item.itemCount ?? item.items.length
+      })
+      working = true
+    }
+    if (messages === 2 && working) break
+  }
+  return {
+    ...asChatPreview(view),
+    openingPreview: true,
+    items: items.reverse(),
+    subagents: undefined,
+    promptSuggestion: undefined,
+    goal: undefined,
+    tokenUsage: null,
+    contextUsage: null
   }
 }

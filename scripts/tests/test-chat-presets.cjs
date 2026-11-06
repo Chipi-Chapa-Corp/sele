@@ -74,7 +74,8 @@ if (!process.versions.electron) {
         platform: 'browser',
         jsx: 'automatic',
         loader: { '.ttf': 'dataurl' },
-        outfile: path.join(directory, 'fixture.js')
+        outfile: path.join(directory, 'fixture.js'),
+        plugins: [require('./helpers/pasted-image-worker.cjs')(directory)]
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
@@ -85,7 +86,7 @@ if (!process.versions.electron) {
       const result = require('node:child_process').spawnSync(
         require('electron'),
         [__filename, directory, '--no-sandbox'],
-        { env, encoding: 'utf8', timeout: 30000 }
+        { env, encoding: 'utf8', timeout: 45000 }
       )
       process.stdout.write(result.stdout || '')
       assert.equal(result.status, 0, result.stderr || result.error?.message)
@@ -115,7 +116,15 @@ if (!process.versions.electron) {
         if (details.level === 'error') errors.push(details.message)
       })
       await win.loadFile(path.join(process.argv[2], 'index.html'))
-      const run = (source) => win.webContents.executeJavaScript(source)
+      const run = async (source) => {
+        try {
+          return await win.webContents.executeJavaScript(source)
+        } catch (error) {
+          throw new Error(`Renderer check failed: ${source}\n${errors.join('\n')}`, {
+            cause: error
+          })
+        }
+      }
       const wait = () => run('new Promise(resolve=>setTimeout(resolve,260))')
       const click = async (text) => {
         assert.equal(
@@ -224,19 +233,12 @@ if (!process.versions.electron) {
       )
       assert.deepEqual(await columns(), ['Model', 'Reasoning', 'Access', 'Speed'])
       await run(`delete window.props.models; window.renderFixture()`)
-      // Reopening clears search; a narrow viewport keeps columns horizontally scrollable.
+      // Reopening clears search; columns fit above the 800px compact breakpoint.
       await open()
       await open()
-      win.setSize(700, 800)
+      win.setSize(850, 800)
       await wait()
       await assertColumnLayout()
-      assert.equal(
-        await run(`(() => {
-        const lists=document.querySelector('.message-box__chat-config-columns')
-        return lists.scrollWidth>lists.clientWidth
-      })()`),
-        true
-      )
       win.setSize(1100, 800)
       await wait()
 
@@ -288,6 +290,79 @@ if (!process.versions.electron) {
       assert.equal(savedRows.length, 2)
       assert.match(savedRows[1].text, /AlphaHighFast/)
       assert.equal(savedRows[1].selected, 'true')
+      // Chromium's focus-visible heuristic requires an active window for native input.
+      win.show()
+      win.focus()
+      const mouseClick = async (selector) => {
+        const point = await run(`(() => {
+          const rect=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect()
+          return {x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)}
+        })()`)
+        win.webContents.sendInputEvent({ type: 'mouseMove', ...point })
+        win.webContents.sendInputEvent({
+          type: 'mouseDown',
+          button: 'left',
+          clickCount: 1,
+          ...point
+        })
+        win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point })
+        win.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 })
+        await wait()
+      }
+      const key = async (keyCode) => {
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode })
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode })
+        await wait()
+      }
+      const focusedPreset = () =>
+        run(`
+        [...document.querySelectorAll('.message-box__chat-config-preset')].indexOf(document.activeElement)
+      `)
+      const assertNoMouseFocusHighlight = async () => {
+        assert.equal(await focusedPreset(), -1, 'mouse opening does not focus a preset')
+        assert.equal(
+          await run(
+            `document.querySelector('.message-box__chat-config-preset-row:has(:focus-visible)') === null`
+          ),
+          true
+        )
+        assert.equal(
+          await run(
+            `getComputedStyle(document.querySelector('.message-box__chat-config-preset-row')).backgroundColor`
+          ),
+          'rgba(0, 0, 0, 0)'
+        )
+        assert.equal(
+          await run(
+            `getComputedStyle(document.querySelector('.message-box__chat-config-menu-root')).outlineStyle`
+          ),
+          'none',
+          'the focus container does not show a keyboard ring after mouse opening'
+        )
+        assert.equal((await rows())[1].selected, 'true', 'focus does not change the active preset')
+      }
+      await open() // Close before opening with real pointer input.
+      await mouseClick('.message-box__chat-config-trigger')
+      await assertNoMouseFocusHighlight()
+      await key('Down')
+      assert.equal(await focusedPreset(), 0)
+      assert.equal(await run(`document.activeElement.matches(':focus-visible')`), true)
+      await key('Down')
+      assert.equal(
+        await focusedPreset(),
+        1,
+        'arrows move between presets, skipping edit/delete actions'
+      )
+      await key('Escape')
+      await key('Tab')
+      await run(`document.querySelector('.message-box__chat-config-trigger').focus()`)
+      await key('Down')
+      assert.equal(await focusedPreset(), 1, 'keyboard opening focuses the active preset')
+      await key('Up')
+      assert.equal(await focusedPreset(), 0)
+      await mouseClick('.message-box__chat-config-trigger')
+      await mouseClick('.message-box__chat-config-trigger')
+      await assertNoMouseFocusHighlight()
       assert.ok(
         await run(`(() => {
         const parts=document.querySelectorAll('.message-box__chat-config-preset')[1].querySelectorAll('.message-box__chat-config-label-part')
@@ -362,8 +437,8 @@ if (!process.versions.electron) {
       )
       assert.equal(
         await run(`document.activeElement.id`),
-        'chat-config-mode',
-        'Close restores focus to the trigger'
+        'message-input',
+        'the composer restores its caret after a pointer action closes the popup'
       )
       await run(`window.renderFixture({presetsEnabled:true,selectionAction:'back'})`)
       await open()

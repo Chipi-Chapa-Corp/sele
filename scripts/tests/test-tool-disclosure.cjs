@@ -25,6 +25,7 @@ if (!process.versions.electron) {
               items.map(item => <ChatDetailItem key={item.id} item={item} {...props} />)
             ))
             window.renderCodexItems = turns => window.renderItems(getChatItems(turns))
+            window.clickWorkingHeading = selector => flushSync(() => document.querySelector(selector).click())
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -270,7 +271,21 @@ if (!process.versions.electron) {
       document.querySelector('.chat-detail__working-load').click(); await settle()
       failedProgress = document.querySelector('details.chat-detail__working')
       const lazyFailedActivityOpened = failureLoads === 1 && failedProgress?.open && !!failedProgress.querySelector('.chat-detail__tool-group')
-      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails, tailRetained, promotedToolOpen, restoredToolOpen, innerCloseKeptSequenceOpen, nextTurnRetained, historySkippedRender, appReadStates, appActionStates, timeIconStates, appFallback, emptyTerminalStates, failedWithoutActivity, failedInitiallyClosed, failedActivityOpened, failedActivityClosed, lazyFailedActivityOpened }
+      // A click must mount the contents in its own React commit. Native toggle
+      // events are separate queued tasks and can lag behind other workspace work.
+      const completedStep = {type: 'working', id: 'completed-click', status: 'worked',
+        startedAt: 1000, completedAt: 65000, items: [thought('completed-thought')]}
+      let disclosureClicks = 0
+      renderItems([completedStep], {onDisclosureToggle: () => disclosureClicks++}); await settle()
+      clickWorkingHeading('.chat-detail__working-time .rolling-value')
+      const completedOpenedImmediately = !!document.querySelector('.chat-detail__working[open] .chat-detail__thought')
+      await settle()
+      const completedStayedOpen = document.querySelector('.chat-detail__working').open
+      clickWorkingHeading('.chat-detail__working > summary')
+      const completedClosedImmediately = !document.querySelector('.chat-detail__working').open && !document.querySelector('.chat-detail__thought')
+      await settle()
+      const completedStayedClosed = !document.querySelector('.chat-detail__working').open
+      return { snapshots, latestOpen, manuallyClosed, stayedClosed, namedHeading, namedRows, searchDetails, editDetails, tailRetained, promotedToolOpen, restoredToolOpen, innerCloseKeptSequenceOpen, nextTurnRetained, historySkippedRender, appReadStates, appActionStates, timeIconStates, appFallback, emptyTerminalStates, failedWithoutActivity, failedInitiallyClosed, failedActivityOpened, failedActivityClosed, lazyFailedActivityOpened, completedOpenedImmediately, completedStayedOpen, completedClosedImmediately, completedStayedClosed, disclosureClicks }
     })()`)
       const [empty, single, grouped, waiting, following, , emptyAgain] = result.snapshots
       assert.equal(empty.wrapper, true)
@@ -321,6 +336,11 @@ if (!process.versions.electron) {
       assert.equal(result.failedActivityOpened, true)
       assert.equal(result.failedActivityClosed, true)
       assert.equal(result.lazyFailedActivityOpened, true)
+      assert.equal(result.completedOpenedImmediately, true, 'clicking the elapsed time reveals activity in the click commit')
+      assert.equal(result.completedStayedOpen, true, 'a queued toggle must not reverse the click')
+      assert.equal(result.completedClosedImmediately, true, 'closing hides activity in the click commit')
+      assert.equal(result.completedStayedClosed, true)
+      assert.equal(result.disclosureClicks, 2, 'each click preserves the scroll disclosure callback')
       assert.equal(result.namedHeading, 'Fetched web pages, Used mcp__example__run')
       assert.match(result.namedRows, /Fetched https:\/\/example.test/)
       assert.match(result.namedRows, /Used mcp__example__run/)
@@ -359,6 +379,36 @@ if (!process.versions.electron) {
         true,
         'appending a message skips unchanged historical item renders'
       )
+      // Exercise native summary keyboard activation as well as DOM clicks.
+      window.show()
+      window.focus()
+      window.webContents.debugger.attach('1.3')
+      await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {
+        enabled: true
+      })
+      await window.webContents.executeJavaScript(
+        "document.querySelector('.chat-detail__working > summary').focus()"
+      )
+      for (const [key, code, keyCode, expectedOpen] of [
+        ['Enter', 'Enter', 13, true],
+        [' ', 'Space', 32, false]
+      ]) {
+        for (const type of ['keyDown', 'keyUp']) {
+          await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+            type,
+            key,
+            code,
+            ...(type === 'keyDown' ? { text: key === 'Enter' ? '\r' : key } : {}),
+            windowsVirtualKeyCode: keyCode
+          })
+        }
+        const keyboardState = await window.webContents.executeJavaScript(`new Promise(resolve => setTimeout(() => resolve({
+          open: document.querySelector('.chat-detail__working').open,
+          content: !!document.querySelector('.chat-detail__thought')
+        }), 30))`)
+        assert.deepEqual(keyboardState, { open: expectedOpen, content: expectedOpen }, code)
+      }
+      window.webContents.debugger.detach()
       console.log('Tool disclosure transitions and named fallbacks passed in Electron.')
       app.quit()
     })

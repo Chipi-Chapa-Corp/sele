@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { startTransition, useEffect } from 'react'
 import type { AppContainerSuggestion, AppContainerTarget } from '../../../../shared/app'
 import { providerIds } from '../../../../shared/provider'
 import { appApi } from '../../appApi'
@@ -26,6 +26,8 @@ export function useWorkspaceSources({
   projectState,
   providerState
 }: WorkspaceSourcesDependencies) {
+  // Asynchronous catalogs can settle while a large chat is visible. Let input
+  // and the next animation frame interrupt the resulting workspace render.
   useEffect(() => {
     if (!sourceState.containerSelectionReady) return
 
@@ -47,47 +49,53 @@ export function useWorkspaceSources({
       })
     ])
       .then(([suggestions, environments, chatContainers]) => {
-        if (!active) return
+        startTransition(() => {
+          if (!active) return
 
-        const currentSuggestion = suggestions.find((suggestion) => suggestion.current)
-        const currentSource = currentSuggestion
-          ? getContainerTargetFromSuggestion(currentSuggestion)
-          : ({ kind: 'host' } satisfies AppContainerTarget)
+          const currentSuggestion = suggestions.find((suggestion) => suggestion.current)
+          const currentSource = currentSuggestion
+            ? getContainerTargetFromSuggestion(currentSuggestion)
+            : ({ kind: 'host' } satisfies AppContainerTarget)
+          const initialContainer = sourceState.containerSelectionReadyRef.current
+            ? null
+            : (sourceState.storedContainerSelection ?? currentSource)
 
-        sourceState.setContainerSuggestions(suggestions)
-        sourceState.setSshEnvironments(environments)
-        sourceState.setStoredChatContainers(chatContainers)
-        sourceState.setNewSessionContainer((currentContainer) => {
-          if (!sourceState.containerSelectionReadyRef.current) {
-            const initialContainer = sourceState.storedContainerSelection ?? currentSource
-            return isContainerTargetAvailable(initialContainer, suggestions, environments)
-              ? initialContainer
+          sourceState.setContainerSuggestions(suggestions)
+          sourceState.setSshEnvironments(environments)
+          sourceState.setStoredChatContainers(chatContainers)
+          sourceState.setNewSessionContainer((currentContainer) => {
+            if (initialContainer) {
+              return isContainerTargetAvailable(initialContainer, suggestions, environments)
+                ? initialContainer
+                : currentSource
+            }
+
+            return isContainerTargetAvailable(currentContainer, suggestions, environments)
+              ? currentContainer
               : currentSource
-          }
-
-          return isContainerTargetAvailable(currentContainer, suggestions, environments)
-            ? currentContainer
-            : currentSource
+          })
+          sourceState.containerSelectionReadyRef.current = true
+          sourceState.setContainerSelectionReady(true)
         })
-        sourceState.containerSelectionReadyRef.current = true
-        sourceState.setContainerSelectionReady(true)
       })
       .catch((error: unknown) => {
-        console.error('Unable to initialize available environments.', error)
-        if (!active) return
+        startTransition(() => {
+          console.error('Unable to initialize available environments.', error)
+          if (!active) return
 
-        sourceState.setContainerSuggestions([])
-        sourceState.setSshEnvironments([])
-        sourceState.setStoredChatContainers([])
-        if (!sourceState.containerSelectionReadyRef.current) {
-          sourceState.setNewSessionContainer(
-            sourceState.storedContainerSelection ?? { kind: 'host' }
-          )
-        } else {
-          sourceState.setNewSessionContainer({ kind: 'host' })
-        }
-        sourceState.containerSelectionReadyRef.current = true
-        sourceState.setContainerSelectionReady(true)
+          sourceState.setContainerSuggestions([])
+          sourceState.setSshEnvironments([])
+          sourceState.setStoredChatContainers([])
+          if (!sourceState.containerSelectionReadyRef.current) {
+            sourceState.setNewSessionContainer(
+              sourceState.storedContainerSelection ?? { kind: 'host' }
+            )
+          } else {
+            sourceState.setNewSessionContainer({ kind: 'host' })
+          }
+          sourceState.containerSelectionReadyRef.current = true
+          sourceState.setContainerSelectionReady(true)
+        })
       })
 
     return () => {
@@ -101,10 +109,12 @@ export function useWorkspaceSources({
 
     if (!environmentId) {
       queueMicrotask(() => {
-        if (!active) return
-        sourceState.setRemoteContainerSuggestions([])
-        sourceState.setRemoteContainerSuggestionsLoading(false)
-        sourceState.setRemoteContainerSuggestionsError(null)
+        startTransition(() => {
+          if (!active) return
+          sourceState.setRemoteContainerSuggestions((current) => (current.length ? [] : current))
+          sourceState.setRemoteContainerSuggestionsLoading(false)
+          sourceState.setRemoteContainerSuggestionsError(null)
+        })
       })
       return () => {
         active = false
@@ -119,47 +129,55 @@ export function useWorkspaceSources({
     } satisfies AppContainerTarget
 
     queueMicrotask(() => {
-      if (!active) return
-      sourceState.setRemoteContainerSuggestions([])
-      sourceState.setRemoteContainerSuggestionsLoading(true)
-      sourceState.setRemoteContainerSuggestionsError(null)
+      startTransition(() => {
+        if (!active) return
+        sourceState.setRemoteContainerSuggestions((current) => (current.length ? [] : current))
+        sourceState.setRemoteContainerSuggestionsLoading(true)
+        sourceState.setRemoteContainerSuggestionsError(null)
+      })
     })
 
     appApi
       .getContainerSuggestions({ container: remoteEnvironment })
       .then((suggestions) => {
-        if (!active) return
+        startTransition(() => {
+          if (!active) return
 
-        sourceState.setRemoteContainerSuggestions(suggestions)
-        sourceState.setRemoteContainerSuggestionsError(null)
-        sourceState.setNewSessionContainer((currentContainer) => {
-          if (
-            currentContainer.kind !== 'container' ||
-            currentContainer.tool !== 'ssh' ||
-            currentContainer.name !== environmentId ||
-            currentContainer.runtime?.kind !== 'container'
-          ) {
-            return currentContainer
-          }
+          sourceState.setRemoteContainerSuggestions(suggestions)
+          sourceState.setRemoteContainerSuggestionsError(null)
+          sourceState.setNewSessionContainer((currentContainer) => {
+            if (
+              currentContainer.kind !== 'container' ||
+              currentContainer.tool !== 'ssh' ||
+              currentContainer.name !== environmentId ||
+              currentContainer.runtime?.kind !== 'container'
+            ) {
+              return currentContainer
+            }
 
-          const runtime = currentContainer.runtime
-          return suggestions.some(
-            (suggestion) => suggestion.tool === runtime.tool && suggestion.name === runtime.name
-          )
-            ? currentContainer
-            : { ...currentContainer, runtime: { kind: 'host' } }
+            const runtime = currentContainer.runtime
+            return suggestions.some(
+              (suggestion) => suggestion.tool === runtime.tool && suggestion.name === runtime.name
+            )
+              ? currentContainer
+              : { ...currentContainer, runtime: { kind: 'host' } }
+          })
         })
       })
       .catch((error) => {
-        console.error('Unable to check containers over SSH.', error)
-        if (!active) return
-        sourceState.setRemoteContainerSuggestions([])
-        sourceState.setRemoteContainerSuggestionsError(
-          getErrorMessage(error, 'Unable to check containers over SSH.')
-        )
+        startTransition(() => {
+          console.error('Unable to check containers over SSH.', error)
+          if (!active) return
+          sourceState.setRemoteContainerSuggestions((current) => (current.length ? [] : current))
+          sourceState.setRemoteContainerSuggestionsError(
+            getErrorMessage(error, 'Unable to check containers over SSH.')
+          )
+        })
       })
       .finally(() => {
-        if (active) sourceState.setRemoteContainerSuggestionsLoading(false)
+        startTransition(() => {
+          if (active) sourceState.setRemoteContainerSuggestionsLoading(false)
+        })
       })
 
     return () => {
@@ -173,30 +191,36 @@ export function useWorkspaceSources({
     const containerKey = getContainerTargetKey(container)
 
     queueMicrotask(() => {
-      if (!active) return
-      sourceState.setNewSessionSourceAvailability((currentAvailability) =>
-        currentAvailability?.containerKey === containerKey ? currentAvailability : null
-      )
+      startTransition(() => {
+        if (!active) return
+        sourceState.setNewSessionSourceAvailability((currentAvailability) =>
+          currentAvailability?.containerKey === containerKey ? currentAvailability : null
+        )
+      })
     })
 
     appApi
       .getSourceAvailability({ container })
       .then((availability) => {
-        if (!active) return
+        startTransition(() => {
+          if (!active) return
 
-        sourceState.setNewSessionSourceAvailability({ containerKey, availability, error: null })
+          sourceState.setNewSessionSourceAvailability({ containerKey, availability, error: null })
+        })
       })
       .catch((error) => {
-        console.error('Unable to check source availability.', error)
-        if (!active) return
+        startTransition(() => {
+          console.error('Unable to check source availability.', error)
+          if (!active) return
 
-        sourceState.setNewSessionSourceAvailability({
-          containerKey,
-          availability: {
-            gitAvailable: false,
-            providers: providerIds.map((providerId) => ({ providerId, available: false }))
-          },
-          error: getErrorMessage(error, 'Unable to check source availability.')
+          sourceState.setNewSessionSourceAvailability({
+            containerKey,
+            availability: {
+              gitAvailable: false,
+              providers: providerIds.map((providerId) => ({ providerId, available: false }))
+            },
+            error: getErrorMessage(error, 'Unable to check source availability.')
+          })
         })
       })
 
@@ -214,7 +238,10 @@ export function useWorkspaceSources({
 
     let active = true
     queueMicrotask(() => {
-      if (active) sourceState.setNewSessionProvider(sourceState.newSessionAvailableProviderIds[0]!)
+      startTransition(() => {
+        if (active)
+          sourceState.setNewSessionProvider(sourceState.newSessionAvailableProviderIds[0]!)
+      })
     })
 
     return () => {
@@ -232,22 +259,26 @@ export function useWorkspaceSources({
         appApi.getSshEnvironments()
       ])
         .then(([storedProjects, deletedCwds, environments]) => {
-          if (!active) return
-          projectState.setProjects(mergeProjects(storedProjects))
-          projectState.setDeletedProjectCwds(new Set(deletedCwds))
-          sourceState.setSshEnvironments(environments)
+          startTransition(() => {
+            if (!active) return
+            projectState.setProjects(mergeProjects(storedProjects))
+            projectState.setDeletedProjectCwds(new Set(deletedCwds))
+            sourceState.setSshEnvironments(environments)
+          })
         })
         .catch((error: unknown) => console.error('Unable to load projects.', error))
     }
     refresh()
     const unsubscribe = appApi.onWorkspaceUpdated(() => {
-      refresh()
-      projectState.setProjectIconsByGroup({})
-      projectState.setCwdNotesByGroup({})
-      providerState.setProviderAccountsRefresh((value) => value + 1)
-      providerState.setProviderResourcesRefresh((value) => value + 1)
-      providerState.setProviderResourcesRevision((value) => value + 1)
-      providerState.setProviderModelsRevision((value) => value + 1)
+      startTransition(() => {
+        refresh()
+        projectState.setProjectIconsByGroup({})
+        projectState.setCwdNotesByGroup({})
+        providerState.setProviderAccountsRefresh((value) => value + 1)
+        providerState.setProviderResourcesRefresh((value) => value + 1)
+        providerState.setProviderResourcesRevision((value) => value + 1)
+        providerState.setProviderModelsRevision((value) => value + 1)
+      })
     })
     return () => {
       active = false

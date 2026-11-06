@@ -2126,8 +2126,18 @@ const renderChatItems = (
         if (content || attachments.length > 0) {
           const itemId = `${turn.id}:${item.id}`
 
-          if (hasSeenInitialUserMessage) {
-            pushWorkingStep('worked', null, item.startedAtMs ?? null)
+          // Goal continuations have no opening user message. Their first user echo is
+          // steering when a goal prompt or preceding activity already started the turn.
+          if (
+            hasSeenInitialUserMessage ||
+            turn.goalPrompt ||
+            workingItemCount > 0 ||
+            pendingTimelineAnchors.length > 0 ||
+            workingStepCount > 0 ||
+            finalMessage
+          ) {
+            pushWorkingStep('worked', finalMessage, item.startedAtMs ?? null)
+            finalMessage = null
 
             chatItems.push({
               type: 'message',
@@ -2138,7 +2148,7 @@ const renderChatItems = (
               attachments,
               kind: 'steering',
               label: 'Steered with',
-              createdAt: toMilliseconds(startedAt),
+              createdAt: item.startedAtMs ?? toMilliseconds(startedAt),
               model: turn.model ?? null
             })
           } else {
@@ -2152,8 +2162,8 @@ const renderChatItems = (
               createdAt: toMilliseconds(startedAt),
               model: turn.model ?? null
             })
-            hasSeenInitialUserMessage = true
           }
+          hasSeenInitialUserMessage = true
         }
         continue
       }

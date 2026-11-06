@@ -235,16 +235,26 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
     if (menuOpen) updateMenuPosition()
   }, [menuOpen, updateMenuPosition])
 
-  const openMenu = useCallback((): void => {
-    if (sections.length === 0) return
+  const openMenu = useCallback(
+    (keyboard = false): void => {
+      if (sections.length === 0) return
 
-    updateMenuPosition()
-    if (presetsEnabled) setPresets(readChatPresets(providerId))
-    setConfiguring(false)
-    setActiveSectionId(null)
-    setOpen(true)
-    focusFirstMenuButton()
-  }, [focusFirstMenuButton, sections.length, updateMenuPosition, presetsEnabled, providerId])
+      updateMenuPosition()
+      if (presetsEnabled) setPresets(readChatPresets(providerId))
+      setConfiguring(false)
+      setActiveSectionId(null)
+      setOpen(true)
+      window.requestAnimationFrame(() => {
+        const menu = menuRef.current
+        const target = keyboard
+          ? (menu?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]:not(:disabled)') ??
+            menu?.querySelector<HTMLButtonElement>('button:not(:disabled)'))
+          : menu
+        target?.focus({ preventScroll: true })
+      })
+    },
+    [sections.length, updateMenuPosition, presetsEnabled, providerId]
+  )
 
   useEffect(() => {
     if (!menuOpen) return
@@ -295,7 +305,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
     }
 
     event.preventDefault()
-    openMenu()
+    openMenu(true)
   }
 
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -304,6 +314,37 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       event.stopPropagation()
       closeMenu()
       buttonRef.current?.focus({ preventScroll: true })
+      return
+    }
+
+    if (
+      event.key === 'ArrowDown' ||
+      event.key === 'ArrowUp' ||
+      ((event.key === 'Home' || event.key === 'End') &&
+        event.target !== modelSearchInputRef.current)
+    ) {
+      const buttons = Array.from(
+        menuRef.current?.querySelectorAll<HTMLButtonElement>(
+          '.message-box__chat-config-option:not(:disabled), ' +
+            '.message-box__chat-config-section-button:not(:disabled), ' +
+            '.message-box__chat-config-back:not(:disabled)'
+        ) ?? []
+      )
+      if (buttons.length === 0) return
+
+      event.preventDefault()
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+      const nextIndex =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? buttons.length - 1
+            : index < 0
+              ? event.key === 'ArrowDown'
+                ? 0
+                : buttons.length - 1
+              : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+      buttons[nextIndex]?.focus()
       return
     }
 
@@ -697,6 +738,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
     <div
       ref={menuRef}
       className="message-box__chat-config-menu-root"
+      tabIndex={-1}
       style={menuStyle ?? undefined}
       onKeyDown={handleMenuKeyDown}
     >

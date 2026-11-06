@@ -31,7 +31,8 @@ export const setThemePreference = (preference: AppThemePreference): void => {
   applyPreferredColorScheme()
 }
 
-export const watchSystemColorScheme = (): void => {
+export const watchSystemColorScheme = (): (() => void) => {
+  let disposed = false
   const query = window.matchMedia(colorSchemeQuery)
   const updateColorScheme = (): void => {
     systemColorScheme = getSystemColorScheme(query)
@@ -44,6 +45,7 @@ export const watchSystemColorScheme = (): void => {
   void appApi
     .getColorScheme()
     .then((scheme) => {
+      if (disposed) return
       systemColorScheme = scheme
       applyPreferredColorScheme()
     })
@@ -51,8 +53,13 @@ export const watchSystemColorScheme = (): void => {
       console.error(logPrefix, 'failed to read main process color scheme', error)
     })
 
-  appApi.onColorSchemeUpdated((scheme) => {
+  const unsubscribe = appApi.onColorSchemeUpdated((scheme) => {
     systemColorScheme = scheme
     applyPreferredColorScheme()
   })
+  return () => {
+    disposed = true
+    query.removeEventListener('change', updateColorScheme)
+    unsubscribe()
+  }
 }

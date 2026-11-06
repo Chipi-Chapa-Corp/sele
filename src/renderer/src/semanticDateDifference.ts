@@ -97,9 +97,16 @@ const notifySemanticDateNowSubscribers = (): void => {
 
 const subscribeSemanticDateNow = (listener: () => void): (() => void) => {
   semanticDateNowSubscribers.add(listener)
-  currentSemanticDateNow = Date.now()
 
   if (semanticDateNowInterval === null) {
+    // Subscribing must not change another consumer's snapshot. Activity reveals
+    // and sidebar tab changes subscribe many dates in one commit; changing the
+    // clock here forced React to synchronously rerender all existing dates.
+    if (Date.now() - currentSemanticDateNow >= semanticDateRefreshMs) {
+      queueMicrotask(() => {
+        if (semanticDateNowSubscribers.size) notifySemanticDateNowSubscribers()
+      })
+    }
     semanticDateNowInterval = setInterval(notifySemanticDateNowSubscribers, semanticDateRefreshMs)
   }
 

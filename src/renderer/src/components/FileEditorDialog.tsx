@@ -58,7 +58,8 @@ import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { Button } from './Button'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
-import { EditableUnifiedDiff, UnifiedDiff, type DiffReviewLocation } from './UnifiedDiff'
+import { UnifiedDiff, type DiffReviewLocation } from './UnifiedDiff'
+import { EditableUnifiedDiff } from './EditableUnifiedDiff'
 import { isRemoteClient } from '../runtimeCapabilities'
 import { MobileCodeEditor } from './MobileCodeEditor'
 import { useCompactLayout } from '../useCompactLayout'
@@ -1422,6 +1423,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   disabled={!openSelectionComment}
                   icon={<MessageSquare aria-hidden="true" />}
                   label="Comment"
+                  onPointerDown={(event) => event.preventDefault()}
                   onMouseDown={(event) => event.preventDefault()}
                   size="small"
                   theme="secondary"

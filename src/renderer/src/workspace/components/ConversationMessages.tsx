@@ -5,7 +5,14 @@ import { RetainedChatViews } from '../../components/RetainedChatViews'
 
 type ConversationMessagesProps = WorkspaceController['conversationMessages']
 
-export function ConversationMessages(props: ConversationMessagesProps): ReactElement {
+// A map keeps React's dev changed-props formatter from serializing both whole
+// transcripts when switching chats. The current snapshot still changes by identity.
+export function ConversationMessages({
+  view
+}: {
+  view: ReadonlyMap<'current', ConversationMessagesProps>
+}): ReactElement {
+  const props = view.get('current')!
   const loading =
     !props.chatKnown &&
     !props.activeSubagentChatView &&

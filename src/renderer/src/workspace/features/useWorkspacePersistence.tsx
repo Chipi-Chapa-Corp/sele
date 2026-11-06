@@ -44,16 +44,23 @@ export function useWorkspacePersistence({
   }, [chatState.chats])
 
   useEffect(() => {
-    chatState.selectedChatRef.current = chatState.selectedChat
-    chatState.selectedChatKeyRef.current = chatState.selectedChat
-      ? getChatKey(chatState.selectedChat)
+    const previousKey = chatState.selectedChatRef.current
+      ? getChatKey(chatState.selectedChatRef.current)
       : null
-    chatState.selectedChatUpdatedAtRef.current = chatState.selectedChat?.updatedAt ?? null
+    const committedKey = chatState.selectedChat ? getChatKey(chatState.selectedChat) : null
+    chatState.selectedChatRef.current = chatState.selectedChat
+    // A read marker for the still-visible chat may commit while another chat's
+    // transition is pending. Metadata must not replace the latest navigation intent.
+    if (previousKey !== committedKey) chatState.selectedChatKeyRef.current = committedKey
+    if (chatState.selectedChatKeyRef.current === committedKey)
+      chatState.selectedChatUpdatedAtRef.current = chatState.selectedChat?.updatedAt ?? null
   }, [chatState.selectedChat])
 
   useEffect(() => {
-    chatState.chatDetailRef.current = chatState.chatDetail
-  }, [chatState.chatDetail])
+    const committedKey = chatState.selectedChat ? getChatKey(chatState.selectedChat) : null
+    if (chatState.selectedChatKeyRef.current === committedKey)
+      chatState.chatDetailRef.current = chatState.chatDetail
+  }, [chatState.chatDetail, chatState.selectedChat?.id, chatState.selectedChat?.providerId])
 
   useEffect(() => {
     chatState.chatTurnWindowRef.current = chatState.chatTurnWindow

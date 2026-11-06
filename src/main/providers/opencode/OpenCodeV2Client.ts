@@ -9,6 +9,7 @@ import {
 } from '@opencode/client'
 import type { OpencodeClient, Session, PermissionRuleset, Part, Message } from '@opencode-ai/sdk/v2'
 import type { OpenCodeMessageWithParts } from './OpenCodeItemRenderers'
+import { chatProcessEnvironment } from '../../chatProcessOwnership.ts'
 
 // Keep Sele's transcript projection independent of the native v2 wire format.
 const nativeClients = new WeakMap<OpencodeClient, OpenCodeClient>()
@@ -397,6 +398,10 @@ export const createOpenCodeV2Client = (options: {
   }
   const prompt = async (p: Params, request?: RequestOptions) => {
     await prepare(p, request)
+    await native.session.environment(
+      { sessionID: id(p), variables: chatProcessEnvironment(id(p)) },
+      request
+    )
     if (p.system)
       await native.session.instructions.entry.put(
         { sessionID: id(p), key: 'sele.system', value: p.system },

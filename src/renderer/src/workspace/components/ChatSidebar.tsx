@@ -1,43 +1,23 @@
-import { AnimatePresence } from 'motion/react'
+import { ChatSidebarGroups } from './ChatSidebarGroups'
 import { AppUpdatePrompt } from './AppUpdatePrompt'
 import { SidebarProviderAccount } from './SidebarProviderAccount'
 import { UsageIndicator } from '../../components/UsageIndicator'
 import { getVisibleUsageBadges } from '../../usageBadges'
 import { selectBadgeBalance } from '../../accountBalances'
 import { memo, useState, type ReactElement } from 'react'
+import { useStableProps } from '../stableProps'
+import { ChatSidebarHeader } from './ChatSidebarHeader'
 import type { ChatImportPreview } from '../../../../shared/chatArchive'
 import { providerApi } from '../../providerApi'
 import { ChatImportDialog } from '../../components/ChatImportDialog'
 import type { WorkspaceController } from '../../useWorkspaceController'
-import {
-  BotMessageSquare,
-  Download,
-  LoaderCircle,
-  MessagesSquare,
-  MessageSquare,
-  MessageSquareDashed,
-  MessageSquareText,
-  Search,
-  SquarePen,
-  Settings,
-  X
-} from 'lucide-react'
-import { chatSidebarFilters, type ChatSidebarFilter } from '../../chatSidebarFilter'
+import { MessageSquare, Search, SquarePen, Settings } from 'lucide-react'
 import { ChatSleepActionsContext } from '../../chatSleep'
 import { ChatReadStateContext } from '../../manualChatReadState'
-import { SegmentedControl } from '../../components/SegmentedControl'
-
-const filterIcons = {
-  all: MessagesSquare,
-  active: MessageSquareText,
-  sleeping: MessageSquareDashed,
-  working: BotMessageSquare
-}
 import { Button } from '../../components/Button'
-import { Input } from '../../components/Input'
 import { ChatSidebarLoadingState } from '../../components/AppStatusStates'
 
-type ChatSidebarProps = WorkspaceController['chatSidebar'] & {
+export type ChatSidebarProps = WorkspaceController['chatSidebar'] & {
   mobile?: { onClose(): void; onSettings(): void }
 }
 
@@ -46,13 +26,12 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     handleImportedChat,
     chatSidebarFilter,
     chatSidebarTabs,
+    hasWorkingChats,
     chatReadState,
     handleChatSidebarFilterChange,
-    importedChatGroup,
-    chats,
+    chatCount,
+    sidebarGroups,
     chromeControlTheme,
-    displayedActiveChatGroups,
-    doneChatGroup,
     handleCloseSearch,
     handleNewChat,
     handleNewChatNoProject,
@@ -61,7 +40,6 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     loadState,
     providerAccount,
     usageIndicator,
-    pinnedChatGroup,
     renderChatGroup,
     renderSettingsButton,
     renderWindowControls,
@@ -72,6 +50,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     setSearchOpen,
     setSearchQuery
   } = props
+  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null)
   const [preview, setPreview] = useState<ChatImportPreview | null>(null)
   const [openingImport, setOpeningImport] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
@@ -86,126 +65,34 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
       setOpeningImport(false)
     }
   }
-  const filterTabs = Object.values(chatSidebarTabs).some(Boolean) && (
-    <SegmentedControl<ChatSidebarFilter>
-      aria-label="Filter conversations"
-      className="chat-home__filter-tabs"
-      size="small"
-      value={chatSidebarFilter}
-      onChange={handleChatSidebarFilterChange}
-      options={chatSidebarFilters
-        .filter(({ value }) => chatSidebarTabs[value])
-        .map(({ value, label, description }) => {
-          const Icon = filterIcons[value]
-          return {
-            value,
-            label: null,
-            ariaLabel: label,
-            title: description,
-            icon: <Icon aria-hidden="true" />
-          }
-        })}
-    />
-  )
-  const hasVisibleGroups = Boolean(
-    pinnedChatGroup || importedChatGroup || displayedActiveChatGroups.length > 0 || doneChatGroup
-  )
+  const headerProps = useStableProps({
+    chatSidebarFilter,
+    chatSidebarTabs,
+    hasWorkingChats,
+    handleChatSidebarFilterChange,
+    chromeControlTheme,
+    handleCloseSearch,
+    handleNewChat,
+    handleNewChatNoProject,
+    renderSettingsButton,
+    renderWindowControls,
+    searchInputRef,
+    searchOpen,
+    searchQuery,
+    setSearchOpen,
+    setSearchQuery,
+    mobile: props.mobile,
+    openingImport,
+    importDisabled: preview !== null,
+    onOpenImport: openImport,
+    searchLoading: sidebarSearch.loading
+  })
+
+  const hasVisibleGroups = sidebarGroups.size > 0
 
   return (
     <aside className="chat-sidebar" aria-label="Recent conversations">
-      <header className={`chat-home__header${searchOpen ? ' chat-home__header--searching' : ''}`}>
-        {renderWindowControls('darwin')}
-        {props.mobile && !searchOpen ? (
-          <div className="mobile-sidebar-heading">
-            <div className="mobile-sidebar-heading__filters">
-              {filterTabs}
-              <Button theme={chromeControlTheme} aria-label="Close sidebar" icon={<X />} callback={props.mobile.onClose} />
-            </div>
-          </div>
-        ) : searchOpen ? (
-          <>
-            <label className="sr-only" htmlFor="chat-search">
-              Search conversations
-            </label>
-            <div className="chat-home__search-field">
-              <Input
-                ref={searchInputRef}
-                id="chat-search"
-                type="search"
-                value={searchQuery}
-                placeholder="Search conversations"
-                aria-busy={sidebarSearch.loading}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') handleCloseSearch()
-                }}
-              />
-              {sidebarSearch.loading && (
-                <span
-                  className="chat-home__search-spinner"
-                  role="status"
-                  aria-label="Searching conversations"
-                >
-                  <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
-                </span>
-              )}
-            </div>
-            <Button
-              theme={chromeControlTheme}
-              aria-label="Close search"
-              aria-controls="chat-search"
-              title="Close search"
-              callback={handleCloseSearch}
-              icon={<X aria-hidden="true" />}
-            />
-          </>
-        ) : (
-          <div className="chat-home__actions">
-            <div className="chat-home__actions-left">
-              <span className="chat-home__settings-action">{renderSettingsButton()}</span>
-              <Button
-                theme={chromeControlTheme}
-                aria-label="Import chat"
-                title="Import chat"
-                disabled={openingImport || preview !== null}
-                callback={openImport}
-                icon={
-                  openingImport ? (
-                    <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
-                  ) : (
-                    <Download aria-hidden="true" />
-                  )
-                }
-              />
-            </div>
-            {filterTabs}
-            <div className="chat-home__actions-right">
-              <Button
-                theme={chromeControlTheme}
-                aria-label="New chat"
-                title="New chat"
-                callback={handleNewChat}
-                icon={<SquarePen aria-hidden="true" />}
-              />
-              <Button
-                theme={chromeControlTheme}
-                aria-label="New chat without a project"
-                title="New chat without a project"
-                callback={handleNewChatNoProject}
-                icon={<MessageSquare aria-hidden="true" />}
-              />
-              <Button
-                theme={chromeControlTheme}
-                aria-label="Search conversations"
-                aria-expanded={false}
-                title="Search conversations"
-                callback={() => setSearchOpen(true)}
-                icon={<Search aria-hidden="true" />}
-              />
-            </div>
-          </div>
-        )}
-      </header>
+      <ChatSidebarHeader {...headerProps} />
       {preview && (
         <ChatImportDialog
           preview={preview}
@@ -216,13 +103,13 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           }}
         />
       )}
-      <div className="chat-sidebar__body">
+      <div ref={setScrollParent} className="chat-sidebar__body">
         {importError && (
           <p className="chat__status" role="alert">
             {importError}
           </p>
         )}
-        {loadState === 'loading' && chats.length === 0 && (
+        {loadState === 'loading' && chatCount === 0 && (
           <ChatSidebarLoadingState label="Loading conversations" />
         )}
         {loadState === 'error' && <p className="chat__status">Unable to load chats.</p>}
@@ -249,10 +136,9 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
         >
           <ChatReadStateContext.Provider value={chatReadState}>
             <ChatSidebarGroups
-              pinnedChatGroup={pinnedChatGroup}
-              importedChatGroup={importedChatGroup}
-              displayedActiveChatGroups={displayedActiveChatGroups}
-              doneChatGroup={doneChatGroup}
+              scrollParent={scrollParent}
+              filterKey={chatSidebarFilter}
+              sidebarGroups={sidebarGroups}
               renderChatGroup={renderChatGroup}
               handleProjectDrop={handleProjectDrop}
               handleProjectStackDragOver={handleProjectStackDragOver}
@@ -276,10 +162,31 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
             mobile
           />
           <div className="mobile-sidebar-footer__actions">
-            <Button theme={chromeControlTheme} aria-label="New chat" icon={<SquarePen />} callback={handleNewChat} />
-            <Button theme={chromeControlTheme} aria-label="New chat without a project" icon={<MessageSquare />} callback={handleNewChatNoProject} />
-            <Button theme={chromeControlTheme} aria-label="Search conversations" aria-expanded={searchOpen} icon={<Search />} callback={() => setSearchOpen(true)} />
-            <Button theme={chromeControlTheme} aria-label="Open settings" icon={<Settings />} callback={props.mobile.onSettings} />
+            <Button
+              theme={chromeControlTheme}
+              aria-label="New chat"
+              icon={<SquarePen />}
+              callback={handleNewChat}
+            />
+            <Button
+              theme={chromeControlTheme}
+              aria-label="New chat without a project"
+              icon={<MessageSquare />}
+              callback={handleNewChatNoProject}
+            />
+            <Button
+              theme={chromeControlTheme}
+              aria-label="Search conversations"
+              aria-expanded={searchOpen}
+              icon={<Search />}
+              callback={() => setSearchOpen(true)}
+            />
+            <Button
+              theme={chromeControlTheme}
+              aria-label="Open settings"
+              icon={<Settings />}
+              callback={props.mobile.onSettings}
+            />
           </div>
         </div>
       ) : (
@@ -288,55 +195,6 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     </aside>
   )
 }
-
-// Split out and memoized: usage and account updates arrive during chat switches and
-// must not rerender the chat list, and list changes must not rerender the footer.
-const ChatSidebarGroups = memo(function ChatSidebarGroups({
-  pinnedChatGroup,
-  importedChatGroup,
-  displayedActiveChatGroups,
-  doneChatGroup,
-  renderChatGroup,
-  handleProjectDrop,
-  handleProjectStackDragOver
-}: Pick<
-  ChatSidebarProps,
-  | 'pinnedChatGroup'
-  | 'importedChatGroup'
-  | 'displayedActiveChatGroups'
-  | 'doneChatGroup'
-  | 'renderChatGroup'
-  | 'handleProjectDrop'
-  | 'handleProjectStackDragOver'
->): ReactElement {
-  const groups = [
-    pinnedChatGroup,
-    importedChatGroup,
-    ...displayedActiveChatGroups,
-    doneChatGroup
-  ].filter((group) => group !== null && group !== undefined)
-  const groupOrder = groups
-    .map(
-      (group) =>
-        `${group.key}:${group.chats.map((chat) => `${chat.providerId}:${chat.id}`).join(',')}`
-    )
-    .join('\n')
-
-  return (
-    <div
-      className="chat-list-stack"
-      onDragOver={handleProjectStackDragOver}
-      onDrop={handleProjectDrop}
-    >
-      {/* groupOrder drives layout changes without broadcasting each workspace render to all rows. */}
-      <AnimatePresence initial={false} mode="sync" presenceAffectsLayout={false}>
-        {groups.map((group) =>
-          renderChatGroup(group, `chat-group-${encodeURIComponent(group.key)}`, groupOrder)
-        )}
-      </AnimatePresence>
-    </div>
-  )
-})
 
 const ChatSidebarFooter = memo(function ChatSidebarFooter({
   providerAccount,

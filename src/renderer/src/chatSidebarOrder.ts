@@ -132,3 +132,19 @@ export const restoreExpandedProjectGroups = (
   })
   return nextGroups
 }
+
+/** Mounted headers can be a window into the logical project order. */
+export const getProjectDropInsertionIndex = (
+  keys: readonly string[],
+  headers: readonly { key: string; top: number; height: number }[],
+  pointerY: number
+): number | null => {
+  let insertion: number | null = null
+  for (const header of headers) {
+    const index = keys.indexOf(header.key)
+    if (index < 0) continue
+    if (pointerY < header.top + header.height / 2) return index
+    insertion = index + 1
+  }
+  return insertion
+}

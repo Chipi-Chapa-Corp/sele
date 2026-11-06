@@ -27,6 +27,19 @@ const getNodeElement = (node: Node): Element | null =>
 const isEditingTarget = (node: Node): boolean =>
   Boolean(getNodeElement(node)?.closest('input, textarea, [contenteditable="true"]'))
 
+const clearSelectionInContainer = (container: HTMLElement | null): void => {
+  const selection = window.getSelection()
+  if (
+    container &&
+    selection?.anchorNode &&
+    selection.focusNode &&
+    container.contains(selection.anchorNode) &&
+    container.contains(selection.focusNode)
+  ) {
+    selection.removeAllRanges()
+  }
+}
+
 const getSelectedQuote = (container: HTMLElement): SelectedQuote | null => {
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null
@@ -82,7 +95,7 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
 
   useEffect(() => {
     if (!enabled) {
-      window.getSelection()?.removeAllRanges()
+      clearSelectionInContainer(containerRef.current)
       const dismissFrame = window.requestAnimationFrame(() => setSelectedQuote(null))
       return () => window.cancelAnimationFrame(dismissFrame)
     }
@@ -120,7 +133,7 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
 
     const clearSelectionAndDismiss = (): void => {
       dismiss()
-      window.getSelection()?.removeAllRanges()
+      clearSelectionInContainer(containerRef.current)
     }
 
     const handlePointerDown = (event: PointerEvent): void => {
@@ -137,7 +150,7 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       // Chromium needs it for Shift+click, word selection and selected-text drags;
       // clearing it in pointerdown runs before its mousedown selection handling.
       if (!selectingWithPointer && event.isPrimary && event.button === 0) {
-        window.getSelection()?.removeAllRanges()
+        clearSelectionInContainer(container)
       }
     }
 
@@ -228,7 +241,7 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
         size="small"
         callback={() => {
           onQuote(selectedQuote.content)
-          window.getSelection()?.removeAllRanges()
+          clearSelectionInContainer(containerRef.current)
           setSelectedQuote(null)
         }}
         icon={<Quote aria-hidden="true" />}

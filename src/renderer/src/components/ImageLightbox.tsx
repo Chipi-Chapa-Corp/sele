@@ -1,5 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Copy, Download, FolderOpen, X } from 'lucide-react'
+import { type ReactNode, type ReactEventHandler, useEffect, useRef, useState } from 'react'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Download,
+  FolderOpen,
+  LoaderCircle,
+  X
+} from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { AppLocalImageOptions } from '../../../shared/app'
 import { appApi } from '../appApi'
@@ -20,6 +29,14 @@ type ImageLightboxProps = {
   onNext?: () => void
   position?: number
   count?: number
+  editor?: {
+    tools: ReactNode
+    overlay: ReactNode
+    onLoad: ReactEventHandler<HTMLImageElement>
+    copy: () => Promise<void>
+    save: () => Promise<string | null>
+    status?: string | null
+  }
   onClose: () => void
 }
 
@@ -38,16 +55,50 @@ export const ImageLightbox = ({
   onNext,
   position = 1,
   count = 1,
+  editor,
   onClose
 }: ImageLightboxProps): React.ReactElement => {
   const [copyState, setCopyState] = useState<CopyState>('idle')
+  const [copyError, setCopyError] = useState<string | null>(null)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [revealError, setRevealError] = useState<string | null>(null)
+  const [mediaSize, setMediaSize] = useState<{ url: string; width: number; height: number } | null>(
+    null
+  )
   const imageRef = useRef<HTMLImageElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef(true)
   const copyFeedbackTimerRef = useRef<number | null>(null)
   const saveFeedbackTimerRef = useRef<number | null>(null)
+
+  const fittedSize = !editor && mediaSize?.url === imageUrl ? mediaSize : null
+
+  const handleBackdropPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || !(event.target instanceof Element)) return
+    if (
+      event.target.closest(
+        'button, video, .image-lightbox__tools, .image-lightbox__status, .image-annotations, .popup-window__resize-handle'
+      )
+    )
+      return
+    const image = imageRef.current
+    if (image?.naturalWidth && image.naturalHeight) {
+      const bounds = image.getBoundingClientRect()
+      const scale = Math.min(bounds.width / image.naturalWidth, bounds.height / image.naturalHeight)
+      const width = image.naturalWidth * scale
+      const height = image.naturalHeight * scale
+      const left = bounds.left + (bounds.width - width) / 2
+      const top = bounds.top + (bounds.height - height) / 2
+      if (
+        event.clientX >= left &&
+        event.clientX <= left + width &&
+        event.clientY >= top &&
+        event.clientY <= top + height
+      )
+        return
+    }
+    onClose()
+  }
 
   useEffect(() => {
     activeRef.current = true
@@ -98,18 +149,23 @@ export const ImageLightbox = ({
   )
 
   const handleCopy = async (): Promise<void> => {
-    if (copyState === 'copying' || (mediaType === 'video' ? !path : !imageRef.current)) return
+    if (copyState === 'copying') return
 
     if (copyFeedbackTimerRef.current !== null) {
       window.clearTimeout(copyFeedbackTimerRef.current)
       copyFeedbackTimerRef.current = null
     }
+    setCopyError(null)
     setCopyState('copying')
     try {
       if (mediaType === 'video' && path) {
         await appApi.copyLocalVideo({ ...localImageOptions, path })
+      } else if (editor) {
+        await editor.copy()
       } else if (imageRef.current) {
         await copyRenderedImage(imageRef.current)
+      } else {
+        throw new Error('The preview is not ready. Try copying again.')
       }
       if (!activeRef.current) return
       setCopyState('copied')
@@ -119,7 +175,14 @@ export const ImageLightbox = ({
       }, 1000)
     } catch (error) {
       console.error('[caught:ImageLightbox:handleCopy]', error)
-      if (activeRef.current) setCopyState('error')
+      if (activeRef.current) {
+        const message =
+          error instanceof Error
+            ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
+            : ''
+        setCopyError(message || `Unable to copy this ${mediaType}. Try copying again.`)
+        setCopyState('error')
+      }
     }
   }
 
@@ -132,9 +195,12 @@ export const ImageLightbox = ({
     }
     setSaveState('saving')
     try {
-      const savedPath = await (mediaType === 'video'
-        ? appApi.saveLocalVideo
-        : appApi.saveLocalImage)({ ...localImageOptions, path })
+      const savedPath = await (editor
+        ? editor.save()
+        : (mediaType === 'video' ? appApi.saveLocalVideo : appApi.saveLocalImage)({
+            ...localImageOptions,
+            path
+          }))
       if (!activeRef.current) return
       if (!savedPath) {
         setSaveState('idle')
@@ -181,19 +247,21 @@ export const ImageLightbox = ({
       role="dialog"
       aria-label={`${name} preview`}
       aria-modal="true"
-      onPointerDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
+      onPointerDown={handleBackdropPointerDown}
     >
-      <div
-        className="image-lightbox__preview"
-        onPointerDown={(event) => {
-          if (event.target === event.currentTarget) onClose()
-        }}
-      >
+      <div className="image-lightbox__preview">
         <div className="image-lightbox__stage">
           <PopupWindow>
-            <div className="image-lightbox__frame">
+            <div
+              className="image-lightbox__frame"
+              style={
+                fittedSize
+                  ? {
+                      width: `min(${fittedSize.width}px, var(--image-lightbox-max-width), calc(var(--image-lightbox-max-height) * ${fittedSize.width / fittedSize.height}))`
+                    }
+                  : undefined
+              }
+            >
               {loading || error ? (
                 <div
                   className="image-lightbox__status"
@@ -209,9 +277,50 @@ export const ImageLightbox = ({
                   controls
                   autoPlay
                   playsInline
+                  onLoadedMetadata={(event) => {
+                    const video = event.currentTarget
+                    if (video.videoWidth && video.videoHeight)
+                      setMediaSize({
+                        url: imageUrl,
+                        width: video.videoWidth,
+                        height: video.videoHeight
+                      })
+                  }}
                 />
+              ) : editor ? (
+                <div className="image-lightbox__editable-image">
+                  <img
+                    ref={imageRef}
+                    src={imageUrl}
+                    alt={`${name} preview`}
+                    onLoad={editor.onLoad}
+                    draggable={false}
+                  />
+                  {editor.overlay}
+                </div>
               ) : (
-                <img ref={imageRef} src={imageUrl} alt={`${name} preview`} />
+                <img
+                  ref={imageRef}
+                  src={imageUrl}
+                  alt={`${name} preview`}
+                  onLoad={(event) => {
+                    const image = event.currentTarget
+                    setMediaSize({
+                      url: imageUrl,
+                      width: image.naturalWidth,
+                      height: image.naturalHeight
+                    })
+                  }}
+                />
+              )}
+              {editor && (
+                <div
+                  className="image-lightbox__tools"
+                  role="toolbar"
+                  aria-label="Image annotation tools"
+                >
+                  {editor.tools}
+                </div>
               )}
               <div className="image-lightbox__actions">
                 {!loading && !error && (mediaType === 'image' || path) && (
@@ -223,15 +332,15 @@ export const ImageLightbox = ({
                       icon={
                         copyState === 'copied' ? (
                           <Check aria-hidden="true" />
+                        ) : copyState === 'copying' ? (
+                          <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
                         ) : (
                           <Copy aria-hidden="true" />
                         )
                       }
                       size="small"
                       theme="secondary"
-                      title={
-                        copyState === 'error' ? `Unable to copy ${mediaType}` : `Copy ${mediaType}`
-                      }
+                      title={copyError ?? `Copy ${mediaType}`}
                     />
                     {canReveal && (
                       <Button
@@ -301,6 +410,16 @@ export const ImageLightbox = ({
           )}
         </div>
       </div>
+      {editor?.status && (
+        <div className="image-lightbox__copy-feedback" role="status">
+          {editor.status}
+        </div>
+      )}
+      {!editor?.status && copyState !== 'idle' && (
+        <div className="image-lightbox__copy-feedback" role={copyError ? 'alert' : 'status'}>
+          {copyError ?? (copyState === 'copying' ? `Copying ${mediaType}…` : 'Copied to clipboard')}
+        </div>
+      )}
       {count > 1 && (
         <div className="image-lightbox__position" role="status" aria-live="polite">
           {position} / {count}

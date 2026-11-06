@@ -90,3 +90,7 @@
   font-family: inherit;
   white-space: normal;
 }
+
+.chat-sidebar__deferred-row:empty {
+  height: 50px;
+}

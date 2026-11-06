@@ -1,5 +1,9 @@
 import type {
   AppGitHubPullRequestDetail,
+  AppGitHubMergeMethod,
+  AppGitHubPullRequestManagement,
+  AppGitHubPullRequestActionOptions,
+  AppGitHubPullRequestCommitOptions,
   AppGitHubPullRequestChanges,
   AppGitHubPullRequestReviewOptions,
   AppGitHubPullRequestOptions,
@@ -62,6 +66,32 @@ const stateEvents = new Set([
   'head_ref_restored'
 ])
 const timelineSchema = z.array(z.array(z.object({ event: z.string() }).passthrough()))
+const reviewEventSchema = z.object({
+  id: z.number(),
+  node_id: z.string(),
+  user: authorSchema,
+  body: z.string().nullable(),
+  submitted_at: dateSchema,
+  state: z.string()
+})
+const reviewCommentsSchema = z.array(
+  z.array(
+    z.object({
+      id: z.number(),
+      pull_request_review_id: z.number(),
+      user: authorSchema,
+      body: z.string(),
+      created_at: dateSchema,
+      path: z.string(),
+      line: z.number().nullable(),
+      original_line: z.number().nullable(),
+      start_line: z.number().nullable().optional(),
+      original_start_line: z.number().nullable().optional(),
+      side: z.enum(['LEFT', 'RIGHT']),
+      html_url: z.url()
+    })
+  )
+)
 const stateEventSchema = z.object({
   event: z.string(),
   id: z.number(),
@@ -88,7 +118,7 @@ export const getGitHubPullRequest = async (
   if (repository.toLowerCase() !== options.repository.toLowerCase())
     throw new Error('The GitHub repository changed. Refresh the pull request list.')
   const fields = Object.keys(detailSchema.shape).join(',')
-  const [pullRequestJson, viewerJson, timelineJson] = await Promise.all([
+  const [pullRequestJson, viewerJson, timelineJson, reviewCommentsJson] = await Promise.all([
     runGitHub([
       'pr',
       'view',
@@ -106,6 +136,14 @@ export const getGitHubPullRequest = async (
       '--paginate',
       '--slurp',
       `repos/${repository}/issues/${options.number}/timeline?per_page=100`
+    ]),
+    runGitHub([
+      'api',
+      '--hostname',
+      'github.com',
+      '--paginate',
+      '--slurp',
+      `repos/${repository}/pulls/${options.number}/comments?per_page=100`
     ])
   ])
   const parsed = detailSchema.safeParse(JSON.parse(pullRequestJson))
@@ -115,36 +153,55 @@ export const getGitHubPullRequest = async (
   const { comments, reviews, state, author, ...pr } = parsed.data
   const timeline = timelineSchema.safeParse(JSON.parse(timelineJson))
   if (!timeline.success) throw new Error('GitHub returned invalid pull request events.')
-  const events: AppGitHubPullRequestDetail['activity'] = timeline.data.flat().flatMap((item) => {
-    if (item.event === 'committed') {
-      const commit = commitEventSchema.safeParse(item)
-      if (!commit.success) throw new Error('GitHub returned an invalid commit event.')
+  const reviewComments = reviewCommentsSchema.safeParse(JSON.parse(reviewCommentsJson))
+  if (!reviewComments.success) throw new Error('GitHub returned invalid review comments.')
+  const reviewTimes = new Map<number, string>()
+  const events = timeline.data
+    .flat()
+    .flatMap<AppGitHubPullRequestDetail['activity'][number]>((item) => {
+      if (item.event === 'reviewed') {
+        const review = reviewEventSchema.parse(item)
+        reviewTimes.set(review.id, review.submitted_at)
+        return [
+          {
+            id: `review:${review.node_id}`,
+            kind: 'review' as const,
+            author: review.user?.login ?? null,
+            body: review.body ?? '',
+            createdAt: review.submitted_at,
+            state: review.state.toUpperCase()
+          }
+        ]
+      }
+      if (item.event === 'committed') {
+        const commit = commitEventSchema.safeParse(item)
+        if (!commit.success) throw new Error('GitHub returned an invalid commit event.')
+        return [
+          {
+            id: `commit:${commit.data.sha}`,
+            kind: 'event' as const,
+            state: 'committed',
+            author: commit.data.author.name,
+            body: commit.data.message.split('\n')[0],
+            createdAt: commit.data.committer.date,
+            commitSha: commit.data.sha
+          }
+        ]
+      }
+      if (!stateEvents.has(item.event)) return []
+      const event = stateEventSchema.safeParse(item)
+      if (!event.success) throw new Error('GitHub returned an invalid pull request event.')
       return [
         {
-          id: `commit:${commit.data.sha}`,
+          id: `event:${event.data.id}`,
           kind: 'event' as const,
-          state: 'committed',
-          author: commit.data.author.name,
-          body: commit.data.message.split('\n')[0],
-          createdAt: commit.data.committer.date,
-          commitSha: commit.data.sha
+          state: event.data.event,
+          author: event.data.actor?.login ?? null,
+          body: '',
+          createdAt: event.data.created_at
         }
       ]
-    }
-    if (!stateEvents.has(item.event)) return []
-    const event = stateEventSchema.safeParse(item)
-    if (!event.success) throw new Error('GitHub returned an invalid pull request event.')
-    return [
-      {
-        id: `event:${event.data.id}`,
-        kind: 'event' as const,
-        state: event.data.event,
-        author: event.data.actor?.login ?? null,
-        body: '',
-        createdAt: event.data.created_at
-      }
-    ]
-  })
+    })
   if (
     pr.number !== options.number ||
     pr.url.toLowerCase() !== `https://github.com/${repository}/pull/${options.number}`.toLowerCase()
@@ -167,7 +224,7 @@ export const getGitHubPullRequest = async (
       state: null
     })),
     ...reviews.flatMap((review) =>
-      review.submittedAt
+      review.submittedAt && !events.some((item) => item.id === `review:${review.id}`)
         ? [
             {
               id: `review:${review.id}`,
@@ -179,7 +236,27 @@ export const getGitHubPullRequest = async (
             }
           ]
         : []
-    )
+    ),
+    ...reviewComments.data.flat().map((comment) => ({
+      id: `review-comment:${comment.id}`,
+      author: comment.user?.login ?? null,
+      body: comment.body,
+      // Inline comments can be written before their review is submitted.
+      createdAt: [comment.created_at, reviewTimes.get(comment.pull_request_review_id)]
+        .filter((date): date is string => !!date)
+        .sort((left, right) => Date.parse(left) - Date.parse(right))
+        .at(-1)!,
+      kind: 'comment' as const,
+      state: null,
+      reviewComment: {
+        path: comment.path,
+        line: comment.line ?? comment.original_line,
+        startLine: comment.start_line ?? comment.original_start_line ?? null,
+        side: comment.side === 'LEFT' ? ('old' as const) : ('new' as const),
+        outdated: comment.line === null,
+        url: comment.html_url
+      }
+    }))
   ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
   const statusEvents =
     state === 'MERGED'
@@ -386,6 +463,24 @@ const changedFileSchema = z.object({
   patch: z.string().optional()
 })
 
+const toPullRequestFile = (
+  file: z.infer<typeof changedFileSchema>
+): AppGitHubPullRequestChanges['files'][number] => ({
+  path: file.filename,
+  previousPath: file.previous_filename ?? null,
+  kind:
+    file.status === 'added' || file.status === 'copied'
+      ? 'create'
+      : file.status === 'removed'
+        ? 'delete'
+        : file.status === 'renamed'
+          ? 'rename'
+          : 'edit',
+  diff: file.patch
+    ? `--- ${file.status === 'added' ? '/dev/null' : `a/${file.previous_filename ?? file.filename}`}\n+++ ${file.status === 'removed' ? '/dev/null' : `b/${file.filename}`}\n${file.patch}\n`
+    : ''
+})
+
 const validatePullRequestRepository = async (
   cwd: string,
   options: Pick<AppGitHubPullRequestOptions, 'repository' | 'number'>,
@@ -431,46 +526,37 @@ export const getGitHubPullRequestChanges = async (
     throw new Error('GitHub did not return all changed files. Open this pull request on GitHub.')
   return {
     commitId: after.head.sha,
-    files: files.map((file) => ({
-      path: file.filename,
-      previousPath: file.previous_filename ?? null,
-      kind:
-        file.status === 'added' || file.status === 'copied'
-          ? 'create'
-          : file.status === 'removed'
-            ? 'delete'
-            : file.status === 'renamed'
-              ? 'rename'
-              : 'edit',
-      diff: file.patch
-        ? `--- ${file.status === 'added' ? '/dev/null' : `a/${file.previous_filename ?? file.filename}`}\n+++ ${file.status === 'removed' ? '/dev/null' : `b/${file.filename}`}\n${file.patch}\n`
-        : ''
-    }))
+    files: files.map(toPullRequestFile)
   }
 }
 
-export const gitHubPullRequestReviewSchema = z.object({
-  commitId: shaSchema,
-  body: z.string().trim().min(1).max(65536),
-  comments: z.array(
-    z
-      .object({
-        id: z.string(),
-        path: z
-          .string()
-          .min(1)
-          .refine(
-            (path) =>
-              !path.startsWith('/') && !path.split('/').includes('..') && !path.includes('\0')
-          ),
-        comment: z.string().trim().min(1).max(65536),
-        line: z.number().int().positive(),
-        endLine: z.number().int().positive().optional(),
-        side: z.enum(['old', 'new'])
-      })
-      .refine((comment) => comment.endLine === undefined || comment.endLine >= comment.line)
+export const gitHubPullRequestReviewSchema = z
+  .object({
+    commitId: shaSchema,
+    body: z.string().max(65536),
+    comments: z.array(
+      z
+        .object({
+          id: z.string(),
+          path: z
+            .string()
+            .min(1)
+            .refine(
+              (path) =>
+                !path.startsWith('/') && !path.split('/').includes('..') && !path.includes('\0')
+            ),
+          comment: z.string().trim().min(1).max(65536),
+          line: z.number().int().positive(),
+          endLine: z.number().int().positive().optional(),
+          side: z.enum(['old', 'new'])
+        })
+        .refine((comment) => comment.endLine === undefined || comment.endLine >= comment.line)
+    )
+  })
+  .refine(
+    (review) => !!review.body.trim() || review.comments.length > 0,
+    'Enter a comment before posting.'
   )
-})
 
 export const submitGitHubPullRequestReview = async (
   cwd: string,
@@ -508,4 +594,199 @@ export const submitGitHubPullRequestReview = async (
     ['api', '--hostname', 'github.com', '--method', 'POST', `${endpoint}/reviews`, '--input', '-'],
     JSON.stringify(payload)
   )
+}
+
+const managementQuery = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){
+  viewerDefaultMergeMethod viewerPermission mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
+  pullRequest(number:$number){headRefOid state isDraft mergeable viewerCanUpdate
+    commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:1){totalCount}}}}}}
+}}`
+const managementSchema = z.object({
+  data: z.object({
+    repository: z.object({
+      viewerDefaultMergeMethod: z.enum(['MERGE', 'SQUASH', 'REBASE']).nullable(),
+      viewerPermission: z.string().nullable(),
+      mergeCommitAllowed: z.boolean(),
+      squashMergeAllowed: z.boolean(),
+      rebaseMergeAllowed: z.boolean(),
+      pullRequest: z.object({
+        headRefOid: shaSchema,
+        state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
+        isDraft: z.boolean(),
+        mergeable: z.string(),
+        viewerCanUpdate: z.boolean(),
+        commits: z.object({
+          nodes: z.array(
+            z.object({
+              commit: z.object({
+                statusCheckRollup: z
+                  .object({
+                    state: z.enum(['SUCCESS', 'PENDING', 'EXPECTED', 'ERROR', 'FAILURE']),
+                    contexts: z.object({ totalCount: z.number().int().nonnegative() })
+                  })
+                  .nullable()
+              })
+            })
+          )
+        })
+      })
+    })
+  })
+})
+
+export const getGitHubPullRequestManagement = async (
+  cwd: string,
+  options: AppGitHubPullRequestOptions,
+  runGit: GitRunner,
+  runGitHub: GitHubRunner
+): Promise<AppGitHubPullRequestManagement> => {
+  await validatePullRequestRepository(cwd, options, runGit)
+  const [owner, name] = options.repository.split('/')
+  const {
+    data: { repository: repo }
+  } = managementSchema.parse(
+    JSON.parse(
+      await runGitHub([
+        'api',
+        '--hostname',
+        'github.com',
+        'graphql',
+        '-f',
+        `query=${managementQuery}`,
+        '-f',
+        `owner=${owner}`,
+        '-f',
+        `name=${name}`,
+        '-F',
+        `number=${options.number}`
+      ])
+    )
+  )
+  const methods: AppGitHubMergeMethod[] = []
+  if (repo.mergeCommitAllowed) methods.push('merge')
+  if (repo.squashMergeAllowed) methods.push('squash')
+  if (repo.rebaseMergeAllowed) methods.push('rebase')
+  const preferred = repo.viewerDefaultMergeMethod?.toLowerCase() as AppGitHubMergeMethod | undefined
+  const pr = repo.pullRequest
+  const rollup = pr.commits.nodes[0]?.commit.statusCheckRollup
+  return {
+    headSha: pr.headRefOid,
+    mergeMethods: methods,
+    defaultMergeMethod: preferred && methods.includes(preferred) ? preferred : (methods[0] ?? null),
+    canMerge:
+      pr.state === 'OPEN' &&
+      !pr.isDraft &&
+      pr.mergeable !== 'CONFLICTING' &&
+      ['ADMIN', 'MAINTAIN', 'WRITE'].includes(repo.viewerPermission ?? '') &&
+      methods.length > 0,
+    canClose: pr.state === 'OPEN' && pr.viewerCanUpdate,
+    checks: !rollup
+      ? 'none'
+      : rollup.state === 'SUCCESS'
+        ? 'success'
+        : ['ERROR', 'FAILURE'].includes(rollup.state)
+          ? 'failure'
+          : 'pending',
+    checkCount: rollup?.contexts.totalCount ?? 0
+  }
+}
+
+export const gitHubPullRequestActionSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('comment'),
+    body: z
+      .string()
+      .max(65536)
+      .refine((body) => !!body.trim(), 'Enter a comment before posting.')
+  }),
+  z.object({ action: z.literal('close') }),
+  z.object({
+    action: z.literal('merge'),
+    method: z.enum(['merge', 'squash', 'rebase']),
+    headSha: shaSchema
+  })
+])
+
+export const performGitHubPullRequestAction = async (
+  cwd: string,
+  options: AppGitHubPullRequestActionOptions,
+  runGit: GitRunner,
+  runGitHub: GitHubRunner
+): Promise<void> => {
+  const action = gitHubPullRequestActionSchema.parse(options)
+  const endpoint = await validatePullRequestRepository(cwd, options, runGit)
+  const send = async (method: string, path: string, payload: unknown) =>
+    runGitHub(
+      ['api', '--hostname', 'github.com', '--method', method, path, '--input', '-'],
+      JSON.stringify(payload)
+    )
+  if (action.action === 'comment') {
+    await send('POST', endpoint.replace('/pulls/', '/issues/') + '/comments', { body: action.body })
+    return
+  }
+  if (action.action === 'close') {
+    const pr = z
+      .object({ state: z.enum(['open', 'closed']), merged: z.boolean() })
+      .parse(JSON.parse(await runGitHub(['api', '--hostname', 'github.com', endpoint])))
+    if (pr.merged) throw new Error('This pull request has already been merged.')
+    if (pr.state === 'closed') return
+    await send('PATCH', endpoint, { state: 'closed' })
+    return
+  }
+  const management = await getGitHubPullRequestManagement(cwd, options, runGit, runGitHub)
+  if (management.headSha !== action.headSha)
+    throw new Error('The pull request has new commits. Refresh it before merging.')
+  if (!management.canMerge || !management.mergeMethods.includes(action.method))
+    throw new Error(
+      'This pull request cannot be merged with the selected method. Refresh its status.'
+    )
+  const result = z
+    .object({ merged: z.boolean(), message: z.string().optional() })
+    .parse(
+      JSON.parse(
+        await send('PUT', endpoint + '/merge', { sha: action.headSha, merge_method: action.method })
+      )
+    )
+  if (!result.merged) throw new Error(result.message || 'GitHub could not merge this pull request.')
+}
+
+export const getGitHubPullRequestCommitChanges = async (
+  cwd: string,
+  options: AppGitHubPullRequestCommitOptions,
+  runGit: GitRunner,
+  runGitHub: GitHubRunner
+): Promise<AppGitHubPullRequestChanges> => {
+  const sha = shaSchema.parse(options.commitSha)
+  await validatePullRequestRepository(cwd, options, runGit)
+  const timeline = timelineSchema.parse(
+    JSON.parse(
+      await runGitHub([
+        'api',
+        '--hostname',
+        'github.com',
+        '--paginate',
+        '--slurp',
+        `repos/${options.repository}/issues/${options.number}/timeline?per_page=100`
+      ])
+    )
+  )
+  if (!timeline.flat().some((item) => item.event === 'committed' && item.sha === sha))
+    throw new Error('This commit does not belong to the pull request.')
+  const pages = z
+    .array(z.object({ sha: shaSchema, files: z.array(changedFileSchema) }))
+    .parse(
+      JSON.parse(
+        await runGitHub([
+          'api',
+          '--hostname',
+          'github.com',
+          '--paginate',
+          '--slurp',
+          `repos/${options.repository}/commits/${sha}?per_page=100`
+        ])
+      )
+    )
+  if (!pages.length || pages.some((page) => page.sha !== sha))
+    throw new Error('GitHub returned a different commit snapshot.')
+  return { commitId: sha, files: pages.flatMap((page) => page.files).map(toPullRequestFile) }
 }

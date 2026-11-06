@@ -7,11 +7,10 @@ export const MotionListItem = forwardRef<
   HTMLDivElement,
   {
     children: ReactNode
-    order: string
     disabled?: boolean
     popLayout?: boolean
   }
->(function MotionListItem({ children, order, disabled = false, popLayout = false }, ref) {
+>(function MotionListItem({ children, disabled = false, popLayout = false }, ref) {
   const present = useIsPresent()
   const reduced = useReducedMotionPreference()
   const elementRef = useRef<HTMLDivElement>(null)
@@ -19,9 +18,10 @@ export const MotionListItem = forwardRef<
   const content = (
     <motion.div
       ref={elementRef}
-      layout={reduced || disabled ? false : 'position'}
-      layoutDependency={order}
-      initial={reduced ? false : { opacity: 0, x: -8 }}
+      // Layout projection reads document scroll/layout for every row. A bulk
+      // sidebar filter must not measure the active transcript through that tree.
+      // Keep compositor-friendly enter/exit motion; normal flow owns positions.
+      initial={reduced || disabled ? false : { opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: reduced ? 0 : -10 }}
       transition={{ duration: reduced ? 0 : 0.18, ease: 'easeOut' }}

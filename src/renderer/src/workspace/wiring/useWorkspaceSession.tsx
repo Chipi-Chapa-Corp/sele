@@ -143,6 +143,7 @@ export function useWorkspaceSession({
     cacheRecentChatDetail: chatCache.cacheRecentChatDetail,
     selectedChatUpdatedAtRef: chatState.selectedChatUpdatedAtRef,
     setChatDetail: chatState.setChatDetail,
+    chatLoadState: chatState.chatLoadState,
     setChatLoadState: chatState.setChatLoadState,
     setChatLoadError: chatState.setChatLoadError,
     markChatSeenAt: chatRead.markChatSeenAt,

@@ -1,3 +1,4 @@
+import { useUncommittedPatchFilter } from './useUncommittedPatchFilter'
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useAccountUsageState } from './useAccountUsageState'
 import { reuseChatSnapshotItems } from '../chatSnapshotItems'
@@ -15,6 +16,8 @@ import type { AppAction } from '../actions'
 import { getAppActionsForProject, getAppActionKeybindingFromEvent } from '../actions'
 import { appApi } from '../appApi'
 import { providerApi } from '../providerApi'
+import { readChatOpening } from '../chatOpening'
+import { conversationViews } from '../conversationViews'
 import { terminalApi } from '../terminalApi'
 import {
   clearChatSearchHighlights,
@@ -22,18 +25,15 @@ import {
   scrollChatSearchMatchIntoView,
   setChatSearchHighlights
 } from '../chatSearch'
-import {
-  getChatChangedFiles,
-  getCommitPatches,
-  getLastTurnChangedFiles,
-  getPatchFilterSignature,
-  isPatchChangeSource,
-  type GitChangeSource,
-  type PatchFilterScope
-} from '../changeTree'
+import { type GitChangeSource } from '../changeTree'
 import { getDefaultFileTreeCollapsedFolders } from '../fileTreeIndex'
 import { indexFileTreeListing } from '../fileTreeIndexClient'
-import { isScrolledToBottom, readChatScrollAnchor, restoreChatScrollAnchor } from '../chatLayout'
+import {
+  isScrolledToBottom,
+  prepareChatContentLayout,
+  readChatScrollAnchor,
+  restoreChatScrollAnchor
+} from '../chatLayout'
 import { getContainerTargetKey, normalizeContainerTarget } from '../containerSelection'
 import {
   preserveOptimisticChatDetail,
@@ -135,6 +135,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     cacheRecentChatDetail,
     selectedChatUpdatedAtRef,
     setChatDetail,
+    chatLoadState,
     setChatLoadState,
     setChatLoadError,
     markChatSeenAt,
@@ -542,15 +543,20 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           latestCommitFinishedAtByChatKey.get(selectedChatKey!) ?? 0
         )
       : null
+  // A visible active stream does not need a durable/read-state render for each
+  // token. Selection and terminal snapshots still acknowledge their exact time;
+  // navigation separately flushes the latest viewing time on departure.
+  const renderedChatReadRevision =
+    renderedChatUpdatedAt === null
+      ? null
+      : chatDetail?.status === 'active'
+        ? Math.floor(renderedChatUpdatedAt / 1000)
+        : renderedChatUpdatedAt
   useEffect(() => {
     if (!selectedProviderId || !selectedChatId || renderedChatUpdatedAt === null) return
 
-    markChatSeenAt(
-      selectedProviderId,
-      selectedChatId,
-      Math.max(Date.now(), renderedChatUpdatedAt)
-    )
-  }, [markChatSeenAt, renderedChatUpdatedAt, selectedChatId, selectedProviderId])
+    markChatSeenAt(selectedProviderId, selectedChatId, Math.max(Date.now(), renderedChatUpdatedAt))
+  }, [markChatSeenAt, renderedChatReadRevision, selectedChatId, selectedProviderId])
   const selectedChatCommitMarkers = useMemo(
     () =>
       selectedProviderId && selectedChatId
@@ -1061,29 +1067,57 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
 
     let active = true
     let providerFinished = false
-    setChatLoadError(null)
+    let providerFailed = false
+    let expandingSavedPreview = false
+    const expandSavedPreview = (): void => {
+      if (expandingSavedPreview) return
+      expandingSavedPreview = true
+      // Expand only after provider failure. Normal navigation keeps this transfer
+      // bounded; complete saved history remains readable offline.
+      void providerApi
+        .getCachedChat?.(selectedProviderId, selectedChatId, { container: selectedChat?.container })
+        ?.then((saved) => {
+          if (
+            !active ||
+            selectedChatKeyRef.current !== getChatKey(selectedChat!) ||
+            !saved ||
+            saved.id !== selectedChatId ||
+            !saved.historyPreview ||
+            saved.openingPreview ||
+            !chatDetailRef.current?.openingPreview
+          )
+            return
+          chatDetailRef.current = saved
+          startTransition(() => setChatDetail(saved))
+        })
+        .catch((savedError: unknown) =>
+          console.warn('Unable to expand saved chat messages.', savedError)
+        )
+    }
+    startTransition(() => setChatLoadError(null))
 
     // The SQLite preview and authoritative read run independently. A slow disk
     // reply must never replace RAM history, a live update, or the provider reply.
-    if (!chatDetailRef.current && effectiveAppSettings.chat.recentChatCacheLimit > 0) {
-      void providerApi
-        .getCachedChat?.(selectedProviderId, selectedChatId, {
-          container: selectedChat?.container
-        })
-        ?.then((preview) => {
+    if (!chatDetailRef.current) {
+      void readChatOpening(selectedChat!)
+        .then((preview) => {
           if (
             !active ||
-            providerFinished ||
+            selectedChatKeyRef.current !== getChatKey(selectedChat!) ||
+            (providerFinished && !providerFailed) ||
             !preview?.historyPreview ||
+            (!preview.conversationView && effectiveAppSettings.chat.recentChatCacheLimit === 0) ||
             preview.id !== selectedChatId ||
             chatDetailRef.current
           )
             return
+          if (preview.conversationView) conversationViews.install(selectedProviderId, [preview])
           chatDetailRef.current = preview
           startTransition(() => {
             setChatDetail(preview)
-            setChatLoadState('loading')
+            setChatLoadState(providerFailed ? 'error' : 'loading')
           })
+          if (providerFailed && preview.openingPreview) expandSavedPreview()
         })
         .catch((error: unknown) => {
           console.warn('Unable to read saved chat messages.', error)
@@ -1094,7 +1128,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       .getChat(selectedProviderId, selectedChatId)
       .then((detail) => {
         providerFinished = true
-        if (!active) return
+        if (!active || selectedChatKeyRef.current !== getChatKey(selectedChat!)) return
         const currentDetail = chatDetailRef.current
         if (isChatDetailSnapshotStale(detail, currentDetail)) {
           startTransition(() => setChatLoadState('ready'))
@@ -1118,13 +1152,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           setChatDetail(loadedDetail)
           setChatLoadState('ready')
         }
-        // First content stays urgent. Refreshing an already readable view can
-        // yield instead of adding a second blocking commit to the switch frame.
-        if (currentDetail?.id === selectedChatId && currentDetail.items.length > 0) {
-          startTransition(publish)
-        } else {
-          publish()
-        }
+        // Large initial snapshots and refreshes both need interruptible rendering.
+        // Readable cached content stays visible while this update is prepared.
+        startTransition(publish)
         markChatSeenAt(
           selectedProviderId,
           selectedChatId,
@@ -1136,15 +1166,17 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       })
       .catch((error) => {
         providerFinished = true
+        providerFailed = true
         console.error(
           `Unable to load messages for ${selectedProviderId} chat ${selectedChatId}.`,
           error
         )
-        if (!active) return
+        if (!active || selectedChatKeyRef.current !== getChatKey(selectedChat!)) return
 
         // Cached history or a live update may already have supplied this chat. A failed
         // background read must not discard it or leave an error over usable messages.
         if (chatDetailRef.current?.id === selectedChatId) {
+          if (chatDetailRef.current.openingPreview) expandSavedPreview()
           if (chatDetailRef.current.historyPreview) {
             setChatLoadError({
               chatKey: getChatKey(selectedChat!),
@@ -1189,9 +1221,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       return
     }
 
-    // Tool disclosures can grow by a full viewport in one commit. Follow active
-    // updates before paint; ResizeObserver also covers lazy diffs and media.
-    scrollChatContentToBottom(contentElement)
+    prepareChatContentLayout(contentElement)
+    // The resize observer follows after browser layout and before paint. Do
+    // not force the newly revealed transcript to lay out inside React commit.
   }, [
     activeSubagentId,
     chatDetail?.items,
@@ -1219,9 +1251,8 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     pendingChatScrollAnchorRef.current = null
     chatViewportAnchorRef.current = null
     previousChatScrollTopRef.current = null
-    scheduleChatAutoScroll()
-  }, [scheduleChatAutoScroll, selectedProviderId, selectedChatId])
-  useEffect(() => {
+  }, [selectedProviderId, selectedChatId])
+  useLayoutEffect(() => {
     if (!selectedChatKey) return
 
     const contentElement = contentRef.current
@@ -1229,7 +1260,14 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       '.chat-detail__messages-inner'
     )
     if (!contentElement || !contentInnerElement) return
+    prepareChatContentLayout(contentElement)
 
+    let reconnectFrame: number | null = null
+    const observe = (): void => {
+      reconnectFrame = null
+      observer.observe(contentElement)
+      observer.observe(contentInnerElement)
+    }
     const observer = new ResizeObserver(() => {
       if (contentRef.current !== contentElement || !contentElement.contains(contentInnerElement)) {
         return
@@ -1238,6 +1276,10 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       if (chatAutoScrollEnabledRef.current) {
         // Diffs and media resolve asynchronously after the chat commit. Correct the
         // bottom inside ResizeObserver so the intermediate height never reaches a paint.
+        if (!isScrolledToBottom(contentElement)) {
+          observer.disconnect()
+          reconnectFrame = window.requestAnimationFrame(observe)
+        }
         scrollChatContentToBottom(contentElement)
         return
       }
@@ -1257,13 +1299,15 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       }
       chatViewportAnchorRef.current = readChatScrollAnchor(contentElement, selectedChatKey)
     })
-    observer.observe(contentElement)
-    observer.observe(contentInnerElement)
+    observe()
 
     // Opening/closing a subagent replaces the DOM viewport without changing the
     // parent chat key. Reconnect instead of observing its detached content.
-    return () => observer.disconnect()
-  }, [activeSubagentId, scrollChatContentToBottom, selectedChatKey])
+    return () => {
+      if (reconnectFrame !== null) window.cancelAnimationFrame(reconnectFrame)
+      observer.disconnect()
+    }
+  }, [activeSubagentId, chatLoadState, scrollChatContentToBottom, selectedChatKey])
   useEffect(() => {
     if (selectedChat) return
 
@@ -1426,7 +1470,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   useEffect(() => {
     let active = true
 
-    queueMicrotask(() => {
+    startTransition(() => {
       if (!active) return
 
       setGitBranchActionState('idle')
@@ -1637,94 +1681,18 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     gitChangeLoadRequest,
     changesContainerKey
   ])
-  useEffect(() => {
-    let active = true
-
-    if (!changesCwd || !isPatchChangeSource(changeSource)) {
-      queueMicrotask(() => {
-        if (!active) return
-        setGitChangeLoadErrorDismissed(false)
-        setUncommittedPatchFilterError(null)
-        setUncommittedPatchFilterState('ready')
-      })
-
-      return () => {
-        active = false
-      }
-    }
-
-    const sourceFiles =
-      changeSource === 'chat'
-        ? getChatChangedFiles(chatDetail?.items)
-        : getLastTurnChangedFiles(chatDetail?.items)
-    const patches = getCommitPatches(sourceFiles)
-    const scope: PatchFilterScope = {
-      containerKey: changesContainerKey,
-      cwd: changesCwd,
-      source: changeSource,
-      signature: getPatchFilterSignature(patches)
-    }
-
-    if (patches.length === 0) {
-      queueMicrotask(() => {
-        if (!active) return
-
-        setUncommittedPatchFilter({ scope, patches: [] })
-        setGitChangeLoadErrorDismissed(false)
-        setUncommittedPatchFilterError(null)
-        setUncommittedPatchFilterState('ready')
-      })
-
-      return () => {
-        active = false
-      }
-    }
-
-    queueMicrotask(() => {
-      if (!active) return
-      setGitChangeLoadErrorDismissed(false)
-      setUncommittedPatchFilterError(null)
-      setUncommittedPatchFilterState('loading')
-    })
-
-    appApi
-      .getUncommittedGitPatchChanges({ container: changesContainer, cwd: changesCwd, patches })
-      .then((result) => {
-        if (!active) return
-
-        startTransition(() => {
-          setUncommittedPatchFilter({ scope, patches: result.patches })
-          setGitChangeLoadErrorDismissed(false)
-          setUncommittedPatchFilterError(null)
-          setUncommittedPatchFilterState('ready')
-        })
-      })
-      .catch((error) => {
-        console.error('[caught:useWorkspaceSelection:useWorkspaceSelection]', error)
-
-        if (!active) return
-
-        setGitChangeLoadErrorDismissed(false)
-        setUncommittedPatchFilterError({
-          scope,
-          cwd: changesCwd,
-          error: getErrorMessage(error, 'Unable to filter Git changes.'),
-          operation: 'Filter Git changes'
-        })
-        setUncommittedPatchFilterState('error')
-      })
-
-    return () => {
-      active = false
-    }
-  }, [
+  useUncommittedPatchFilter({
     changeSource,
     changesContainer,
     changesContainerKey,
     changesCwd,
-    chatDetail?.items,
-    gitChangeLoadRequest
-  ])
+    items: chatDetail?.items,
+    gitChangeLoadRequest,
+    setUncommittedPatchFilter,
+    setUncommittedPatchFilterState,
+    setUncommittedPatchFilterError,
+    setGitChangeLoadErrorDismissed
+  })
   useEffect(() => {
     if (changesPaneView !== 'files' || !changesCwd) return
 

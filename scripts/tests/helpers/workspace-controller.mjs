@@ -74,6 +74,12 @@ const namespaces = [
 ]
 
 export const workspaceTestGlobals = (globals) => {
+  globals.prefetchChatOpening ??= () => {}
+  globals.readChatOpening ??= (chat) =>
+    globals.providerApi?.getCachedChat?.(chat.providerId, chat.id, {
+      container: chat.container,
+      opening: true
+    }) ?? Promise.resolve(null)
   if (!('onConversationRequested' in globals)) globals.onConversationRequested = undefined
   for (const name of namespaces) {
     if (!(name in globals))

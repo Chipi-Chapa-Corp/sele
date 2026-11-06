@@ -116,10 +116,24 @@ export type AppLocalImage = AppLocalMedia
 
 export type AppSelectedImage = {
   kind: 'image'
+  /** A small composer preview; path always names the original sendable image. */
+  previewOnly?: boolean
   dataUrl: string
   name: string
   path: string
 }
+
+/** Subsequent chunks use the upload reference returned by the first chunk. */
+export type AppPastedImageRequest =
+  | {
+      data: ArrayBuffer
+      totalBytes: number
+      offset: number
+      path?: string
+      mimeType?: string
+      previewDataUrl?: string
+    }
+  | { cancel: string }
 
 export type AppSelectedFile = {
   kind: 'file'
@@ -395,6 +409,24 @@ export type AppGitHubPullRequestChanges = {
   }>
 }
 
+export type AppGitHubPullRequestCommitOptions = AppGitHubPullRequestOptions & { commitSha: string }
+export type AppGitHubMergeMethod = 'merge' | 'squash' | 'rebase'
+export type AppGitHubPullRequestManagement = {
+  headSha: string
+  mergeMethods: AppGitHubMergeMethod[]
+  defaultMergeMethod: AppGitHubMergeMethod | null
+  canMerge: boolean
+  canClose: boolean
+  checks: 'success' | 'pending' | 'failure' | 'none'
+  checkCount: number
+}
+export type AppGitHubPullRequestActionOptions = AppGitHubPullRequestOptions & {
+  action: 'comment' | 'close' | 'merge'
+  body?: string
+  method?: AppGitHubMergeMethod
+  headSha?: string
+}
+
 export type AppGitHubPullRequestReviewOptions = AppGitHubPullRequestOptions & {
   commitId: string
   body: string
@@ -425,6 +457,14 @@ export type AppGitHubPullRequestDetail = AppGitHubPullRequest & {
     kind: 'comment' | 'review' | 'event'
     state: string | null
     commitSha?: string
+    reviewComment?: {
+      path: string
+      line: number | null
+      startLine: number | null
+      side: 'old' | 'new'
+      outdated: boolean
+      url: string
+    }
   }>
 }
 
@@ -676,6 +716,13 @@ export type AppApi = {
     options: AppGitHubPullRequestOptions
   ) => Promise<AppGitHubPullRequestChanges>
   submitGitHubPullRequestReview: (options: AppGitHubPullRequestReviewOptions) => Promise<void>
+  getGitHubPullRequestManagement: (
+    options: AppGitHubPullRequestOptions
+  ) => Promise<AppGitHubPullRequestManagement>
+  getGitHubPullRequestCommitChanges: (
+    options: AppGitHubPullRequestCommitOptions
+  ) => Promise<AppGitHubPullRequestChanges>
+  performGitHubPullRequestAction: (options: AppGitHubPullRequestActionOptions) => Promise<void>
   getGitChanges: (options: AppGitChangesOptions) => Promise<AppGitChangesResult>
   getGitBranches: (options?: AppGitBranchesOptions) => Promise<AppGitBranchesResult>
   switchGitBranch: (options: AppGitSwitchBranchOptions) => Promise<AppGitBranchesResult>
@@ -714,7 +761,9 @@ export type AppApi = {
   getDroppedMessageAttachments: (files: File[]) => Promise<AppSelectedAttachment[]>
   readClipboardText: () => Promise<string>
   writeClipboardText: (text: string) => Promise<void>
-  getClipboardImage: () => Promise<AppSelectedImage | null>
+  /** Without input reads the native clipboard; chunks save the paste event's original image. */
+  getClipboardImage: (image?: AppPastedImageRequest) => Promise<AppSelectedImage | null>
+
   getLocalVideo: (options: AppLocalMediaOptions) => Promise<AppLocalMedia>
   copyLocalVideo: (options: AppLocalMediaOptions) => Promise<void>
   saveLocalVideo: (options: AppLocalMediaOptions) => Promise<string | null>
@@ -763,6 +812,9 @@ export const appIpcChannels = {
   getGitHubPullRequests: 'app:get-github-pull-requests',
   getGitHubPullRequest: 'app:get-github-pull-request',
   getGitHubPullRequestChanges: 'app:get-github-pull-request-changes',
+  getGitHubPullRequestManagement: 'app:get-github-pull-request-management',
+  getGitHubPullRequestCommitChanges: 'app:get-github-pull-request-commit-changes',
+  performGitHubPullRequestAction: 'app:perform-github-pull-request-action',
   submitGitHubPullRequestReview: 'app:submit-github-pull-request-review',
   getGitChanges: 'app:get-git-changes',
   getGitBranches: 'app:get-git-branches',

@@ -80,10 +80,15 @@ if (!process.versions.electron) {
                         { encoding: 'utf8' }
                       )
                     : await fs.readFile(args.path, 'utf8')
-                  ).replace(
-                    'const onCommit = useCallback(() => setRevision((value) => value + 1), [])',
-                    'const onCommit = useCallback(() => {window.leafCommits=(window.leafCommits??0)+1;setRevision((value) => value + 1)}, [])'
-                  ),
+                  )
+                    .replace(
+                      'const onCommit = useCallback(() => startTransition(() => setRevision((value) => value + 1)), [])',
+                      'const onCommit = useCallback(() => {window.leafCommits=(window.leafCommits??0)+1;startTransition(() => setRevision((value) => value + 1))}, [])'
+                    )
+                    .replace(
+                      'const onCommit = useCallback(() => setRevision((value) => value + 1), [])',
+                      'const onCommit = useCallback(() => {window.leafCommits=(window.leafCommits??0)+1;setRevision((value) => value + 1)}, [])'
+                    ),
                   loader: 'tsx',
                   resolveDir: path.dirname(args.path)
                 })
@@ -234,6 +239,10 @@ if (!process.versions.electron) {
       )
       const requestsBeforeReveal = await run('window.planRequests')
       const commitsBeforeReveal = await run('window.leafCommits')
+      assert.ok(
+        Number.isInteger(commitsBeforeReveal) && commitsBeforeReveal > 0,
+        'commit probe must exercise real notifications'
+      )
       const completedContent = content + '\nAPPENDED-MARKER\n'
       await run(`window.render(${JSON.stringify(completedContent)},'rich',false,false)`)
       await run(`window.render(${JSON.stringify(completedContent)},'rich',false,true)`)
@@ -302,6 +311,28 @@ if (!process.versions.electron) {
         await run('document.querySelector("pre code").textContent.trimEnd()'),
         codeText.trimEnd(),
         'split code retains exact characters and entities'
+      )
+      // Hide during progressive mounting: queued work pauses, then resumes into
+      // the same committed nodes instead of restarting or appending stale parts.
+      await run(`window.render(${JSON.stringify(content)},'partial')`)
+      await waitFor(
+        `document.querySelectorAll('h3').length > 0 && document.querySelectorAll('h3').length < 350`
+      )
+      await run(
+        `window.partialHeading=document.querySelector('h3');window.render(${JSON.stringify(content)},'partial',false,false);window.partialCount=document.querySelectorAll('h3').length`
+      )
+      await run('new Promise(resolve=>setTimeout(resolve,200))')
+      assert.equal(
+        await run('document.querySelectorAll("h3").length===partialCount'),
+        true,
+        'hidden transcripts cancel queued DOM work'
+      )
+      await run(`window.render(${JSON.stringify(content)},'partial',false,true)`)
+      await waitFor(`document.querySelectorAll('h3').length === 350`)
+      assert.equal(
+        await run('partialHeading===document.querySelector("h3")'),
+        true,
+        'partial reveal resumes without replacing the prefix'
       )
       // Worker results and queued mounts from the previous chat cannot return after unmount.
       await run(

@@ -2,6 +2,7 @@ import { supportsLocalHostTools } from '../hostToolTarget'
 import { CopilotHistoryPages } from './CopilotHistoryPages'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createCopilotTerminalSessions } from './CopilotTerminalSessions'
+import { copilotProcessHooks } from '../../chatProcessOwnership'
 import {
   PersistentPendingMessages,
   type PersistedPendingMessage
@@ -2400,6 +2401,19 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
   }
 
+  stopChatProcesses = async (chatId: string): Promise<string[]> => {
+    this.completionCoordinator.cancel(chatId)
+    const session = this.states.get(chatId)?.session
+    if (!session) return []
+    await this.getChatTerminalTasks(chatId)
+    const tasks = (await session.rpc.tasks.list()).tasks
+    for (const task of tasks)
+      if (task.type === 'agent' && (task.status === 'running' || task.status === 'idle'))
+        await session.rpc.tasks.cancel({ id: task.id })
+    await this.stopChat(chatId)
+    return [chatId]
+  }
+
   stopChat = async (chatId: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
     if (state.goalMutation) state.goalMutationCanceled = true
@@ -2693,6 +2707,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     try {
       session = await client.createSession({
         sessionId: state.id,
+        hooks: copilotProcessHooks(state.id),
         clientName,
         workingDirectory,
         ...(browser ? { mcpServers: { Sele_Browser: this.browserServerConfig(browser) } } : {}),
@@ -2769,6 +2784,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         options?.cwd ?? state.metadata.context?.workingDirectory ?? ''
       )
       const session = await client.resumeSession(sessionId, {
+        hooks: copilotProcessHooks(sessionId),
         clientName: 'Sele',
         ...(browser ? { mcpServers: { Sele_Browser: this.browserServerConfig(browser) } } : {}),
         workingDirectory: options?.cwd ?? state.metadata.context?.workingDirectory,
