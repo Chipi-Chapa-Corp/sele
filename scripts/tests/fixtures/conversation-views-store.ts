@@ -97,13 +97,19 @@ const run = async () => {
     createdAt: 1,
     updatedAt: 2,
     items: [
+      { id: 'first-prompt', type: 'message', role: 'user', content: 'Earlier question' },
+      { id: 'first-answer', type: 'message', role: 'assistant', content: 'Earlier answer' },
+      { id: 'last-prompt', type: 'message', role: 'user', content: 'Large question' },
       {
         id: 'large-answer',
         type: 'message',
         role: 'assistant',
-        content: 'large body '.repeat(600_000)
+        content: 'large body '.repeat(600_000),
+        attachments: [{ kind: 'file', path: '/fixture/result.txt', name: 'result.txt' }]
       }
-    ]
+    ],
+    itemsStartTurnIndex: 3,
+    turnCount: 5
   } as ProviderChatDetail)
   await restarted.write(hugeScope, huge)
   const currentDb = await getDatabase()
@@ -116,39 +122,33 @@ const run = async () => {
   const openingStart = performance.now()
   const opening = (await restarted.read([hugeScope], { opening: true })).get(hugeScope.key)!
   const openingBytes = Buffer.byteLength(JSON.stringify(opening))
-  assert.ok(openingBytes < 20_000, 'opening IPC is bounded even for multi-megabyte turns')
-  assert.equal(opening.items[0].id, huge.items[0].id)
-  assert.ok(opening.items[0].content.endsWith(huge.items[0].content.slice(-8192)))
-  assert.equal(opening.items[0].contentLoaded, false)
-  assert.equal(opening.items[0].contentCharacterCount, huge.items[0].content.length)
-  assert.equal(opening.historyPreview, true)
+  assert.deepEqual(opening.items, huge.items, 'openings preserve all saved messages and full text')
+  assert.equal(opening.itemsStartTurnIndex, huge.itemsStartTurnIndex)
+  assert.equal(opening.turnCount, huge.turnCount)
+  assert.equal(opening.historyPreview, huge.historyPreview)
   console.log(
-    'Bounded saved opening:',
+    'Full saved opening:',
     JSON.stringify({
       openingBytes,
-      originalBytes: huge.items[0].content.length,
+      originalBytes: huge.items.at(-1)!.content.length,
       readMs: performance.now() - openingStart
     })
   )
-  const secondOpeningStart = performance.now()
-  const secondOpening = (await restarted.read([hugeScope], { opening: true })).get(hugeScope.key)!
-  assert.equal(secondOpening.items[0].id, huge.items[0].id)
-  const upgraded = await currentDb
-    .selectFrom('conversation_view')
-    .select('opening')
+  // Older versions saved a separate truncated opening. It must never replace
+  // the complete payload after upgrading or reopening the database.
+  await currentDb
+    .updateTable('conversation_view')
+    .set({ opening: JSON.stringify({ ...huge, items: [huge.items[0]], historyPreview: true }) })
     .where('scope_key', '=', hugeScope.key)
-    .executeTakeFirstOrThrow()
-  assert.ok(
-    upgraded.opening && upgraded.opening.length < 20_000,
-    'legacy rows acquire a bounded opening without rewriting full history'
+    .execute()
+  await disposeDatabase()
+  const secondOpening = (await restarted.read([hugeScope], { opening: true })).get(hugeScope.key)!
+  assert.deepEqual(
+    secondOpening,
+    opening,
+    'restarted openings ignore legacy truncated columns and preserve the saved view'
   )
-  console.log(
-    'Warm saved opening:',
-    JSON.stringify({
-      readMs: performance.now() - secondOpeningStart,
-      bytes: upgraded.opening.length
-    })
-  )
+  const reopenedDb = await getDatabase()
   const toolsScope = identity.viewScope('codex', 'large-tools')!
   const toolsView = createConversationView({
     ...huge,
@@ -180,10 +180,10 @@ const run = async () => {
   assert.equal(toolsOpening.items[1].itemCount, 200)
   assert.equal(
     (await restarted.read([toolsScope])).get(toolsScope.key)!.items[1].items.length,
-    200,
-    'the full stored tool history remains intact'
+    0,
+    'hidden tool bodies stay unloaded until expansion'
   )
-  await currentDb.deleteFrom('conversation_view').where('scope_key', '=', toolsScope.key).execute()
+  await reopenedDb.deleteFrom('conversation_view').where('scope_key', '=', toolsScope.key).execute()
   const start = performance.now()
   const metadataPage = await restarted.list(identity.viewScope('codex', '')!, 0, 200)
   const listMs = performance.now() - start
@@ -192,16 +192,16 @@ const run = async () => {
   assert.ok(bytes < 100_000, 'listing never returns megabytes of saved messages')
   assert.ok(metadataPage.summaries.every((summary) => !('items' in summary)))
   assert.equal(metadataPage.summaries.find((summary) => summary.id === 'huge')?.title, huge.title)
-  assert.equal(
-    (await restarted.read([hugeScope])).get(hugeScope.key)!.items[0].content,
-    huge.items[0].content,
+  assert.deepEqual(
+    (await restarted.read([hugeScope])).get(hugeScope.key)!.items,
+    huge.items,
     'metadata-only discovery preserves the complete on-demand opening view'
   )
   console.log(
     'Saved-view discovery:',
     JSON.stringify({
       chats: metadataPage.summaries.length,
-      savedTurnBytes: huge.items[0].content.length,
+      savedTurnBytes: huge.items.at(-1)!.content.length,
       metadataBytes: bytes,
       listMs
     })
