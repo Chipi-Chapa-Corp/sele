@@ -157,7 +157,8 @@ jobs:
   linux:
     name: Linux x64 Flatpak
     needs: validate
-    runs-on: ubuntu-latest
+    # Keep Flatpak tooling on a release-tested image when ubuntu-latest changes.
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
