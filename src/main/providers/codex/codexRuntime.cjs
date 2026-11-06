@@ -40,7 +40,8 @@ function startRuntime(config) {
     stopping = true
     clearTimeout(idleTimer)
     for (const request of requests.values()) clearTimeout(request.timer)
-    client?.destroy()
+    // Flush queued diagnostics before closing an attached client's connection.
+    client?.end()
     child?.kill()
     server.close()
     // The account-view wrapper may take a moment to reap its provider child.
@@ -154,6 +155,7 @@ function startRuntime(config) {
         client = socket
         clearTimeout(idleTimer)
         send(socket, { runtimeReady: true })
+        if (!initialized && stderr) send(socket, { runtimeStderr: stderr })
         return
       }
       if (message.runtimeStop === true) {
