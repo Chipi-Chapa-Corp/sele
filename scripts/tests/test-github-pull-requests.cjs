@@ -68,7 +68,7 @@ if (!process.versions.electron) {
               const [browserEnabled, setBrowserEnabled] = useState(true)
               window.selectProject = setCwd
               window.setBrowserEnabled = setBrowserEnabled
-              const settings = {browser: {enabled: browserEnabled}, appearance: {zoomLevel: 1}}
+              const settings = {git: {enablePullRequests: true}, browser: {enabled: browserEnabled}, appearance: {zoomLevel: 1}}
               const gitHubPullRequests = useGitHubPullRequests({active: view === 'git' && gitPaneView === 'pull-requests', cwd})
               window.prState = gitHubPullRequests
               const cached = Array.from({length:gitHubPullRequests.totalCount},(_,index)=>({index,pr:gitHubPullRequests.getPullRequest(index)})).filter(item=>item.pr)

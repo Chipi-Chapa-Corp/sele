@@ -32,6 +32,7 @@ export type AppProjectSettingPath =
   | {
       section: 'git'
       key:
+        | 'enablePullRequests'
         | 'commitModels'
         | 'errorResolutionPrompt'
         | 'permanentErrorResolutionPrompt'
@@ -203,6 +204,15 @@ export const setAppProjectSettingOverrideValue = (
         } as Partial<AppSettings['performance']>
       })
     case 'git':
+      if (path.key === 'enablePullRequests') {
+        return cleanProjectSettingsOverrides({
+          ...overrides,
+          git: {
+            ...overrides.git,
+            enablePullRequests: value as boolean
+          }
+        })
+      }
       if (path.key !== 'commitModels') {
         return cleanProjectSettingsOverrides({
           ...overrides,

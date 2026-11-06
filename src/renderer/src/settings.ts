@@ -220,6 +220,7 @@ export type AppSettings = {
     codex: AppCodexProviderSettings
   }
   git: {
+    enablePullRequests: boolean
     commitModels: AppGitCommitModels
     errorResolutionPrompt: string
     permanentErrorResolutionPrompt: string
@@ -238,6 +239,7 @@ export type AppProjectSettingsOverrides = {
   links?: Partial<AppExternalLinkSettings>
   performance?: Partial<AppPerformanceSettings>
   git?: {
+    enablePullRequests?: boolean
     commitModels?: AppGitCommitModels
     errorResolutionPrompt?: string
     permanentErrorResolutionPrompt?: string
@@ -438,6 +440,7 @@ export const defaultAppSettings: AppSettings = {
     }
   },
   git: {
+    enablePullRequests: false,
     commitModels: {},
     errorResolutionPrompt: defaultGitErrorResolutionPrompt,
     permanentErrorResolutionPrompt: defaultPermanentGitErrorResolutionPrompt,
@@ -773,6 +776,9 @@ const readProjectGitOverrides = (
 ): AppProjectSettingsOverrides['git'] => {
   const overrides: NonNullable<AppProjectSettingsOverrides['git']> = {}
 
+  if (typeof git.enablePullRequests === 'boolean') {
+    overrides.enablePullRequests = git.enablePullRequests
+  }
   if (hasOwnProperty(git, 'commitModels')) {
     const commitModels = getStoredGitCommitModels(git.commitModels)
     if (Object.keys(commitModels).length > 0) overrides.commitModels = commitModels
@@ -930,6 +936,9 @@ const pruneAppProjectSettingsOverrides = (
   if (overrides.git) {
     const gitOverrides: NonNullable<AppProjectSettingsOverrides['git']> = {}
 
+    if (hasOwnProperty(overrides.git, 'enablePullRequests')) {
+      gitOverrides.enablePullRequests = overrides.git.enablePullRequests
+    }
     if (overrides.git.commitModels && Object.keys(overrides.git.commitModels).length > 0) {
       gitOverrides.commitModels = { ...overrides.git.commitModels }
     }
@@ -1027,6 +1036,7 @@ export const resolveAppSettings = (
     },
     git: {
       ...settings.git,
+      enablePullRequests: gitOverrides?.enablePullRequests ?? settings.git.enablePullRequests,
       commitModels,
       errorResolutionPrompt,
       permanentErrorResolutionPrompt,
@@ -1241,6 +1251,10 @@ export const readStoredAppSettings = (): AppSettings => {
         }
       },
       git: {
+        enablePullRequests:
+          typeof git.enablePullRequests === 'boolean'
+            ? git.enablePullRequests
+            : defaultAppSettings.git.enablePullRequests,
         commitModels: hasOwnProperty(git, 'commitModels')
           ? getStoredGitCommitModels(git.commitModels)
           : hasOwnProperty(git, 'commitModel') && isStoredModel(git.commitModel)
@@ -1420,6 +1434,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
         codex?: Partial<AppCodexProviderSettings>
       }
       git?: {
+        enablePullRequests?: boolean
         commitModels?: AppGitCommitModels
         errorResolutionPrompt?: string
         permanentErrorResolutionPrompt?: string
@@ -1629,6 +1644,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
     }
 
     const storedGit: {
+      enablePullRequests?: boolean
       commitModels?: AppGitCommitModels
       errorResolutionPrompt?: string
       permanentErrorResolutionPrompt?: string
@@ -1638,6 +1654,9 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
       worktree?: Partial<AppGitWorktreeSettings>
     } = {}
+    if (settings.git.enablePullRequests !== defaultAppSettings.git.enablePullRequests) {
+      storedGit.enablePullRequests = settings.git.enablePullRequests
+    }
     if (Object.keys(settings.git.commitModels).length > 0) {
       storedGit.commitModels = getStoredGitCommitModels(settings.git.commitModels)
     }

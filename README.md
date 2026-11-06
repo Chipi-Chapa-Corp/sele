@@ -132,7 +132,8 @@ credentials or unsupported remote MCP OAuth credentials may require sign-in agai
 
 ## GitHub pull requests
 
-In the Git sidebar, choose **Pull requests** to browse PRs for the project's GitHub remote.
+Enable **Settings → Git → Features → Enable pull requests** (off by default), then
+choose **Pull requests** in the Git sidebar to browse PRs for the project's GitHub remote.
 Use the state selector to include open, merged, closed, and draft PRs. Search by title or
 PR number below the filters. The list fetches a small window around your scroll position and renders only the
 visible rows. Offscreen pages are discarded and fetched again when you scroll back. Reload refreshes the list. GitHub search makes the first 1,000 matching PRs available.

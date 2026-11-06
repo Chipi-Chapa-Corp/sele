@@ -540,6 +540,19 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
       })
     )
   }
+  const handleGitPullRequestsEnabledChange = (enablePullRequests: boolean): void => {
+    updateScopedSetting(
+      { section: 'git', key: 'enablePullRequests' },
+      enablePullRequests,
+      (currentSettings) => ({
+        ...currentSettings,
+        git: {
+          ...currentSettings.git,
+          enablePullRequests
+        }
+      })
+    )
+  }
   const handleGitUntrackedFilesPromptChange = (untrackedFilesPrompt: string): void => {
     updateScopedSetting(
       { section: 'git', key: 'untrackedFilesPrompt' },
@@ -729,6 +742,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handleGitCommitPromptChange,
     handleGitErrorResolutionPromptChange,
     handleGitQuickActionsChange,
+    handleGitPullRequestsEnabledChange,
     handleGitUntrackedFilesPromptChange,
     handleGitWorktreeChange,
     handleLastActionChange,

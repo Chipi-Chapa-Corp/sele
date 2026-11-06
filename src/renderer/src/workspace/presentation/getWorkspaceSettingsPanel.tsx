@@ -122,6 +122,7 @@ export function getWorkspaceSettingsPanel({
     handleGitCommitPromptChange: settingsActions.handleGitCommitPromptChange,
     handleGitErrorResolutionPromptChange: settingsActions.handleGitErrorResolutionPromptChange,
     handleGitQuickActionsChange: settingsActions.handleGitQuickActionsChange,
+    handleGitPullRequestsEnabledChange: settingsActions.handleGitPullRequestsEnabledChange,
     handleGitUntrackedFilesPromptChange: settingsActions.handleGitUntrackedFilesPromptChange,
     handleGitWorktreeChange: settingsActions.handleGitWorktreeChange,
     handleMaxChatsRenderedChange: settingsActions.handleMaxChatsRenderedChange,

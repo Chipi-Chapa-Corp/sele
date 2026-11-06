@@ -12,7 +12,10 @@ export function useWorkspacePanes({ settings }: WorkspacePanesDependencies) {
 
   const [storedChangesPaneView, setChangesPaneView] = useState<ChangesPaneView>('git')
 
-  const [gitPaneView, setGitPaneView] = useState<'changes' | 'pull-requests'>('changes')
+  const [storedGitPaneView, setGitPaneView] = useState<'changes' | 'pull-requests'>('changes')
+  const gitPaneView = settings.effectiveAppSettings.git.enablePullRequests
+    ? storedGitPaneView
+    : 'changes'
 
   const changesPaneView =
     settings.noProject && (storedChangesPaneView === 'git' || storedChangesPaneView === 'files')

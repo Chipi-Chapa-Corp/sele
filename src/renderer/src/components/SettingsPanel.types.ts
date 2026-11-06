@@ -97,6 +97,7 @@ export type SettingsPanelProps = {
     value: string
   ) => void
   handleGitCommitModelChange: (nextModel: string) => void
+  handleGitPullRequestsEnabledChange: (enabled: boolean) => void
   handleGitCommitPromptChange: (key: keyof AppGitCommitPromptSettings, value: string) => void
   handleGitErrorResolutionPromptChange: (
     key: 'errorResolutionPrompt' | 'permanentErrorResolutionPrompt',

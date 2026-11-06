@@ -141,7 +141,7 @@ export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
           <div className="changes-sidebar__settings-slot">{renderSettingsButton()}</div>
         </div>
       </div>
-      {changesPaneView === 'git' && (
+      {changesPaneView === 'git' && effectiveAppSettings.git.enablePullRequests && (
         <SegmentedControl
           aria-label="Git view"
           className="changes-sidebar__view-toggle changes-sidebar__git-view-toggle"

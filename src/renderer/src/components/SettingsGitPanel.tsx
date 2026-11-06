@@ -47,6 +47,7 @@ type SettingsGitPanelProps = Pick<
   | 'handleGitCommitPromptChange'
   | 'handleGitErrorResolutionPromptChange'
   | 'handleGitQuickActionsChange'
+  | 'handleGitPullRequestsEnabledChange'
   | 'handleGitUntrackedFilesPromptChange'
   | 'handleGitWorktreeChange'
   | 'handleNewSessionContainerChange'
@@ -79,6 +80,7 @@ export function SettingsGitPanel(props: SettingsGitPanelProps): React.ReactNode 
     handleGitCommitPromptChange,
     handleGitErrorResolutionPromptChange,
     handleGitQuickActionsChange,
+    handleGitPullRequestsEnabledChange,
     handleGitUntrackedFilesPromptChange,
     handleGitWorktreeChange,
     handleNewSessionContainerChange,
@@ -96,6 +98,10 @@ export function SettingsGitPanel(props: SettingsGitPanelProps): React.ReactNode 
     settingsPanelSettings,
     sshEnvironmentError
   } = props
+  const gitPullRequestsPath = {
+    section: 'git',
+    key: 'enablePullRequests'
+  } satisfies AppProjectSettingPath
   const gitCommitModelsPath = {
     section: 'git',
     key: 'commitModels'
@@ -143,6 +149,27 @@ export function SettingsGitPanel(props: SettingsGitPanelProps): React.ReactNode 
       role="tabpanel"
       aria-label="Git settings"
     >
+      <section className="settings-dialog__section" aria-labelledby="settings-git-features">
+        <h2 className="settings-dialog__section-heading" id="settings-git-features">
+          Features
+        </h2>
+        <div className="settings-dialog__section-cards">
+          <div className={getSettingsFieldClassName()}>
+            <div className="settings-dialog__field-header">
+              <h3 id="settings-git-enable-pull-requests">Enable pull requests</h3>
+              <p>Show the Commit / PR switcher in the Git sidebar.</p>
+            </div>
+            {renderProjectSettingAction(gitPullRequestsPath, 'Enable pull requests')}
+            <Switch
+              className="settings-switch"
+              aria-labelledby="settings-git-enable-pull-requests"
+              checked={settingsPanelSettings.git.enablePullRequests}
+              disabled={isScopedSettingControlDisabled(gitPullRequestsPath)}
+              onChange={(event) => handleGitPullRequestsEnabledChange(event.currentTarget.checked)}
+            />
+          </div>
+        </div>
+      </section>
       <section className="settings-dialog__section" aria-labelledby="settings-git-quick-actions">
         <h2 className="settings-dialog__section-heading" id="settings-git-quick-actions">
           Quick actions

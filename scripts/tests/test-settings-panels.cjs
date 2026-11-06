@@ -73,6 +73,7 @@ if (!process.versions.electron) {
               'handleGitCommitPromptChange',
               'handleGitErrorResolutionPromptChange',
               'handleGitQuickActionsChange',
+              'handleGitPullRequestsEnabledChange',
               'handleGitUntrackedFilesPromptChange',
               'handleGitWorktreeChange',
               'handleMaxChatsRenderedChange',
