@@ -60,7 +60,9 @@ export function useWorkspaceSidebarPresentation({
           ? {
               ...group,
               hasWorkingChat:
-                chatState.activeChatSidebarFilter !== 'working' && workingProjectCwds.has(group.cwd)
+                chatState.chatSidebarTabs.working &&
+                chatState.activeChatSidebarFilter !== 'working' &&
+                workingProjectCwds.has(group.cwd)
             }
           : group,
         contentId,
@@ -70,6 +72,7 @@ export function useWorkspaceSidebarPresentation({
       )
     },
     [
+      chatState.chatSidebarTabs.working,
       chatState.activeChatSidebarFilter,
       renderChatGroup,
       selectedChatKey,
