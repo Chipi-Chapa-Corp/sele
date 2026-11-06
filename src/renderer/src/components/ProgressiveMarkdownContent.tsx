@@ -14,7 +14,6 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { createMarkdownPlan, reuseMarkdownPlan, type MarkdownPlanNode } from '../markdownPlan'
 import { requestMarkdownPlan } from '../chatMarkdownClient'
 import { useMarkdownImages } from '../useMarkdownImages'
-import { hydrateMermaidDiagrams } from '../mermaidRendering'
 import { DeferredChatTurn } from './DeferredChatTurn'
 import { MarkdownElement, MarkdownFragment, MarkdownNodes } from './MarkdownContent'
 
@@ -31,6 +30,7 @@ type PartProps = {
   onCommit: () => void
   eager: boolean
   sanitized: boolean
+  renderDiagrams: boolean
 }
 
 const MarkdownLeaf = memo(function MarkdownLeaf({
@@ -39,7 +39,8 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
   container,
   cwd,
   onCommit,
-  sanitized
+  sanitized,
+  renderDiagrams
 }: Omit<PartProps, 'node' | 'priority'> & { html: string }) {
   const fragment = useMemo(
     () => sanitizedFragment(html, parent, sanitized),
@@ -48,7 +49,8 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
   const committedFragment = useRef<DocumentFragment | null>(null)
   // Flow content can share a DOM-owned boundary. Tables/lists retain their
   // native parent contexts; embedded applications keep their React lifecycle.
-  const flat = parent === 'div' && !fragment.querySelector('[data-visualization]')
+  const flat =
+    parent === 'div' && !fragment.querySelector('[data-visualization], [data-mermaid-diagram]')
   useLayoutEffect(() => {
     // Revealing an Activity reconnects effects without inserting any new DOM.
     // Replaying every leaf's commit would rerender the whole message again.
@@ -59,12 +61,18 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
   return flat ? (
     <MarkdownFragment fragment={fragment} />
   ) : (
-    <MarkdownNodes parent={fragment} container={container} cwd={cwd} />
+    <MarkdownNodes
+      parent={fragment}
+      container={container}
+      cwd={cwd}
+      renderDiagrams={renderDiagrams}
+    />
   )
 })
 
 const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
-  const { node, parent, priority, container, cwd, onCommit, eager, sanitized } = props
+  const { node, parent, priority, container, cwd, onCommit, eager, sanitized, renderDiagrams } =
+    props
   const tag = 'tag' in node ? node.tag : null
   const opening = 'tag' in node ? node.opening : null
   const shell = useMemo(
@@ -83,6 +91,7 @@ const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
           onCommit={onCommit}
           eager={eager}
           sanitized={sanitized}
+          renderDiagrams={renderDiagrams}
         />
       </DeferredChatTurn>
     )
@@ -100,6 +109,7 @@ const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
           onCommit={onCommit}
           eager={eager}
           sanitized={sanitized}
+          renderDiagrams={renderDiagrams}
         />
       ))}
     </MarkdownElement>
@@ -113,7 +123,11 @@ const groupFlatSections = (plan: MarkdownPlanNode[] | null): PlanSection[] => {
   const sections: PlanSection[] = []
   for (const [index, node] of (plan ?? []).entries()) {
     // Embedded React applications retain their own component lifecycle.
-    if ('html' in node && !node.html.includes('data-visualization')) {
+    if (
+      'html' in node &&
+      !node.html.includes('data-visualization') &&
+      !node.html.includes('data-mermaid-diagram')
+    ) {
       const previous = sections.at(-1)
       if (previous && 'leaves' in previous) previous.leaves.push(node)
       else sections.push({ index, leaves: [node] })
@@ -195,10 +209,6 @@ export function ProgressiveMarkdownContent({
     }
   }, [input, html])
   useMarkdownImages(ref, html ?? String(revision), container, cwd, errorMarkup)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: leaf commits change the DOM without changing the source message.
-  useEffect(() => {
-    if (!streaming && ref.current) hydrateMermaidDiagrams(ref.current)
-  }, [streaming, revision, html])
   return (
     <div
       ref={ref}
@@ -228,6 +238,7 @@ export function ProgressiveMarkdownContent({
               onCommit={html === undefined ? onCommit : noop}
               eager={html !== undefined}
               sanitized={html !== undefined}
+              renderDiagrams={!streaming}
             />
           )
         )

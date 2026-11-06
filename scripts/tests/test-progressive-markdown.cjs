@@ -474,6 +474,37 @@ if (!process.versions.electron) {
           await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG())
         }
       }
+      const diagram = '```mermaid\nflowchart LR\nA[Readable diagram] --> B[Shared lightbox]\n```\n'
+      for (const [key, message] of [
+        ['diagram-small', diagram],
+        ['diagram-worker', diagram + '\n' + content]
+      ]) {
+        await run(`window.render(${JSON.stringify(message)},${JSON.stringify(key)},true)`)
+        await waitFor(`document.querySelector('[data-mermaid-diagram]') !== null`)
+        assert.equal(
+          await run(`document.querySelector('.markdown-mermaid__canvas svg') !== null`),
+          false,
+          'streaming diagrams wait until the reply settles'
+        )
+        await run(`window.render(${JSON.stringify(message)},${JSON.stringify(key)},false)`)
+        await waitFor(`document.querySelector('[data-mermaid-hydration="rendered"]') !== null`)
+        await run(`document.querySelector('[aria-label="Expand diagram"]').click()`)
+        await waitFor(`document.querySelector('.resizable-lightbox[open]') !== null`)
+        assert.equal(
+          await run(
+            `document.querySelector('.resizable-lightbox[open]').classList.contains('popup-window')`
+          ),
+          true
+        )
+        assert.equal(
+          await run(
+            `document.querySelector('[aria-label="Zoom in"]').classList.contains('ui-button')`
+          ),
+          true
+        )
+        await run(`document.querySelector('[aria-label="Close expanded diagram"]').click()`)
+        await waitFor(`document.querySelector('.resizable-lightbox[open]') === null`)
+      }
       assert.deepEqual(errors, [])
       console.log(
         JSON.stringify({

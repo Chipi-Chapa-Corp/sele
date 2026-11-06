@@ -48,6 +48,14 @@ const flatten = (nodes) =>
 const leaves = (nodes) =>
   nodes.flatMap((node) => ('html' in node ? [node.html] : leaves(node.children)))
 
+test('Mermaid source stays in one leaf so the diagram component receives the complete fence', () => {
+  const diagram = `<div data-mermaid-diagram><pre class="markdown-mermaid__source"><code>${'A --> B\n'.repeat(2000)}</code></pre></div>`
+  const html = `<details>${diagram}<p>Tail</p></details>`
+  const plan = createMarkdownPlan(html)
+  assert.equal(flatten(plan), html)
+  assert.ok(leaves(plan).some((leaf) => leaf.includes(diagram)))
+})
+
 test('large rich messages retain exact markup with bounded leaves inside tables and details', () => {
   const row =
     '<tr><td><a href="https://example.com?a=>">&lt;hello&gt;</a></td><td><strong>value</strong></td></tr>'

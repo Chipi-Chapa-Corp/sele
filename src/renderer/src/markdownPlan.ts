@@ -128,6 +128,8 @@ export const createMarkdownPlan = (html: string): MarkdownPlanNode[] => {
       const size = child.end - child.start
       if (
         child.tag &&
+        // A diagram is one React component and needs its complete source.
+        !html.slice(child.start, child.openingEnd).includes('data-mermaid-diagram') &&
         (size > markdownPartCharacters || child.elements > markdownPartElements) &&
         child.children.length
       ) {

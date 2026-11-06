@@ -3,6 +3,7 @@ import type { AppContainerTarget } from '../../../shared/app'
 import { usePatchedFragment, usePatchedHtml } from '../markdownDomPatch'
 import { decodeVisualizationReference } from '../visualizationReference'
 import { Visualization } from './Visualization'
+import { MermaidDiagram } from './MermaidDiagram'
 
 export function MarkdownFragment({ fragment }: { fragment: DocumentFragment }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -45,16 +46,26 @@ export function MarkdownElement({
 export function MarkdownNodes({
   parent,
   container,
-  cwd
+  cwd,
+  renderDiagrams = true
 }: {
   parent: ParentNode
   container?: AppContainerTarget | null
   cwd?: string | null
+  renderDiagrams?: boolean
 }): ReactNode {
   const occurrences = new Map<string, number>()
   return Array.from(parent.childNodes, (node, index) => {
     if (!(node instanceof Element))
       return node.nodeType === Node.TEXT_NODE ? node.textContent : null
+    if (renderDiagrams && node.hasAttribute('data-mermaid-diagram')) {
+      return (
+        <MermaidDiagram
+          key={`mermaid:${index}`}
+          source={node.querySelector('.markdown-mermaid__source')?.textContent ?? ''}
+        />
+      )
+    }
     const reference = decodeVisualizationReference(node.getAttribute('data-visualization') ?? '')
     if (reference) {
       const occurrence = occurrences.get(reference.path) ?? 0
@@ -68,15 +79,22 @@ export function MarkdownNodes({
         </div>
       )
     }
-    const hasVisualization = Boolean(node.querySelector('[data-visualization]'))
+    const hasEmbeddedContent = Boolean(
+      node.querySelector('[data-visualization], [data-mermaid-diagram]')
+    )
     return (
       // React must not reconcile children into an element whose DOM it does not own.
       <MarkdownElement
-        key={`${node.localName}:${index}:${hasVisualization ? 'react' : 'html'}`}
+        key={`${node.localName}:${index}:${hasEmbeddedContent ? 'react' : 'html'}`}
         element={node}
       >
-        {hasVisualization ? (
-          <MarkdownNodes parent={node} container={container} cwd={cwd} />
+        {hasEmbeddedContent ? (
+          <MarkdownNodes
+            parent={node}
+            container={container}
+            cwd={cwd}
+            renderDiagrams={renderDiagrams}
+          />
         ) : undefined}
       </MarkdownElement>
     )
@@ -95,7 +113,7 @@ export function MarkdownContent({
   cwd?: string | null
 }): React.JSX.Element {
   const content = useMemo(() => {
-    if (!html.includes('data-visualization=')) return null
+    if (!html.includes('data-visualization=') && !html.includes('data-mermaid-diagram')) return null
     const template = document.createElement('template')
     template.innerHTML = html
     return template.content

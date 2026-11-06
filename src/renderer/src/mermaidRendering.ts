@@ -1,6 +1,16 @@
 import DOMPurify from 'dompurify'
 import './mermaidRendering.css'
 
+export const sanitizeMermaidSvg = (svg: string): string =>
+  DOMPurify.sanitize(svg, {
+    USE_PROFILES: { html: true, svg: true, svgFilters: true },
+    // Mermaid uses XHTML inside foreignObject for node, edge and cluster labels.
+    // Allow both the SVG container and its HTML namespace transition so the
+    // second sanitization preserves labels while still filtering their contents.
+    ADD_TAGS: ['foreignObject'],
+    HTML_INTEGRATION_POINTS: { foreignobject: true }
+  })
+
 export type MermaidColorScheme = 'dark' | 'light'
 
 export type MermaidRenderResult = {
@@ -113,14 +123,7 @@ export const hydrateMermaidDiagrams = (container: HTMLElement): void => {
       .then(({ svg, bindFunctions }) => {
         if (!diagram.isConnected || !container.contains(diagram)) return
 
-        diagram.innerHTML = DOMPurify.sanitize(svg, {
-          USE_PROFILES: { html: true, svg: true, svgFilters: true },
-          // Mermaid uses XHTML inside foreignObject for node, edge and cluster labels.
-          // Allow both the SVG container and its HTML namespace transition so the
-          // second sanitization preserves labels while still filtering their contents.
-          ADD_TAGS: ['foreignObject'],
-          HTML_INTEGRATION_POINTS: { foreignobject: true }
-        })
+        diagram.innerHTML = sanitizeMermaidSvg(svg)
         diagram.removeAttribute('aria-busy')
         diagram.dataset.mermaidHydration = 'rendered'
         diagram.classList.add('markdown-mermaid--rendered')

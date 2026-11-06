@@ -11,18 +11,29 @@ if (!process.versions.electron) {
       await require('esbuild').build({
         bundle: true,
         platform: 'browser',
+        jsx: 'automatic',
+        define: { 'process.env.NODE_ENV': '"production"' },
         stdin: {
           resolveDir: root,
+          loader: 'tsx',
           contents: `
-            import {hydrateMermaidDiagrams} from './src/renderer/src/mermaidRendering'
+            import React from 'react'
+            import {createRoot} from 'react-dom/client'
+            import {flushSync} from 'react-dom'
+            import {MarkdownContent} from './src/renderer/src/components/MarkdownContent'
             import {renderMarkdownCodeBlock} from './src/renderer/src/codeHighlighting'
             import './src/renderer/src/assets/main.css'
             import './src/renderer/src/App.css'
+            const root = createRoot(document.getElementById('root'))
             window.render = (source, scheme) => {
               document.documentElement.dataset.colorScheme = scheme
-              document.getElementById('root').innerHTML = renderMarkdownCodeBlock(source, 'mermaid')
-              hydrateMermaidDiagrams(document.getElementById('root'))
+              flushSync(() => root.render(<MarkdownContent key={scheme} html={renderMarkdownCodeBlock(source, 'mermaid')} />))
             }
+            window.diagramZoom = () => {
+              const svg = document.querySelector('.markdown-mermaid__canvas > svg')
+              return Math.round(svg.getBoundingClientRect().width / svg.viewBox.baseVal.width * 100)
+            }
+            window.unmount = () => flushSync(() => root.unmount())
           `
         },
         outfile: path.join(directory, 'fixture.js'),
@@ -153,7 +164,9 @@ if (!process.versions.electron) {
           W-->>S: Preview ready`,
           scheme
         )
-        const text = await run(`document.querySelector('svg').textContent`)
+        const text = await run(
+          `document.querySelector('.markdown-mermaid__canvas > svg').textContent`
+        )
         for (const label of [
           'Session',
           'Worker',
@@ -169,9 +182,156 @@ if (!process.versions.electron) {
         )
         await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG())
       }
+      // A long horizontal diagram must keep readable labels rather than shrink
+      // to the chat width. Exercise the actual hydrated controls and native modal.
+      const wide = `flowchart LR\n${Array.from({ length: 14 }, (_, i) => `N${i}[Stage ${i}: keyboard animation]`).join(' --> ')}`
+      const key = async (keyCode, modifiers = []) => {
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+        if (keyCode === 'Enter')
+          win.webContents.sendInputEvent({ type: 'char', keyCode: '\r', modifiers })
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+        await run(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+        )
+      }
+      for (const scheme of ['dark', 'light']) {
+        await render(wide, scheme)
+        assert.ok(
+          await run(`(() => {
+          const viewport = document.querySelector('.markdown-mermaid__viewport')
+          const svg = viewport.querySelector('.markdown-mermaid__canvas > svg')
+          const label = svg.querySelector('.node foreignObject')
+          window.originalDiagram = svg
+          return viewport.scrollWidth > viewport.clientWidth * 2 &&
+            svg.getBoundingClientRect().width >= svg.viewBox.baseVal.width &&
+            label.getBoundingClientRect().height >= 12 &&
+            document.documentElement.scrollWidth === document.documentElement.clientWidth
+        })()`),
+          `${scheme}: wide diagram should scroll without shrinking or widening the page`
+        )
+        await run(`document.querySelector('[aria-label="Expand diagram"]').focus()`)
+        await key('Enter')
+        assert.equal(await run(`document.querySelector('.resizable-lightbox').open`), true)
+        assert.equal(
+          await run(`document.querySelectorAll('.markdown-mermaid__canvas > svg').length`),
+          1
+        )
+        assert.equal(
+          await run(
+            `document.querySelector('.resizable-lightbox .markdown-mermaid__canvas > svg') === window.originalDiagram`
+          ),
+          true
+        )
+        assert.equal(await run(`window.diagramZoom()`), 100)
+        assert.equal(
+          await run(`document.activeElement.getAttribute('aria-label')`),
+          'Close expanded diagram'
+        )
+        await key('Tab')
+        assert.equal(
+          await run(
+            `document.querySelector('.resizable-lightbox').contains(document.activeElement)`
+          ),
+          true
+        )
+        const originalWidth = await run(`window.originalDiagram.getBoundingClientRect().width`)
+        await run(`document.querySelector('[aria-label="Zoom in"]').click()`)
+        assert.ok(
+          (await run(`window.originalDiagram.getBoundingClientRect().width`)) > originalWidth
+        )
+        await run(`document.querySelector('[aria-label="Fit diagram"]').click()`)
+        assert.ok(
+          await run(`(() => {
+          const viewport = document.querySelector('.markdown-mermaid--expanded .markdown-mermaid__viewport')
+          return viewport.scrollWidth <= viewport.clientWidth && viewport.scrollHeight <= viewport.clientHeight
+        })()`),
+          `${scheme}: Fit should show the entire diagram`
+        )
+        await run(`document.querySelector('[aria-label="Actual size"]').click()`)
+        assert.equal(await run(`window.diagramZoom()`), 100)
+        await run(`document.querySelector('[aria-label="Zoom out"]').click()`)
+        assert.equal(await run(`window.diagramZoom()`), 80)
+        await run(`document.querySelector('[aria-label="Actual size"]').click()`)
+        assert.equal(await run(`window.diagramZoom()`), 100)
+        await run(
+          `document.querySelector('.markdown-mermaid--expanded .markdown-mermaid__viewport').scrollLeft = 500`
+        )
+        assert.ok(
+          (await run(
+            `document.querySelector('.markdown-mermaid--expanded .markdown-mermaid__viewport').scrollLeft`
+          )) > 0
+        )
+        const screenshot = path.resolve(
+          __dirname,
+          `../../test-results/mermaid-expanded-${scheme}.png`
+        )
+        await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG())
+        await key('Escape')
+        assert.equal(await run(`document.querySelector('.resizable-lightbox').open`), false)
+        assert.equal(
+          await run(
+            `document.querySelector('.markdown-mermaid__viewport svg') === window.originalDiagram`
+          ),
+          true
+        )
+        assert.equal(
+          await run(
+            `document.activeElement === document.querySelector('[aria-label="Expand diagram"]') || document.activeElement === document.querySelector('.markdown-mermaid__viewport')`
+          ),
+          true
+        )
+        await run(`document.querySelector('[aria-label="Expand diagram"]').focus()`)
+        await key('Enter')
+        await run(`document.querySelector('[aria-label="Close expanded diagram"]').click()`)
+        await run('new Promise(resolve => requestAnimationFrame(resolve))')
+        assert.equal(await run(`document.querySelector('.resizable-lightbox').open`), false)
+        await run(`document.querySelector('[aria-label="Expand diagram"]').click()`)
+        win.webContents.sendInputEvent({
+          type: 'mouseDown',
+          x: 1,
+          y: 1,
+          button: 'left',
+          clickCount: 1
+        })
+        win.webContents.sendInputEvent({
+          type: 'mouseUp',
+          x: 1,
+          y: 1,
+          button: 'left',
+          clickCount: 1
+        })
+        await run(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+        )
+        assert.equal(await run(`document.querySelector('.resizable-lightbox').open`), false)
+      }
+      win.setSize(400, 700)
+      await render(wide, 'dark')
+      await run(`document.querySelector('[aria-label="Expand diagram"]').click()`)
+      await run(`document.querySelector('[aria-label="Fit diagram"]').click()`)
+      await run(
+        'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+      )
+      assert.equal(await run(`document.querySelector('.resizable-lightbox').open`), true)
+      assert.ok(
+        await run(`(() => {
+        const dialog = document.querySelector('.resizable-lightbox')
+        const controls = dialog.querySelector('.resizable-lightbox__actions')
+        const rect = dialog.getBoundingClientRect()
+        return rect.left >= 0 && rect.right <= innerWidth &&
+          controls.scrollWidth <= controls.clientWidth && dialog.scrollHeight <= dialog.clientHeight
+      })()`),
+        'Preview and all controls should fit a narrow window'
+      )
+      await fs.writeFile(
+        path.resolve(__dirname, '../../test-results/mermaid-expanded-mobile.png'),
+        (await win.webContents.capturePage()).toPNG()
+      )
+      await run(`window.unmount()`)
+      assert.equal(await run(`document.querySelector('dialog[open]') !== null`), false)
       assert.deepEqual(errors, [])
       console.log(
-        'Mermaid node, edge, subgraph and formatted labels render in both themes; unsafe content is removed.'
+        'Mermaid labels render safely in both themes; wide diagrams stay readable, expand, zoom, fit, scroll and close on desktop and narrow windows.'
       )
     } catch (error) {
       console.error(error, errors)
