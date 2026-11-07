@@ -7,7 +7,7 @@ import vm from 'node:vm'
 import test from 'node:test'
 import { build } from 'esbuild'
 
-for (const platform of ['linux', 'win32']) {
+for (const platform of ['linux', 'darwin', 'win32']) {
   test(`${platform}: Codex account lifecycle and display names stay in the selected environment without switching accounts`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'sele-codex-display-'))
     const accountId = '00000000-0000-4000-8000-000000000001'
@@ -53,16 +53,20 @@ for (const platform of ['linux', 'win32']) {
           }
         ]
       })
-      const module = { exports: {} }
-      vm.runInNewContext(bundled.outputFiles[0].text, {
-        module,
-        exports: module.exports,
-        require: createRequire(import.meta.url),
-        process: { ...process, platform, env: { ...process.env, CODEX_HOME: root } },
-        Buffer,
-        fixture: { root, remote }
-      })
-      const local = await module.exports.getCodexAccountsWithDisplayNames()
+      const loadApi = () => {
+        const module = { exports: {} }
+        vm.runInNewContext(bundled.outputFiles[0].text, {
+          module,
+          exports: module.exports,
+          require: createRequire(import.meta.url),
+          process: { ...process, platform, env: { ...process.env, CODEX_HOME: root } },
+          Buffer,
+          fixture: { root, remote }
+        })
+        return module.exports
+      }
+      const api = loadApi()
+      const local = await api.getCodexAccountsWithDisplayNames()
       assert.equal(
         local.accounts.find((account) => account.id === 'default').displayName,
         'Personal Name'
@@ -77,19 +81,28 @@ for (const platform of ['linux', 'win32']) {
       await assert.rejects(access(join(managed, 'name')))
       assert.equal(await readFile(join(managed, 'auth.json'), 'utf8'), token('Work Name'))
 
-      const other = await module.exports.getCodexAccountsWithDisplayNames({
+      const container = {
         kind: 'container',
         name: 'fixture',
         tool: 'fixture'
-      })
+      }
+      const other = await api.getCodexAccountsWithDisplayNames(container)
       assert.equal(other.accounts[0].displayName, 'Remote Name')
       assert.equal(other.accounts.length, 1)
-      const api = module.exports
       const created = await api.createCodexAccount()
       const createdHome = join(root, 'sele/accounts', created.accountId)
-      assert.equal(await readFile(join(createdHome, 'pending'), 'utf8'), '')
+      assert.match(await readFile(join(createdHome, 'pending'), 'utf8'), /^[0-9a-f-]{36}\n$/)
       await assert.rejects(access(join(createdHome, 'name')))
       await assert.rejects(access(join(createdHome, 'pending-name')))
+      // Background account/credit refreshes must not roll back a live browser login.
+      for (let index = 0; index < 3; index++) {
+        const refresh = await api.getCodexAccountsWithDisplayNames()
+        assert.equal(
+          refresh.accounts.some((account) => account.id === created.accountId),
+          false
+        )
+        await access(join(createdHome, 'pending'))
+      }
       await writeFile(join(createdHome, 'auth.json'), token('Added Name'))
       await api.finalizeCodexAccount(created.accountId)
       const added = await api.getCodexAccountsWithDisplayNames()
@@ -99,17 +112,42 @@ for (const platform of ['linux', 'win32']) {
       )
       assert.equal(added.accounts.find((account) => account.active).id, created.accountId)
       const canceled = await api.createCodexAccount()
+      await api.getCodexAccountsWithDisplayNames()
       await api.cancelCodexAccountCreation(canceled.accountId)
+      await assert.rejects(access(join(root, 'sele/accounts', canceled.accountId)))
       assert.equal(
         (await api.getCodexAccounts()).accounts.find((account) => account.active).id,
         created.accountId
       )
       const interrupted = await api.createCodexAccount()
+      const restarted = loadApi()
       assert.equal(
-        (await api.getCodexAccounts()).accounts.find((account) => account.active).id,
+        (await restarted.getCodexAccounts()).accounts.find((account) => account.active).id,
         created.accountId
       )
       await assert.rejects(access(join(root, 'sele/accounts', interrupted.accountId)))
+
+      const remoteCreation = await restarted.createCodexAccount(container)
+      const remoteHome = join(remote, 'sele/accounts', remoteCreation.accountId)
+      await restarted.getCodexAccountsWithDisplayNames(container)
+      await access(join(remoteHome, 'pending'))
+      await writeFile(join(remoteHome, 'auth.json'), token('Added Remote Name'))
+      await restarted.finalizeCodexAccount(remoteCreation.accountId, container)
+      const remoteAdded = await restarted.getCodexAccountsWithDisplayNames(container)
+      assert.equal(
+        remoteAdded.accounts.find((account) => account.active).displayName,
+        'Added Remote Name'
+      )
+      assert.equal(
+        (await restarted.getCodexAccounts()).accounts.find((account) => account.active).id,
+        created.accountId
+      )
+
+      // Empty legacy markers still represent interrupted sign-ins and are recovered.
+      const legacy = await restarted.createCodexAccount(container)
+      await writeFile(join(remote, 'sele/accounts', legacy.accountId, 'pending'), '')
+      await restarted.getCodexAccounts(container)
+      await assert.rejects(access(join(remote, 'sele/accounts', legacy.accountId)))
     } finally {
       await rm(root, { recursive: true, force: true })
     }

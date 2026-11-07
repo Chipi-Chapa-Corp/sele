@@ -13,8 +13,11 @@ export type CodexAccountOperation =
   | 'delete'
   | 'names'
 
+// Pending markers belong to this app session; only an older session needs recovery.
+export const codexAccountSessionId = randomUUID()
+
 /** Native account lifecycle for Windows, with the existing on-disk format and rollback markers. */
-export const createCodexAccountStore = (home: string) => {
+export const createCodexAccountStore = (home: string, sessionId = codexAccountSessionId) => {
   const root = join(home, 'sele')
   const activePath = join(root, 'active-account')
   const active = async () => (await optionalCodexFile(activePath))?.trim() || 'default'
@@ -63,7 +66,8 @@ export const createCodexAccountStore = (home: string) => {
             await rm(join(directory, legacy))
           }
         }
-        await rollback(entry.name)
+        const owner = (await optionalCodexFile(join(directory, 'pending')))?.trim()
+        if (owner != null && owner !== sessionId) await rollback(entry.name)
         if (await ready(entry.name)) ids.push(entry.name)
       }
       return ['Windows', await active(), ...ids].join('\0')
@@ -86,7 +90,12 @@ export const createCodexAccountStore = (home: string) => {
       case 'create': {
         const previous = await active()
         await mkdir(directory, { recursive: true, mode: 0o700 })
-        await writeFile(join(directory, 'pending'), '', { flag: 'wx', mode: 0o600 })
+        const pendingPath = join(directory, `.pending-${sessionId}`)
+        await writeFile(pendingPath, `${sessionId}\n`, {
+          flag: 'wx',
+          mode: 0o600
+        })
+        await rename(pendingPath, join(directory, 'pending'))
         await writeFile(join(directory, 'auth.json'), '{}\n', { flag: 'wx', mode: 0o600 })
         await writeFile(
           join(directory, 'previous-account'),

@@ -8,7 +8,11 @@ import {
   isCodexAccountId,
   parseCodexAccountsOutput
 } from './CodexAccountConfig'
-import { createCodexAccountStore, type CodexAccountOperation } from './CodexAccountStore.ts'
+import {
+  codexAccountSessionId,
+  createCodexAccountStore,
+  type CodexAccountOperation
+} from './CodexAccountStore.ts'
 import { codexHome } from './CodexShadowHome.ts'
 import { codexAccountDisplayName } from '../AccountDisplayName'
 
@@ -17,6 +21,7 @@ const accountCommandMaxBuffer = 1024 * 1024
 
 const inspectAccountsScript = String.raw`
 set -eu
+session_id=$1
 umask 077
 platform=$(uname -s 2>/dev/null || printf 'Unknown')
 printf '%s\0' "$platform"
@@ -45,6 +50,10 @@ fi
 if [ -d "$accounts_home" ]; then
   for pending_home in "$accounts_home"/*; do
     [ -d "$pending_home" ] && [ -f "$pending_home/pending" ] || continue
+    pending_session=''
+    IFS= read -r pending_session < "$pending_home/pending" || true
+    # Account-list refreshes must leave this session's browser sign-in intact.
+    [ "$pending_session" != "$session_id" ] || continue
     pending_id=${'${'}pending_home##*/}
     case "$pending_id" in
       *[!0-9a-f-]*|'')
@@ -106,7 +115,8 @@ sele_home="$codex_home/sele"
 account_home="$sele_home/accounts/$account_id"
 umask 077
 mkdir -p "$account_home"
-: > "$account_home/pending"
+printf '%s\n' "$2" > "$account_home/.pending-$2"
+mv "$account_home/.pending-$2" "$account_home/pending"
 printf '{}\n' > "$account_home/auth.json"
 previous=default
 current=''
@@ -243,7 +253,7 @@ export const getCodexAccounts = async (
   if (unavailableMessage) return { available: false, unavailableMessage, accounts: [] }
 
   return parseCodexAccountsOutput(
-    await runAccountCommand(inspectAccountsScript, [], container, 'inspect')
+    await runAccountCommand(inspectAccountsScript, [codexAccountSessionId], container, 'inspect')
   )
 }
 
@@ -289,7 +299,12 @@ export const createCodexAccount = async (
   if (!configuration.available) throw new Error(configuration.unavailableMessage ?? 'Unavailable')
 
   const accountId = randomUUID()
-  await runAccountCommand(createAccountScript, [accountId], container, 'create')
+  await runAccountCommand(
+    createAccountScript,
+    [accountId, codexAccountSessionId],
+    container,
+    'create'
+  )
   return { accountId }
 }
 

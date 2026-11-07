@@ -27,6 +27,10 @@ test('native account lifecycle preserves legacy credentials, names, cancellation
   await store('cancel', [b])
   assert.equal((await get()).accounts.find((account) => account.active).id, a)
   await store('create', [b])
+  assert.equal(
+    (await get()).accounts.some((account) => account.id === b),
+    false
+  )
   await store('finalize', [b])
   assert.equal((await get()).accounts.find((account) => account.active).id, b)
   assert.deepEqual((await store('names', ['default', a])).split('\0'), [
@@ -37,7 +41,12 @@ test('native account lifecycle preserves legacy credentials, names, cancellation
   ])
   await store('delete', [a])
   await store('create', [a])
-  assert.equal((await get()).accounts.find((account) => account.active).id, b)
+  const restarted = createCodexAccountStore(home, 'restarted-session')
+  assert.equal(
+    parseCodexAccountsOutput(await restarted('inspect')).accounts.find((account) => account.active)
+      .id,
+    b
+  )
   await store('delete', [b])
   assert.equal((await get()).accounts.find((account) => account.active).id, 'default')
   assert.equal(await readFile(join(home, 'auth.json'), 'utf8'), 'default')
