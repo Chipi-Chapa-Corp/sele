@@ -14,7 +14,7 @@ done
   printf 'This chat account is no longer available. Select another account for this chat.\n' >&2
   exit 1
 }
-for name in auth.lock models_cache.json; do
+for name in auth.lock auth.json.lock models_cache.json; do
   [ ! -L "$shadow/$name" ] || {
     printf 'Codex account %s must be private.\n' "$name" >&2
     exit 1

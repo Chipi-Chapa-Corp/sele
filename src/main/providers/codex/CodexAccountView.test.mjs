@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -79,6 +79,8 @@ for (const usePosix of [true, false]) {
     await mkdir(shadow, { recursive: true })
     await writeFile(join(shadow, 'auth.json'), 'old token')
     await writeFile(join(root, 'auth.json'), 'default token')
+    await writeFile(join(root, 'auth.json.lock'), 'default lock')
+    await writeFile(join(shadow, 'auth.json.lock'), 'account lock')
     const script = join(root, 'provider.cjs')
     await writeFile(
       script,
@@ -118,5 +120,28 @@ for (const usePosix of [true, false]) {
     assert.equal(await readFile(join(root, 'starts'), 'utf8'), 'started\n')
     assert.equal(await readFile(join(root, 'auth.json'), 'utf8'), 'default token')
     assert.equal(await readFile(join(shadow, 'auth.json'), 'utf8'), 'rotated token')
+    assert.equal(await readFile(join(root, 'auth.json.lock'), 'utf8'), 'default lock')
+    assert.equal(await readFile(join(shadow, 'auth.json.lock'), 'utf8'), 'account lock')
+
+    await rm(join(shadow, 'auth.json.lock'))
+    await symlink(join(root, 'auth.json.lock'), join(shadow, 'auth.json.lock'))
+    const rejected = async () => {
+      const invalid = await getCodexAccountViewCommand(
+        'unused-provider',
+        [],
+        usePosix,
+        account,
+        env
+      )
+      const child = spawn(invalid.file, invalid.args, { env: invalid.env })
+      let stderr = ''
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk
+      })
+      const [code] = await once(child, 'close')
+      assert.equal(code, 1)
+      throw new Error(stderr.trim())
+    }
+    await assert.rejects(rejected, /Codex account auth\.json\.lock must be private\./)
   })
 }

@@ -4,6 +4,7 @@ import {
   removeBrowserUseSessions
 } from './CodexBrowserSessions'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import { createInterface } from 'node:readline'
 import type { AppContainerTarget } from '../../../shared/app'
@@ -92,7 +93,7 @@ const getAppServerCommand = async (
     }
   }
 
-  const resourceUnitName = `sele-codex-${process.pid}-${Date.now()}`
+  const resourceUnitName = `sele-codex-${process.pid}-${randomUUID()}`
   return {
     command: 'systemd-run',
     env: accountViewCommand.env,
@@ -102,6 +103,9 @@ const getAppServerCommand = async (
       '--wait',
       '--collect',
       '--quiet',
+      // The account wrapper contains shell variables, including ${target##*/}.
+      // Only its shell may expand them; systemd otherwise substitutes empty values.
+      '--expand-environment=no',
       `--unit=${resourceUnitName}`,
       '--property=CPUWeight=25',
       '--property=IOWeight=25',

@@ -33,6 +33,7 @@ export const codexPrivateEntries = new Set([
   'sele',
   'auth.json',
   'auth.lock',
+  'auth.json.lock',
   'models_cache.json',
   'tmp',
   '.DS_Store'
@@ -91,7 +92,7 @@ export const prepareCodexShadowHome = async (home: string, id: string): Promise<
       throw new Error('Codex account directory must be a real directory.')
   }
   await resolveCodexAccount(home, id)
-  for (const name of ['auth.lock', 'models_cache.json']) {
+  for (const name of ['auth.lock', 'auth.json.lock', 'models_cache.json']) {
     const info = await lstat(join(shadow, name)).catch((error) => {
       if (error.code !== 'ENOENT') throw error
       return null
