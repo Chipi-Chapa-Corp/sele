@@ -86,3 +86,29 @@
   flex-wrap: wrap;
   padding-top: 0.8rem;
 }
+
+.account-dialog__user-code {
+  display: block;
+  margin-top: 0.25rem;
+  padding: 0.55rem 0.6rem;
+  border: 0.0625rem solid var(--menu-border);
+  border-radius: 0.4rem;
+  color: var(--ink);
+  font-family: var(--code-font-family);
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Copy code is the main action; the page actions sit below it. */
+.account-dialog__browser-actions--device > .ui-button:first-child {
+  grid-column: 1 / -1;
+}
+
+.account-dialog__browser-actions--device {
+  margin-top: 0;
+}

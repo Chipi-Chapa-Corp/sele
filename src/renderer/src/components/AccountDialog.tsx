@@ -13,8 +13,11 @@ export type AccountAuthorizationSession = {
   authorize: () => Promise<void>
   cancel: () => Promise<void>
   submitCode?: (code: string) => Promise<void>
+  copyCode?: () => Promise<void>
   copyLink?: () => Promise<void>
 }
+
+type CopyTarget = 'code' | 'link'
 
 type AccountDialogProps = {
   reauthenticate?: boolean
@@ -37,8 +40,9 @@ export const AccountDialog = ({
   const [userCode, setUserCode] = useState<string | null>(null)
   const [authorization, setAuthorization] = useState<AccountAuthorizationSession | null>(null)
   const [authorizationActionPending, setAuthorizationActionPending] = useState(false)
-  const [copyLinkPending, setCopyLinkPending] = useState(false)
-  const [linkCopied, setLinkCopied] = useState(false)
+  const [copyPending, setCopyPending] = useState<CopyTarget | null>(null)
+  // Only the most recently copied value is on the clipboard.
+  const [copied, setCopied] = useState<CopyTarget | null>(null)
   const [code, setCode] = useState('')
   const [codePending, setCodePending] = useState(false)
 
@@ -56,7 +60,7 @@ export const AccountDialog = ({
     if (phase !== 'idle') return
     setPhase('starting')
     setCode('')
-    setLinkCopied(false)
+    setCopied(null)
     cancelingRef.current = false
     setError(null)
     try {
@@ -157,19 +161,47 @@ export const AccountDialog = ({
     }
   }
 
-  const handleCopyLink = async (): Promise<void> => {
-    if (!authorization?.copyLink || phase !== 'authorizing' || copyLinkPending) return
-    setCopyLinkPending(true)
+  const handleCopy = async (target: CopyTarget): Promise<void> => {
+    const copy = target === 'code' ? authorization?.copyCode : authorization?.copyLink
+    if (!copy || phase !== 'authorizing' || copyPending) return
+    setCopyPending(target)
     setError(null)
     try {
-      await authorization.copyLink()
-      if (mounted.current) setLinkCopied(true)
-    } catch {
-      setError('Unable to copy the sign-in link.')
+      await copy()
+      if (mounted.current) setCopied(target)
+    } catch (copyError) {
+      console.error('[caught:AccountDialog:handleCopy]', copyError)
+      if (mounted.current)
+        setError(
+          target === 'code' ? 'Unable to copy the code.' : 'Unable to copy the sign-in link.'
+        )
     } finally {
-      if (mounted.current) setCopyLinkPending(false)
+      if (mounted.current) setCopyPending(null)
     }
   }
+
+  const copyLinkButton = authorization?.copyLink && (
+    <Button
+      aria-label="Copy sign-in link"
+      aria-busy={copyPending === 'link'}
+      callback={() => handleCopy('link')}
+      disabled={phase === 'canceling'}
+      icon={copied === 'link' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      label={<span role="status">{copied === 'link' ? 'Copied' : 'Copy link'}</span>}
+      theme="secondary"
+    />
+  )
+
+  const openPageButton = (
+    <Button
+      aria-label="Open sign-in page"
+      callback={handleAuthorize}
+      disabled={phase === 'canceling' || authorizationActionPending}
+      icon={<ExternalLink aria-hidden="true" />}
+      label="Open page"
+      theme="secondary"
+    />
+  )
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
@@ -229,35 +261,46 @@ export const AccountDialog = ({
             <div className="account-dialog__authorization">
               <p>
                 {userCode
-                  ? 'Copy the one-time code and complete authorization in your browser.'
+                  ? 'Enter this one-time code on the sign-in page. Open the page here, or copy the link to sign in on another device.'
                   : authorization?.submitCode
                     ? 'Open the sign-in page, then paste the code below. You can also copy the link to another device.'
                     : 'Open the authorization page in your browser.'}
               </p>
+              {userCode && (
+                <>
+                  <output className="account-dialog__user-code" aria-label="One-time code">
+                    {userCode}
+                  </output>
+                  <div className="account-dialog__browser-actions account-dialog__browser-actions--device">
+                    {authorization?.copyCode && (
+                      <Button
+                        aria-label="Copy one-time code"
+                        aria-busy={copyPending === 'code'}
+                        callback={() => handleCopy('code')}
+                        disabled={phase === 'canceling'}
+                        icon={
+                          copied === 'code' ? (
+                            <Check aria-hidden="true" />
+                          ) : (
+                            <Copy aria-hidden="true" />
+                          )
+                        }
+                        label={
+                          <span role="status">{copied === 'code' ? 'Copied' : 'Copy code'}</span>
+                        }
+                        theme="primary"
+                      />
+                    )}
+                    {openPageButton}
+                    {copyLinkButton}
+                  </div>
+                </>
+              )}
               {authorization?.submitCode && (
                 <>
                   <div className="account-dialog__browser-actions">
-                    <Button
-                      aria-label="Open sign-in page"
-                      callback={handleAuthorize}
-                      disabled={phase === 'canceling' || authorizationActionPending}
-                      icon={<ExternalLink aria-hidden="true" />}
-                      label="Open page"
-                      theme="secondary"
-                    />
-                    {authorization.copyLink && (
-                      <Button
-                        aria-label="Copy sign-in link"
-                        aria-busy={copyLinkPending}
-                        callback={handleCopyLink}
-                        disabled={phase === 'canceling'}
-                        icon={
-                          linkCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />
-                        }
-                        label={<span role="status">{linkCopied ? 'Copied' : 'Copy link'}</span>}
-                        theme="secondary"
-                      />
-                    )}
+                    {openPageButton}
+                    {copyLinkButton}
                   </div>
                   <label className="account-dialog__code-label" htmlFor="account-dialog-code">
                     Authorization code
@@ -302,22 +345,12 @@ export const AccountDialog = ({
                     disabled={phase !== 'authorizing' || !code.trim() || codePending}
                     theme="primary"
                   />
-                ) : (
+                ) : userCode ? null : (
                   <Button
                     callback={handleAuthorize}
                     disabled={phase === 'canceling' || authorizationActionPending}
-                    icon={
-                      userCode ? <Copy aria-hidden="true" /> : <ExternalLink aria-hidden="true" />
-                    }
-                    label={
-                      authorizationActionPending
-                        ? userCode
-                          ? 'Copying…'
-                          : 'Opening…'
-                        : userCode
-                          ? `Copy ${userCode}`
-                          : 'Open'
-                    }
+                    icon={<ExternalLink aria-hidden="true" />}
+                    label={authorizationActionPending ? 'Opening…' : 'Open'}
                     theme="primary"
                   />
                 )}

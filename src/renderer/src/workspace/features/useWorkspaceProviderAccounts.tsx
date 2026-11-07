@@ -247,6 +247,8 @@ export function useWorkspaceProviderAccounts({
       }
     })()
 
+    const pendingUrl = authUrl
+    const pendingUserCode = userCode
     return {
       userCode,
       completion,
@@ -256,11 +258,14 @@ export function useWorkspaceProviderAccounts({
               providerApi.submitAccountLoginCode(providerId, loginId!, code, { container, chatId })
           }
         : {}),
-      ...(acceptsCode && authUrl ? { copyLink: () => appApi.writeClipboardText(authUrl!) } : {}),
+      ...(pendingUserCode ? { copyCode: () => appApi.writeClipboardText(pendingUserCode) } : {}),
+      // Both code-based flows can finish on another device, so expose the page link.
+      ...((acceptsCode || pendingUserCode) && pendingUrl
+        ? { copyLink: () => appApi.writeClipboardText(pendingUrl) }
+        : {}),
       authorize: async () => {
-        if (!authUrl) return
-        if (userCode) await appApi.writeClipboardText(userCode)
-        await appApi.handleExternalLink({ url: authUrl, action: 'open' })
+        if (!pendingUrl) return
+        await appApi.handleExternalLink({ url: pendingUrl, action: 'open' })
       },
       cancel: async () => {
         const configuration = await providerApi.cancelAccountCreation(
