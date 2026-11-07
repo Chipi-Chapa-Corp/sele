@@ -62,6 +62,7 @@ export function useWorkspaceSidebarPresentation({
               hasWorkingChat:
                 chatState.chatSidebarTabs.working &&
                 chatState.activeChatSidebarFilter !== 'working' &&
+                chatState.activeChatSidebarFilter !== 'all' &&
                 workingProjectCwds.has(group.cwd)
             }
           : group,
