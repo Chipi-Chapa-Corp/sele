@@ -1,5 +1,8 @@
 import { createLimitResetDelivery } from './LimitResetDelivery'
 import { LimitResetQueue } from './LimitResetQueue'
+import { ExpiringResetCredits } from './ExpiringResetCredits'
+import { promptExpiringReset } from './ExpiringResetPrompt'
+import type { AppContainerTarget } from '../../shared/app'
 import { limitResetMessageBackend } from '../database/limitResetMessages'
 import { isNoProjectChat } from '../../shared/noProject'
 import { getLastTurnOutcome } from '../../shared/chatTurnOutcome'
@@ -945,7 +948,26 @@ const queueLimitResetMessage = async (
   )
 }
 
-export const startLimitResetQueue = (): void => limitResetQueue.start()
+const resetCreditSources = new Map<string, AppContainerTarget | null>()
+const expiringResetCredits = new ExpiringResetCredits({
+  sources: async () => {
+    const sources = new Map(resetCreditSources)
+    sources.set(getContainerTargetKey(null), null)
+    for (const container of await getChatContainers())
+      sources.set(getContainerTargetKey(container), container)
+    return [...sources.values()]
+  },
+  // Codex is currently the only provider exposing consumable manual reset credits.
+  accounts: getCodexAccountsWithDisplayNames,
+  usage: (options) => adapters.codex.getUsage(options),
+  reset: (options) => adapters.codex.resetRateLimits(options),
+  prompt: promptExpiringReset
+})
+
+export const startLimitResetQueue = (): void => {
+  limitResetQueue.start()
+  expiringResetCredits.start()
+}
 
 export const providerApi: ProviderApi = {
   reauthenticateAccount: async (providerId, options) => {
@@ -982,6 +1004,8 @@ export const providerApi: ProviderApi = {
     return adapters[providerId].login(options)
   },
   getAccounts: async (providerId, options) => {
+    if (providerId === 'codex')
+      resetCreditSources.set(getContainerTargetKey(options?.container), options?.container ?? null)
     const accountEpoch = persistentChatHistory.accountEpoch(providerId, options?.container)
     const load = async (): Promise<ProviderAccountConfiguration> => {
       if (providerId === 'codex') return getCodexAccountsWithDisplayNames(options?.container)
@@ -1605,6 +1629,7 @@ export const providerApi: ProviderApi = {
 
 export const disposeProviderAdapters = async (): Promise<void> => {
   backgroundChatRecovery.dispose()
+  await expiringResetCredits.close()
   await limitResetQueue.close()
   await Promise.allSettled(Object.values(adapters).map((adapter) => adapter.dispose()))
   try {
