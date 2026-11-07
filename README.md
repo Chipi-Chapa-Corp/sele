@@ -247,10 +247,14 @@ Vite updates; run this GUI fixture on the `isolated-gui` private display.
 Run the project checks with:
 
 ```bash
-npm run lint
-npm run typecheck
+npm run check
 npm run build
 ```
+
+`npm install` / `npm ci` installs the repository's Git pre-commit hook through
+`npm run prepare`. The hook runs `npm run check`: lint, type-checking, unit tests,
+and integration tests, matching CI validation. A failed check blocks the commit.
+For an existing checkout, run `npm run prepare` once to enable the hook.
 
 Use these test entry points:
 

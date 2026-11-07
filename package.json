@@ -1,12 +1,14 @@
 {
   "name": "sele",
-  "version": "3.19.0",
+  "version": "3.19.1",
   "description": "A lightweight desktop AI harness",
   "author": "ExposedCat",
   "license": "GPL-3.0-only",
   "desktopName": "com.chipichapa.sele.desktop",
   "main": "./out/main/index.js",
   "scripts": {
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:integration",
     "test": "node scripts/tests/run.mjs unit",
     "test:unit": "node scripts/tests/run.mjs unit",
     "test:integration": "node scripts/tests/run.mjs integration",

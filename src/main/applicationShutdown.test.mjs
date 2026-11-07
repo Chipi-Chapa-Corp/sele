@@ -107,6 +107,7 @@ test('failed queue flush still saves final conversation views and releases histo
     }).outputText,
     {
       backgroundChatRecovery: { dispose: () => calls.push('recovery') },
+      expiringResetCredits: { close: async () => calls.push('credits') },
       limitResetQueue: {
         close: async () => {
           calls.push('reset')
@@ -132,6 +133,14 @@ test('failed queue flush still saves final conversation views and releases histo
     }
   )
   await assert.rejects(dispose(), /disk failure/)
-  assert.deepEqual(calls, ['recovery', 'reset', 'adapter', 'timer', ['scope', 'detail'], 'history'])
+  assert.deepEqual(calls, [
+    'recovery',
+    'credits',
+    'reset',
+    'adapter',
+    'timer',
+    ['scope', 'detail'],
+    'history'
+  ])
   assert.equal(pending.size, 0)
 })

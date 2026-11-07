@@ -189,6 +189,7 @@ const ingestionFixture = () => {
   const timers = new Map()
   const saved = []
   let closed = false
+  let creditsClosed = false
   let hold = false
   let release
   const scope = {
@@ -212,6 +213,11 @@ const ingestionFixture = () => {
     },
     adapters: { fixture: { dispose() {} } },
     backgroundChatRecovery: { dispose() {} },
+    expiringResetCredits: {
+      async close() {
+        creditsClosed = true
+      }
+    },
     limitResetQueue: { async close() {} },
     flushPersistentPendingMessages: async () => {},
     pendingConversationViews: new Map(),
@@ -254,6 +260,7 @@ const ingestionFixture = () => {
     timers,
     saved,
     closed: () => closed,
+    creditsClosed: () => creditsClosed,
     hold: () => {
       hold = true
     },
@@ -299,6 +306,7 @@ test('shutdown awaits the final durable viewport before closing its scope', asyn
   h.context.queueConversationView('codex', opening(1), false)
   const shuttingDown = h.context.disposeProviderAdapters()
   await settle()
+  assert.equal(h.creditsClosed(), true)
   assert.equal(h.timers.size, 0)
   assert.equal(h.closed(), false)
   assert.equal(h.saved.length, 0)
