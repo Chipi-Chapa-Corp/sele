@@ -340,6 +340,25 @@ test('a second live client cannot replace the worker or take over its stream', a
   assert.equal((await first.request('fixture/state')).pid, original.pid)
 })
 
+test('account runtime can restart immediately after disposal', async () => {
+  const profile = join(directory, 'account-restart')
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const transport = await connectRuntime(profile)
+    const original = await rpc(transport).initialize()
+    // Model delayed delivery of the stop record on the loopback connection.
+    const end = transport.stdin.end.bind(transport.stdin)
+    transport.stdin.end = (...args) => {
+      setTimeout(() => end(...args), 100)
+      return transport.stdin
+    }
+    transport.kill()
+    const replacement = await connectRuntime(profile)
+    const restarted = await rpc(replacement).initialize()
+    assert.notEqual(restarted.pid, original.pid)
+    replacement.kill()
+  }
+})
+
 test('large concurrent replies survive a slow frontend without truncation or reconnection', async (t) => {
   const profile = join(directory, 'backpressure')
   const transport = await connectRuntime(profile)

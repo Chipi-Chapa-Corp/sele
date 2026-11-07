@@ -7393,6 +7393,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
     if (!threadId || !turnId || !params.item || typeof params.item !== 'object') return
+    if (this.isRolledBackTurn(threadId, turnId)) return
 
     const status = notification.method === 'item/started' ? 'running' : 'finished'
     const items = this.normalizeLiveItem(params.item as CodexThreadItem).map((item) =>
@@ -7416,8 +7417,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       if (childThreadId) this.subagentRunOutcomes.delete(childThreadId)
     })
     if (items.some((item) => item.type === 'userMessage')) {
-      // User echoes also reconcile local prompts and steering-message identity.
-      this.upsertItems(threadId, turnId, items)
+      // Item notifications can precede the turn/start reply. Correlate the echoed client ID
+      // before upserting, or the server turn is appended alongside its local pending turn.
+      const turn: CodexTurn = { id: turnId, status: 'inProgress', items }
+      const pendingTurnId = this.getPendingTurnIdForLiveTurn(threadId, turn)
+      if (pendingTurnId) this.reconcileStartedTurn(threadId, pendingTurnId, turn)
+      else this.upsertItems(threadId, turnId, items)
     } else {
       items.forEach((item) =>
         this.updateItem(threadId, turnId, item.id, (previous) =>

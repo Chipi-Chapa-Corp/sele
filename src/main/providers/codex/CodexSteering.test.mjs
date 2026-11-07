@@ -127,6 +127,8 @@ const reconciliationFixture = () => {
     updateTurnItems: (_threadId, _turnId, update) => {
       turn = { ...turn, items: update(turn.items) }
     },
+    isRolledBackTurn: () => false,
+    getPendingTurnIdForLiveTurn: () => null,
     scheduleChatUpdated() {}
   })
   return {

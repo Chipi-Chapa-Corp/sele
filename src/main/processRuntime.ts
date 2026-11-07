@@ -24,7 +24,9 @@ export const processRuntimeKey = (profile: string, identity: unknown): string =>
     .digest('hex')
     .slice(0, 32)
 
-const attach = (port: number, token: string): Promise<RuntimeProcess> =>
+const stoppingRuntimes = new Map<string, Promise<void>>()
+
+const attach = (directory: string, port: number, token: string): Promise<RuntimeProcess> =>
   new Promise((resolve, reject) => {
     const socket = connect({ host: '127.0.0.1', port })
     const stdout = new PassThrough()
@@ -40,6 +42,20 @@ const attach = (port: number, token: string): Promise<RuntimeProcess> =>
     transport.stderr = stderr
     transport.exitCode = null
     transport.kill = () => {
+      if (socket.destroyed || stoppingRuntimes.has(directory)) return
+      // Account changes dispose and reconnect synchronously. Wait for the stop
+      // record to reach the worker before trying its still-published endpoint.
+      const stopped = new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => socket.destroy(), 5000)
+        socket.once('close', () => {
+          clearTimeout(timeout)
+          resolve()
+        })
+      })
+      stoppingRuntimes.set(directory, stopped)
+      void stopped.then(() => {
+        if (stoppingRuntimes.get(directory) === stopped) stoppingRuntimes.delete(directory)
+      })
       socket.end(JSON.stringify({ runtimeStop: true }) + '\n')
     }
     transport.detach = () => socket.end()
@@ -85,10 +101,11 @@ export const connectProcessRuntime = async (
 ): Promise<RuntimeProcess> => {
   const key = processRuntimeKey(profile, identity)
   const directory = join(profile, options.namespace, key)
+  await stoppingRuntimes.get(directory)
   if (!command) {
     const token = await readFile(join(directory, 'token'), 'utf8')
     const endpoint = JSON.parse(await readFile(join(directory, 'endpoint.json'), 'utf8'))
-    return attach(endpoint.port, token)
+    return attach(directory, endpoint.port, token)
   }
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const tokenPath = join(directory, 'token')
@@ -111,7 +128,7 @@ export const connectProcessRuntime = async (
     const endpoint = JSON.parse(await readFile(endpointPath, 'utf8')) as { port: number }
     if (!Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65535)
       throw new Error('Invalid Process runtime endpoint.')
-    return attach(endpoint.port, token)
+    return attach(directory, endpoint.port, token)
   }
   try {
     return await reconnect()
