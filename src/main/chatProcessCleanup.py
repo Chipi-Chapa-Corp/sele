@@ -7,11 +7,11 @@ import time
 from pathlib import Path
 
 
-def cleanup(chat_ids, grace=1.0):
+def cleanup(chat_ids, grace=1.0, keys=('SELE_CHAT_ID', 'CODEX_THREAD_ID')):
     if not Path('/proc/self/stat').exists():
         return  # Native provider cancellation remains available on other platforms.
     markers = {f'{key}={chat}'.encode() for chat in chat_ids
-               for key in ('SELE_CHAT_ID', 'CODEX_THREAD_ID')}
+               for key in keys}
     uid = os.getuid()
     protected = set()
 
@@ -103,4 +103,5 @@ def cleanup(chat_ids, grace=1.0):
 
 
 if __name__ == '__main__':
-    cleanup(json.loads(sys.argv[1]))
+    cleanup(json.loads(sys.argv[1]), keys=json.loads(sys.argv[2]) if len(sys.argv) > 2
+            else ('SELE_CHAT_ID', 'CODEX_THREAD_ID'))

@@ -54,7 +54,7 @@ if (!process.versions.electron) {
             window.renderFixture = (props = {}) => {
               Object.assign(window.composerProps, props)
               flushSync(() => root.render(<React.StrictMode>
-              <MessageSelectionQuoteButton containerRef={containerRef} onQuote={noop}/>
+              <MessageSelectionQuoteButton containerRef={containerRef} onQuote={(content, comment) => window.renderFixture({quoteRequest:{id:Date.now(),content,comment}})}/>
               <Profiler id="composer" onRender={() => window.commits++}>
                 {window.composerProps.fixtureVisible !== false && <MessageBox autoFocus draftScopeKey="test" providerId="codex"
                   cwd="/fixture" model="test" models={[]} agentMode="default" agentModes={[]}
@@ -924,6 +924,133 @@ if (!process.versions.electron) {
       await settle()
       assert.equal(await run('document.querySelectorAll(".message-box__attachment-preview--image").length'), 1,
         'another chat keeps its unsent image')
+      // Quotes stay out of the textarea and become ordinary Markdown only on send.
+      await run(
+        `renderFixture({draftScopeKey:'quote-draft', quoteRequest:{id:1,content:'Original quote\\nsecond line',comment:'  Please explain this part  '}})`
+      )
+      await settle()
+      assert.equal(await run('input.value'), '')
+      assert.equal(
+        await run(
+          'document.querySelector(".message-box__quote .attachment-chip__label").textContent'
+        ),
+        'Please explain this part'
+      )
+      assert.equal(
+        await run(`document.querySelector('[aria-label="Send message"]').disabled`),
+        false,
+        'quote alone enables sending'
+      )
+      const sendsBeforeQuote = await run('window.sendCount')
+      await click('.message-box__quote .attachment-chip__trigger')
+      await settle()
+      assert.equal(
+        await run('document.querySelector(".quote-comment-popover__quote").textContent'),
+        'Original quote\nsecond line'
+      )
+      assert.equal(await run('document.activeElement.value'), 'Please explain this part')
+      await screenshot('quote-editor-desktop')
+      await run(`document.activeElement.select()`)
+      await win.webContents.debugger.sendCommand('Input.insertText', { text: 'Updated comment' })
+      await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13
+      })
+      await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13
+      })
+      await settle()
+      assert.equal(
+        await run('window.sendCount'),
+        sendsBeforeQuote,
+        'saving the quote cannot submit the composer'
+      )
+      assert.equal(
+        await run(
+          'document.querySelector(".message-box__quote .attachment-chip__label").textContent'
+        ),
+        'Updated comment'
+      )
+      await run(`preferencesApi.flush(); renderFixture({draftScopeKey:'other-quote-draft'})`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 0)
+      await run(`renderFixture({draftScopeKey:'quote-draft'})`)
+      await settle()
+      assert.equal(
+        await run('document.querySelectorAll(".message-box__quote").length'),
+        1,
+        'quote stays with its chat'
+      )
+      await run(
+        `renderFixture({editSession:{id:'quote-edit',content:'Earlier message',attachments:[]}})`
+      )
+      await settle()
+      assert.equal(
+        await run('document.querySelectorAll(".message-box__quote").length'),
+        0,
+        'unsent quotes do not enter an older message edit'
+      )
+      await run(
+        `[...document.querySelectorAll('button')].find(button => button.textContent === 'Cancel').click(); renderFixture({editSession:null})`
+      )
+      await settle()
+      assert.equal(
+        await run('document.querySelectorAll(".message-box__quote").length'),
+        1,
+        'canceling edit restores quotes'
+      )
+      await run(
+        `window.renderFixture({onSend: message => {window.failedQuote = message; return false}}); document.querySelector('[aria-label="Send message"]').click()`
+      )
+      await settle()
+      assert.equal(
+        await run('window.failedQuote'),
+        '> Original quote\n> second line\n\nUpdated comment'
+      )
+      assert.equal(await run('input.value'), '')
+      assert.equal(
+        await run('document.querySelectorAll(".message-box__quote").length'),
+        1,
+        'failed send restores quote badge'
+      )
+      await screenshot('quote-badge-desktop')
+      await phone(375)
+      await click('.message-box__quote .attachment-chip__trigger')
+      await settle()
+      assert.equal(await run(`(() => {
+        const rect = document.querySelector('.quote-comment-popover').getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;
+      })()`), true, 'quote editor fits on a phone')
+      await screenshot('quote-editor-phone')
+      await key('Escape')
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".quote-comment-popover").length'), 0)
+      await win.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride')
+      await run(
+        `renderFixture({onSend: message => {window.sent = message; return true}}); setText('Main request'); document.querySelector('[aria-label="Send message"]').click()`
+      )
+      await settle()
+      assert.equal(
+        await run('window.sent'),
+        '> Original quote\n> second line\n\nUpdated comment\n\nMain request'
+      )
+      assert.equal(
+        await run('document.querySelectorAll(".message-box__quote").length'),
+        0,
+        'sent quotes clear'
+      )
+      await run(`renderFixture({quoteRequest:{id:2,content:'Another quote',comment:'A long comment '.repeat(10)}})`)
+      await settle()
+      assert.equal(await run('document.querySelector(".message-box__quote .attachment-chip__label").textContent.endsWith("…")'), true,
+        'long comments are trimmed in the badge')
+      await click('.message-box__quote .attachment-chip__remove')
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 0, 'quotes can be removed')
       assert.deepEqual(errors, [])
       console.log(
         'Composer input checks passed: prompt keycaps, Enter sending, persistent focus, text selection, mentions, selection without renders, large drafts, native replacement, and message quotes.'

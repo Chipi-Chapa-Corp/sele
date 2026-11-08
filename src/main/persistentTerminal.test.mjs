@@ -76,12 +76,16 @@ test('a workspace shell restores the same PID, scrollback, input and resize afte
     }
   })
   let originalOutput = ''
-  first.onData((data) => {
+  const originalChunks = []
+  first.onData((data, replay) => {
     originalOutput += data
+    originalChunks.push({ data, replay })
   })
   await first.attach()
   await waitFor(() => originalOutput.includes('started:'))
   assert.ok(originalOutput.startsWith('Previous agent output\r\n[process exited with code 7]\r\n'))
+  assert.equal(originalChunks[0].replay, true)
+  assert.equal(originalChunks.find(({ data }) => data.includes('started:')).replay, false)
   first.detach()
   await new Promise((resolve) => setTimeout(resolve, 100))
   assert.deepEqual(await listPersistentTerminalIds(profile), [id])
@@ -92,8 +96,10 @@ test('a workspace shell restores the same PID, scrollback, input and resize afte
   assert.equal(restored.metadata.label, 'Dev server')
   assert.equal(restored.metadata.chatKey, 'codex:chat')
   let output = ''
-  restored.onData((data) => {
+  const restoredChunks = []
+  restored.onData((data, replay) => {
     output += data
+    restoredChunks.push({ data, replay })
   })
   await restored.attach()
   restored.resize(110, 35)
@@ -102,6 +108,11 @@ test('a workspace shell restores the same PID, scrollback, input and resize afte
   assert.ok(output.startsWith('Previous agent output\r\n[process exited with code 7]\r\n'))
   assert.equal(output.split('Previous agent output').length, 2)
   assert.match(output, new RegExp(`started:${first.pid}`))
+  assert.equal(restoredChunks[0].replay, true)
+  assert.equal(
+    restoredChunks.find(({ data }) => data.includes('reply:after-restart')).replay,
+    false
+  )
   await restored.refreshStatus()
   assert.ok(restored.process)
   let exit
@@ -154,4 +165,42 @@ test('discovery cannot relaunch a terminal whose runtime is absent', async () =>
   await assert.rejects(connectPersistentTerminal(join(directory, 'absent'), 'missing'), {
     code: 'ENOENT'
   })
+})
+
+test('explicit stop waits for and force-kills a shell that ignores hangup and termination', async () => {
+  const terminal = await connectPersistentTerminal(join(directory, 'stubborn'), 'stubborn', {
+    command: {
+      file: '/usr/bin/python3',
+      args: [
+        '-u',
+        '-c',
+        'import signal,time; signal.signal(signal.SIGHUP,signal.SIG_IGN); signal.signal(signal.SIGTERM,signal.SIG_IGN); print("READY"); time.sleep(60)'
+      ]
+    },
+    options: { cols: 80, rows: 24, cwd: directory, env: process.env },
+    metadata: {
+      sessionId: 'stubborn',
+      workspaceKey: 'fixture',
+      shell: 'python3',
+      cols: 80,
+      rows: 24
+    }
+  })
+  let output = ''
+  terminal.onData((data) => {
+    output += data
+  })
+  await terminal.attach()
+  await waitFor(() => output.includes('READY'))
+  let exit
+  terminal.onExit((event) => {
+    exit = event
+  })
+  try {
+    await terminal.stop()
+    assert.equal(exit?.signal, 9, 'stop only succeeds after the resistant shell exits')
+    assert.throws(() => process.kill(terminal.pid, 0), { code: 'ESRCH' })
+  } finally {
+    terminal.detach()
+  }
 })

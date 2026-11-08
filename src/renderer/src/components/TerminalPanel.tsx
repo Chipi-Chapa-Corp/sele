@@ -4,6 +4,7 @@ import { Plus, Terminal as TerminalIcon, X } from 'lucide-react'
 import type { AppContainerTarget } from '../../../shared/app'
 import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { terminalApi } from '../terminalApi'
+import { createTerminalOutput } from '../terminalOutput'
 import { Button } from './Button'
 import { consumeTouchClick } from '../touchInput'
 import { isAndroidClient } from '../runtimeCapabilities'
@@ -278,7 +279,8 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
     let removeDataListener: (() => void) | null = null
     let removeExitListener: (() => void) | null = null
     let terminal: XtermTerminal | null = null
-    let outputChunks: string[] = []
+    let terminalOutput: ReturnType<typeof createTerminalOutput> | null = null
+    let outputChunks: { data: string; replay: boolean }[] = []
     let pendingOutputCharacters = 0
     let ptyPaused = false
     let lastColumns = 0
@@ -311,38 +313,41 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
       outputFrame = null
       if (!terminal || outputChunks.length === 0) return
 
-      const data = outputChunks.join('')
+      const chunks = outputChunks
       outputChunks = []
-      terminal.write(data, () => {
-        pendingOutputCharacters = Math.max(0, pendingOutputCharacters - data.length)
-        if (ptyPaused && pendingOutputCharacters <= outputResumeThreshold) {
-          setPtyPaused(false)
-        }
-      })
+      for (const { data, replay } of chunks)
+        terminalOutput?.write(data, replay, () => {
+          pendingOutputCharacters = Math.max(0, pendingOutputCharacters - data.length)
+          if (ptyPaused && pendingOutputCharacters <= outputResumeThreshold) {
+            setPtyPaused(false)
+          }
+        })
     }
 
-    const queueOutput = (data: string): void => {
+    const queueOutput = (data: string, replay = false): void => {
       if (!active || !terminal || data.length === 0) return
 
-      outputChunks.push(data)
+      const previous = outputChunks.at(-1)
+      if (previous?.replay === replay) previous.data += data
+      else outputChunks.push({ data, replay })
       pendingOutputCharacters += data.length
       if (pendingOutputCharacters >= outputPauseThreshold) setPtyPaused(true)
       outputFrame ??= requestAnimationFrame(flushOutput)
     }
 
-    const appendOutput = (data: string): void => {
+    const appendOutput = (data: string, replay = false): void => {
       if (!receivedOutput) {
         receivedOutput = true
         outputCache.value = ''
       }
       outputCache.value = (outputCache.value + data).slice(-512 * 1024)
-      queueOutput(data)
+      queueOutput(data, replay)
     }
 
     const restoreOutput = (): void => {
       const previousOutput = initialOutput ?? outputCache.value
       if (!receivedOutput && previousOutput) {
-        terminal?.write(previousOutput)
+        terminalOutput?.write(previousOutput, true)
         receivedOutput = true
       }
     }
@@ -387,6 +392,7 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
           theme: getTerminalTheme(host)
         })
         terminalRef.current = terminal
+        terminalOutput = createTerminalOutput(terminal)
 
         const fitAddon = new FitAddon()
         terminal.loadAddon(fitAddon)
@@ -462,14 +468,9 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
 
         removeDataListener = terminalApi.onData((event) => {
           if (event.sessionId === sessionId) {
-            // Replayed agent output must not report old shell-integration markers as new work.
-            if (!nativeSessionId)
-              task.output(
-                !receivedOutput && initialOutput
-                  ? event.data.slice(initialOutput.length)
-                  : event.data
-              )
-            appendOutput(event.data)
+            // Replayed output must not report old shell-integration markers as new work.
+            if (!nativeSessionId && !event.replay) task.output(event.data)
+            appendOutput(event.data, event.replay)
           }
         })
         removeExitListener = terminalApi.onExit((event) => {
@@ -519,7 +520,7 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
         fitAndResize()
 
         if (initialCommand?.trim()) {
-          terminal.write(getCommandHeading(initialCommand))
+          terminalOutput.write(getCommandHeading(initialCommand), true)
         }
 
         if (initialCommand?.trim() && !nativeSessionId) task.start()
@@ -610,6 +611,7 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
       removeExitListener?.()
       fitRef.current = null
       terminalRef.current = null
+      terminalOutput?.dispose()
       terminal?.dispose()
       if (sessionCreated) void terminalApi.closeSession(sessionId)
     }

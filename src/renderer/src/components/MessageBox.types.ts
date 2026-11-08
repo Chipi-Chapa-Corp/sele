@@ -128,6 +128,7 @@ export type MessageBoxProps = {
 export type MessageBoxQuoteRequest = {
   id: number
   content: string
+  comment: string
 }
 
 type MessageBoxContextUsage = ChatContextUsage

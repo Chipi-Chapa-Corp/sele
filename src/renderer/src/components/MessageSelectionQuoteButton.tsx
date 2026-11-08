@@ -3,12 +3,13 @@ import { createPortal } from 'react-dom'
 import { Quote } from 'lucide-react'
 import { toCssRem } from '../cssUnits'
 import { Button } from './Button'
+import { QuoteCommentPopover } from './QuoteCommentPopover'
 import './MessageSelectionQuoteButton.css'
 
 type MessageSelectionQuoteButtonProps = {
   containerRef: RefObject<HTMLElement | null>
   enabled?: boolean
-  onQuote: (content: string) => void
+  onQuote: (content: string, comment: string) => void
 }
 
 type SelectedQuote = {
@@ -92,11 +93,18 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
 }) => {
   const rootRef = useRef<HTMLDivElement>(null)
   const [selectedQuote, setSelectedQuote] = useState<SelectedQuote | null>(null)
+  const [commentQuote, setCommentQuote] = useState<{
+    content: string
+    anchor: { getBoundingClientRect: () => DOMRect; contextElement: HTMLElement }
+  } | null>(null)
 
   useEffect(() => {
     if (!enabled) {
       clearSelectionInContainer(containerRef.current)
-      const dismissFrame = window.requestAnimationFrame(() => setSelectedQuote(null))
+      const dismissFrame = window.requestAnimationFrame(() => {
+        setSelectedQuote(null)
+        setCommentQuote(null)
+      })
       return () => window.cancelAnimationFrame(dismissFrame)
     }
 
@@ -218,7 +226,22 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
     }
   }, [containerRef, enabled])
 
-  if (!enabled || !selectedQuote || !selectedQuote.host.isConnected) {
+  if (!enabled) return null
+
+  if (commentQuote)
+    return (
+      <QuoteCommentPopover
+        anchor={commentQuote.anchor}
+        content={commentQuote.content}
+        onClose={() => setCommentQuote(null)}
+        onSubmit={(comment) => {
+          onQuote(commentQuote.content, comment)
+          setCommentQuote(null)
+        }}
+      />
+    )
+
+  if (!selectedQuote || !selectedQuote.host.isConnected) {
     return null
   }
 
@@ -240,7 +263,25 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
         theme="secondary"
         size="small"
         callback={() => {
-          onQuote(selectedQuote.content)
+          const rect = rootRef.current?.getBoundingClientRect()
+          if (!rect) return
+          const host = selectedQuote.host
+          const hostRect = host.getBoundingClientRect()
+          setCommentQuote({
+            content: selectedQuote.content,
+            anchor: {
+              contextElement: host,
+              getBoundingClientRect: () => {
+                const current = host.getBoundingClientRect()
+                return new DOMRect(
+                  rect.x + current.x - hostRect.x,
+                  rect.y + current.y - hostRect.y,
+                  rect.width,
+                  rect.height
+                )
+              }
+            }
+          })
           clearSelectionInContainer(containerRef.current)
           setSelectedQuote(null)
         }}

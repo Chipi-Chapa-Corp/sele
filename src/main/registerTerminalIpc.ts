@@ -24,6 +24,8 @@ import {
   type PersistentTerminal
 } from './persistentTerminal'
 import { providerIds, type ProviderId } from '../shared/provider'
+import type { AppContainerTarget } from '../shared/app'
+import { killTerminalProcesses } from './chatProcesses'
 
 const minimumColumns = 2
 const maximumColumns = 500
@@ -46,11 +48,43 @@ type ManagedTerminalSession = {
   outputTimer: NodeJS.Timeout | null
   paused: boolean
   shell: string
+  chatId: string | null
+  container: AppContainerTarget | null
   dataListener: IDisposable
   exitListener: IDisposable
 }
 
 const sessions = new Map<string, ManagedTerminalSession>()
+const pendingTerminalStops = new Set<Promise<void>>()
+const pendingTerminalCreates = new Set<Promise<TerminalSession>>()
+let shuttingDown = false
+
+const terminalChatId = (chatKey?: string | null): string | null => {
+  const separator = chatKey?.indexOf(':') ?? -1
+  return separator > 0 ? chatKey!.slice(separator + 1) : null
+}
+
+const stopTerminal = async (
+  id: string,
+  pty: IPty | PersistentTerminal,
+  container: AppContainerTarget | null
+): Promise<void> => {
+  // Discover descendants before stopping their parent. Container shells are owned
+  // by conmon rather than by the local PTY launcher.
+  const cleanup = await Promise.allSettled([killTerminalProcesses([id], container)])
+  const results = [
+    ...cleanup,
+    ...(await Promise.allSettled([
+      'stop' in pty ? pty.stop() : Promise.resolve().then(() => pty.kill())
+    ]))
+  ]
+  const failures = results.filter((result) => result.status === 'rejected')
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((result) => result.reason),
+      'Unable to stop terminal.'
+    )
+}
 const agentAttachments = new Map<
   string,
   { owner: RendererClient; sourceId: string; detach: () => void }
@@ -311,7 +345,7 @@ const queueOutput = (session: ManagedTerminalSession, data: string): void => {
   session.outputTimer ??= setTimeout(() => flushOutput(session), outputFlushDelayMs)
 }
 
-const disposeSession = (session: ManagedTerminalSession, killProcess: boolean): void => {
+const disposeSession = (session: ManagedTerminalSession, killProcess: boolean): Promise<void> => {
   sessions.delete(session.id)
 
   if (session.outputTimer) {
@@ -322,24 +356,26 @@ const disposeSession = (session: ManagedTerminalSession, killProcess: boolean): 
   session.dataListener.dispose()
   session.exitListener.dispose()
 
-  if (killProcess) {
-    try {
-      session.pty.kill()
-    } catch (error) {
-      console.error('[caught:registerTerminalIpc:disposeSession]', error)
-      // The PTY may already have exited between the lookup and cleanup.
+  const stopped = (
+    killProcess ? stopTerminal(session.id, session.pty, session.container) : Promise.resolve()
+  ).finally(() => {
+    if ('detach' in session.pty) {
+      session.pty.detach()
+      knownPersistentTerminals.delete(session.id)
+      if (!killProcess) recoveryNeeded = true
     }
-  }
-  if ('detach' in session.pty) {
-    session.pty.detach()
-    knownPersistentTerminals.delete(session.id)
-    if (!killProcess) recoveryNeeded = true
-  }
+  })
+  pendingTerminalStops.add(stopped)
+  void stopped.finally(() => pendingTerminalStops.delete(stopped)).catch(() => {})
+  return stopped
 }
 
 const disposeOwnerSessions = (ownerId: number): void => {
   for (const session of sessions.values()) {
-    if (session.owner.id === ownerId) disposeSession(session, !('detach' in session.pty))
+    if (session.owner.id === ownerId)
+      void disposeSession(session, true).catch((error) =>
+        console.error('Unable to stop closed window terminal.', error)
+      )
   }
   for (const [id, attachment] of agentAttachments) {
     if (attachment.owner.id !== ownerId) continue
@@ -364,7 +400,8 @@ const getOwnedSession = (event: ClientEvent, sessionId: unknown): ManagedTermina
   return session?.owner.id === event.sender.id ? session : null
 }
 
-const createSession = async (event: ClientEvent, value: unknown): Promise<TerminalSession> => {
+const startSession = async (event: ClientEvent, value: unknown): Promise<TerminalSession> => {
+  if (shuttingDown) throw new Error('Sele is shutting down.')
   const options = await getCreateOptions(value)
   const baseShell = getShell()
   if (basename(baseShell.file) === 'fish') baseShell.args.push('-C', fishTerminalIntegration)
@@ -382,6 +419,10 @@ const createSession = async (event: ClientEvent, value: unknown): Promise<Termin
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'Sele'
   }
+  env.SELE_TERMINAL_ID = id
+  const chatId = terminalChatId(options.chatKey)
+  if (chatId) env.SELE_CHAT_ID = chatId
+  else delete env.SELE_CHAT_ID
   if (basename(baseShell.file) === 'bash') {
     env['PS0'] = `\u001b]133;C\u0007${process.env.PS0 ?? ''}`
     env['PROMPT_COMMAND'] = `${process.env.PROMPT_COMMAND ?? ''}\nprintf '\\033]133;D;0\\007'`
@@ -427,14 +468,25 @@ const createSession = async (event: ClientEvent, value: unknown): Promise<Termin
     outputTimer: null,
     paused: false,
     shell: basename(baseShell.file),
+    chatId,
+    container: options.container ?? null,
     dataListener: { dispose: () => {} },
     exitListener: { dispose: () => {} }
   }
 
   sessions.set(id, session)
+  if (shuttingDown || event.sender.isDestroyed()) {
+    await disposeSession(session, true)
+    throw new Error('Terminal owner closed during startup.')
+  }
   observeOwner(event.sender)
 
-  session.dataListener = pty.onData((data) => queueOutput(session, data))
+  session.dataListener = pty.onData((data, replay?: boolean) => {
+    if (replay) {
+      flushOutput(session)
+      event.sender.send(terminalIpcChannels.data, { sessionId: id, data, replay: true })
+    } else queueOutput(session, data)
+  })
   session.exitListener = pty.onExit(({ exitCode, signal }) => {
     flushOutput(session)
     sessions.delete(id)
@@ -450,7 +502,12 @@ const createSession = async (event: ClientEvent, value: unknown): Promise<Termin
     }
   })
 
-  if (!persistent && options.initialOutput) queueOutput(session, options.initialOutput)
+  if (!persistent && options.initialOutput)
+    event.sender.send(terminalIpcChannels.data, {
+      sessionId: id,
+      data: options.initialOutput,
+      replay: true
+    })
   if ('attach' in pty) await pty.attach()
 
   return {
@@ -459,6 +516,13 @@ const createSession = async (event: ClientEvent, value: unknown): Promise<Termin
     cwd,
     shell: basename(baseShell.file)
   }
+}
+
+const createSession = (event: ClientEvent, value: unknown): Promise<TerminalSession> => {
+  const pending = startSession(event, value)
+  pendingTerminalCreates.add(pending)
+  void pending.finally(() => pendingTerminalCreates.delete(pending)).catch(() => {})
+  return pending
 }
 
 const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => {
@@ -532,14 +596,19 @@ export const registerTerminalIpc = (): void => {
         const completed = agentTerminalSessions.completed(sourceId)
         if (!completed) return { status: 'unavailable' }
         if (completed.output)
-          owner.send(terminalIpcChannels.data, { sessionId, data: completed.output })
+          owner.send(terminalIpcChannels.data, { sessionId, data: completed.output, replay: true })
         owner.send(terminalIpcChannels.exit, { sessionId, exitCode: completed.exitCode })
         return { status: 'exited' }
       }
       observeOwner(owner)
       const detach = agentTerminalSessions.attach(sourceId, {
-        data: (data) => {
-          if (!owner.isDestroyed()) owner.send(terminalIpcChannels.data, { sessionId, data })
+        data: (data, replay) => {
+          if (!owner.isDestroyed())
+            owner.send(terminalIpcChannels.data, {
+              sessionId,
+              data,
+              ...(replay ? { replay: true } : {})
+            })
         },
         exit: (exitCode) => {
           if (!owner.isDestroyed()) owner.send(terminalIpcChannels.exit, { sessionId, exitCode })
@@ -629,20 +698,71 @@ export const registerTerminalIpc = (): void => {
       return
     }
     const session = getOwnedSession(event, sessionId)
-    if (session) disposeSession(session, true)
+    if (session) return disposeSession(session, true)
+    return undefined
   })
 }
 
-export const disposeTerminalSessions = (options: { preserve?: boolean } = {}): void => {
+export const disposeTerminalSessions = async (
+  options: { preserve?: boolean } = {}
+): Promise<void> => {
+  if (options.preserve) {
+    for (const attachment of agentAttachments.values()) attachment.detach()
+    agentAttachments.clear()
+    await Promise.all(
+      [...sessions.values()].map((session) => disposeSession(session, !('detach' in session.pty)))
+    )
+    for (const terminal of recoveredPersistentTerminals.values()) terminal.detach()
+    recoveredPersistentTerminals.clear()
+    recoveryNeeded = true
+    return
+  }
+  shuttingDown = true
+  await Promise.allSettled([...pendingTerminalCreates])
+  // Include brokers from earlier app instances even when their tabs were never opened.
+  const recovered = await Promise.allSettled([recoverPersistentTerminals()])
   for (const attachment of agentAttachments.values()) attachment.detach()
   agentAttachments.clear()
-  for (const session of [...sessions.values()])
-    disposeSession(session, options.preserve === false || !('detach' in session.pty))
-  for (const terminal of recoveredPersistentTerminals.values()) {
-    if (options.preserve === false) terminal.kill()
-    terminal.detach()
-  }
+  const stopped = await Promise.allSettled([
+    ...recovered.map((result) =>
+      result.status === 'rejected' ? Promise.reject(result.reason) : Promise.resolve()
+    ),
+    ...pendingTerminalStops,
+    ...[...sessions.values()].map((session) => disposeSession(session, true)),
+    ...[...recoveredPersistentTerminals].map(([id, terminal]) =>
+      stopTerminal(id, terminal, terminal.metadata.container ?? null).finally(() =>
+        terminal.detach()
+      )
+    )
+  ])
   recoveredPersistentTerminals.clear()
+  const failures = stopped.filter((result) => result.status === 'rejected')
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((result) => result.reason),
+      'Unable to stop terminals.'
+    )
+}
+
+export const stopChatTerminalSessions = async (chatIds: string[]): Promise<void> => {
+  await recoverPersistentTerminals()
+  const ids = new Set(chatIds)
+  const results = await Promise.allSettled([
+    ...[...sessions.values()]
+      .filter((session) => session.chatId && ids.has(session.chatId))
+      .map(async (session) => {
+        await disposeSession(session, true)
+        if (!session.owner.isDestroyed())
+          session.owner.send(terminalIpcChannels.exit, { sessionId: session.id, exitCode: 130 })
+      }),
+    agentTerminalSessions.stopChats(chatIds)
+  ])
+  const failures = results.filter((result) => result.status === 'rejected')
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((result) => result.reason),
+      'Unable to stop chat terminals.'
+    )
 }
 
 const knownPersistentTerminals = new Set<string>()
@@ -654,6 +774,7 @@ const recoverPersistentTerminals = (): Promise<void> => {
   if (!recoveryNeeded) return Promise.resolve()
   recoveryNeeded = false
   recovery = (async () => {
+    const failures: unknown[] = []
     for (const id of await listPersistentTerminalIds(app.getPath('userData'))) {
       if (knownPersistentTerminals.has(id)) continue
       knownPersistentTerminals.add(id)
@@ -677,7 +798,11 @@ const recoverPersistentTerminals = (): Promise<void> => {
           workspaceLabel: metadata.label,
           closeOnCommandFinish: metadata.closeOnCommandFinish,
           background: true,
-          stop: () => terminal.stop(),
+          stop: () =>
+            stopTerminal(id, terminal, metadata.container ?? null).finally(() => {
+              recoveredPersistentTerminals.delete(id)
+              terminal.detach()
+            }),
           write: (data) => terminal.write(data),
           resize: (cols, rows) => terminal.resize(cols, rows)
         })
@@ -693,9 +818,11 @@ const recoverPersistentTerminals = (): Promise<void> => {
           knownPersistentTerminals.delete(id)
           recoveryNeeded = true
           console.error('Unable to recover terminal session.', error)
+          failures.push(error)
         }
       }
     }
+    if (failures.length) throw new AggregateError(failures, 'Unable to recover terminal sessions.')
   })()
     .catch((error) => {
       recoveryNeeded = true

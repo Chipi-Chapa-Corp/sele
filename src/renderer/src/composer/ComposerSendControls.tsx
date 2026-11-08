@@ -40,6 +40,7 @@ type ComposerSendControlsProps = {
   disabled: boolean
   draftScopeKey: string
   message: string
+  hasQuotes: boolean
   selectedAttachments: AppSelectedAttachment[]
   linkedChats: ComposerLinkedChat[]
   selectedSkills: ProviderSkill[]
@@ -70,6 +71,7 @@ export const ComposerSendControls = memo(function ComposerSendControls({
   disabled,
   draftScopeKey,
   message,
+  hasQuotes,
   selectedAttachments,
   linkedChats,
   selectedSkills,
@@ -98,6 +100,7 @@ export const ComposerSendControls = memo(function ComposerSendControls({
 
   const hasContent =
     Boolean(message.trim()) ||
+    hasQuotes ||
     selectedAttachments.length > 0 ||
     linkedChats.length > 0 ||
     selectedSkills.length > 0 ||

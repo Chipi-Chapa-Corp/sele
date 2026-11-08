@@ -10,6 +10,8 @@ import { ReviewCommentsButton } from '../components/ReviewCommentsButton'
 import { FileIcon as SymbolsFileIcon } from '../components/SymbolIcons'
 import { type ComposerLinkedChat } from '../linkedChats'
 import { getSkillSummary } from './mentionResults'
+import type { ComposerQuote } from '../composerQuotes'
+import { ComposerQuoteChip } from './ComposerQuoteChip'
 
 const copilotMultipleSkillsTooltip = "Copilot doesn't support multiple skills invocation"
 
@@ -18,6 +20,9 @@ type ComposerAttachmentsProps = {
   linkedChats: ComposerLinkedChat[]
   selectedSkills: ProviderSkill[]
   selectedApps: ProviderApp[]
+  selectedQuotes: ComposerQuote[]
+  handleChangeQuote: (id: string, comment: string) => void
+  handleRemoveQuote: (id: string) => void
   handleOpenAttachment: (attachment: AppSelectedAttachment) => void
   handleRemoveAttachment: (path: string) => void
   handleRemoveLinkedChat: (linkedChat: ComposerLinkedChat) => void
@@ -40,6 +45,9 @@ export const ComposerAttachments = memo(function ComposerAttachments({
   linkedChats,
   selectedSkills,
   selectedApps,
+  selectedQuotes,
+  handleChangeQuote,
+  handleRemoveQuote,
   handleOpenAttachment,
   handleRemoveAttachment,
   handleRemoveLinkedChat,
@@ -66,6 +74,7 @@ export const ComposerAttachments = memo(function ComposerAttachments({
       linkedChats.length > 0 ||
       selectedSkills.length > 0 ||
       selectedApps.length > 0 ||
+      selectedQuotes.length > 0 ||
       showSelectedReview) && (
       <div className="message-box__attachment-previews">
         {selectedImages.length > 0 && (
@@ -105,12 +114,21 @@ export const ComposerAttachments = memo(function ComposerAttachments({
           linkedChats.length > 0 ||
           selectedSkills.length > 0 ||
           selectedApps.length > 0 ||
+          selectedQuotes.length > 0 ||
           showSelectedReview) && (
           <div
             className="message-box__attachment-preview-group message-box__attachment-preview-group--other"
             aria-label="Selected context"
             role="list"
           >
+            {selectedQuotes.map((quote) => (
+              <ComposerQuoteChip
+                key={quote.id}
+                quote={quote}
+                onChange={handleChangeQuote}
+                onRemove={handleRemoveQuote}
+              />
+            ))}
             {linkedChats.map((linkedChat) => (
               <AttachmentChip
                 key={linkedChat.operationId}

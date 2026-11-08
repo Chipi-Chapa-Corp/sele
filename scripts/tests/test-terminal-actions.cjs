@@ -57,6 +57,12 @@ if (!process.versions.electron) {
         external: ['electron']
       })
       await build({
+        entryPoints: ['src/renderer/src/chatMarkdown.worker.ts'],
+        outfile: path.join(directory, 'markdown-worker.js'),
+        bundle: true,
+        platform: 'browser'
+      })
+      await build({
         stdin: {
           contents: `
             import React, {useState} from 'react'
@@ -119,6 +125,10 @@ if (!process.versions.electron) {
           {
             name: 'memory-preferences',
             setup(builder) {
+              builder.onLoad({ filter: /chatMarkdown\.worker\.ts$/ }, () => ({
+                contents: `export default class extends Worker {constructor(){super('./markdown-worker.js')}}`,
+                loader: 'js'
+              }))
               builder.onLoad({ filter: /\/renderer\/src\/preferences\.ts$/ }, () => ({
                 contents: `const values = new Map(); export const preferences = {
                 getItem: key => values.get(key) ?? null,
@@ -484,9 +494,22 @@ if (!process.versions.electron) {
             interactive.append('echo:' + data)
           }
         })
+        const terminalQueries = '\x1b]11;?\x07\x1b[6n\x1b[c'
+        interactive.append(terminalQueries + 'HISTORICAL_QUERIES\r\n')
         await waitFor(`${tab(4)} !== null`)
         await run(`${tab(4)}.click()`)
         await waitFor(`window.terminals.at(-1).options.disableStdin === false`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('HISTORICAL_QUERIES')`)
+        assert.deepEqual(input, [], 'Replayed terminal queries must never reach process stdin')
+        interactive.append(terminalQueries + 'LIVE_QUERIES\r\n')
+        await waitFor(`window.text(window.terminals.at(-1)).includes('LIVE_QUERIES')`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('echo:')`)
+        assert.equal(input.length, 3, 'Live color, cursor and device queries still receive replies')
+        assert.ok(input[0].startsWith('\x1b]11;rgb:'))
+        assert.equal(input[1][0], '\x1b')
+        assert.match(input[1].slice(1), /^\[\d+;\d+R$/)
+        assert.equal(input[2], '\x1b[?1;2c')
+        input.length = 0
         await run(`window.terminals.at(-1).input('status\\r', true)`)
         await waitFor(`window.text(window.terminals.at(-1)).includes('echo:status')`)
         assert.deepEqual(input, ['status\r'])
@@ -810,7 +833,7 @@ if (!process.versions.electron) {
           cwd: ${JSON.stringify(directory)}, cols: 80, rows: 24,
           initialCommand: ${JSON.stringify(restartCommand)}
         })`)
-        terminal.disposeTerminalSessions()
+        await terminal.disposeTerminalSessions({ preserve: true })
         await window.loadFile(path.join(directory, 'index.html'))
         await run(String.raw`window.text = terminal => Array.from({length: terminal.buffer.active.length},
           (_, index) => terminal.buffer.active.getLine(index).translateToString(true)).join('\n'); undefined`)
@@ -869,7 +892,7 @@ if (!process.versions.electron) {
         console.error(error)
         exitCode = 1
       } finally {
-        terminal.disposeTerminalSessions({ preserve: false })
+        await terminal.disposeTerminalSessions()
         await terminal.stopPtys()
         window.destroy()
         app.exit(exitCode)

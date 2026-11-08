@@ -54,6 +54,8 @@ export type TerminalSession = {
 export type TerminalDataEvent = {
   sessionId: string
   data: string
+  /** Historical output must not generate new replies to the process. */
+  replay?: boolean
 }
 
 export type TerminalExitEvent = {

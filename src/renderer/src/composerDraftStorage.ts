@@ -1,6 +1,7 @@
 import type { AppSelectedAttachment } from '../../shared/app'
 import type { ProviderApp, ProviderSkill } from '../../shared/provider'
 import type { ComposerDraft, PromptDraft } from './composerDraft'
+import type { ComposerQuote } from './composerQuotes'
 import { preferences } from './preferences.ts'
 import { flushAfterPaintWriters } from './afterPaintWriter.ts'
 
@@ -61,7 +62,10 @@ export const moveComposerDraftScope = (
             message: [target.message, source.message].filter(Boolean).join('\n\n'),
             attachments: [...target.attachments, ...source.attachments],
             skills: [...target.skills, ...source.skills],
-            apps: [...target.apps, ...source.apps]
+            apps: [...target.apps, ...source.apps],
+            ...(target.quotes?.length || source.quotes?.length
+              ? { quotes: [...(target.quotes ?? []), ...(source.quotes ?? [])] }
+              : {})
           }
         : source
     )
@@ -126,6 +130,14 @@ const isApp = (value: unknown): value is ProviderApp =>
 const isPromptDraft = (value: unknown): value is PromptDraft =>
   isRecord(value) && typeof value.id === 'string' && typeof value.prompt === 'string'
 
+const isQuote = (value: unknown): value is ComposerQuote =>
+  isRecord(value) &&
+  typeof value.id === 'string' &&
+  typeof value.content === 'string' &&
+  Boolean(value.content.trim()) &&
+  typeof value.comment === 'string' &&
+  Boolean(value.comment.trim())
+
 export const parseStoredComposerDrafts = (
   value: string | null,
   readImage: (key: string) => string | null = () => null
@@ -183,8 +195,15 @@ export const parseStoredComposerDrafts = (
       }
       const skills = Array.isArray(draft.skills) ? draft.skills.filter(isSkill) : []
       const apps = Array.isArray(draft.apps) ? draft.apps.filter(isApp) : []
-      if (draft.message || attachments.length || skills.length || apps.length) {
-        composerDrafts.set(key, { message: draft.message, attachments, skills, apps })
+      const quotes = Array.isArray(draft.quotes) ? draft.quotes.filter(isQuote) : []
+      if (draft.message || attachments.length || skills.length || apps.length || quotes.length) {
+        composerDrafts.set(key, {
+          message: draft.message,
+          attachments,
+          skills,
+          apps,
+          ...(quotes.length ? { quotes } : {})
+        })
       }
     }
   }

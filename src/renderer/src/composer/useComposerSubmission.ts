@@ -1,6 +1,7 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import type { ProviderActiveSendMode } from '../../../shared/provider'
-import { restoreFailedComposerMessage } from '../composerDraft'
+import { restoreFailedComposerMessage, updateComposerDraft } from '../composerDraft'
+import { buildQuotedPrompt } from '../composerQuotes'
 import { buildLinkedChatPrompt, getLinkedChatKey } from '../linkedChats'
 import { captureMessageFlight } from '../motion/messageFlight'
 import { maxSelectedAppCount, maxSelectedSkillCount } from './composerLimits'
@@ -36,6 +37,8 @@ type ComposerSubmissionDependencies = {
     | 'message'
     | 'selectedSkills'
     | 'selectedApps'
+    | 'selectedQuotes'
+    | 'setSelectedQuotes'
     | 'selectedAttachments'
     | 'setMessage'
     | 'setSelectedAttachments'
@@ -87,6 +90,8 @@ export function useComposerSubmission({
     message,
     selectedSkills,
     selectedApps,
+    selectedQuotes,
+    setSelectedQuotes,
     selectedAttachments,
     setMessage,
     setSelectedAttachments,
@@ -134,6 +139,7 @@ export function useComposerSubmission({
         selectedAttachments.length === 0 &&
         selectedSkillInputs.length === 0 &&
         selectedAppInputs.length === 0 &&
+        selectedQuotes.length === 0 &&
         linkedChats.length === 0 &&
         !submittingReview) ||
       operationsDisabled ||
@@ -157,7 +163,7 @@ export function useComposerSubmission({
         name: chat.name,
         summary: chat.summary ?? ''
       })),
-      nextMessage
+      buildQuotedPrompt(selectedQuotes, nextMessage)
     )
     const restoreLinkedChats = (): void => {
       if (sentLinkedChats.length === 0) return
@@ -168,13 +174,23 @@ export function useComposerSubmission({
         ...chats
       ])
     }
+    const restoreQuotes = (): void => {
+      if (selectedQuotes.length === 0) return
+      setComposerDrafts((drafts) =>
+        updateComposerDraft(drafts, sendScope, 'quotes', (quotes = []) => [
+          ...selectedQuotes.filter((sent) => !quotes.some((quote) => quote.id === sent.id)),
+          ...quotes
+        ])
+      )
+    }
 
     if (editing) {
       const previousDraft = {
         message: editingState.messageBeforeEditRef.current ?? '',
         attachments: editingState.attachmentsBeforeEditRef.current ?? [],
         skills: editingState.skillsBeforeEditRef.current ?? [],
-        apps: editingState.appsBeforeEditRef.current ?? []
+        apps: editingState.appsBeforeEditRef.current ?? [],
+        quotes: editingState.quotesBeforeEditRef.current ?? []
       }
       void Promise.resolve(
         onSend(
@@ -194,11 +210,13 @@ export function useComposerSubmission({
           setSelectedAttachments(previousDraft.attachments)
           setSelectedSkills(previousDraft.skills)
           setSelectedApps(previousDraft.apps)
+          setSelectedQuotes(previousDraft.quotes)
           editSessionIdRef.current = null
           editingState.messageBeforeEditRef.current = null
           editingState.attachmentsBeforeEditRef.current = null
           editingState.skillsBeforeEditRef.current = null
           editingState.appsBeforeEditRef.current = null
+          editingState.quotesBeforeEditRef.current = null
         })
         .catch((error: unknown) => {
           console.error('Unable to persist the cleared composer draft.', error)
@@ -211,6 +229,7 @@ export function useComposerSubmission({
     setSelectedAttachments([])
     setSelectedSkills([])
     setSelectedApps([])
+    setSelectedQuotes([])
     updateLinkedChats(sendScope, () => noLinkedChats)
     onSelectedReviewChange?.(null)
     setAttachmentSelectionError(null)
@@ -228,6 +247,7 @@ export function useComposerSubmission({
         if (sent) return
         cancelFlight()
         restoreLinkedChats()
+        restoreQuotes()
         if (!nextMessage) return
 
         setComposerDrafts((drafts) =>
@@ -238,6 +258,7 @@ export function useComposerSubmission({
         cancelFlight()
         console.error('Unable to send the composer message.', error)
         restoreLinkedChats()
+        restoreQuotes()
         if (!nextMessage) return
 
         setComposerDrafts((drafts) =>

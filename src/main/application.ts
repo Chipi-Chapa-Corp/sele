@@ -394,8 +394,8 @@ app.on('before-quit', (event) => {
   if (finishingQuit) return
   finishingQuit = true
   beginProviderIpcShutdown()
-  disposeTerminalSessions()
-  void stopLocalAccess()
+  void disposeTerminalSessions()
+    .finally(stopLocalAccess)
     .finally(disposeProviderAdapters)
     .finally(stopPtys)
     .finally(stopModelPricingRefresh)

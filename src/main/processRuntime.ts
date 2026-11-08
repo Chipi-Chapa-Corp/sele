@@ -90,7 +90,13 @@ const attach = (directory: string, port: number, token: string): Promise<Runtime
   })
 
 const missingListener = (error: unknown): boolean =>
-  ['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException)?.code ?? '')
+  // A runtime that is shutting down can reset a connection before its
+  // loopback listener finishes closing. Treat that the same as a missing
+  // listener so the caller can acquire the launch lock and start a fresh
+  // owner instead of surfacing the transport race as the startup error.
+  ['ENOENT', 'ECONNREFUSED', 'ECONNRESET'].includes(
+    (error as NodeJS.ErrnoException)?.code ?? ''
+  )
 
 /** Launch once, then reconnect to its original stdio owner after Electron exits. */
 export const connectProcessRuntime = async (

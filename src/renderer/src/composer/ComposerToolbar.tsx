@@ -27,6 +27,7 @@ type ComposerToolbarProps = {
   handleStop: () => void
   controlPressed: boolean
   message: string
+  hasQuotes: boolean
   linkedChats: ComposerLinkedChat[]
   selectedSkills: ProviderSkill[]
   selectedApps: ProviderApp[]
@@ -47,6 +48,7 @@ export const ComposerToolbar = memo(function ComposerToolbar({
   handleStop,
   controlPressed,
   message,
+  hasQuotes,
   linkedChats,
   selectedSkills,
   selectedApps
@@ -237,6 +239,7 @@ export const ComposerToolbar = memo(function ComposerToolbar({
           disabled={disabled}
           draftScopeKey={draftScopeKey}
           message={message}
+          hasQuotes={hasQuotes}
           selectedAttachments={selectedAttachments}
           linkedChats={linkedChats}
           selectedSkills={selectedSkills}

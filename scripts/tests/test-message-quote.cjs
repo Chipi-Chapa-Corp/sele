@@ -36,7 +36,7 @@ if (!process.versions.electron) {
                   </div>)}
                 </div>
                 <textarea aria-label="Composer"/>
-                <MessageSelectionQuoteButton containerRef={ref} onQuote={text => window.quoted = text}/>
+                <MessageSelectionQuoteButton containerRef={ref} onQuote={(text, comment) => { window.quoted = text; window.quoteComment = comment }}/>
               </main>
             }
             flushSync(() => root.render(<React.StrictMode><Fixture/></React.StrictMode>))
@@ -176,7 +176,21 @@ if (!process.versions.electron) {
       })()`)
       await click(point)
       await settle()
+      assert.equal(await run('window.quoted'), undefined, 'quote waits for a comment')
+      assert.equal(await run('document.activeElement.getAttribute("aria-label")'), 'Quote comment')
+      assert.equal(
+        await run('document.querySelector(".quote-comment-popover__quote").textContent'),
+        'изгибаются'
+      )
+      assert.equal(
+        await run(`document.querySelector('[aria-label="Add comment"]').disabled`),
+        true
+      )
+      await win.webContents.debugger.sendCommand('Input.insertText', { text: 'Explain the bend' })
+      await run(`document.querySelector('[aria-label="Add comment"]').click()`)
+      await settle()
       assert.equal(await run('window.quoted'), 'изгибаются')
+      assert.equal(await run('window.quoteComment'), 'Explain the bend')
       assert.equal(await run('getSelection().isCollapsed'), true)
       const wordPoint = await run(`(() => {
         const rect = document.querySelector('[data-word="7"]').getBoundingClientRect();

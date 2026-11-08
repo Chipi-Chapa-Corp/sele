@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type { ProviderApp, ProviderSkill } from '../../../shared/provider'
 import { parseLinkedChatMessage, type ComposerLinkedChat } from '../linkedChats'
+import type { ComposerQuote } from '../composerQuotes'
 
 import type { MessageBoxProps } from '../components/MessageBox.types'
 import type { useComposerDraftState } from './useComposerDraftState'
@@ -19,6 +20,8 @@ type ComposerEditingDependencies = {
     | 'selectedAttachments'
     | 'selectedSkills'
     | 'selectedApps'
+    | 'selectedQuotes'
+    | 'setSelectedQuotes'
     | 'setMessage'
     | 'setSelectedAttachments'
     | 'setSelectedSkills'
@@ -52,6 +55,8 @@ export function useComposerEditing({
     selectedAttachments,
     selectedSkills,
     selectedApps,
+    selectedQuotes,
+    setSelectedQuotes,
     setMessage,
     setSelectedAttachments,
     setSelectedSkills,
@@ -71,6 +76,8 @@ export function useComposerEditing({
   const selectedSkillsRef = useRef(selectedSkills)
 
   const selectedAppsRef = useRef(selectedApps)
+  const selectedQuotesRef = useRef(selectedQuotes)
+  const quotesBeforeEditRef = useRef<ComposerQuote[] | null>(null)
 
   const messageBeforeEditRef = useRef<string | null>(null)
 
@@ -95,6 +102,9 @@ export function useComposerEditing({
   useEffect(() => {
     selectedAppsRef.current = selectedApps
   }, [selectedApps])
+  useEffect(() => {
+    selectedQuotesRef.current = selectedQuotes
+  }, [selectedQuotes])
 
   useEffect(() => {
     if (!editSession) {
@@ -103,6 +113,7 @@ export function useComposerEditing({
       attachmentsBeforeEditRef.current = null
       skillsBeforeEditRef.current = null
       appsBeforeEditRef.current = null
+      quotesBeforeEditRef.current = null
       restoreLinkedChatsBeforeEdit()
       return
     }
@@ -115,6 +126,7 @@ export function useComposerEditing({
       attachmentsBeforeEditRef.current = selectedAttachmentsRef.current
       skillsBeforeEditRef.current = selectedSkillsRef.current
       appsBeforeEditRef.current = selectedAppsRef.current
+      quotesBeforeEditRef.current = selectedQuotesRef.current
     }
     if (linkedChatsBeforeEditRef.current === null) {
       linkedChatsBeforeEditRef.current = { scope: draftScopeKey, chats: linkedChatsRef.current }
@@ -134,6 +146,7 @@ export function useComposerEditing({
     setSelectedAttachments(editSession.attachments)
     setSelectedSkills([])
     setSelectedApps([])
+    setSelectedQuotes([])
     setAttachmentSelectionError(null)
 
     const animationFrame = window.requestAnimationFrame(() => {
@@ -149,6 +162,7 @@ export function useComposerEditing({
     setSelectedApps,
     setSelectedAttachments,
     setSelectedSkills,
+    setSelectedQuotes,
     updateLinkedChats
   ])
 
@@ -166,11 +180,13 @@ export function useComposerEditing({
     setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
     setSelectedSkills(skillsBeforeEditRef.current ?? [])
     setSelectedApps(appsBeforeEditRef.current ?? [])
+    setSelectedQuotes(quotesBeforeEditRef.current ?? [])
     editSessionIdRef.current = null
     messageBeforeEditRef.current = null
     attachmentsBeforeEditRef.current = null
     skillsBeforeEditRef.current = null
     appsBeforeEditRef.current = null
+    quotesBeforeEditRef.current = null
     onCancelEdit?.()
   }
   return {
@@ -178,6 +194,7 @@ export function useComposerEditing({
     attachmentsBeforeEditRef,
     skillsBeforeEditRef,
     appsBeforeEditRef,
+    quotesBeforeEditRef,
     handleCancelEdit
   }
 }

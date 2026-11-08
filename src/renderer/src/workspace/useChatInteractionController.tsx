@@ -540,10 +540,11 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     content.addEventListener('sele:visualization-follow-up', followUp)
     return () => content.removeEventListener('sele:visualization-follow-up', followUp)
   }, [contentRef, selectedChat, handleSendMessage])
-  const handleQuoteSelectedMessageText = useCallback((content: string): void => {
+  const handleQuoteSelectedMessageText = useCallback((content: string, comment: string): void => {
     setMessageBoxQuoteRequest((currentRequest) => ({
       id: (currentRequest?.id ?? 0) + 1,
-      content
+      content,
+      comment
     }))
   }, [])
   useEffect(() => {

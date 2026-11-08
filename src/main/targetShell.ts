@@ -9,9 +9,15 @@ export const getTargetTerminalScript = (options: {
   command?: string | null
   cwd?: string
   keepAlive?: boolean
+  env?: NodeJS.ProcessEnv
 }): string => {
   const command = options.command?.trim() || null
   const lines = [...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : [])]
+  // Container/SSH launchers do not reliably forward arbitrary environment variables.
+  for (const key of ['SELE_CHAT_ID', 'SELE_TERMINAL_ID']) {
+    const value = options.env?.[key]
+    if (value) lines.push(`export ${key}=${quotePosixShellArg(value)}`)
+  }
 
   if (!command) {
     lines.push('exec "${SHELL:-/bin/sh}" -l')

@@ -230,17 +230,21 @@ export const ReviewMarkers = ({
 
 export const ReviewInput = ({
   ariaLabel,
+  initialValue = '',
+  submitLabel = 'Add comment',
   onCancel,
   onSubmit,
   position
 }: {
   ariaLabel: string
+  initialValue?: string
+  submitLabel?: string
   onCancel: () => void
   onSubmit: (comment: string) => void
   position: { left: number; top: number; width?: number }
 }): React.JSX.Element => {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(initialValue)
   const trimmedValue = value.trim()
 
   useEffect(() => {
@@ -266,6 +270,7 @@ export const ReviewInput = ({
       onMouseUp={(event) => event.stopPropagation()}
       onSubmit={(event) => {
         event.preventDefault()
+        event.stopPropagation()
         submit()
       }}
     >
@@ -276,18 +281,27 @@ export const ReviewInput = ({
         placeholder="Add a comment"
         onChange={(event) => setValue(event.currentTarget.value)}
         onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+            event.preventDefault()
+            event.stopPropagation()
+            submit()
+            return
+          }
           if (event.key !== 'Escape') return
           event.preventDefault()
+          event.stopPropagation()
           onCancel()
         }}
       />
       <Button
-        aria-label="Add comment"
+        aria-label={submitLabel}
         callback={submit}
         disabled={!trimmedValue}
-        icon={<Plus aria-hidden="true" />}
+        icon={
+          submitLabel === 'Add comment' ? <Plus aria-hidden="true" /> : <Check aria-hidden="true" />
+        }
         theme="primary"
-        title="Add comment"
+        title={submitLabel}
       />
     </form>
   )

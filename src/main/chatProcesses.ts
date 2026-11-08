@@ -6,11 +6,24 @@ import cleanupSource from './chatProcessCleanup.py?raw'
 export const killChatProcesses = async (
   chatIds: string[],
   container: AppContainerTarget | null
+): Promise<void> => killOwnedProcesses(chatIds, container, ['SELE_CHAT_ID', 'CODEX_THREAD_ID'])
+
+export const killTerminalProcesses = async (
+  sessionIds: string[],
+  container: AppContainerTarget | null
+): Promise<void> => killOwnedProcesses(sessionIds, container, ['SELE_TERMINAL_ID'])
+
+const killOwnedProcesses = async (
+  ids: string[],
+  container: AppContainerTarget | null,
+  markers: string[]
 ): Promise<void> => {
-  if (!chatIds.length || (process.platform !== 'linux' && !container)) return
-  const command = await getHostCommand('python3', ['-c', cleanupSource, JSON.stringify(chatIds)], {
-    container
-  })
+  if (!ids.length || (process.platform !== 'linux' && !container)) return
+  const command = await getHostCommand(
+    'python3',
+    ['-c', cleanupSource, JSON.stringify(ids), JSON.stringify(markers)],
+    { container }
+  )
   await new Promise<void>((resolve, reject) => {
     execFile(
       command.file,

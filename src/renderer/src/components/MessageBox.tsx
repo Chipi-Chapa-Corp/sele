@@ -18,13 +18,6 @@ import './MessageBox.css'
 import type { MessageBoxProps } from './MessageBox.types'
 export type { MessageBoxQuoteRequest } from './MessageBox.types'
 
-const formatQuote = (content: string): string =>
-  content
-    .replace(/\r\n?/g, '\n')
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n')
-
 export const MessageBox: React.FC<MessageBoxProps> = (props) => {
   const {
     active = false,
@@ -112,6 +105,7 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     draft.selectedAttachments.length === 0 &&
     draft.selectedSkills.length === 0 &&
     draft.selectedApps.length === 0 &&
+    draft.selectedQuotes.length === 0 &&
     linked.linkedChats.length === 0 &&
     !mentions.mentionMenuOpen &&
     dismissedPromptSuggestions.get(draftScopeKey) !== promptSuggestion.id
@@ -135,15 +129,17 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
       return
     }
 
-    const quotedContent = formatQuote(quoteRequest.content.trim())
-    if (!quotedContent) return
+    const content = quoteRequest.content.trim()
+    const comment = quoteRequest.comment.trim()
+    if (!content || !comment) return
 
     let focusFrame: number | null = null
     const updateFrame = window.requestAnimationFrame(() => {
       handledQuoteRequestIdRef.current = quoteRequest.id
-      draft.setMessage(
-        (currentMessage) => `${currentMessage ? `${currentMessage}\n` : ''}${quotedContent}\n\n`
-      )
+      draft.setSelectedQuotes((quotes) => [
+        ...quotes,
+        { id: crypto.randomUUID(), content, comment }
+      ])
       mentions.setFileMention(null)
       mentions.setSkillMention(null)
       mentions.setProjectMention(null)
@@ -161,7 +157,7 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
       window.cancelAnimationFrame(updateFrame)
       if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
     }
-  }, [editing, quoteRequest, draft.setMessage])
+  }, [editing, quoteRequest, draft.setSelectedQuotes])
   const sending = useComposerSubmission({
     options: props,
     draft: draft,
@@ -276,6 +272,15 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
           linkedChats={linked.linkedChats}
           selectedSkills={draft.selectedSkills}
           selectedApps={draft.selectedApps}
+          selectedQuotes={draft.selectedQuotes}
+          handleChangeQuote={(id, comment) =>
+            draft.setSelectedQuotes((quotes) =>
+              quotes.map((quote) => (quote.id === id ? { ...quote, comment } : quote))
+            )
+          }
+          handleRemoveQuote={(id) =>
+            draft.setSelectedQuotes((quotes) => quotes.filter((quote) => quote.id !== id))
+          }
           handleOpenAttachment={attachments.handleOpenAttachment}
           handleRemoveAttachment={attachments.handleRemoveAttachment}
           handleRemoveLinkedChat={linked.handleRemoveLinkedChat}
@@ -319,6 +324,7 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
           handleStop={handleStop}
           controlPressed={keyboard.controlPressed}
           message={draft.message}
+          hasQuotes={draft.selectedQuotes.length > 0}
           linkedChats={linked.linkedChats}
           selectedSkills={draft.selectedSkills}
           selectedApps={draft.selectedApps}

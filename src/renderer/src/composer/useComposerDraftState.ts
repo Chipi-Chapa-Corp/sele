@@ -3,6 +3,7 @@ import type { AppSelectedAttachment } from '../../../shared/app'
 import type { ProviderApp, ProviderSkill } from '../../../shared/provider'
 import { getComposerDraft, getPromptDrafts, updateComposerDraft } from '../composerDraft'
 import { useComposerDrafts } from '../useComposerDrafts'
+import { type ComposerQuote, noComposerQuotes } from '../composerQuotes'
 
 type ComposerDraftStateDependencies = {
   editSession: {
@@ -32,6 +33,17 @@ export function useComposerDraftState({
   const selectedSkills = composerDraft.skills
 
   const selectedApps = composerDraft.apps
+  const selectedQuotes = composerDraft.quotes ?? noComposerQuotes
+  const setSelectedQuotes = useCallback<Dispatch<SetStateAction<ComposerQuote[]>>>(
+    (action) => {
+      setComposerDrafts((drafts) =>
+        updateComposerDraft(drafts, draftScopeKey, 'quotes', (current) =>
+          typeof action === 'function' ? action(current ?? noComposerQuotes) : action
+        )
+      )
+    },
+    [draftScopeKey]
+  )
 
   const setMessage = useCallback<Dispatch<SetStateAction<string>>>(
     (action) => {
@@ -70,6 +82,8 @@ export function useComposerDraftState({
     selectedAttachments,
     selectedSkills,
     selectedApps,
+    selectedQuotes,
+    setSelectedQuotes,
     setMessage,
     setSelectedAttachments,
     setSelectedSkills,

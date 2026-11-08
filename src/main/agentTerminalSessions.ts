@@ -12,7 +12,7 @@ type Options = Omit<
   read?: () => Promise<{ data: string; exitCode?: number }>
   resize?: (cols: number, rows: number) => void
 }
-type Listener = { data: (data: string) => void; exit: (code: number) => void }
+type Listener = { data: (data: string, replay?: boolean) => void; exit: (code: number) => void }
 const maximumOutput = 512 * 1024
 const completedRetentionMs = 120_000
 export const longTerminalCommandMs = 2000
@@ -84,11 +84,11 @@ export const createAgentTerminalSessions = (now = Date.now) => {
       cleanupAt = Infinity
     }
   }
-  const append = (id: string, data: string) => {
+  const append = (id: string, data: string, replay = false) => {
     const entry = entries.get(id)
     if (!entry || !data) return
     entry.output = (entry.output + data).slice(-maximumOutput)
-    for (const listener of entry.listeners) listener.data(data)
+    for (const listener of entry.listeners) listener.data(data, replay)
   }
   const poll = (id: string): Promise<boolean> => {
     const entry = entries.get(id)
@@ -177,7 +177,7 @@ export const createAgentTerminalSessions = (now = Date.now) => {
       const sessionId = id!
       return {
         id: sessionId,
-        append: (data: string) => append(sessionId, data),
+        append: (data: string, replay = false) => append(sessionId, data, replay),
         finish: (code = 0) => finish(sessionId, code),
         background: () => {
           const entry = entries.get(sessionId)
@@ -220,7 +220,7 @@ export const createAgentTerminalSessions = (now = Date.now) => {
       const entry = entries.get(id)
       if (!entry) throw new Error('This agent process is no longer available.')
       entry.listeners.add(listener)
-      if (entry.output) listener.data(entry.output)
+      if (entry.output) listener.data(entry.output, true)
       if (entry.info.status === 'exited') listener.exit(entry.exitCode ?? 0)
       const timer = setInterval(() => void poll(id), 500)
       void poll(id)

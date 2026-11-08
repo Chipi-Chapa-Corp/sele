@@ -3,6 +3,7 @@ import { spawn, execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
+import { once } from 'node:events'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
@@ -21,6 +22,32 @@ const alive = async (pid) => {
     throw error
   }
 }
+
+test('terminal cleanup kills an orphan by session marker without killing sibling chat terminals', {
+  skip: process.platform !== 'linux'
+}, async (t) => {
+  const id = randomUUID()
+  const processes = []
+  t.after(() => {
+    for (const child of processes) child.kill('SIGKILL')
+  })
+  const start = async (env) => {
+    const child = spawn('python3', ['-u', '-c', 'import time; print("READY"); time.sleep(60)'], {
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    processes.push(child)
+    await once(child.stdout, 'data')
+    return child.pid
+  }
+  const owned = await start({ SELE_TERMINAL_ID: id, SELE_CHAT_ID: 'shared-chat' })
+  const sibling = await start({ SELE_TERMINAL_ID: id + '-other', SELE_CHAT_ID: 'shared-chat' })
+  const unrelated = await start({ SELE_CHAT_ID: id, CODEX_THREAD_ID: id })
+  await run('python3', ['-c', source, JSON.stringify([id]), JSON.stringify(['SELE_TERMINAL_ID'])])
+  assert.equal(await alive(owned), false)
+  assert.equal(await alive(sibling), true)
+  assert.equal(await alive(unrelated), true, 'terminal cleanup does not match chat IDs')
+})
 
 test('done cleanup kills detached tagged processes and untagged children, preserving other chats', {
   skip: process.platform !== 'linux'

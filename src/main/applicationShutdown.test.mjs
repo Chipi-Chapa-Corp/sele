@@ -34,7 +34,7 @@ test('a failed pending-message durability barrier still finishes every shutdown 
       quit: () => calls.push('quit')
     },
     beginProviderIpcShutdown: () => calls.push('ipc'),
-    disposeTerminalSessions: () => calls.push('terminals'),
+    disposeTerminalSessions: async () => calls.push('terminals'),
     stopLocalAccess: async () => {
       calls.push('local')
     },

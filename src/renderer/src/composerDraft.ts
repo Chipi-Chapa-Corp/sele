@@ -1,12 +1,14 @@
 import type { SetStateAction } from 'react'
 import type { AppSelectedAttachment } from '../../shared/app'
 import type { ProviderApp, ProviderSkill } from '../../shared/provider'
+import type { ComposerQuote } from './composerQuotes'
 
 export type ComposerDraft = {
   message: string
   attachments: AppSelectedAttachment[]
   skills: ProviderSkill[]
   apps: ProviderApp[]
+  quotes?: ComposerQuote[]
 }
 
 export type PromptDraft = {
@@ -27,7 +29,8 @@ const isComposerDraftEmpty = (draft: ComposerDraft): boolean =>
   !draft.message &&
   draft.attachments.length === 0 &&
   draft.skills.length === 0 &&
-  draft.apps.length === 0
+  draft.apps.length === 0 &&
+  !draft.quotes?.length
 
 const resolveStateAction = <Value>(current: Value, action: SetStateAction<Value>): Value =>
   typeof action === 'function' ? (action as (value: Value) => Value)(current) : action

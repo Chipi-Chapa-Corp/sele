@@ -12,9 +12,10 @@ const namespace = 'terminal-runtime-v1'
 export type TerminalMetadata = TerminalCreateOptions & { shell: string }
 export type PersistentTerminal = Pick<
   IPty,
-  'pid' | 'process' | 'write' | 'resize' | 'pause' | 'resume' | 'kill' | 'onData' | 'onExit'
+  'pid' | 'process' | 'write' | 'resize' | 'pause' | 'resume' | 'kill' | 'onExit'
 > & {
   metadata: TerminalMetadata
+  onData(listener: (data: string, replay?: boolean) => void): { dispose(): void }
   attach(): Promise<void>
   stop(): Promise<void>
   detach(): void
@@ -49,7 +50,7 @@ export const connectPersistentTerminal = async (
       timer: ReturnType<typeof setTimeout>
     }
   >()
-  const data = new Set<(value: string) => void>()
+  const data = new Set<(value: string, replay?: boolean) => void>()
   const exits = new Set<(value: { exitCode: number; signal?: number }) => void>()
   const send = (method: string, params?: unknown, id?: number) => {
     if (transport.exitCode !== null) throw new Error('Terminal connection closed.')
@@ -79,7 +80,8 @@ export const connectPersistentTerminal = async (
       clearTimeout(entry.timer)
       if (message.error) entry.reject(new Error(message.error.message))
       else entry.resolve(message.result)
-    } else if (message.method === 'data') for (const listener of data) listener(message.params)
+    } else if (message.method === 'data')
+      for (const listener of data) listener(message.params, message.replay === true)
     else if (message.method === 'exit') for (const listener of exits) listener(message.params)
   })
   transport.on('error', (error) => console.error('Terminal runtime connection failed.', error))

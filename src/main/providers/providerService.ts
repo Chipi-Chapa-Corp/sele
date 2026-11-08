@@ -11,7 +11,7 @@ import { ChatAccounts } from './ChatAccounts'
 import { BackgroundChatRecovery } from './BackgroundChatRecovery'
 import { createChatProcessCleanup } from './ChatProcessCleanup'
 import { killChatProcesses } from '../chatProcesses'
-import { agentTerminalSessions } from '../agentTerminalSessions'
+import { stopChatTerminalSessions } from '../registerTerminalIpc'
 import { ImportedConversations } from './ImportedConversations'
 import { app } from 'electron'
 import { prepareChatWorkspace } from './noProjectWorkspace'
@@ -374,7 +374,7 @@ const adapters = Object.fromEntries(
 const cleanupChatProcesses = createChatProcessCleanup({
   adapters,
   metadata: getChatMetadata,
-  stopTerminals: (ids) => agentTerminalSessions.stopChats(ids),
+  stopTerminals: stopChatTerminalSessions,
   killProcesses: killChatProcesses
 })
 
