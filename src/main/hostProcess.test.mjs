@@ -15,7 +15,7 @@ const compile = (file) =>
 const ptySource = compile('./pty.ts')
 const hostSource = compile('./hostProcess.ts')
 
-const harness = ({ flatpak = false, spawnError } = {}) => {
+const harness = ({ flatpak = false, spawnError, bridge = null } = {}) => {
   const logs = []
   const launches = []
   const shellExecs = []
@@ -85,7 +85,7 @@ const harness = ({ flatpak = false, spawnError } = {}) => {
       }
     },
     'node:os': { homedir: () => '/fixture', userInfo: () => ({ shell: '/bin/bash' }) },
-    './currentContainer': { getCurrentContainerHostBridge: async () => null },
+    './currentContainer': { getCurrentContainerHostBridge: async () => bridge },
     './database/sshEnvironments': {},
     './sshCommand': {},
     './targetShell': targetShell,
@@ -102,8 +102,37 @@ const harness = ({ flatpak = false, spawnError } = {}) => {
     flatpak
       ? assert.rejects(pending, { code: 'ENOENT' })
       : pending.then((command) => assert.equal(command.file, '/fixture/bin/tool'))
-  return { pty, logs, launches, shellExecs, started, lookup, settleLookup }
+  return { host, pty, logs, launches, shellExecs, started, lookup, settleLookup }
 }
+
+for (const flatpak of [false, true]) {
+  test(`${flatpak ? 'Flatpak' : 'native'} wrapper resolves the host CLI and its shell PATH before transport`, async () => {
+    const h = harness({ flatpak })
+    const pending = h.host.resolveHostExecutable('tool', { env: { CODEX_HOME: '/custom/home' } })
+    await h.started
+    h.launches[0].terminal.finish(0, 'FOUND=/custom/tool\nPATH=/custom:/fixture/bin\n')
+    const resolved = await pending
+    assert.equal(resolved.file, '/custom/tool')
+    assert.equal(resolved.env.PATH, '/custom:/fixture/bin')
+    assert.equal(resolved.env.CODEX_HOME, '/custom/home')
+    assert.deepEqual(h.logs, [])
+  })
+}
+
+test('wrapper command lookup stays inside a remote target or host bridge', async () => {
+  for (const [settings, options] of [
+    [{}, { container: { kind: 'container', tool: 'ssh', name: 'fixture' } }],
+    [{ bridge: { file: 'host-spawn', argsPrefix: [] } }, {}]
+  ]) {
+    const h = harness(settings)
+    const env = { CODEX_HOME: '/remote/codex' }
+    const command = await h.host.resolveHostExecutable('codex', { ...options, env })
+    assert.equal(command.file, 'codex')
+    assert.equal(command.env, env)
+    assert.equal(h.launches.length, 0)
+    assert.equal(h.shellExecs.length, 0)
+  }
+})
 
 for (const flatpak of [false, true]) {
   const target = flatpak ? 'Flatpak host' : 'local'

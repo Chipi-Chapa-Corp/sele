@@ -15,6 +15,7 @@ export class LanTransport implements RendererTransport {
   private reconnectDelay = 500
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private listeners = new Map<string, Map<unknown, (args: unknown[]) => void>>()
+  private readyWaiters = new Set<{ resolve(): void; reject(error: Error): void }>()
   private pending = new Map<
     number,
     {
@@ -52,6 +53,8 @@ export class LanTransport implements RendererTransport {
           if (message.type === 'ready' && message.version === localAccessProtocolVersion) {
             clearTimeout(timeout)
             this.ready = true
+            this.readyWaiters.forEach((waiter) => waiter.resolve())
+            this.readyWaiters.clear()
             this.reconnectDelay = 500
             this.onStatus(null)
             settled = true
@@ -95,6 +98,10 @@ export class LanTransport implements RendererTransport {
         this.pending.clear()
         if (!settled) reject(error)
         if (this.stopped) return
+        if (event.code === 1008) {
+          this.readyWaiters.forEach((waiter) => waiter.reject(error))
+          this.readyWaiters.clear()
+        }
         if (this.connectedBefore && event.code === 1008 && this.onAccessRevoked) {
           this.onAccessRevoked()
           return
@@ -132,6 +139,27 @@ export class LanTransport implements RendererTransport {
     })
   }
 
+  /** Wait before starting new work after a native picker resumes the WebView.
+   * This never queues or replays an invoke that has already been sent. */
+  waitUntilReady(): Promise<void> {
+    if (this.ready && this.socket?.readyState === WebSocket.OPEN) return Promise.resolve()
+    if (this.stopped) return Promise.reject(new Error('Sele is disconnected.'))
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error): void => {
+        clearTimeout(timer)
+        this.readyWaiters.delete(waiter)
+        if (error) reject(error)
+        else resolve()
+      }
+      const waiter = { resolve: () => finish(), reject: (error: Error) => finish(error) }
+      const timer = setTimeout(
+        () => finish(new Error('Sele is disconnected. Try attaching again after reconnecting.')),
+        15_000
+      )
+      this.readyWaiters.add(waiter)
+    })
+  }
+
   send(channel: string, ...args: unknown[]): void {
     if (!this.ready || this.socket?.readyState !== WebSocket.OPEN) return
     this.socket.send(encodeClientMessage({ type: 'send', channel, args }))
@@ -149,6 +177,8 @@ export class LanTransport implements RendererTransport {
 
   close(): void {
     this.stopped = true
+    this.readyWaiters.forEach((waiter) => waiter.reject(new Error('Sele is disconnected.')))
+    this.readyWaiters.clear()
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     this.socket?.close()
   }

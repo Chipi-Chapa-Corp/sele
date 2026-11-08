@@ -35,6 +35,14 @@
   .chat[data-mobile-pane] .chat__resize-handle {
     display: none;
   }
+  .chat[data-mobile-view="conversation"] .chat__panels {
+    padding: 0.55rem 0 0;
+  }
+  .chat[data-mobile-pane] #detail > .chat-panel {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
   .chat[data-mobile-pane] .message-box textarea {
     max-height: min(9rem, 25dvh);
   }
@@ -90,8 +98,8 @@
   }
   .chat[data-mobile-pane] .message-box__controls:not(.message-box__controls--no-selectors) {
     display: grid;
-    grid-template-areas: "selectors selectors" "attachments send";
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "selectors selectors selectors" "attachments usage send";
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 0.5rem;
   }
   .chat[data-mobile-pane] .message-box__selectors {
@@ -109,14 +117,6 @@
     max-width: 100%;
     padding-block: 0.4rem;
   }
-  .chat[data-mobile-pane] .message-box__chat-config-trigger .message-box__chat-config-label {
-    flex-wrap: wrap;
-    white-space: normal;
-  }
-  .chat[data-mobile-pane] .message-box__chat-config-trigger .message-box__chat-config-label-part {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
   .chat[data-mobile-pane] .message-box__attachment-controls,
   .chat[data-mobile-pane] .message-box__send-controls {
     grid-row: 2;
@@ -125,8 +125,36 @@
     grid-row: 1;
   }
   .chat[data-mobile-pane] .message-box__controls--no-selectors {
-    grid-template-areas: "attachments send";
-    grid-template-columns: auto auto;
+    display: grid;
+    grid-template-areas: "attachments usage send";
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .message-box__inline-usage {
+    grid-area: usage;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .chat[data-mobile-pane] .message-box__usage-control--adaptive {
+    flex: 1;
+    min-width: 0;
+  }
+  .chat[data-mobile-pane] .message-box__usage-control--adaptive > .ui-button {
+    container: mobile-usage-badge / inline-size;
+    flex: 0 1 3.5rem;
+    min-width: 0;
+    padding: 0;
+  }
+  @container mobile-usage-badge (max-width: 3.25rem) {
+    .message-box__usage-percent,
+    .message-box__usage-balance {
+      font-size: 0.625rem;
+    }
+  }
+  @container mobile-usage-badge (max-width: 2.5rem) {
+    .message-box__usage-percent {
+      display: none;
+    }
   }
   .chat[data-mobile-pane] .chat-panel__new-session {
     justify-content: flex-start;
@@ -565,15 +593,6 @@
   }
   .message-box__chat-config-preset-actions {
     justify-content: flex-end;
-  }
-  .message-box__chat-config-preset .message-box__chat-config-label {
-    flex-wrap: wrap;
-    white-space: normal;
-    gap: 0.35rem;
-  }
-  .message-box__chat-config-preset .message-box__chat-config-label-part {
-    white-space: normal;
-    overflow-wrap: anywhere;
   }
   .message-box__chat-config-value {
     min-width: 0;

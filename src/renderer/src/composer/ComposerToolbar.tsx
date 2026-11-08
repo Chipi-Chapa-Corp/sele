@@ -170,6 +170,11 @@ export const ComposerToolbar = memo(function ComposerToolbar({
             />
           )}
         </div>
+        {compact && showUsageIndicator && (
+          <div className="message-box__inline-usage">
+            <ComposerUsageControl settings={settings} compact inline />
+          </div>
+        )}
         {promptControlsVisible && (
           <div className="message-box__selectors">
             {selectorsVisible && (

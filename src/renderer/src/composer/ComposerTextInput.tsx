@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { ComposerPlaceholder } from '../components/ComposerPlaceholder'
 import { Dropdown } from '../components/Dropdown'
 import { isTouchEditingActivation } from '../touchInput'
+import { useCompactLayout } from '../useCompactLayout'
 import { useComposerAttachments } from './useComposerAttachments'
 import { useComposerDraftState } from './useComposerDraftState'
 import { useComposerKeyboard } from './useComposerKeyboard'
@@ -40,6 +41,7 @@ export const ComposerTextInput = memo(function ComposerTextInput({
   keyboard,
   attachments
 }: ComposerTextInputProps) {
+  const compact = useCompactLayout()
   return (
     <div ref={mentions.textareaWrapRef} className="message-box__textarea-wrap">
       {autoFocus && draftScopeKey.startsWith('new-chat:') && (
@@ -97,15 +99,17 @@ export const ComposerTextInput = memo(function ComposerTextInput({
             type="button"
             className="message-box__suggestion-key"
             tabIndex={-1}
-            aria-label="Send suggestion immediately (Enter)"
-            title="Send immediately (Enter)"
+            aria-label={
+              compact ? 'Send suggestion immediately' : 'Send suggestion immediately (Enter)'
+            }
+            title={compact ? 'Send immediately' : 'Send immediately (Enter)'}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               dismissPromptSuggestion()
               sending.submitMessage(activePrimaryMode, visiblePromptSuggestion.text)
             }}
           >
-            <span>Enter</span>
+            <span>{compact ? 'Send' : 'Enter'}</span>
           </button>
         </div>
       )}
@@ -113,6 +117,7 @@ export const ComposerTextInput = memo(function ComposerTextInput({
         ref={textareaRef}
         id="message-input"
         rows={1}
+        enterKeyHint={compact ? 'enter' : undefined}
         value={draft.message}
         placeholder={
           visiblePromptSuggestion ? '' : 'Use @ for files, $ for skills and # for projects'
@@ -120,7 +125,7 @@ export const ComposerTextInput = memo(function ComposerTextInput({
         aria-autocomplete={visiblePromptSuggestion ? 'inline' : 'list'}
         aria-description={
           visiblePromptSuggestion
-            ? `Suggested next prompt: ${visiblePromptSuggestion.text}. Press Tab to accept into draft, Enter to send immediately, or Escape to dismiss.`
+            ? `Suggested next prompt: ${visiblePromptSuggestion.text}. ${compact ? 'Tap Send to send immediately.' : 'Press Tab to accept into draft, Enter to send immediately, or Escape to dismiss.'}`
             : undefined
         }
         aria-controls={mentions.mentionMenuOpen ? mentions.mentionListboxId : undefined}

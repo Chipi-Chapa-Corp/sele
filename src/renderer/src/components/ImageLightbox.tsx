@@ -77,7 +77,7 @@ export const ImageLightbox = ({
     if (event.button !== 0 || !(event.target instanceof Element)) return
     if (
       event.target.closest(
-        'button, video, .image-lightbox__tools, .image-lightbox__status, .image-annotations, .popup-window__resize-handle'
+        'button, video, .image-lightbox__toolbar, .image-lightbox__status, .image-annotations, .popup-window__resize-handle'
       )
     )
       return
@@ -313,76 +313,78 @@ export const ImageLightbox = ({
                   }}
                 />
               )}
-              {editor && (
-                <div
-                  className="image-lightbox__tools"
-                  role="toolbar"
-                  aria-label="Image annotation tools"
-                >
-                  {editor.tools}
-                </div>
-              )}
-              <div className="image-lightbox__actions">
-                {!loading && !error && (mediaType === 'image' || path) && (
-                  <>
-                    <Button
-                      disabled={copyState === 'copying'}
-                      aria-label={`Copy ${name}`}
-                      callback={handleCopy}
-                      icon={
-                        copyState === 'copied' ? (
-                          <Check aria-hidden="true" />
-                        ) : copyState === 'copying' ? (
-                          <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
-                        ) : (
-                          <Copy aria-hidden="true" />
-                        )
-                      }
-                      size="small"
-                      theme="secondary"
-                      title={copyError ?? `Copy ${mediaType}`}
-                    />
-                    {canReveal && (
+              <div className="image-lightbox__toolbar">
+                {editor && (
+                  <div
+                    className="image-lightbox__tools"
+                    role="toolbar"
+                    aria-label="Image annotation tools"
+                  >
+                    {editor.tools}
+                  </div>
+                )}
+                <div className="image-lightbox__actions">
+                  {!loading && !error && (mediaType === 'image' || path) && (
+                    <>
                       <Button
-                        aria-label={`Show ${name} in file manager`}
-                        callback={handleReveal}
-                        icon={<FolderOpen aria-hidden="true" />}
-                        size="small"
-                        theme="secondary"
-                        title={revealError ?? 'Show in file manager'}
-                      />
-                    )}
-                    {path && (
-                      <Button
-                        disabled={saveState === 'saving'}
-                        aria-label={`Save ${name}`}
-                        callback={handleSave}
+                        disabled={copyState === 'copying'}
+                        aria-label={`Copy ${name}`}
+                        callback={handleCopy}
                         icon={
-                          saveState === 'saved' ? (
+                          copyState === 'copied' ? (
                             <Check aria-hidden="true" />
+                          ) : copyState === 'copying' ? (
+                            <LoaderCircle className="app-loading-spinner" aria-hidden="true" />
                           ) : (
-                            <Download aria-hidden="true" />
+                            <Copy aria-hidden="true" />
                           )
                         }
                         size="small"
                         theme="secondary"
-                        title={
-                          saveState === 'error'
-                            ? `Unable to save ${mediaType}`
-                            : `Save ${mediaType}`
-                        }
+                        title={copyError ?? `Copy ${mediaType}`}
                       />
-                    )}
-                  </>
-                )}
-                <Button
-                  aria-label={`Close ${mediaType} preview`}
-                  callback={onClose}
-                  icon={<X aria-hidden="true" />}
-                  size="small"
-                  theme="secondary"
-                  title="Close"
-                />
+                      {canReveal && (
+                        <Button
+                          aria-label={`Show ${name} in file manager`}
+                          callback={handleReveal}
+                          icon={<FolderOpen aria-hidden="true" />}
+                          size="small"
+                          theme="secondary"
+                          title={revealError ?? 'Show in file manager'}
+                        />
+                      )}
+                      {path && (
+                        <Button
+                          disabled={saveState === 'saving'}
+                          aria-label={`Save ${name}`}
+                          callback={handleSave}
+                          icon={
+                            saveState === 'saved' ? (
+                              <Check aria-hidden="true" />
+                            ) : (
+                              <Download aria-hidden="true" />
+                            )
+                          }
+                          size="small"
+                          theme="secondary"
+                          title={
+                            saveState === 'error'
+                              ? `Unable to save ${mediaType}`
+                              : `Save ${mediaType}`
+                          }
+                        />
+                      )}
+                    </>
+                  )}
+                  <Button
+                    aria-label={`Close ${mediaType} preview`}
+                    callback={onClose}
+                    icon={<X aria-hidden="true" />}
+                    size="small"
+                    theme="secondary"
+                    title="Close"
+                  />
+                </div>
               </div>
             </div>
           </PopupWindow>

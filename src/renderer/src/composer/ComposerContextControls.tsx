@@ -79,8 +79,9 @@ export const ComposerWorkspaceControls = memo(function ComposerWorkspaceControls
 
 export const ComposerUsageControl = memo(function ComposerUsageControl({
   settings,
-  compact
-}: Props) {
+  compact,
+  inline = false
+}: Props & { inline?: boolean }) {
   const {
     showUsageIndicator = true,
     providerId,
@@ -110,7 +111,8 @@ export const ComposerUsageControl = memo(function ComposerUsageControl({
     <>
       {showUsageIndicator && (
         <UsageIndicator
-          triggerLabel={compact ? 'Limits and usage' : undefined}
+          triggerLabel={compact && !inline ? 'Limits and usage' : undefined}
+          adaptive={inline}
           queueTriggerLabel={compact ? 'On reset' : undefined}
           providerId={providerId}
           chatId={chatId}
@@ -126,7 +128,7 @@ export const ComposerUsageControl = memo(function ComposerUsageControl({
           onCompact={onCompact}
           onUsageRefresh={onUsageRefresh}
           onUsageReset={onUsageReset}
-          onQueueLimitReset={onQueueLimitReset}
+          onQueueLimitReset={inline ? undefined : onQueueLimitReset}
         />
       )}
     </>

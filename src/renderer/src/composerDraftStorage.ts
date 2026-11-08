@@ -169,7 +169,12 @@ export const parseStoredComposerDrafts = (
               name: attachment.name,
               path: attachment.path,
               dataUrl,
-              ...(attachment.previewOnly === true ? { previewOnly: true } : {})
+              ...(attachment.previewOnly === true ? { previewOnly: true } : {}),
+              ...(typeof attachment.annotationNumber === 'number' &&
+              Number.isSafeInteger(attachment.annotationNumber) &&
+              attachment.annotationNumber >= 0
+                ? { annotationNumber: attachment.annotationNumber }
+                : {})
             }
             storedImageKeys.set(image, attachment.imageKey)
             attachments.push(image)
@@ -240,7 +245,10 @@ export const writeStoredComposerDrafts = (state: ComposerDraftState): void => {
           name: attachment.name,
           path: attachment.path,
           imageKey,
-          ...(attachment.previewOnly ? { previewOnly: true } : {})
+          ...(attachment.previewOnly ? { previewOnly: true } : {}),
+          ...(attachment.annotationNumber !== undefined
+            ? { annotationNumber: attachment.annotationNumber }
+            : {})
         }
       })
     }

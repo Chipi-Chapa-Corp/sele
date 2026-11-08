@@ -483,6 +483,42 @@ if (!process.versions.electron) {
         )
         assert.equal(attachment[0].kind, 'file')
         assert.equal(await fs.readFile(attachment[0].path, 'utf8'), 'phone attachment')
+        // A native picker can outlive its Wi-Fi connection. Reconnecting must
+        // preserve the picker, then persist all selected images before reload.
+        window.webContents.debugger.attach('1.3')
+        await run(`window.pickerSurvived = true;
+          const nativeClick = HTMLInputElement.prototype.click;
+          HTMLInputElement.prototype.click = function() {
+            if (this.type === 'file') window.fixturePicker = this;
+            else nativeClick.call(this);
+          };
+          document.querySelector('[aria-label="Attach files"]').click();`)
+        await waitFor('Boolean(window.fixturePicker)')
+        await handlers.get(host.localAccessChannels.configure)({}, { enabled: false, port })
+        await waitFor('Boolean(document.getElementById("sele-connection-status"))')
+        await handlers.get(host.localAccessChannels.configure)({}, { enabled: true, port })
+        await waitFor('!document.getElementById("sele-connection-status")')
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        assert.equal(await run('window.pickerSurvived'), true, 'reconnect cannot discard an open picker')
+        const imageFiles = []
+        for (let index = 0; index < 3; index++) {
+          const imagePath = path.join(directory, `phone-${index}.png`)
+          const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64')
+          await fs.writeFile(imagePath, Buffer.concat([image, Buffer.alloc(1024 * 1024)]))
+          imageFiles.push(imagePath)
+        }
+        const { root: pickerDocument } = await window.webContents.debugger.sendCommand('DOM.getDocument')
+        const { nodeId: pickerNode } = await window.webContents.debugger.sendCommand('DOM.querySelector', {
+          nodeId: pickerDocument.nodeId, selector: 'input[type="file"]'
+        })
+        await window.webContents.debugger.sendCommand('DOM.setFileInputFiles', {
+          nodeId: pickerNode, files: imageFiles
+        })
+        await waitFor('!window.pickerSurvived && Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))')
+        await run('document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()')
+        await waitFor('document.querySelectorAll(\'.message-box__attachment-preview--image\').length === 3')
+        assert.equal(globalThis.lanFixture.sends, 1, 'attachment recovery does not replay chat sends')
+        window.webContents.debugger.detach()
         await run(`preferencesApi.setItem('sele:lan-fixture-draft', 'keep on phone')`)
         // Access keys are per tab; settings and drafts live on the host.
         console.log('LOCAL UI: first client sent and uploaded; opening second')

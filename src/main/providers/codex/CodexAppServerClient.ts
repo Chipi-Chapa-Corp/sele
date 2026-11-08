@@ -8,8 +8,12 @@ import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import { createInterface } from 'node:readline'
 import type { AppContainerTarget } from '../../../shared/app'
-import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
-import { getCodexExecutable, getCodexExecutableError } from './CodexExecutable'
+import { getHostCommand, isRunningInFlatpak, resolveHostExecutable } from '../../hostProcess'
+import {
+  getCodexExecutable,
+  getCodexExecutableError,
+  isCodexExecutableUnavailable
+} from './CodexExecutable'
 import { getCodexAccountViewCommand } from './CodexAccountView'
 import { CodexDynamicTools } from './CodexDynamicTools'
 import { registerCodexDesktopTools } from './CodexDesktopTools'
@@ -67,16 +71,29 @@ type AppServerCommand = {
 
 const getAppServerCommand = async (
   binary: string,
-  options: { container?: AppContainerTarget | null; accountId?: string } = {}
+  options: {
+    container?: AppContainerTarget | null
+    accountId?: string
+    existingOnly?: boolean
+  } = {}
 ): Promise<AppServerCommand> => {
   // Account handoffs must release the writer as soon as we unsubscribe, rather
   // than retaining it for Codex's default inactive-thread grace period.
   const appServerArgs = ['app-server', '-c', 'thread_unload_delay_secs=0', '--listen', 'stdio://']
+  const executable = options.existingOnly
+    ? { file: binary, env: process.env }
+    : await resolveHostExecutable(binary, {
+        container: options.container,
+        env: process.env
+      }).catch((error: unknown) => {
+        throw getCodexExecutableError(error)
+      })
   const accountViewCommand = await getCodexAccountViewCommand(
-    binary,
+    executable.file,
     appServerArgs,
     process.platform !== 'win32' || options.container?.kind === 'container',
-    options.accountId
+    options.accountId,
+    executable.env
   )
   const canUseSystemd =
     process.platform === 'linux' &&
@@ -111,6 +128,11 @@ const getAppServerCommand = async (
       '--property=IOWeight=25',
       `--property=MemoryHigh=${codexResourceMemoryHigh}`,
       '--property=OOMScoreAdjust=500',
+      // Services inherit the user manager's environment, not systemd-run's.
+      // Copy values from the invoking process without exposing them in argv.
+      ...Object.entries(accountViewCommand.env ?? process.env).flatMap(([key, value]) =>
+        value !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ? [`--setenv=${key}`] : []
+      ),
       accountViewCommand.file,
       ...accountViewCommand.args
     ]
@@ -133,6 +155,7 @@ export class CodexAppServerClient {
   private browserTools: ReturnType<typeof registerCodexBrowserTools> = null
 
   private process: CodexProcess | null = null
+  private initialized = false
   private startPromise: Promise<void> | null = null
   private runtimeRecovery: Promise<void> | null = null
   private lifecycle = 0
@@ -307,6 +330,7 @@ export class CodexAppServerClient {
     if (options.preserveRuntime && this.process?.detach) this.process.detach()
     else this.process?.kill()
     this.process = null
+    this.initialized = false
     this.startPromise = null
     this.rejectPending(new Error('Codex app-server stopped'))
   }
@@ -348,6 +372,8 @@ export class CodexAppServerClient {
   private start = async (): Promise<void> => {
     await this.runtimeRecovery
     if (!this.startPromise) {
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
       const startPromise = this.initialize().catch((error: unknown) => {
         if (this.startPromise === startPromise) this.startPromise = null
         throw error
@@ -362,7 +388,7 @@ export class CodexAppServerClient {
     const lifecycle = this.lifecycle
     const appServerCommand = await getAppServerCommand(
       this.container?.kind === 'container' ? 'codex' : getCodexExecutable(),
-      { container: this.container, accountId: this.accountId }
+      { container: this.container, accountId: this.accountId, existingOnly }
     )
     const hostCommand = await getHostCommand(appServerCommand.command, appServerCommand.args, {
       container: this.container,
@@ -394,6 +420,7 @@ export class CodexAppServerClient {
     }
 
     this.process = child
+    this.initialized = false
     this.stderr = ''
 
     createInterface({ input: child.stdout }).on('line', (line) => {
@@ -406,7 +433,7 @@ export class CodexAppServerClient {
     })
 
     const handleError = (error: Error): void => {
-      if (this.process === child) this.handleProcessEnd(error)
+      if (this.process === child) this.handleProcessEnd(getCodexExecutableError(error))
     }
     // Pipe failures are emitted asynchronously by stdin, outside sendRequest's
     // try/catch. Keep this listener even after disposal to absorb late EPIPEs.
@@ -466,6 +493,7 @@ export class CodexAppServerClient {
           })
         )
       this.sendNotification('initialized')
+      this.initialized = true
     } catch (error) {
       if (this.process === child)
         this.handleProcessEnd(error instanceof Error ? error : new Error(String(error)))
@@ -641,6 +669,8 @@ export class CodexAppServerClient {
   }
 
   private handleProcessEnd = (error: Error): void => {
+    const wasInitialized = this.initialized
+    this.initialized = false
     if (this.persistent)
       for (const threadId of this.ownedThreadIds) this.recoveryThreadIds.add(threadId)
     this.desktopTools?.close()
@@ -655,9 +685,11 @@ export class CodexAppServerClient {
     if (child?.detach) child.detach()
     else child?.kill()
     if (child) {
-      console.error('Codex app-server stopped unexpectedly', error)
+      if (wasInitialized) console.error('Codex app-server stopped unexpectedly', error)
       this.stoppedListeners.forEach((listener) => listener(error))
-      if (this.persistent) this.scheduleReconnect()
+      // Startup failures are returned to the caller. Only an established
+      // connection starts background recovery; its catch owns subsequent retries.
+      if (this.persistent && wasInitialized) this.scheduleReconnect()
     }
   }
 
@@ -670,6 +702,7 @@ export class CodexAppServerClient {
       void this.start().catch((error: unknown) => {
         if (lifecycle !== this.lifecycle) return
         console.error('Unable to reconnect to the Codex runtime.', error)
+        if (isCodexExecutableUnavailable(error)) return
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000)
         this.scheduleReconnect()
       })

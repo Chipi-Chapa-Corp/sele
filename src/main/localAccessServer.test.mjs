@@ -297,6 +297,7 @@ test('browser transport rejects uncertain mutations and reconnects without repla
   // Server-side shutdown cannot retract work already dispatched to a provider.
   await f.server.stop()
   await rejected
+  const attachmentConnection = transport.waitUntilReady()
   const replacement = await startLocalAccessServer({
     port: f.server.port,
     host: '127.0.0.1',
@@ -310,6 +311,7 @@ test('browser transport rejects uncertain mutations and reconnects without repla
   })
   t.after(() => replacement.stop())
   await readyAgain
+  await attachmentConnection
   assert.equal(mutations, 1)
 })
 

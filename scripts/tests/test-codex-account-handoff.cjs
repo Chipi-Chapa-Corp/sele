@@ -95,8 +95,8 @@ const { spawnSync } = require('node:child_process')
             }))
             const stubs = {
               electron: `export const app = { getPath: () => { throw Error('Profile access is forbidden') } }`,
-              hostProcess: `export const isRunningInFlatpak = () => false; export const getHostCommand = async (file, args, options) => ({ file, args, env: options?.env || process.env })`,
-              CodexExecutable: `export const getCodexExecutable = () => process.env.SELE_TEST_CODEX_BINARY || 'codex'; export const getCodexExecutableError = error => error`,
+              hostProcess: `export const isRunningInFlatpak = () => false; export const getHostCommand = async (file, args, options) => ({ file, args, env: options?.env || process.env }); export const resolveHostExecutable = async (file, options) => ({ file, env: options.env })`,
+              CodexExecutable: `export const getCodexExecutable = () => process.env.SELE_TEST_CODEX_BINARY || 'codex'; export const getCodexExecutableError = error => error; export const isCodexExecutableUnavailable = () => false`,
               CodexAccountView: `import { getCodexAccountViewCommand as prepare } from ${JSON.stringify(path.join(project, 'src/main/providers/codex/CodexAccountView.ts'))}; export const getCodexAccountViewCommand = (binary, args, _posix, id) => prepare(binary, args, process.env.SELE_TEST_CODEX_NATIVE !== '1', id)`,
               CodexDesktopTools: `export const registerCodexDesktopTools = () => ({ close() {} })`,
               CodexBrowserSessions: `export const registerBrowserUseSession = () => {}; export const removeBrowserUseSessions = () => {}`

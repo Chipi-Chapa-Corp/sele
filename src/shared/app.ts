@@ -118,6 +118,8 @@ export type AppSelectedImage = {
   kind: 'image'
   /** A small composer preview; path always names the original sendable image. */
   previewOnly?: boolean
+  /** Highest annotation number already rendered into this attachment. */
+  annotationNumber?: number
   dataUrl: string
   name: string
   path: string

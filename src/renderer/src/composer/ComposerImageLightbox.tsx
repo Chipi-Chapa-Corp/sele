@@ -28,10 +28,24 @@ const tools = [
 
 export function ComposerImageLightbox({
   image,
+  tool,
+  onToolChange,
+  position,
+  count,
+  annotationStartNumber = (image.annotationNumber ?? 0) + 1,
+  onPrevious,
+  onNext,
   onClose,
   onSave
 }: {
   image: AppSelectedImage
+  tool: AnnotationTool | null
+  onToolChange(tool: AnnotationTool | null): void
+  position?: number
+  count?: number
+  annotationStartNumber?: number
+  onPrevious?(): void
+  onNext?(): void
   onClose(): void
   onSave(image: AppSelectedImage): void
 }): React.JSX.Element {
@@ -41,7 +55,6 @@ export function ComposerImageLightbox({
   const gestureRef = useRef<{ pointerId: number; annotation: ImageAnnotation } | null>(null)
   const busyRef = useRef(false)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
-  const [tool, setTool] = useState<AnnotationTool | null>(null)
   const [annotations, setAnnotations] = useState<ImageAnnotation[]>([])
   const [preview, setPreview] = useState<ImageAnnotation | null>(null)
   const [size, setSize] = useState(3)
@@ -172,14 +185,18 @@ export function ComposerImageLightbox({
     const name = `${image.name.replace(/\.[^.]+$/, '')}.png`
     const saved = await readPastedImage(new File([png], name, { type: 'image/png' }))
     if (!saved) throw new Error('Unable to save the edited image.')
-    return { ...saved, name }
+    return {
+      ...saved,
+      name,
+      annotationNumber: Math.max(image.annotationNumber ?? 0, nextAnnotationNumber(annotations) - 1)
+    }
   }
 
-  const close = async (): Promise<void> => {
+  const finish = async (onFinished: () => void): Promise<void> => {
     if (busyRef.current) return
     cancelGesture()
     if (!annotations.length) {
-      onClose()
+      onFinished()
       return
     }
     busyRef.current = true
@@ -187,7 +204,7 @@ export function ComposerImageLightbox({
     setError(null)
     try {
       onSave(await persistImage())
-      onClose()
+      onFinished()
     } catch (error) {
       console.error('[caught:ComposerImageLightbox:close]', error)
       setError(
@@ -206,7 +223,11 @@ export function ComposerImageLightbox({
       path={image.path}
       loading={Boolean(image.previewOnly && !full?.url && !full?.error)}
       error={full?.error}
-      onClose={() => void close()}
+      onClose={() => void finish(onClose)}
+      position={position}
+      count={count}
+      onPrevious={onPrevious ? () => void finish(onPrevious) : undefined}
+      onNext={onNext ? () => void finish(onNext) : undefined}
       editor={{
         onLoad: (event) => {
           imageRef.current = event.currentTarget
@@ -226,7 +247,7 @@ export function ComposerImageLightbox({
                 disabled={busy || !dimensions.width}
                 callback={() => {
                   cancelGesture()
-                  setTool((current) => (current === value ? null : value))
+                  onToolChange(tool === value ? null : value)
                 }}
                 icon={<Icon aria-hidden="true" />}
                 size="small"
@@ -267,7 +288,7 @@ export function ComposerImageLightbox({
                 fontSize: (18 + size * 2) * scale,
                 fontWeight: Math.min(900, 400 + size * 50),
                 ...(tool === 'number' || tool === 'numbered-arrow'
-                  ? { number: nextAnnotationNumber(annotations) }
+                  ? { number: Math.max(annotationStartNumber, nextAnnotationNumber(annotations)) }
                   : {})
               }
               setError(null)

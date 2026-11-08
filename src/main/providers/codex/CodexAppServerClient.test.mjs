@@ -7,6 +7,7 @@ import { PassThrough, Writable } from 'node:stream'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
+import { getCodexExecutableError, isCodexExecutableUnavailable } from './CodexExecutable.ts'
 
 const source = ts.createSourceFile(
   'CodexAppServerClient.ts',
@@ -42,6 +43,8 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
     console: { error: (...args) => logs.push(args) },
     getAppServerCommand: () => ({ command: 'fixture', args: [] }),
     getHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
+    getCodexExecutableError,
+    isCodexExecutableUnavailable,
     supportsLocalHostTools,
     registerBrowserUseSession() {},
     removeBrowserUseSession() {},
@@ -413,6 +416,101 @@ test('shutdown cancels a scheduled reconnect', async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(children.length, 1)
 })
+
+const captureTimers = (context) => {
+  const timers = new Map()
+  context.setTimeout = (callback, delay) => {
+    const timer = { unref() {} }
+    timers.set(timer, { callback, delay })
+    return timer
+  }
+  context.clearTimeout = (timer) => timers.delete(timer)
+  return {
+    timers,
+    async fire(delay) {
+      assert.equal(timers.size, 1, 'there must be exactly one reconnect timer')
+      const [timer, scheduled] = timers.entries().next().value
+      assert.equal(scheduled.delay, delay)
+      timers.delete(timer)
+      scheduled.callback()
+      await tick()
+      await tick() // Drain asynchronous stdin errors from the newly attached process.
+    }
+  }
+}
+
+test('failed initial startup does not launch a background retry loop', async (t) => {
+  const { client, children, context } = fixture(t, { failInitialize: true })
+  const { timers } = captureTimers(context)
+  client.persistent = true
+  await assert.rejects(client.request('model/list'), { code: 'EPIPE' })
+  await tick()
+  assert.equal(children.length, 1)
+  assert.equal(timers.size, 0)
+  assert.equal(client.reconnectTimer, null)
+  await client.request('model/list')
+  assert.equal(children.length, 2, 'a foreground request can retry after startup fails')
+})
+
+test('failed reconnects back off once per attempt and reset after recovery', async (t) => {
+  const { client, children, context } = fixture(t)
+  const { timers, fire } = captureTimers(context)
+  client.persistent = true
+  await client.request('model/list')
+  const connect = context.connectCodexRuntime
+  context.connectCodexRuntime = async (...args) => {
+    const child = await connect(...args)
+    child.failure = brokenPipe()
+    return child
+  }
+  children[0].emit('error', brokenPipe())
+  for (const delay of [250, 500, 1000, 2000, 4000, 8000, 10000]) await fire(delay)
+  context.connectCodexRuntime = connect
+  await fire(10000)
+  assert.equal(timers.size, 0)
+  assert.equal(client.reconnectDelay, 250)
+  assert.equal(client.connectionIdentity, children.at(-1))
+})
+
+for (const failure of [
+  new Error('sele-codex-view: line 74: codex: command not found'),
+  Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' }),
+  Object.assign(new Error('spawn codex EACCES'), { code: 'EACCES' })
+]) {
+  test(`an unavailable executable stops background recovery: ${failure.message}`, async (t) => {
+    const { client, children, context, logs } = fixture(t)
+    const { timers, fire } = captureTimers(context)
+    client.persistent = true
+    await client.request('model/list')
+    const connect = context.connectCodexRuntime
+    context.connectCodexRuntime = async (...args) => {
+      const child = await connect(...args)
+      if (failure.code) child.failure = failure
+      else {
+        child.stdin.destroy()
+        child.stdin = new Writable({
+          write(_chunk, _encoding, callback) {
+            setImmediate(() => {
+              child.stderr.write(failure.message)
+              child.emit('close', 127)
+            })
+            callback()
+          }
+        })
+      }
+      return child
+    }
+    children[0].emit('error', brokenPipe())
+    await fire(250)
+    assert.equal(timers.size, 0)
+    assert.equal(client.reconnectTimer, null)
+    assert.equal(children.length, 2)
+    assert.match(logs.at(-1)[1].message, /SELE_CODEX_PATH/)
+    context.connectCodexRuntime = connect
+    await client.request('model/list')
+    assert.equal(children.length, 3, 'foreground requests can retry after the CLI is repaired')
+  })
+}
 
 test('reports the negotiated CLI version for optional prediction capabilities', async (t) => {
   const { client } = fixture(t, { initializeResult: { userAgent: 'codex_cli_rs/0.166.0 (Linux)' } })

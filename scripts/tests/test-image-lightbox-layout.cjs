@@ -89,6 +89,12 @@ if (!process.versions.electron) {
       const ready = async (width) => {
         await wait(`document.querySelector('.image-lightbox img')?.naturalWidth===${width}`)
         await pause()
+        assert.ok(
+          await run(
+            `(()=>{const image=document.querySelector('.image-lightbox img').getBoundingClientRect();return [...document.querySelectorAll('.image-lightbox__toolbar button')].every(button=>{const r=button.getBoundingClientRect();return r.bottom<image.top&&r.top>=0&&r.left>=0&&r.right<=innerWidth})})()`
+          ),
+          'image actions stay above the image and inside the viewport'
+        )
       }
       const assertFitted = (r) => {
         assert.ok(Math.abs(r.frame.width - r.image.width) < 1, JSON.stringify(r))

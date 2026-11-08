@@ -59,10 +59,18 @@
   padding-right: 1.45rem;
 }
 
-:where(.ui-segmented-control__option:hover:not(:disabled)),
 :where(.ui-segmented-control__option:focus-visible) {
   color: var(--ink);
   background: var(--tab-hover-surface);
+}
+
+/* Touch browsers can retain :hover after a tap or while reopening a drawer.
+   Only the selected indicator should highlight a segment on those devices. */
+@media (hover: hover) and (pointer: fine) {
+  :where(.ui-segmented-control__option:hover:not(:disabled)) {
+    color: var(--ink);
+    background: var(--tab-hover-surface);
+  }
 }
 
 :where(.ui-segmented-control__option:focus-visible) {

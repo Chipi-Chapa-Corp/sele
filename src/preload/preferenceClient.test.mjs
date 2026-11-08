@@ -147,3 +147,35 @@ test('an in-flight local write replays the latest authoritative broadcast after 
   await client.flush()
   assert.equal(client.getItem('sele:setting').value,'newer host edit')
 })
+
+for (const timing of ['before clearing', 'after clearing']) {
+  test(`a draft-save echo ${timing} cannot resurrect sent attachments`, async () => {
+    let publish
+    const requests = []
+    const key = 'sele:composer-drafts:v1'
+    const savedDraft = JSON.stringify({ composerDrafts: [['codex:chat', {
+      message: '', attachments: [{ kind: 'image', path: '/image.png', imageKey: 'sele:composer-image:v1:image' }]
+    }]] })
+    const client = createPreferenceClient({
+      initialize: async () => ({ ok: true, value: {} }),
+      write: () => {
+        const request = deferred()
+        requests.push(request)
+        return request.promise
+      },
+      commit: () => ok,
+      subscribe: (listener) => { publish = listener }
+    })
+    await client.initialize()
+    client.setItem(key, savedDraft)
+    if (timing === 'before clearing') publish({ [key]: savedDraft })
+    client.removeItem(key)
+    if (timing === 'after clearing') publish({ [key]: savedDraft })
+    const flushed = client.flush()
+    requests[0].resolve(ok)
+    await new Promise(setImmediate)
+    requests[1].resolve(ok)
+    await flushed
+    assert.equal(client.getItem(key).value, null, 'the newer cleared draft must win over its own old save')
+  })
+}

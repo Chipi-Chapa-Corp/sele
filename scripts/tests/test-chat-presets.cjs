@@ -507,6 +507,25 @@ if (!process.versions.electron) {
       await open()
       await open()
       assert.equal((await rows()).length, 0, 'deletions survive reopening')
+      win.setSize(360, 800)
+      await run(`window.renderFixture({models:[{id:'alpha',
+        label:'A very long model preset name that cannot fit on one phone row',
+        supportedReasoningEfforts:[{id:'low',label:'Low'},{id:'high',label:'High'}]}]});
+        const main=document.querySelector('main'); main.className='chat'; main.dataset.mobilePane='conversation';
+        main.style.cssText='width:100%;padding:16px;height:100vh;display:block';`)
+      await wait()
+      const truncatedLabel = (selector) => run(`(() => {
+        const label=document.querySelector(${JSON.stringify(selector)});
+        const style=getComputedStyle(label);
+        return style.whiteSpace==='nowrap' && style.textOverflow==='ellipsis'
+          && label.scrollWidth>label.clientWidth && label.getClientRects().length===1;
+      })()`)
+      assert.equal(await truncatedLabel('.message-box__chat-config-trigger .message-box__chat-config-label-part'), true,
+        'long selected model labels truncate on a phone')
+      if (!await run('Boolean(document.querySelector(".message-box__chat-config-menu"))')) await open()
+      await click('Save preset')
+      assert.equal(await truncatedLabel('.message-box__chat-config-preset .message-box__chat-config-label-part'), true,
+        'long saved presets truncate instead of wrapping on a phone')
       assert.deepEqual(errors, [])
       console.log('Chat preset UI checks passed')
     } catch (error) {

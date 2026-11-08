@@ -360,11 +360,6 @@ export const ChatMessage = ({
           streaming={!pending && role === 'assistant' && streaming}
         />
       )}
-      {item.payloadTruncated && (
-        <span className="chat-detail__payload-preview-note">
-          Showing a bounded preview of this large message.
-        </span>
-      )}
       <div className="chat-detail__message-footer">
         {/* Streamed text may still be demoted into the working step, so it gets no finished-message chrome. */}
         {role === 'user' && messageDate}

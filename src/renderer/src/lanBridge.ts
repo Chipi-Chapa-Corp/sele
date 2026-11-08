@@ -10,6 +10,8 @@ import {
 import { isLocalPreference, preferencesChangedChannel } from '../../shared/preferenceSync'
 import { createLocalPreferences } from './localPreferences'
 import { LanTransport } from './lanTransport'
+import { createRemoteReload } from './remoteReload'
+import { flushPreferences } from './preferences'
 import { isAndroidClient } from './runtimeCapabilities'
 import { Capacitor } from '@capacitor/core'
 import { localNetwork } from './nativeLocalNetwork'
@@ -145,6 +147,16 @@ export const initializeLanBridge = async (): Promise<void> => {
     sessionStorage.getItem('sele-local-access-token')
   if (parameters.has('token')) history.replaceState(null, '', location.pathname + location.search)
   let transport: LanTransport
+  let initialized = false
+  const reconnectReload = createRemoteReload({
+    settle: () =>
+      new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    persist: async () => {
+      if (initialized) await flushPreferences()
+    },
+    reload: () => location.reload(),
+    onError: (error) => console.error('Unable to save the draft before reconnecting.', error)
+  })
   for (;;) {
     token ||= await requestToken()
     transport = new LanTransport(
@@ -153,7 +165,7 @@ export const initializeLanBridge = async (): Promise<void> => {
         : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/sele/ws`,
       token,
       showConnection,
-      () => location.reload(),
+      () => reconnectReload.request(),
       android ? () => location.reload() : undefined
     )
     try {
@@ -187,20 +199,35 @@ export const initializeLanBridge = async (): Promise<void> => {
     if (files.length > 10 || files.reduce((sum, file) => sum + file.size, 0) > 32 * 1024 * 1024) {
       throw new Error('Choose up to ten attachments smaller than 32 MB in total.')
     }
-    return transport.invoke(
-      localAccessChannels.uploadAttachments,
-      await Promise.all(
-        files.map(async (file) => ({
-          name: file.name,
-          type: file.type,
-          data: await file.arrayBuffer()
-        }))
+    // Avoid holding all original images, their base64 copies and the reply in
+    // WebView memory at once. The selection limit still applies to the batch.
+    const attachments: AppSelectedAttachment[] = []
+    for (const file of files) {
+      const data = await file.arrayBuffer()
+      await transport.waitUntilReady()
+      attachments.push(
+        ...(await transport.invoke<AppSelectedAttachment[]>(localAccessChannels.uploadAttachments, [
+          {
+            name: file.name,
+            type: file.type,
+            data
+          }
+        ]))
       )
-    )
+    }
+    return attachments
   }
-  bridge.appApi.getDroppedMessageAttachments = upload
+  bridge.appApi.getDroppedMessageAttachments = async (files) => {
+    const release = reconnectReload.hold()
+    try {
+      return await upload(files)
+    } finally {
+      release()
+    }
+  }
   bridge.appApi.selectMessageAttachments = () =>
     new Promise((resolve, reject) => {
+      const release = reconnectReload.hold()
       const input = document.createElement('input')
       input.type = 'file'
       input.multiple = true
@@ -209,13 +236,20 @@ export const initializeLanBridge = async (): Promise<void> => {
       input.onchange = () => {
         const files = Array.from(input.files ?? [])
         input.remove()
-        void upload(files).then(resolve, reject)
+        void upload(files).then(resolve, reject).finally(release)
       }
       input.oncancel = () => {
         input.remove()
         resolve([])
+        release()
       }
-      input.click()
+      try {
+        input.click()
+      } catch (error) {
+        input.remove()
+        release()
+        reject(error)
+      }
     })
   const chooseHostPath = async (initialPath: string, file = false): Promise<string | null> => {
     const { requestHostPath } = await import('./components/HostPathDialog')
@@ -352,6 +386,7 @@ export const initializeLanBridge = async (): Promise<void> => {
       }
     }
   })
+  initialized = true
   window.addEventListener('pagehide', () => transport.close(), { once: true })
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) location.reload()

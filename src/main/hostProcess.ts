@@ -1141,6 +1141,19 @@ export const getHostCommand = (
 ): Promise<HostCommand> =>
   getContainerHostCommand(file, args, options).then(normalizeWindowsExecutableCommand)
 
+/** Resolve the host CLI before hiding it inside an account or resource wrapper. */
+export const resolveHostExecutable = async (
+  file: string,
+  options: HostCommandOptions = {}
+): Promise<{ file: string; env?: NodeJS.ProcessEnv }> => {
+  // These targets resolve commands in their own login shell. A local lookup
+  // would select a binary from the wrong filesystem.
+  if (options.container?.kind === 'container' || (await getCurrentContainerHostBridge()))
+    return { file, env: options.env }
+  const resolved = await resolveHostFile(file, options.cwd, options.env)
+  return { file: resolved.file, env: await getHostEnvironment(options.env, resolved.path) }
+}
+
 export const getHostExecutableCommand = async (
   file: string,
   args: string[],

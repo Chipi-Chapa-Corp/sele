@@ -28,6 +28,10 @@ export const createPreferenceClient = (transport: Transport): PreferencesApi => 
     if (!snapshot) return
     const applied: PreferenceChanges = {}
     for (const [key, value] of Object.entries(changes)) {
+      // A broadcast matching our in-flight save is an echo, not a newer edit.
+      // Deferring it would replay the old draft after a queued clear is saved,
+      // resurrecting attachments that have already been sent.
+      if (writing && Object.hasOwn(writing, key) && writing[key] === value) continue
       // A pending local edit wins until its own write has been acknowledged.
       if (Object.hasOwn(pending, key) || (writing && Object.hasOwn(writing, key))) {
         deferred[key] = value

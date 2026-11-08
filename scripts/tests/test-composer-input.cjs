@@ -19,7 +19,32 @@ if (!process.versions.electron) {
             import * as settings from './src/renderer/src/settings'
             import { MessageBox } from './src/renderer/src/components/MessageBox'
             import { MessageSelectionQuoteButton } from './src/renderer/src/components/MessageSelectionQuoteButton'
+            import { createPreferenceClient } from './src/preload/preferenceClient'
+            import { initializePreferences } from './src/renderer/src/preferences'
             const noop = () => {}
+            const savedPreferences = new Map()
+            let publishPreferences
+            window.deferredDraftWrites = []
+            window.preferencesApi = createPreferenceClient({
+              initialize: async () => ({ok:true,value:Object.fromEntries(savedPreferences)}),
+              write: values => {
+                for (const [key,value] of Object.entries(values)) {
+                  if (value === null) savedPreferences.delete(key)
+                  else savedPreferences.set(key,value)
+                }
+                if (window.deferDraftWrites && Object.hasOwn(values,'sele:composer-drafts:v1')) {
+                  return new Promise(resolve => window.deferredDraftWrites.push({values,resolve}))
+                }
+                return Promise.resolve({ok:true,value:null})
+              },
+              commit: () => ({ok:true,value:null}),
+              subscribe: listener => { publishPreferences = listener }
+            })
+            window.echoDraftWrite = index => {
+              const request = window.deferredDraftWrites[index]
+              publishPreferences(request.values)
+              request.resolve({ok:true,value:null})
+            }
             const containerRef = {current: document.getElementById('messages')}
             window.commits = 0
             window.measureSettingsRenders = ${!process.argv.includes('--baseline')}
@@ -44,7 +69,7 @@ if (!process.versions.electron) {
               </Profiler>
             </React.StrictMode>))
             }
-            window.renderFixture()
+            window.ready = initializePreferences().then(() => window.renderFixture())
           `,
           resolveDir: path.resolve(__dirname, '../..'),
           loader: 'tsx'
@@ -82,6 +107,14 @@ if (!process.versions.electron) {
                 {
                   name: 'count-settings-renders',
                   setup(build) {
+                    if (process.argv.includes('--baseline-preferences')) {
+                      build.onLoad({ filter: /preferenceClient\.ts$/ }, (args) => ({
+                        contents: require('node:child_process').execFileSync('git', [
+                          'show', 'HEAD:' + path.relative(path.resolve(__dirname, '../..'), args.path)
+                        ], { encoding: 'utf8' }),
+                        loader: 'ts'
+                      }))
+                    }
                     build.onLoad({ filter: /ComposerSettings\.tsx$/ }, async (args) => ({
                       contents: (await fs.readFile(args.path, 'utf8')).replace(
                         '}: ComposerSettingsProps) {',
@@ -108,7 +141,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        `<!doctype html>
+        `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
         <link rel="stylesheet" href="fixture.css">
         <div id="messages"><div class="chat-detail__message--assistant">
           <div class="chat-detail__message-quote-host"></div><p>Quote these words</p>
@@ -163,6 +196,7 @@ if (!process.versions.electron) {
           throw new Error(source + '\n' + errors.join('\n'), { cause: error })
         })
       const settle = () => run('new Promise(resolve => setTimeout(resolve, 80))')
+      await run('window.ready')
       await win.webContents.debugger.attach('1.3')
       await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {
         enabled: true
@@ -757,6 +791,139 @@ if (!process.versions.electron) {
         'after selection!',
         'restored focus retains a usable native caret'
       )
+
+      // Exercise the shared composer in the phone shell, including all three
+      // usage badges and the extra controls shown during an active turn.
+      await run(`
+        document.getElementById('focus-controls').remove();
+        document.getElementById('messages').remove();
+        const shell = document.createElement('main');
+        shell.className = 'chat';
+        shell.dataset.mobilePane = shell.dataset.mobileView = 'conversation';
+        shell.innerHTML = '<header class="mobile-conversation-header">Fixture chat</header><div class="chat__panels"><div id="detail" data-panel="true"><section class="chat-panel"></section></div></div>';
+        document.body.append(shell);
+        shell.querySelector('.chat-panel').append(document.getElementById('root'));
+        document.getElementById('root').className = 'chat-panel__composer-inner';
+        document.getElementById('root').style.marginTop = 'auto';
+        document.getElementById('root').style.height = 'auto';
+        renderFixture({draftScopeKey:'mobile-layout', active:false, promptSuggestion:null,
+          contextUsage:{source:'exact',usedTokens:1000,maxTokens:10000},
+          displayUsage:{context:true,short:true,long:true}, accountUsageState:'ready',
+          accountUsage:{updatedAt:Date.now(),statisticsLoaded:false,summary:null,
+            dailyUsageBuckets:null,rateLimitResetCredits:null,errors:[],rateLimits:[
+              {id:'five_hour',label:'Codex',kind:'primary',windowMinutes:300,usedPercent:30,resetsAt:null},
+              {id:'seven_day',label:'Codex',kind:'primary',windowMinutes:10080,usedPercent:50,resetsAt:null}
+            ]}});
+      `)
+      const phone = async (width) => {
+        await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+          width, height: 800, deviceScaleFactor: 1, mobile: true
+        })
+        await settle()
+      }
+      const screenshot = async (name) => {
+        if (!process.env.SELE_COMPOSER_SCREENSHOTS) return
+        await fs.mkdir(process.env.SELE_COMPOSER_SCREENSHOTS, { recursive: true })
+        await fs.writeFile(path.join(process.env.SELE_COMPOSER_SCREENSHOTS, name + '.png'),
+          (await win.webContents.capturePage()).toPNG())
+      }
+      await phone(440)
+      await run("input.focus(); setText('first line')")
+      const sendsBeforeNewline = await run('window.sendCount')
+      // A char event lets Chromium perform the native textarea default action.
+      const newline = async () => {
+        await key('Enter')
+        await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+          type: 'char', key: 'Enter', text: '\r', unmodifiedText: '\r'
+        })
+        await settle()
+      }
+      await newline()
+      assert.equal(await run('input.value'), 'first line\n', 'phone Enter inserts a newline')
+      assert.equal(await run('window.sendCount'), sendsBeforeNewline, 'phone Enter never sends')
+      assert.equal(await run('input.enterKeyHint'), 'enter')
+      await run("setText(''); renderFixture({promptSuggestion:{id:'phone',text:'Suggested phone prompt'}}); input.focus()")
+      await settle()
+      assert.ok(await ghost())
+      await newline()
+      assert.equal(await run('input.value'), '\n', 'Enter inserts a newline over a suggestion')
+      assert.equal(await run('window.sendCount'), sendsBeforeNewline, 'Enter cannot send the suggestion')
+      await run("renderFixture({promptSuggestion:null}); setText('phone message')")
+      await settle()
+      await click('[aria-label="Send message"]')
+      assert.equal(await run('window.sendCount'), sendsBeforeNewline + 1, 'phone send button still submits')
+      const usageLayout = () => run(`(() => {
+        const host = document.querySelector('.message-box__inline-usage');
+        const badges = [...host.querySelectorAll('[data-usage-limit]')];
+        const percentages = badges.map(b => b.querySelector('.message-box__usage-percent'));
+        const attachments = document.querySelector('.message-box__attachment-controls').getBoundingClientRect();
+        const send = document.querySelector('.message-box__send-controls').getBoundingClientRect();
+        return {count:badges.length, fits:badges.every(b => {
+          const r = b.getBoundingClientRect();
+          return r.left >= attachments.right && r.right <= send.left;
+        }), fonts:percentages.map(p => parseFloat(getComputedStyle(p).fontSize)),
+        visible:percentages.map(p => getComputedStyle(p).display !== 'none')};
+      })()`)
+      const roomy = await usageLayout()
+      await screenshot('roomy')
+      assert.equal(roomy.count, 3)
+      assert.equal(roomy.fits, true, 'usage badges sit between chat tools and send')
+      assert.ok(roomy.visible.every(Boolean), 'roomy phone shows percentages')
+      const pane = await run(`(() => {
+        const panel = document.querySelector('#detail > .chat-panel');
+        const r = panel.getBoundingClientRect(); const style = getComputedStyle(panel);
+        return {left:r.left,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight,
+          border:style.borderLeftWidth,shadow:style.boxShadow};
+      })()`)
+      assert.equal(pane.left, 0)
+      assert.equal(pane.right, pane.width)
+      assert.equal(pane.bottom, pane.height)
+      assert.equal(pane.border, '0px')
+      assert.equal(pane.shadow, 'none')
+      await phone(340)
+      const narrow = await usageLayout()
+      await screenshot('narrow')
+      assert.equal(narrow.fits, true)
+      assert.ok(narrow.visible.every(Boolean), 'narrow phone still fits smaller percentages')
+      assert.ok(narrow.fonts.every((font, index) => font < roomy.fonts[index]), 'font shrinks before hiding percentages')
+      await phone(320)
+      await run("renderFixture({active:true}); setText('guidance')")
+      await settle()
+      const activeUsage = await usageLayout()
+      await screenshot('active')
+      assert.equal(activeUsage.fits, true, 'badges fit beside queue and stop controls')
+      assert.ok(activeUsage.visible.every(visible => !visible), 'tight active toolbar keeps rings and hides percentages')
+      await phone(440)
+      assert.ok((await usageLayout()).visible.every(Boolean), 'percentages return when space is available')
+
+      // Keep the same image in another chat's unsent draft. A stale save echo
+      // must neither restore the sent image nor replace text typed after Send.
+      await win.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride')
+      await run(`window.fixtureImage = {kind:'image',name:'fixture.png',path:'/fixture.png',
+        dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF1cAAAAASUVORK5CYII='};
+        appApi.selectMessageAttachments = async () => [window.fixtureImage];
+        renderFixture({active:false,draftScopeKey:'other-image-draft'});`)
+      await settle()
+      await run(`document.querySelector('[aria-label="Attach files"]').click()`)
+      await run('new Promise(resolve => setTimeout(resolve, 400))')
+      await run(`preferencesApi.flush(); renderFixture({draftScopeKey:'image-send-echo'}); window.deferDraftWrites = true`)
+      await settle()
+      await run(`document.querySelector('[aria-label="Attach files"]').click()`)
+      await run('new Promise(resolve => setTimeout(resolve, 400))')
+      assert.equal(await run('window.deferredDraftWrites.length'), 1)
+      assert.equal(await run('document.querySelectorAll(".message-box__attachment-preview--image").length'), 1)
+      await run(`document.querySelector('[aria-label="Send message"]').click(); input.focus(); setText('next message')`)
+      await run('new Promise(resolve => setTimeout(resolve, 400))')
+      assert.equal(await run('document.querySelectorAll(".message-box__attachment-preview--image").length'), 0)
+      await run(`window.deferDraftWrites = false; window.echoDraftWrite(0); preferencesApi.flush()`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__attachment-preview--image").length'), 0,
+        'an old save acknowledgement cannot put sent images back in the composer')
+      assert.equal(await run('input.value'), 'next message', 'the next draft survives the old acknowledgement')
+      await run(`renderFixture({draftScopeKey:'other-image-draft'})`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__attachment-preview--image").length'), 1,
+        'another chat keeps its unsent image')
       assert.deepEqual(errors, [])
       console.log(
         'Composer input checks passed: prompt keycaps, Enter sending, persistent focus, text selection, mentions, selection without renders, large drafts, native replacement, and message quotes.'

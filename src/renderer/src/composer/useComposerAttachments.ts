@@ -5,6 +5,7 @@ import { appApi } from '../appApi'
 import { hasLinkedChatDrag, linkedChatDragType, parseLinkedChatDrag } from '../linkedChats'
 import { readPastedImage } from './pastedImage'
 import { maxSelectedAttachmentCount } from './composerLimits'
+import type { AnnotationTool } from './imageAnnotations'
 
 const getComposerDragKind = (dataTransfer: DataTransfer): 'files' | 'chat' | null => {
   const types = Array.from(dataTransfer.types)
@@ -44,6 +45,17 @@ export function useComposerAttachments({
     AppSelectedAttachment,
     { kind: 'image' }
   > | null>(null)
+  const [annotationTool, setAnnotationTool] = useState<AnnotationTool | null>(null)
+
+  const images = selectedAttachments.filter((attachment) => attachment.kind === 'image')
+  const openedImageIndex = openedImage ? images.indexOf(openedImage) : -1
+  const annotationStartNumber =
+    images.reduce((highest, image) => Math.max(highest, image.annotationNumber ?? 0), 0) + 1
+
+  const navigateImage = (direction: number): void => {
+    if (openedImageIndex < 0 || images.length < 2) return
+    setOpenedImage(images[(openedImageIndex + direction + images.length) % images.length])
+  }
 
   const [attachmentSelectionPending, setAttachmentSelectionPending] = useState(false)
 
@@ -261,6 +273,13 @@ export function useComposerAttachments({
   return {
     openedImage,
     setOpenedImage,
+    annotationTool,
+    setAnnotationTool,
+    openedImagePosition: openedImageIndex + 1,
+    imageCount: images.length,
+    annotationStartNumber,
+    handlePreviousImage: images.length > 1 ? () => navigateImage(-1) : undefined,
+    handleNextImage: images.length > 1 ? () => navigateImage(1) : undefined,
     attachmentSelectionPending,
     attachmentDragActive,
     attachmentDragKind,

@@ -20,8 +20,8 @@ if (!process.versions.electron) {
           function Fixture({initial}) {
             const [selectedAttachments,setSelectedAttachments]=useState([initial]);const ref=useRef(null),edit=useRef(null);
             const a=useComposerAttachments({options:{},draft:{selectedAttachments,setSelectedAttachments,setSelectedSkills:()=>{},setSelectedApps:()=>{}},linked:{handleLinkChat:()=>{}},setAttachmentSelectionError:()=>{},editSessionIdRef:edit,textareaRef:ref});
-            window.fixture={image:selectedAttachments[0],replace:image=>setSelectedAttachments([image]),open:()=>a.handleOpenAttachment(selectedAttachments[0])};
-            return <><textarea ref={ref}/><button id="open" onClick={()=>a.handleOpenAttachment(selectedAttachments[0])}>Open</button>{a.openedImage&&<ComposerImageLightbox key={a.openedImage.path} image={a.openedImage} onSave={a.handleSaveOpenedImage} onClose={()=>a.setOpenedImage(null)}/>}</>
+            window.fixture={image:selectedAttachments[0],images:selectedAttachments,replace:image=>setSelectedAttachments([image]),addImage:async()=>{const image=await window.appApi.fixtureImage('second');setSelectedAttachments(current=>[...current,{kind:'file',name:'notes.txt',path:'/notes.txt'},image])},open:(index=0)=>a.handleOpenAttachment(selectedAttachments[index])};
+            return <><textarea ref={ref}/><button id="open" onClick={()=>a.handleOpenAttachment(selectedAttachments[0])}>Open</button>{a.openedImage&&<ComposerImageLightbox key={a.openedImage.path} image={a.openedImage} tool={a.annotationTool} onToolChange={a.setAnnotationTool} position={a.openedImagePosition} count={a.imageCount} annotationStartNumber={a.annotationStartNumber} onPrevious={a.handlePreviousImage} onNext={a.handleNextImage} onSave={a.handleSaveOpenedImage} onClose={()=>a.setOpenedImage(null)}/>}</>
           }
           window.appApi.fixtureImage().then(initial=>createRoot(document.getElementById('root')).render(<React.StrictMode><Fixture initial={initial}/></React.StrictMode>));`
         },
@@ -95,6 +95,8 @@ if (!process.versions.electron) {
         .createFromBitmap(Buffer.alloc(800 * 500 * 4, 255), { width: 800, height: 500 })
         .toPNG()
       await fs.writeFile(original, bytes)
+      const second = path.join(directory, 'second.png')
+      await fs.writeFile(second, bytes)
       const largePath = path.join(directory, 'large.png')
       const width = 6000,
         height = 4000
@@ -114,8 +116,8 @@ if (!process.versions.electron) {
       ipcMain.handle('fixtureImage', async (_, large) => ({
         kind: 'image',
         name: 'original.png',
-        path: large ? largePath : original,
-        previewOnly: Boolean(large) && large !== 'inline',
+        path: large === 'second' ? second : large ? largePath : original,
+        previewOnly: Boolean(large) && large !== 'inline' && large !== 'second',
         dataUrl:
           'data:image/png;base64,' +
           (large === 'inline' ? await fs.readFile(largePath) : bytes).toString('base64')
@@ -164,6 +166,10 @@ if (!process.versions.electron) {
         await run(`document.querySelector('[aria-label="${label}"]').click()`)
         await pause()
       }
+      const selectedTool = () =>
+        run(
+          'document.querySelector(".image-lightbox__tools [aria-pressed=true]")?.getAttribute("aria-label") ?? null'
+        )
       const open = async () => {
         await run('fixture.open()')
         await wait('Boolean(document.querySelector(".image-annotations"))')
@@ -206,6 +212,14 @@ if (!process.versions.electron) {
       const labels = () =>
         run('[...document.querySelectorAll(".image-annotations text")].map(n=>n.textContent)')
       const groups = () => run('document.querySelectorAll(".image-annotations > g").length')
+      const assertToolbar = async () => {
+        assert.ok(
+          await run(
+            `(()=>{const image=document.querySelector('.image-lightbox img').getBoundingClientRect();return [...document.querySelectorAll('.image-lightbox__toolbar button')].every(button=>{const r=button.getBoundingClientRect();return r.bottom<image.top&&r.top>=0&&r.left>=0&&r.right<=innerWidth})})()`
+          ),
+          'annotation tools and image actions stay above the image and within the viewport'
+        )
+      }
       const redPixels = (png) => {
         const image = nativeImage.createFromBuffer(png)
         assert.deepEqual(image.getSize(), { width: 800, height: 500 })
@@ -218,6 +232,7 @@ if (!process.versions.electron) {
       await win.loadURL(process.argv[3])
       await wait('Boolean(window.fixture)')
       await open()
+      await assertToolbar()
       await draw(200, 200, 300, 300)
       assert.equal(await groups(), 0, 'no active tool draws nothing')
       assert.equal(
@@ -542,6 +557,7 @@ if (!process.versions.electron) {
           ),
           'small and extreme aspect ratios keep annotations aligned'
         )
+        await assertToolbar()
         await click('Close image preview')
         await wait('!document.querySelector(".image-lightbox")')
       }
@@ -562,6 +578,88 @@ if (!process.versions.electron) {
       assert.ok(redPixels(copied) > 100)
       await click('Close image preview')
       await wait('!document.querySelector(".image-lightbox")')
+      // Navigation saves edits before switching, skips files, and shares numbering.
+      await run('fixture.addImage()')
+      await open()
+      await assertToolbar()
+      assert.equal(
+        await run('document.querySelector(".image-lightbox__position").textContent'),
+        '1 / 2'
+      )
+      await click('Draw numbers')
+      await draw(300, 300)
+      const firstNumber = Number((await labels())[0])
+      assert.ok(firstNumber > 2, 'reopening continues after numbers baked into the attachment')
+      fail = true
+      await click('Next media')
+      await wait(
+        'document.querySelector(".image-lightbox__copy-feedback")?.textContent.includes("Fixture save failed")'
+      )
+      assert.equal(
+        await run('document.querySelector(".image-lightbox__position").textContent'),
+        '1 / 2'
+      )
+      assert.deepEqual(await labels(), [String(firstNumber)], 'failed navigation retains edits')
+      fail = false
+      await click('Next media')
+      await wait('document.querySelector(".image-lightbox__position")?.textContent==="2 / 2"')
+      await wait('document.querySelector(".image-lightbox img")?.naturalWidth===800')
+      assert.equal(await selectedTool(), 'Draw numbers', 'next image retains the selected tool')
+      await draw(300, 300)
+      assert.deepEqual(await labels(), [String(firstNumber + 1)])
+      await click('Undo annotation')
+      await click('Draw numbered arrows')
+      await draw(100, 100, 300, 200)
+      assert.deepEqual(await labels(), [String(firstNumber + 1)])
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' })
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' })
+      await wait('document.querySelector(".image-lightbox__position")?.textContent==="1 / 2"')
+      await wait('document.querySelector(".image-lightbox img")?.naturalWidth===800')
+      assert.equal(
+        await selectedTool(),
+        'Draw numbered arrows',
+        'keyboard navigation retains the selected tool'
+      )
+      await click('Draw numbers')
+      await draw(400, 300)
+      assert.deepEqual(await labels(), [String(firstNumber + 2)])
+      await click('Undo annotation')
+      await click('Previous media')
+      await wait('document.querySelector(".image-lightbox__position")?.textContent==="2 / 2"')
+      assert.equal(await selectedTool(), 'Draw numbers', 'previous image retains the selected tool')
+      await click('Close image preview')
+      await wait('!document.querySelector(".image-lightbox")')
+      await run('fixture.open(2)')
+      await wait('document.querySelector(".image-lightbox img")?.naturalWidth===800')
+      assert.equal(await selectedTool(), 'Draw numbers', 'close/reopen retains the selected tool')
+      await draw(400, 300)
+      assert.deepEqual(
+        await labels(),
+        [String(firstNumber + 2)],
+        'close/reopen preserves the shared counter'
+      )
+      win.setContentSize(375, 812)
+      await pause()
+      await assertToolbar()
+      await click('Next media')
+      await wait('document.querySelector(".image-lightbox__position")?.textContent==="1 / 2"')
+      await wait('document.querySelector(".image-lightbox img")?.naturalWidth===800')
+      await assertToolbar()
+      await click('Close image preview')
+      await wait('!document.querySelector(".image-lightbox")')
+      await open()
+      await click('Draw numbers')
+      assert.equal(await selectedTool(), null)
+      await click('Next media')
+      await wait('document.querySelector(".image-lightbox__position")?.textContent==="2 / 2"')
+      assert.equal(await selectedTool(), null, 'navigation retains a deselected tool')
+      await click('Close image preview')
+      await wait('!document.querySelector(".image-lightbox")')
+      await open()
+      assert.equal(await selectedTool(), null, 'close/reopen retains a deselected tool')
+      await click('Close image preview')
+      await wait('!document.querySelector(".image-lightbox")')
+      win.setContentSize(1100, 800)
       // Keep full-resolution work off the renderer, and exercise real typing and
       // frame delivery while a noisy 24-megapixel image is being saved.
       for (const source of [true, 'inline']) {
@@ -571,7 +669,7 @@ if (!process.versions.electron) {
         await pause()
         await open()
         await wait('document.querySelector(".image-lightbox img")?.naturalWidth===6000')
-        await click('Draw numbered arrows')
+        if ((await selectedTool()) !== 'Draw numbered arrows') await click('Draw numbered arrows')
         await draw(100, 100, 300, 200)
         await run(`(()=>{
         window.saveMetrics={gaps:[],tasks:[],inputs:0};

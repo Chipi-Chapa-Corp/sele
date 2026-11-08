@@ -314,6 +314,37 @@ if (!process.versions.electron) {
         true,
         'the CSS indicator follows the selected grid cell'
       )
+      // Touch browsers can retain a hover pseudo-state when a sidebar opens.
+      // It must not paint a second selection beside the pressed segment.
+      await win.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled', {
+        enabled: true
+      })
+      assert.equal(await run(`matchMedia('(pointer: coarse)').matches`), true)
+      await win.webContents.debugger.sendCommand('DOM.enable')
+      await win.webContents.debugger.sendCommand('CSS.enable')
+      const { root: documentNode } = await win.webContents.debugger.sendCommand('DOM.getDocument')
+      const { nodeId: unselectedTab } = await win.webContents.debugger.sendCommand('DOM.querySelector', {
+        nodeId: documentNode.nodeId,
+        selector: '[aria-label="Test tabs"] button[aria-pressed="false"]'
+      })
+      await win.webContents.debugger.sendCommand('CSS.forcePseudoState', {
+        nodeId: unselectedTab,
+        forcedPseudoClasses: ['hover']
+      })
+      await wait(180)
+      assert.deepEqual(await run(`(() => {
+        const control = document.querySelector('[aria-label="Test tabs"]');
+        return {pressed: [...control.querySelectorAll('[aria-pressed="true"]')].map(b => b.textContent),
+          background: getComputedStyle(control.querySelector('[aria-pressed="false"]')).backgroundColor};
+      })()`), { pressed: ['Second'], background: 'rgba(0, 0, 0, 0)' },
+      'only the second tab is highlighted, even with a lingering touch hover')
+      await win.webContents.debugger.sendCommand('CSS.forcePseudoState', {
+        nodeId: unselectedTab,
+        forcedPseudoClasses: []
+      })
+      await win.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled', {
+        enabled: false
+      })
       // Portal exits survive the trigger's conditional; reopening must not retain duplicates.
       await run(`document.getElementById('test-dropdown').click()`)
       await frames()

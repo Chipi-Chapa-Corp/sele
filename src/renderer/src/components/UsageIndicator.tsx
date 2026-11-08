@@ -59,6 +59,7 @@ type AccountRateLimit = ProviderAccountUsage['rateLimits'][number]
 type AccountBalance = NonNullable<ProviderAccountUsage['balances']>[number]
 
 type UsageIndicatorProps = {
+  adaptive?: boolean
   triggerLabel?: string
   queueTriggerLabel?: string
   providerId: ProviderId
@@ -346,6 +347,7 @@ const getRateLimitUsageFingerprint = (usage: ProviderAccountUsage | null): strin
   JSON.stringify(usage?.rateLimits ?? null)
 
 export function UsageIndicator({
+  adaptive = false,
   triggerLabel,
   queueTriggerLabel,
   providerId,
@@ -655,7 +657,10 @@ export function UsageIndicator({
   }
 
   return (
-    <div className="message-box__usage-control" ref={usageControlRef}>
+    <div
+      className={`message-box__usage-control${adaptive ? ' message-box__usage-control--adaptive' : ''}`}
+      ref={usageControlRef}
+    >
       {triggerLabel && (
         <span className="usage-summary-trigger">
           <Button

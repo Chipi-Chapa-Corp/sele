@@ -328,6 +328,13 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
         <ComposerImageLightbox
           key={attachments.openedImage.path}
           image={attachments.openedImage}
+          tool={attachments.annotationTool}
+          onToolChange={attachments.setAnnotationTool}
+          position={attachments.openedImagePosition}
+          count={attachments.imageCount}
+          annotationStartNumber={attachments.annotationStartNumber}
+          onPrevious={attachments.handlePreviousImage}
+          onNext={attachments.handleNextImage}
           onSave={attachments.handleSaveOpenedImage}
           onClose={() => attachments.setOpenedImage(null)}
         />

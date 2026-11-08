@@ -55,7 +55,7 @@ keep the original workspace layout. Mobile opens on the conversation. A compact 
 its main slide-out sidebar, starts a new chat, and switches to workspace tools. The top bar
 uses the same shell surface as the area around the chat pane and a panel-layout icon for workspace. Android status/navigation inset backgrounds follow that surface and theme; opening the drawer animates the same dimming scrim over them. The sidebar
 keeps live chat/sleep filters at the top, then account selection and four icon actions at the
-bottom: New Chat, projectless chat, search and Settings. Limits and the reset queue belong to the conversation’s Chat tools menu.
+bottom: New Chat, projectless chat, search and Settings. Usage badges fill the available space beside Chat tools in the composer, reducing their font size and then hiding percentage text on narrow screens. Limits details and the reset queue remain in Chat tools.
 There is no bottom navigation strip or duplicate section heading. The same shared controls and theme tokens style both desktop and mobile.
 A right swipe opens the sidebar; a left swipe, backdrop tap, Escape, or native Back closes it.
 A right swipe also opens the drawer from workspace tools. Back leaves workspace tools for the conversation; switching tool tabs does not create navigation history.
@@ -65,8 +65,12 @@ The modal drawer blocks background input and contains keyboard focus. Native Bac
 the topmost picker/dialog first, returns from preset sections and PR details, leaves workspace
 tools, and opens the root chat list before minimizing the app. The conversation or draft
 remains available when the drawer closes. Native dialog cancellation follows the same save/cancel guards as its visible close action.
+The conversation pane fills the sides and bottom without a floating border or shadow. Enter on the mobile keyboard inserts a newline; the send button submits the message.
 The composer stays above Android's keyboard, and native Back dismisses the topmost menu/dialog
 before closing the drawer or returning to the conversation.
+Reconnects defer the UI reload while an attachment picker or upload is active, then save the
+returned attachments in the draft before reloading. Multi-file uploads read and transfer one
+file at a time to reduce WebView memory use.
 Conversation and workspace panels use the available width in portrait and landscape; the
 sidebar remains a drawer in both orientations. The transcript uses a
 standard percentage height on phones, including older WebViews without CSS `round()` support.
@@ -74,8 +78,8 @@ standard percentage height on phones, including older WebViews without CSS `roun
 Chat and project row actions appear after a hold, cancel when the finger moves, and dismiss with Back or
 a tap elsewhere. Fine-pointer hover details stay on desktop; touch never mounts those cards.
 New-chat setup uses a compact project/provider summary that opens labeled project, provider,
-location, and runtime selectors. The model selector owns its full row; long labels wrap, preset
-configuration uses vertical sections, and saved presets keep readable labels and touch actions.
+location, and runtime selectors. The model selector owns its full row; long model and preset labels stay on one line and truncate with an ellipsis. Preset
+configuration uses vertical sections, and saved presets keep usable touch actions.
 Goal, notes, actions, limits and on-reset controls live in Chat tools. Searchable pickers retain
 their state and reposition when Android opens or closes its keyboard. Phone controls have no visual focus outlines; icon-only buttons remain square, and chat-tool carets and reset rows align with the other controls.
 

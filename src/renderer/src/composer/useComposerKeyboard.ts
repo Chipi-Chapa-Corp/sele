@@ -8,6 +8,7 @@ import {
   type PromptDraft
 } from '../composerDraft'
 import { getModifiedActiveSendMode } from '../messageSendMode'
+import { useCompactLayout } from '../useCompactLayout'
 import { restoreAncestorScrollAfterNativeNavigation } from './nativeNavigation'
 import { useComposerMentions } from './useComposerMentions'
 
@@ -50,6 +51,7 @@ export function useComposerKeyboard({
   const { setMessage, message, setPromptDraftsByScope } = draft
 
   const [controlPressed, setControlPressed] = useState(false)
+  const compact = useCompactLayout()
 
   useEffect(() => {
     let pressed = false
@@ -75,6 +77,11 @@ export function useComposerKeyboard({
   }, [])
 
   const handleMessageKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    // Let the phone keyboard insert its native newline, including while a
+    // suggestion or mention picker is visible. Sending has an explicit button.
+    if (compact && event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey)
+      return
+
     if (
       visiblePromptSuggestion &&
       !event.nativeEvent.isComposing &&
