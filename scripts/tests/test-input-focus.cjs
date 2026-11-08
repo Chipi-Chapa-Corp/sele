@@ -15,6 +15,8 @@ if (!process.versions.electron) {
             import { Input } from './src/renderer/src/components/Input'
             import { BranchSwitcher } from './src/renderer/src/components/BranchSwitcher'
             import { MessageSelectionQuoteButton } from './src/renderer/src/components/MessageSelectionQuoteButton'
+            import { installMiddleClickPasteGuard } from './src/renderer/src/middleClickPaste'
+            window.installMiddleClickPasteGuard = installMiddleClickPasteGuard
             const root = createRoot(document.getElementById('root'))
             window.inputRef = React.createRef()
             window.renderInput = (options = {}) => flushSync(() => root.render(<React.StrictMode>
@@ -69,7 +71,8 @@ if (!process.versions.electron) {
     process.exitCode = 1
   })
 } else {
-  const { app, BrowserWindow } = require('electron')
+  const { app, BrowserWindow, clipboard } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'profile'))
   app.whenReady().then(async () => {
     const window = new BrowserWindow({
       show: false,
@@ -178,8 +181,70 @@ if (!process.versions.electron) {
         'BODY',
         'detached input does not regain focus'
       )
+      if (process.platform === 'linux') {
+        await run(`
+          document.body.innerHTML = '<input id="input"><textarea id="textarea"></textarea><div id="editable" contenteditable="true"><span id="nested">hello</span></div><a id="link" href="#target">Link</a>'
+          window.pastes = 0
+          document.addEventListener('paste', () => window.pastes++)
+        `)
+        const middleClick = async (id) => {
+          const point = await run(`(() => {
+            const target = document.getElementById(${JSON.stringify(id)})
+            target.focus()
+            const rect = target.getBoundingClientRect()
+            return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }
+          })()`)
+          window.webContents.sendInputEvent({
+            type: 'mouseDown',
+            button: 'middle',
+            clickCount: 1,
+            ...point
+          })
+          await settle()
+          clipboard.writeText('primary selection', 'selection')
+          window.webContents.sendInputEvent({
+            type: 'mouseUp',
+            button: 'middle',
+            clickCount: 1,
+            ...point
+          })
+          await settle()
+        }
+        await middleClick('input')
+        assert.equal(await run('window.pastes'), 1, 'fixture exercises native Linux paste')
+        await run('window.stopGuard = window.installMiddleClickPasteGuard(); window.pastes = 0')
+        for (const id of ['input', 'textarea', 'nested']) {
+          await run(`document.getElementById('input').value = ''`)
+          const before = await run(`document.getElementById(${JSON.stringify(id)}).textContent`)
+          await middleClick(id)
+          assert.equal(await run('window.pastes'), 0, `${id} blocks middle-click paste`)
+          assert.equal(await run(`document.getElementById('input').value`), '')
+          assert.equal(await run(`document.getElementById('textarea').value`), '')
+          assert.equal(
+            await run(`document.getElementById(${JSON.stringify(id)}).textContent`),
+            before
+          )
+        }
+        clipboard.writeText('normal paste')
+        await run(`document.getElementById('input').focus()`)
+        window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'v', modifiers: ['control'] })
+        window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'v', modifiers: ['control'] })
+        await settle()
+        assert.equal(await run(`document.getElementById('input').value`), 'normal paste')
+        assert.equal(
+          await run(`(() => {
+          const event = new MouseEvent('mouseup', {button: 1, bubbles: true, cancelable: true})
+          return document.getElementById('link').dispatchEvent(event)
+        })()`),
+          true,
+          'middle-click on links remains available'
+        )
+        await run('window.stopGuard(); window.pastes = 0')
+        await middleClick('textarea')
+        assert.equal(await run('window.pastes'), 1, 'cleanup restores native handling')
+      }
       console.log(
-        'Input focus checks passed: branch opening/reopening, Strict Mode, caret, typing, autofocus, selection, and focus transfer.'
+        'Input focus checks passed: branch opening/reopening, Strict Mode, caret, typing, autofocus, selection, focus transfer, and Linux middle-click paste.'
       )
     } catch (error) {
       console.error(error)

@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { App } from './App'
 import { RendererErrorBoundary } from './components/RendererErrorBoundary'
 import { watchSystemColorScheme } from './systemColorScheme'
+import { installMiddleClickPasteGuard } from './middleClickPaste'
 
 const onError = (event: ErrorEvent): void => {
   console.error('Uncaught renderer error:', event.error?.stack ?? event.message)
@@ -28,6 +29,7 @@ document.documentElement.dataset.platform = platform.includes('mac')
     : 'linux'
 
 const stopWatchingColorScheme = watchSystemColorScheme()
+const stopPreventingMiddleClickPaste = installMiddleClickPasteGuard()
 
 // Keep the mounted tree when an update propagates to this entry module. React
 // Refresh still decides whether each component's hook signature can keep state.
@@ -39,6 +41,7 @@ if (import.meta.hot) {
     window.removeEventListener('error', onError)
     window.removeEventListener('unhandledrejection', onUnhandledRejection)
     stopWatchingColorScheme()
+    stopPreventingMiddleClickPaste()
   })
 }
 
