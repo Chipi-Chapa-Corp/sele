@@ -2504,7 +2504,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.resolveThreadName(loadedThread),
       this.resolveThreadCwd(loadedThread, fallbackCwd)
     ])
-    const thread = { ...loadedThread, name, cwd }
+    // Capability fallback reads must acknowledge submissions just like cursor pages.
+    // Otherwise their native turns are projected alongside the retained local placeholders.
+    const turns = await this.attachSubmittedUserMessages(loadedThread.id, loadedThread.turns)
+    const thread = { ...loadedThread, name, cwd, turns }
     await Promise.all([
       this.loadTranscriptMetadata(thread),
       this.goals.read(thread.id, (method, params) => this.client.request(method, params))
@@ -2677,10 +2680,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
     cachedThread: CodexThread | null,
     loadStartedAtRevision: number
   ): Promise<ProviderChatDetail> => {
-    let thread = cachedThread ?? (await this.loadThreadWithoutPagination(threadMetadata))
+    // A latest refresh must read history even after pagination was rejected earlier.
+    // Reusing the cache here would keep an orphaned local turn forever.
+    let thread =
+      (!cacheLatest && cachedThread) || (await this.loadThreadWithoutPagination(threadMetadata))
     if (cacheLatest) {
       const currentThread = this.threads.get(chatId)
-      if (!cachedThread && currentThread) {
+      if (currentThread) {
         // The compatibility reader can lag behind turn/start too. Apply the same live
         // overlay/revision rules as cursor history, so opening a just-created chat
         // cannot erase its accepted prompt or events received during the read.
@@ -2743,6 +2749,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       cachedThread?.turnPagination &&
       cachedThread.turnPaginationBoundaryStale &&
       window.direction === 'older' &&
+      window.cursor != null &&
       window.cursor === cachedThread.turnPagination.olderCursor
     ) {
       requestedCursor = await loadCodexLatestTurnBoundary(
@@ -2750,14 +2757,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
         threadMetadata.id,
         cachedThread.turns.length
       )
-      this.cacheThread({
-        ...cachedThread,
-        turnPagination: {
-          ...cachedThread.turnPagination,
-          olderCursor: requestedCursor
-        },
-        turnPaginationBoundaryStale: false
-      })
+      // The boundary RPC can outlive a submission acknowledgment. Installing its
+      // captured thread would resurrect the local turn after its guard was cleared.
+      if (this.threads.get(chatId) === cachedThread) {
+        this.cacheThread({
+          ...cachedThread,
+          turnPagination: {
+            ...cachedThread.turnPagination,
+            olderCursor: requestedCursor
+          },
+          turnPaginationBoundaryStale: false
+        })
+      }
     }
     const pendingMessages =
       window.direction === 'older' && window.cursor == null
@@ -5334,9 +5345,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           .get(threadId)
           ?.turns.some(
             (candidate) => candidate.id === submission.clientMessageId && candidate.local === true
-          ) ||
-        (this.pendingTurnIds.get(threadId) !== submission.clientMessageId &&
-          !isCodexTurnTerminal(turn))
+          )
       )
         continue
       const [reconciled] = this.reconcileAuthoritativeTurnLifecycles(threadId, [turn])

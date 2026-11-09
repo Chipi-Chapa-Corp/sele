@@ -37,6 +37,8 @@ const methods = [
   'clearPendingTurnId',
   'reconcileStartedTurn',
   'attachSubmittedUserMessages',
+  'hydrateFullThread',
+  'loadLegacyChatWindowInContext',
   'getPendingTurnIdForLiveTurn'
 ]
 const helpers = source.statements.filter(
@@ -434,3 +436,74 @@ test('history can clean up a recovered echo when no start acknowledgment is in f
   assert.deepEqual(deleted, ['client'])
   assert.equal(f.adapter.threads.get('chat').turns[0].id, 'server')
 })
+
+for (const status of ['inProgress', 'completed']) {
+  for (const alreadyUnsupported of [false, true]) {
+    test(`pagination fallback reconciles an orphaned ${status} turn (already unsupported: ${alreadyUnsupported})`, async () => {
+      const submission = {
+        clientMessageId: 'client',
+        turnId: 'server',
+        input: [{ type: 'text', text: 'Fix the release' }]
+      }
+      let stored = [submission]
+      const f = fixture({
+        getCodexSubmittedMessages: async () => structuredClone(stored),
+        deleteCodexSubmittedMessages: async (ids) => {
+          stored = stored.filter((row) => !ids.includes(row.clientMessageId))
+        },
+        getThreadName: (thread) => thread.name,
+        projectCodexTurnTail: liveMerge.projectCodexTurnTail
+      })
+      const native = {
+        id: 'server',
+        status,
+        items: [
+          { type: 'userMessage', id: 'native-user', clientId: 'client', content: submission.input },
+          { type: 'agentMessage', id: 'progress', phase: 'commentary', text: 'Checking.' },
+          ...(status === 'completed'
+            ? [{ type: 'agentMessage', id: 'answer', phase: 'final_answer', text: 'Done.' }]
+            : [])
+        ]
+      }
+      // Replay the saved shape from the report: local placeholder plus native turn,
+      // with a durable identity binding but no remaining pending-turn guard.
+      f.adapter.threads.get('chat').turns.push(native)
+      f.adapter.pendingTurnIds.clear()
+      Object.assign(f.adapter, {
+        threadRevisions: new Map(),
+        resolveThreadName: async () => 'Fixture',
+        resolveThreadCwd: async () => '/fixture',
+        loadTranscriptMetadata: async () => {},
+        goals: { read: async () => {} },
+        getProviderPendingMessages: () => [],
+        getLiveOverlayTurnIds: () => new Set(),
+        cacheThread: (thread) => f.adapter.threads.set(thread.id, thread),
+        createChatDetail: (thread) => ({ id: thread.id, items: getChatItems(thread.turns) }),
+        loadThreadWithoutPagination: () =>
+          f.adapter.hydrateFullThread({ id: 'chat', turns: [native] }, null)
+      })
+      const detail = await f.adapter.loadLegacyChatWindowInContext(
+        'chat',
+        { cursor: null, direction: 'older', limit: 10 },
+        true,
+        { id: 'chat', preview: 'Fix the release' },
+        alreadyUnsupported ? f.adapter.threads.get('chat') : null,
+        0
+      )
+      assert.equal(
+        detail.items.filter((item) => item.type === 'message' && item.role === 'user').length,
+        1
+      )
+      assert.equal(detail.items.filter((item) => item.type === 'working').length, 1)
+      assert.equal(
+        detail.items.find((item) => item.type === 'working').status,
+        status === 'completed' ? 'worked' : 'working'
+      )
+      assert.deepEqual(
+        Array.from(f.adapter.threads.get('chat').turns, (turn) => turn.id),
+        ['server']
+      )
+      assert.equal(stored.length, 0, 'the authoritative echo retires the recovery record')
+    })
+  }
+}

@@ -15,6 +15,7 @@ import {
   isUnsupportedTurnPaginationError,
   loadCodexFullThread,
   loadCodexLegacyThread,
+  loadCodexLatestTurnBoundary,
   loadCodexTurnCursorWindow
 } from './CodexPaginatedHistory.ts'
 
@@ -66,6 +67,7 @@ const fixture = () => {
     loadCodexTurnCursorWindow,
     loadCodexFullThread,
     loadCodexLegacyThread,
+    loadCodexLatestTurnBoundary,
     isLegacyCodexHistory,
     isUnsupportedTurnPaginationError,
     projectCodexTurnTail,
@@ -188,6 +190,74 @@ test('pagination fallback preserves a submitted turn absent from the history pro
     ['submitted']
   )
   assert.equal(adapter.threads.get('chat').turns[0].items[0].text, 'Hello')
+})
+
+test('a delayed older-page boundary cannot restore a submitted placeholder after acknowledgment', async () => {
+  const { adapter, finishMetadata } = fixture()
+  finishMetadata(false)
+  const pending = { id: 'client', local: true, status: 'inProgress', items: [] }
+  adapter.threads.set('chat', {
+    id: 'chat',
+    historyMode: 'paginated',
+    preview: 'Hello',
+    turns: [pending],
+    turnPagination: { kind: 'cursor', olderCursor: 'old-boundary', newerCursor: null },
+    turnPaginationBoundaryStale: true
+  })
+  let finishBoundary
+  adapter.client.request = async (_method, params) => {
+    if (params.itemsView === 'notLoaded') {
+      return new Promise((resolve) => {
+        finishBoundary = resolve
+      })
+    }
+    return { data: [{ id: 'history', status: 'completed', items: [] }], nextCursor: null }
+  }
+  const opening = adapter.loadChatCursorWindowInContext(
+    'chat',
+    { cursor: 'old-boundary', direction: 'older', limit: 10 },
+    false
+  )
+  await setImmediate()
+  const acknowledged = {
+    ...adapter.threads.get('chat'),
+    turns: [{ id: 'server', status: 'inProgress', items: [] }]
+  }
+  adapter.threads.set('chat', acknowledged)
+  adapter.threadRevisions.set('chat', 1)
+  finishBoundary({ data: [], nextCursor: 'resolved-boundary' })
+  await opening
+  assert.equal(adapter.threads.get('chat'), acknowledged)
+  assert.deepEqual(
+    Array.from(adapter.threads.get('chat').turns, (turn) => turn.id),
+    ['server']
+  )
+})
+
+test('a latest read with an exhausted stale boundary does not seek an older-page cursor', async () => {
+  const { adapter } = fixture()
+  const native = { id: 'server', status: 'completed', items: [] }
+  adapter.threads.set('chat', {
+    id: 'chat',
+    historyMode: 'paginated',
+    preview: 'Hello',
+    turns: [native],
+    turnPagination: { kind: 'cursor', olderCursor: null, newerCursor: null },
+    turnPaginationBoundaryStale: true
+  })
+  adapter.client.request = async (_method, params) => {
+    assert.notEqual(
+      params.itemsView,
+      'notLoaded',
+      'null requests the latest page, not an older boundary'
+    )
+    return { data: [native], nextCursor: null }
+  }
+  const detail = await adapter.getChat('chat')
+  assert.deepEqual(
+    Array.from(detail.items, (turn) => turn.id),
+    ['server']
+  )
 })
 
 test('compatibility history cannot overwrite events received during its read', async () => {

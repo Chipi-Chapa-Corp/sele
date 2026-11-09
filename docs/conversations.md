@@ -71,6 +71,12 @@ detaches the UI; reopening restores ownership and reads history without replayin
 Idle workers exit after five minutes when no turns, background terminals, approvals, or RPCs remain.
 Restoring a runtime also refreshes its background terminal controls.
 
+Cursor pages and full-history capability fallbacks reconcile submitted messages using
+the echoed client ID or the saved client-to-turn binding before projecting local overlays.
+Latest fallback refreshes read native history even when a cached view exists, so they can
+remove orphaned placeholders. Delayed cursor-boundary reads must not reinstall a snapshot
+captured before a submission was acknowledged.
+
 Account discovery reattaches each configured Codex account's retained worker in the
 background, once per account and execution environment. Sidebar discovery also checks saved
 chat account bindings. Recovery reads and publishes the worker's chat state without waiting
