@@ -208,7 +208,11 @@ const setup = () => {
     emptyUsageSummary: {},
     console,
     getClaudeExecutable: () => 'claude',
-    getHostExecutableCommand: async (file, args, options) => ({ file, args, env: options.env }),
+    getProviderHostExecutableCommand: async (file, args, options) => ({
+      file,
+      args,
+      env: options.env
+    }),
     claudeAccounts: {
       getEnvironment: async () => ({ ...environment }),
       getUsageEnvironment: async () => ({ ...environment, CLAUDE_CONFIG_DIR: '/usage/a' }),
@@ -481,7 +485,7 @@ test('a switch during executable resolution rejects the stale runtime', async ()
   const { h, context } = setup()
   const gate = deferred()
   const started = deferred()
-  context.getHostExecutableCommand = async (file, args, options) => {
+  context.getProviderHostExecutableCommand = async (file, args, options) => {
     started.resolve()
     await gate.promise
     return { file, args, env: options.env }

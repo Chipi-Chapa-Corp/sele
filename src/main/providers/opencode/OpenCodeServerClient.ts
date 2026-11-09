@@ -1,3 +1,4 @@
+import { getProviderHostCommand } from '../../providerProcesses'
 import { supportsLocalHostTools } from '../hostToolTarget'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -158,7 +159,7 @@ export class OpenCodeServerClient {
             .join(' ')}`
         ]
       : serverArgs
-    const hostCommand = await getHostCommand(commandFile, commandArgs, {
+    const hostCommand = await getProviderHostCommand(commandFile, commandArgs, {
       container: this.container,
       cwd: homedir(),
       env: serverEnv

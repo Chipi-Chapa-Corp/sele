@@ -100,9 +100,49 @@ in the chat's saved host/container/SSH environment and requires Python 3 there. 
 provider cancellation remains available on other platforms. Undoing done does not restart
 processes. Cleanup errors leave the chat unfinished so the action can be retried.
 
-Checks: `npm test -- chatProcessCleanup conversationViews renderer/src/ PersistentPendingMessages
+## Chat process ownership
+
+New execution runtimes for Codex, Claude, Copilot, and OpenCode are scoped to one
+chat and its saved account and execution environment. Forks receive their own runtime;
+provider-created subagents remain descendants of the parent runtime. Discovery and
+account utilities use separate runtimes. Codex's retained-worker identity includes
+the ownership scope, so reconnecting never attaches one chat to another chat's worker.
+
+On Linux with cgroup v2, Python 3, and a reachable systemd user manager (systemd 250+),
+provider launches use recorded transient services with `ExitType=cgroup` and
+`KillMode=control-group`. Ordinary descendants remain members after `nohup`, `setsid`,
+reparenting, or clearing their environment. Receipts under `provider-processes-v1` in
+the Sele profile record the exact units and target environment before launch. A
+private target-side launch permit prevents delayed starts after cleanup. A missing
+permit after an OS restart retires the old boundary; the next execution gets a fresh one.
+
+The **Chat processes** button in the terminal toolbar lists kernel cgroup members
+with their PID, command, and working directory. With no chat selected, it lists all
+recorded launches, including launches that have not been assigned a chat. **Open log** is available when a
+process's stdout or stderr is a regular file; it tails that exact file in a new
+terminal. It does not recreate an interactive session for a process that discarded
+its terminal. Existing provider terminal attachments continue to use their original
+streams. **Stop all** cancels native work and scheduled retries, then stops the chat's
+owned services. Marking the chat done uses the same ownership cleanup.
+
+When the required manager or tools are unavailable, the provider can still run and
+the process panel explicitly reports **Tracking unavailable**. A previously tracked
+boundary never silently switches to untracked execution. Processes started before
+this feature have no ownership receipt; their existing environment-marker cleanup
+remains a best-effort compatibility path. Deliberate cgroup migration and work
+submitted to external daemons or remote hosts are outside a local descendant boundary.
+This is lifecycle ownership, not a security sandbox.
+
+Checks: `npm test -- ProviderProcessStore ChatProcessRuntimes chatProcessCleanup conversationViews renderer/src/ PersistentPendingMessages
 PendingMessageRestore linkedChats CodexAppServerClient CodexRuntime` and
 `npm run test:integration -- database` cover state and storage.
 The full-app opening fixture is
 `scripts/tests/test-persistent-chat-opening.cjs`. Run GUI portions with isolation as described
 in the [repository guide](README.md).
+
+The opt-in `providerProcessCgroups` regression uses fixture providers to verify a
+real environment-cleared `setsid` child, receipt recovery, and cleanup that preserves
+a second chat. Run it with `SELE_TEST_PROCESS_CGROUPS=1` inside an isolated session
+with its own systemd user manager. It skips when that private manager is unavailable;
+it must never use the user's session bus as a fallback. `test:ui -- terminal-actions`
+covers the process list, exact log paths (including shell metacharacters), and Stop all.

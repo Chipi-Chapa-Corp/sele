@@ -1,3 +1,4 @@
+import { getInitialProviderContainers } from '../../providerProcessContext'
 import { createCodexTerminalSessions } from './CodexTerminalSessions'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import {
@@ -1365,7 +1366,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
   >()
   private threadListScanClients = new WeakSet<CodexAppServerClient>()
   private clientContainerContext = new AsyncLocalStorage<AppContainerTarget | null>()
-  private threadContainers = new Map<string, AppContainerTarget | null>()
+  private threadContainers = new Map<string, AppContainerTarget | null>(
+    getInitialProviderContainers()
+  )
   private transcriptProjection = new CodexTranscriptProjection()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void

@@ -1,3 +1,4 @@
+import { getInitialProviderContainers } from '../../providerProcessContext'
 import { supportsLocalHostTools } from '../hostToolTarget'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createOpenCodeTerminalSessions } from './OpenCodeTerminalSessions'
@@ -431,7 +432,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private historyPages = new OpenCodeHistoryPages()
   private refreshes = new WeakMap<OpenCodeChatState, Promise<void>>()
   private stateChecks = new WeakMap<OpenCodeChatState, Promise<void>>()
-  private sessionContainers = new Map<string, AppContainerTarget | null>()
+  private sessionContainers = new Map<string, AppContainerTarget | null>(
+    getInitialProviderContainers()
+  )
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
   >()

@@ -314,6 +314,12 @@ export const withProviderNetworkRetries = (
     },
     editMessage: (id, messageId, message, options) =>
       run(id, options, () => adapter.editMessage(id, messageId, message, options)),
+    stopChatProcesses: adapter.stopChatProcesses
+      ? (id, options) => {
+          cancel(id)
+          return adapter.stopChatProcesses!(id, options)
+        }
+      : undefined,
     stopChat: (id) => {
       cancel(id)
       return adapter.stopChat(id)
@@ -328,7 +334,7 @@ export const withProviderNetworkRetries = (
       unsubscribe()
       listeners.clear()
       revisionOffsets.clear()
-      adapter.dispose()
+      return adapter.dispose()
     }
   }
   // Every detail returned to the service must use the same presentation revisions, including

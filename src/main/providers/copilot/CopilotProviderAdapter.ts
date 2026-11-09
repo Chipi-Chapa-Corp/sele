@@ -1,3 +1,5 @@
+import { getProviderHostExecutableCommand } from '../../providerProcesses'
+import { providerProcessContext, getInitialProviderContainers } from '../../providerProcessContext'
 import { supportsLocalHostTools } from '../hostToolTarget'
 import { CopilotHistoryPages } from './CopilotHistoryPages'
 import { PendingMessageEdits } from '../PendingMessageEdits'
@@ -77,7 +79,7 @@ import type {
 import type { AppContainerTarget } from '../../../shared/app'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
 import { getCurrentContainerHostBridge } from '../../currentContainer'
-import { getHostCommand, getHostExecutableCommand, isRunningInFlatpak } from '../../hostProcess'
+import { getHostCommand, isRunningInFlatpak } from '../../hostProcess'
 import { providerOneShotGenerationCanceledMessage } from '../../../shared/provider'
 import type {
   ProviderAdapter,
@@ -120,7 +122,12 @@ import {
   getCopilotCustomProviderSessionOptions
 } from './CopilotCustomProvider'
 import { CopilotEventStore } from './CopilotEventStore.ts'
-import { getCopilotGoalInput, mapCopilotGoal, readCopilotGoalState, runCopilotGoal } from './CopilotGoals.ts'
+import {
+  getCopilotGoalInput,
+  mapCopilotGoal,
+  readCopilotGoalState,
+  runCopilotGoal
+} from './CopilotGoals.ts'
 import { SqliteUsageReader } from '../SqliteUsageReader'
 import {
   bindCopilotUsageQuery,
@@ -737,7 +744,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   private clientEntries = new Map<string, CopilotClientEntry>()
   private clientEntryPromises = new Map<string, Promise<CopilotClientEntry>>()
-  private sessionContainers = new Map<string, AppContainerTarget | null>()
+  private sessionContainers = new Map<string, AppContainerTarget | null>(
+    getInitialProviderContainers()
+  )
   private states = new Map<string, CopilotSessionState>()
   private eventStores = new WeakMap<CopilotSessionState, CopilotEventStore<SessionEvent>>()
   private subagentFollowUps = new WeakMap<
@@ -2492,6 +2501,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<CopilotClientEntry> => {
     const normalizedContainer = normalizeContainerTarget(container)
     if (
+      !providerProcessContext.getStore() &&
       normalizedContainer.kind !== 'container' &&
       !isRunningInFlatpak() &&
       process.platform !== 'win32' &&
@@ -2500,7 +2510,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       return this.getHostClientEntry()
     }
 
-    const hostCommand = await getHostExecutableCommand(
+    const hostCommand = await getProviderHostExecutableCommand(
       normalizedContainer.kind === 'container' ? 'copilot' : getCopilotExecutable(),
       [],
       {

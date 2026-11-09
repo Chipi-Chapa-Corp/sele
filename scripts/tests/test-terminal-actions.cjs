@@ -35,6 +35,13 @@ if (!process.versions.electron) {
           {
             name: 'current-container-fixture',
             setup(build) {
+              build.onLoad({ filter: /\/providerProcesses\.ts$/ }, () => ({
+                contents: `export const stopProviderProcessGroup = async id => { globalThis.__seleProcessStops.push(id); globalThis.__seleProcessGroups = [] }; export const getProviderProcessStore = () => ({
+                  list: async () => globalThis.__seleProcessGroups ?? [],
+                  stop: async id => { globalThis.__seleProcessStops.push(id); globalThis.__seleProcessGroups = [] }
+                })`,
+                loader: 'ts'
+              }))
               build.onLoad({ filter: /\/database\/sshEnvironments\.ts$/ }, () => ({
                 contents: 'export const getSshEnvironment = async () => null',
                 loader: 'ts'
@@ -243,6 +250,51 @@ if (!process.versions.electron) {
         // Fish can briefly run prompt helpers during startup; wait for its idle prompt before reuse.
         await waitFor(`window.terminals[0].options.disableStdin === false &&
           /[>$#]\\s*$/.test(window.text(window.terminals[0]).trim())`)
+
+        // Process ownership is supplied as explicit receipts, with log paths
+        // obtained from regular output descriptors. The terminal must only tail
+        // that file, including shell metacharacters in its name.
+        const processLog = path.join(directory, "process '$()'.log")
+        await fs.writeFile(processLog, 'PROCESS_LOG_FIXTURE\n')
+        globalThis.__seleProcessStops = []
+        globalThis.__seleProcessGroups = [
+          {
+            id: 'boundary-fixture',
+            providerId: 'codex',
+            chatId: 'fixture',
+            container: { kind: 'container', tool: 'toolbox', name: 'fixture' },
+            status: 'tracked',
+            canStop: true,
+            reason: null,
+            processes: [
+              { pid: 123, command: 'fixture-server --running', cwd: directory, logs: [processLog] }
+            ]
+          }
+        ]
+        await run(`document.querySelector('button[aria-label="Chat processes"]').click()`)
+        await waitFor(
+          `document.querySelector('.terminal-processes')?.textContent.includes('fixture-server --running')`
+        )
+        await run(
+          `Array.from(document.querySelectorAll('.terminal-processes button')).find(el => el.textContent.includes('Open log')).click()`
+        )
+        await waitFor(`window.terminals.some(t => window.text(t).includes('PROCESS_LOG_FIXTURE'))`)
+        const screenshotPath = path.join(process.cwd(), 'test-results', 'process-ownership.png')
+        await fs.mkdir(path.dirname(screenshotPath), { recursive: true })
+        await fs.writeFile(screenshotPath, (await window.webContents.capturePage()).toPNG())
+        await run(`window.savedConfirm = window.confirm; window.confirm = () => true;
+          document.querySelector('button[aria-label="Close Process log"]').click()`)
+        await waitFor(`!document.querySelector('button[aria-label="Close Process log"]')`)
+        await run(`window.confirm = window.savedConfirm;
+          Array.from(document.querySelectorAll('.terminal-processes button')).find(el => el.textContent.includes('Stop all')).click()`)
+        await waitFor(
+          `!document.querySelector('.terminal-processes')?.textContent.includes('fixture-server --running')`
+        )
+        assert.deepEqual(globalThis.__seleProcessStops, ['boundary-fixture'])
+        await run(
+          'window.terminals = window.terminals.filter(t => t.element?.isConnected); undefined'
+        )
+        await run(`document.querySelector('button[aria-label="Chat processes"]').click()`)
 
         // Auto-closing actions leave an existing empty tab available for the next action.
         const autoCloseMarker = path.join(directory, 'auto-close-empty')

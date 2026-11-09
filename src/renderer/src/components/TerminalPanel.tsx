@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ITheme, Terminal as XtermTerminal } from '@xterm/xterm'
-import { Plus, Terminal as TerminalIcon, X } from 'lucide-react'
+import { ListTree, Plus, Terminal as TerminalIcon, X } from 'lucide-react'
+import { ProviderProcesses } from './ProviderProcesses'
 import type { AppContainerTarget } from '../../../shared/app'
 import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { terminalApi } from '../terminalApi'
@@ -727,6 +728,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const tabRuntimesRef = useRef(new Map<string, TerminalTabRuntime>())
   const viewedAgentTabsRef = useRef(new Set<string>())
   const handledAgentSessionsRef = useRef(new Set<string>())
+  const [showProcesses, setShowProcesses] = useState(false)
   const [sessionsDiscovered, setSessionsDiscovered] = useState(false)
   const [workspaces, setWorkspaces] = useState(() => new Map<string, TerminalWorkspace>())
   const workspace = workspaces.get(workspaceKey) ?? null
@@ -1072,6 +1074,14 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   return (
     <section className="terminal-panel" aria-label="Terminal">
       <div className="terminal-panel__toolbar">
+        <Button
+          theme="transparent"
+          size="small"
+          aria-label="Chat processes"
+          title="Chat processes"
+          icon={<ListTree aria-hidden="true" />}
+          callback={() => setShowProcesses((value) => !value)}
+        />
         <SegmentedControl
           aria-label="Terminal tabs"
           className="terminal-panel__tabs"
@@ -1098,6 +1108,36 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           icon={<Plus aria-hidden="true" />}
         />
       </div>
+      {showProcesses && (
+        <ProviderProcesses
+          chatKey={chatKey ?? null}
+          active={active}
+          onOpenLog={(group, path) => {
+            // A regular file descriptor gives us the exact log path. Never infer a
+            // logfile from the command, and never rerun the original command.
+            const quoted = `'${path.replace(/'/g, `'\\''`)}'`
+            const tab = createCommandTerminalTab({
+              id: crypto.randomUUID(),
+              chatKey,
+              command: `tail -n 200 -F -- ${quoted}`,
+              container: group.container,
+              cwd: null,
+              projectCwd: null,
+              workspaceKey,
+              label: 'Process log',
+              focus: true,
+              closeOnFinish: false
+            })
+            setWorkspaces((current) => {
+              const previous = current.get(workspaceKey) ?? { activeTabId: null, tabs: [] }
+              return new Map(current).set(workspaceKey, {
+                activeTabId: tab.id,
+                tabs: [...previous.tabs, tab]
+              })
+            })
+          }}
+        />
+      )}
       <div className="terminal-panel__workspace">
         {workspace?.tabs.length === 0 && (
           <div className="terminal-panel__empty">

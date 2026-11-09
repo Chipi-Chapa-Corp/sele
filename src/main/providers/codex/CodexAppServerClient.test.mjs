@@ -42,6 +42,8 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
     app: { getPath: () => '/fixture-profile' },
     console: { error: (...args) => logs.push(args) },
     getAppServerCommand: () => ({ command: 'fixture', args: [] }),
+    providerProcessContext: { getStore: () => undefined },
+    getProviderHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
     getHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
     getCodexExecutableError,
     isCodexExecutableUnavailable,

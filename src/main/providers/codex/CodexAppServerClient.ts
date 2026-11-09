@@ -1,3 +1,5 @@
+import { getProviderHostCommand } from '../../providerProcesses'
+import { providerProcessContext } from '../../providerProcessContext'
 import {
   registerBrowserUseSession,
   removeBrowserUseSession,
@@ -75,6 +77,7 @@ const getAppServerCommand = async (
     container?: AppContainerTarget | null
     accountId?: string
     existingOnly?: boolean
+    owned?: boolean
   } = {}
 ): Promise<AppServerCommand> => {
   // Account handoffs must release the writer as soon as we unsubscribe, rather
@@ -96,6 +99,7 @@ const getAppServerCommand = async (
     executable.env
   )
   const canUseSystemd =
+    !options.owned &&
     process.platform === 'linux' &&
     !isRunningInFlatpak() &&
     options.container?.kind !== 'container' &&
@@ -388,12 +392,21 @@ export class CodexAppServerClient {
     const lifecycle = this.lifecycle
     const appServerCommand = await getAppServerCommand(
       this.container?.kind === 'container' ? 'codex' : getCodexExecutable(),
-      { container: this.container, accountId: this.accountId, existingOnly }
+      {
+        container: this.container,
+        accountId: this.accountId,
+        existingOnly,
+        owned: Boolean(providerProcessContext.getStore())
+      }
     )
-    const hostCommand = await getHostCommand(appServerCommand.command, appServerCommand.args, {
-      container: this.container,
-      env: appServerCommand.env ?? process.env
-    }).catch((error: unknown) => {
+    const hostCommand = await (existingOnly ? getHostCommand : getProviderHostCommand)(
+      appServerCommand.command,
+      appServerCommand.args,
+      {
+        container: this.container,
+        env: appServerCommand.env ?? process.env
+      }
+    ).catch((error: unknown) => {
       throw getCodexExecutableError(error)
     })
     const child: CodexProcess = this.persistent
@@ -404,7 +417,10 @@ export class CodexAppServerClient {
             this.accountId ??
               (process.platform === 'win32' ? (appServerCommand.env?.CODEX_HOME ?? null) : null),
             process.env.CODEX_HOME ?? null,
-            process.env.SELE_CODEX_PATH ?? null
+            process.env.SELE_CODEX_PATH ?? null,
+            ...(providerProcessContext.getStore()
+              ? [providerProcessContext.getStore()!.record.id]
+              : [])
           ],
           existingOnly ? null : hostCommand
         )

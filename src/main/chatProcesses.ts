@@ -1,3 +1,4 @@
+import { getProviderProcessStore } from './providerProcesses'
 import { execFile } from 'node:child_process'
 import type { AppContainerTarget } from '../shared/app'
 import { getHostCommand } from './hostProcess'
@@ -6,7 +7,10 @@ import cleanupSource from './chatProcessCleanup.py?raw'
 export const killChatProcesses = async (
   chatIds: string[],
   container: AppContainerTarget | null
-): Promise<void> => killOwnedProcesses(chatIds, container, ['SELE_CHAT_ID', 'CODEX_THREAD_ID'])
+): Promise<void> => {
+  await getProviderProcessStore().stopChat(chatIds, container)
+  await killOwnedProcesses(chatIds, container, ['SELE_CHAT_ID', 'CODEX_THREAD_ID'])
+}
 
 export const killTerminalProcesses = async (
   sessionIds: string[],

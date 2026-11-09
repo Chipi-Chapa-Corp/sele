@@ -1,3 +1,5 @@
+import { getInitialProviderContainers } from '../../providerProcessContext'
+import { getProviderHostExecutableCommand } from '../../providerProcesses'
 import { supportsLocalHostTools } from '../hostToolTarget'
 import { isProviderUsageLimitError } from '../../../shared/providerErrors'
 import { PendingMessageEdits } from '../PendingMessageEdits'
@@ -682,7 +684,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   private completingStates = new Set<ClaudeSessionState>()
   private stateTranscriptBytes = new WeakMap<ClaudeSessionState, number>()
   private admissionLeases = new Map<ClaudeSessionState, ReturnType<typeof setTimeout>>()
-  private sessionContainers = new Map<string, StoredClaudeContainer | null>()
+  private sessionContainers = new Map<string, StoredClaudeContainer | null>(
+    getInitialProviderContainers()
+  )
   private sessionMetadata = new Map<string, SDKSessionInfo>()
   private sessionOptions = new Map<string, ProviderTurnOptions>()
   private transcriptProjections = new Map<ClaudeSessionState, ClaudeTranscriptProjection>()
@@ -2212,7 +2216,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     await this.accountChanges.get(key)
     const accountRevision = this.accountRevisions.get(key) ?? 0
     const executable = storedContainer ? 'claude' : getClaudeExecutable()
-    const command = await getHostExecutableCommand(executable, [], {
+    const command = await getProviderHostExecutableCommand(executable, [], {
       container: storedContainer,
       cwd: cwd ?? undefined,
       env: {

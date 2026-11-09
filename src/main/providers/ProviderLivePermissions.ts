@@ -170,7 +170,7 @@ export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapt
       policies.clear()
       latest.clear()
       attempted.clear()
-      adapter.dispose()
+      return adapter.dispose()
     }
   }
 }

@@ -71,6 +71,7 @@ const fixture = (t, providerId = 'codex', queueUsageResetContinuation) => {
     getChat: async () => current,
     getChatWindow: async () => current,
     getChats: async () => ({ chats: [{ id: 'chat', status: current.status }], nextCursor: null }),
+    stopChatProcesses: async () => ['chat'],
     stopChat: async () => {
       emit({ ...current, status: null })
       return current
@@ -290,6 +291,16 @@ test('Stop cancels a pending retry', async (t) => {
   await adapter.continueChat('chat', 'task', options)
   fail()
   await adapter.stopChat('chat')
+  t.mock.timers.tick(60000)
+  await flush()
+  assert.equal(calls.length, 1)
+})
+
+test('process cleanup cancels scheduled retries before terminating the boundary', async (t) => {
+  const { adapter, calls, fail } = fixture(t)
+  await adapter.continueChat('chat', 'task', options)
+  fail()
+  assert.deepEqual(await adapter.stopChatProcesses('chat'), ['chat'])
   t.mock.timers.tick(60000)
   await flush()
   assert.equal(calls.length, 1)

@@ -60,6 +60,14 @@ test('wrapped startup captures the same fresh credentials that the SDK uses', as
           getCurrentContainerHostBridge: async () => ({}),
           isCurrentContainerTarget: async () => false
         }
+      if (name.includes('providerProcesses'))
+        return {
+          async getProviderHostCommand(file, args, options) {
+            const targetEnv = { ...options.env }
+            prepared.push(targetEnv)
+            return { file, args, env: targetEnv, cwd: options.cwd }
+          }
+        }
       if (name.includes('hostProcess'))
         return {
           isRunningInFlatpak: () => false,

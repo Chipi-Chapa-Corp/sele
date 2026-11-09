@@ -1,3 +1,5 @@
+import { withChatProcessRuntimes } from './ChatProcessRuntimes'
+import { getProviderProcessStore, setProviderProcessStopper } from '../providerProcesses'
 import { createLimitResetDelivery } from './LimitResetDelivery'
 import { LimitResetQueue } from './LimitResetQueue'
 import { ExpiringResetCredits } from './ExpiringResetCredits'
@@ -318,7 +320,12 @@ const claudeAccountAdapters = new Map<string, ClaudeProviderAdapter>()
 const codexAccountAdapter = (account: string): CodexProviderAdapter => {
   let adapter = codexAccountAdapters.get(account)
   if (!adapter) {
-    adapter = new CodexProviderAdapter(account)
+    adapter = withChatProcessRuntimes(new CodexProviderAdapter(account), {
+      store: getProviderProcessStore(),
+      accountId: account,
+      metadata: getChatMetadata,
+      create: () => new CodexProviderAdapter(account)
+    })
     codexAccountAdapters.set(account, adapter)
   }
   return adapter
@@ -326,7 +333,12 @@ const codexAccountAdapter = (account: string): CodexProviderAdapter => {
 const claudeAccountAdapter = (account: string): ClaudeProviderAdapter => {
   let adapter = claudeAccountAdapters.get(account)
   if (!adapter) {
-    adapter = new ClaudeProviderAdapter(account)
+    adapter = withChatProcessRuntimes(new ClaudeProviderAdapter(account), {
+      store: getProviderProcessStore(),
+      accountId: account,
+      metadata: getChatMetadata,
+      create: () => new ClaudeProviderAdapter(account)
+    })
     claudeAccountAdapters.set(account, adapter)
   }
   return adapter
@@ -359,8 +371,24 @@ const accountRuntimes = {
 const nativeAdapters: Record<ProviderId, ProviderAdapter> = {
   codex: accountRuntimes.codex.adapter,
   claude: accountRuntimes.claude.adapter,
-  copilot: withLiveChatPermissions(withFailureRetries(new CopilotProviderAdapter())),
-  'opencode-v2': withLiveChatPermissions(withFailureRetries(openCodeAdapter))
+  copilot: withLiveChatPermissions(
+    withFailureRetries(
+      withChatProcessRuntimes(new CopilotProviderAdapter(), {
+        store: getProviderProcessStore(),
+        metadata: getChatMetadata,
+        create: () => new CopilotProviderAdapter()
+      })
+    )
+  ),
+  'opencode-v2': withLiveChatPermissions(
+    withFailureRetries(
+      withChatProcessRuntimes(openCodeAdapter, {
+        store: getProviderProcessStore(),
+        metadata: getChatMetadata,
+        create: () => new OpenCodeProviderAdapter()
+      })
+    )
+  )
 }
 
 export const importedConversations = new ImportedConversations(
@@ -376,6 +404,26 @@ const cleanupChatProcesses = createChatProcessCleanup({
   metadata: getChatMetadata,
   stopTerminals: stopChatTerminalSessions,
   killProcesses: killChatProcesses
+})
+
+setProviderProcessStopper(async (id) => {
+  const store = getProviderProcessStore()
+  const record = await store.get(id)
+  const failures: unknown[] = []
+  if (record.chatId) {
+    try {
+      await cleanupChatProcesses([record.chatId], record.providerId)
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+  // The receipt's saved environment can differ from a chat moved since launch.
+  try {
+    await store.stop(id)
+  } catch (error) {
+    failures.push(error)
+  }
+  if (failures.length) throw new AggregateError(failures, 'Unable to stop all chat processes.')
 })
 
 const backgroundChatRecovery = new BackgroundChatRecovery({

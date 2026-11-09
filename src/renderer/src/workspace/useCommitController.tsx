@@ -172,7 +172,9 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
           : await providerApi.continueChatInFork(providerId, chatId!, prompt, 'commit', turnOptions)
       applyChatDetail(providerId, detail)
 
-      if (changesCwdRef.current === changesCwd) setCommitInput('')
+      setCommitInput((currentInput) =>
+        currentInput.trim() === commitInputValue ? '' : currentInput
+      )
       if (markerId) {
         setChatCommitMarkers((currentMarkers) => {
           const marker = currentMarkers[markerId]
@@ -382,7 +384,14 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
         message: action === 'amend' ? null : commitMessage,
         patches: patchChangeSourceSelected ? getCommitPatches(changedFiles) : undefined
       })
-      if (changesCwdRef.current === changesCwd) setCommitInput('')
+      // The input is shared across projects. Clear the submitted text even after navigation,
+      // while preserving anything typed during the operation. Quick commits may replace the
+      // original instructions with a generated message before reaching this point.
+      setCommitInput((currentInput) =>
+        currentInput.trim() === commitInputValue || currentInput.trim() === commitMessage
+          ? ''
+          : currentInput
+      )
       setGitChangeLoadRequest((currentRequest) => currentRequest + 1)
       return true
     } catch (error) {
