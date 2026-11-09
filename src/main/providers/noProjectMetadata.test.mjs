@@ -26,9 +26,15 @@ const load = (node, context) =>
 const fixture = () => {
   const metadata = new Map()
   const cwdProbes = []
+  const successors = []
   const native = (id) => ({ id, cwd: '/home/user', items: [], container: null, preview: '' })
   const context = vm.createContext({
     console,
+    deferredChatProcessCleanup: {
+      remember() {},
+      created: async (chat) => successors.push(chat),
+      forked: async () => {}
+    },
     backgroundChatRecovery: { observe() {} },
     persistentChatHistory: { invalidate() {}, observe() {}, beginOpening: () => null },
     saveProviderChatHistory: () => {},
@@ -84,6 +90,7 @@ const fixture = () => {
     )
   })
   for (const name of [
+    'retainProcessesForNewChat',
     'applyMetadataToChat',
     'applyMetadataToChats',
     'applyMetadataToDetail',
@@ -100,8 +107,19 @@ const fixture = () => {
       )
       .map((node) => [node.name.getText(source), load(node.initializer, context)])
   )
-  return { api, context, metadata, cwdProbes, native }
+  return { api, context, metadata, cwdProbes, native, successors }
 }
+
+test('user chat creation retains project processes while internal utility chats do not', async () => {
+  const { api, successors } = fixture()
+  await api.startChat('codex', 'Continue working', { cwd: '/project' })
+  assert.equal(successors.length, 1)
+  assert.equal(successors[0].projectCwd, '/project')
+  assert.equal(successors[0].providerId, 'codex')
+  await api.startChat('codex', 'Write a commit', { cwd: '/project' }, 'commit')
+  await api.startChat('codex', 'Summarize', { cwd: '/project' }, 'linkedChat')
+  assert.equal(successors.length, 1)
+})
 
 for (const providerId of ['codex', 'claude', 'copilot', 'opencode']) {
   test(`${providerId}: HOME fallback retains No Project through creation, history, updates and forks`, async () => {

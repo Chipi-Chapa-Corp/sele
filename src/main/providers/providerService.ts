@@ -12,6 +12,7 @@ import { getChatTurnOutcomes, setChatTurnOutcome } from '../database/chatTurnOut
 import { ChatAccounts } from './ChatAccounts'
 import { BackgroundChatRecovery } from './BackgroundChatRecovery'
 import { createChatProcessCleanup } from './ChatProcessCleanup'
+import { DeferredChatProcessCleanup } from './DeferredChatProcessCleanup'
 import { killChatProcesses } from '../chatProcesses'
 import { stopChatTerminalSessions } from '../registerTerminalIpc'
 import { ImportedConversations } from './ImportedConversations'
@@ -406,6 +407,28 @@ const cleanupChatProcesses = createChatProcessCleanup({
   killProcesses: killChatProcesses
 })
 
+const deferredChatProcessCleanup = new DeferredChatProcessCleanup({
+  file: join(app.getPath('userData'), 'chat-process-cleanup-v1.json'),
+  cleanup: cleanupChatProcesses,
+  metadata: getChatMetadata,
+  onError: (error) => console.error('Unable to clean up Done chat processes; will retry.', error)
+})
+
+const retainProcessesForNewChat = async (
+  providerId: ProviderId,
+  id: string,
+  options?: ProviderStartChatOptions
+): Promise<void> => {
+  const cwdMetadata = await getCwdMetadata(options?.noProject ? null : options?.cwd)
+  await deferredChatProcessCleanup.created({
+    id,
+    providerId,
+    cwd: options?.cwd ?? null,
+    projectCwd: cwdMetadata.projectCwd,
+    container: options?.container ?? null
+  })
+}
+
 const backgroundChatRecovery = new BackgroundChatRecovery({
   scope: (provider, chat) => persistentChatHistory.viewScope(provider, chat.id, chat.container),
   read: (provider, chat) => {
@@ -494,6 +517,10 @@ const applyMetadataToChats = async (chats: ProviderChat[]): Promise<ProviderChat
         getCwdMetadata(enrichedChat.noProject ? null : chat.cwd),
         getMessageReviews(chat.id)
       ])
+      deferredChatProcessCleanup.remember({
+        ...enrichedChat,
+        projectCwd: cwdMetadata.projectCwd
+      })
       const previewReview = reviews.find(
         (review) =>
           Boolean(chat.preview) &&
@@ -536,6 +563,12 @@ const applyMetadataToDetail = async (
     getCwdMetadata(noProject ? null : detail.cwd),
     getMessageReviews(detail.id)
   ])
+  deferredChatProcessCleanup.remember({
+    ...detail,
+    providerId,
+    projectCwd: cwdMetadata.projectCwd,
+    container: metadata.container ?? detail.container ?? null
+  })
   const usage = includeUsage
     ? await (liveUsage && detail.status === 'active' ? getLiveChatTokenUsage : getChatTokenUsage)(
         providerId,
@@ -910,7 +943,10 @@ const limitResetQueue = new LimitResetQueue(
           deferInitialMessage: true,
           accountId: entry.accountId
         },
-        onCreated
+        async (chatId) => {
+          await retainProcessesForNewChat(entry.providerId, chatId, entry.options)
+          await onCreated(chatId)
+        }
       ),
     saveMetadata: async (entry) => {
       if (!entry.draftKey || !entry.chatId) return
@@ -993,6 +1029,7 @@ const expiringResetCredits = new ExpiringResetCredits({
 })
 
 export const startLimitResetQueue = (): void => {
+  deferredChatProcessCleanup.start()
   limitResetQueue.start()
   expiringResetCredits.start()
 }
@@ -1465,24 +1502,17 @@ export const providerApi: ProviderApi = {
       if (options?.initialGoal && !adapters[providerId].setChatGoal)
         throw new Error('This provider does not support goals.')
       options = await prepareChatWorkspace(app.getPath('userData'), options)
-      const detail = await adapters[providerId].startChat(
-        message,
-        options,
-        purpose || options?.review || options?.container || options?.noProject
-          ? async (chatId) => {
-              await Promise.all([
-                options?.noProject ? setChatNoProject(chatId) : Promise.resolve(),
-                purpose ? setChatPurpose(chatId, purpose) : Promise.resolve(),
-                options?.container
-                  ? setChatContainer(chatId, options.container)
-                  : Promise.resolve(),
-                options?.review
-                  ? setMessageReview(chatId, message, options.review.prompt, options.review)
-                  : Promise.resolve()
-              ])
-            }
-          : undefined
-      )
+      const detail = await adapters[providerId].startChat(message, options, async (chatId) => {
+        if (!purpose) await retainProcessesForNewChat(providerId, chatId, options)
+        await Promise.all([
+          options?.noProject ? setChatNoProject(chatId) : Promise.resolve(),
+          purpose ? setChatPurpose(chatId, purpose) : Promise.resolve(),
+          options?.container ? setChatContainer(chatId, options.container) : Promise.resolve(),
+          options?.review
+            ? setMessageReview(chatId, message, options.review.prompt, options.review)
+            : Promise.resolve()
+        ])
+      })
       return applyMetadataToDetail(detail, providerId)
     } catch (error) {
       if (options?.review)
@@ -1530,6 +1560,7 @@ export const providerApi: ProviderApi = {
   forkChat: async (providerId, chatId, messageId) => {
     const sourceMetadata = await getChatMetadata(chatId)
     const detail = await adapters[providerId].forkChat(chatId, messageId, async (forkedChatId) => {
+      await deferredChatProcessCleanup.forked(forkedChatId, providerId, chatId)
       if (sourceMetadata.noProject) await setChatNoProject(forkedChatId)
       if (sourceMetadata.container) {
         await setChatContainer(forkedChatId, sourceMetadata.container)
@@ -1637,11 +1668,12 @@ export const providerApi: ProviderApi = {
       .stopChat(chatId)
       .then((detail) => applyMetadataToDetail(detail, providerId)),
   markChatDone: async (providerId, chatId, done = true) => {
-    if (done) await cleanupChatProcesses([chatId], providerId)
+    if (done) await deferredChatProcessCleanup.schedule([chatId], providerId)
+    else await deferredChatProcessCleanup.cancel(chatId)
     return setChatDone(chatId, done)
   },
   markChatsDone: async (chatIds) => {
-    await cleanupChatProcesses(chatIds)
+    await deferredChatProcessCleanup.schedule(chatIds)
     return setChatsDone(chatIds, true)
   },
   getCwdNotes: (providerId, cwd) => getCwdNotes(providerId, cwd),
@@ -1656,6 +1688,7 @@ export const providerApi: ProviderApi = {
 }
 
 export const disposeProviderAdapters = async (): Promise<void> => {
+  await deferredChatProcessCleanup.close()
   backgroundChatRecovery.dispose()
   await expiringResetCredits.close()
   await limitResetQueue.close()

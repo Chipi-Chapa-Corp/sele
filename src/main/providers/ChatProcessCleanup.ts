@@ -9,7 +9,7 @@ type Dependencies = {
   killProcesses: (chatIds: string[], container: AppContainerTarget | null) => Promise<void>
 }
 
-/** Metadata is saved only after cleanup succeeds; failures remain visible and retryable. */
+/** Stop a chat's owned work in each saved execution environment. */
 export const createChatProcessCleanup =
   (dependencies: Dependencies) =>
   async (chatIds: string[], providerId?: ProviderId): Promise<void> => {

@@ -31,6 +31,7 @@ const fixture = () => {
   const events = []
   const context = vm.createContext({
     console,
+    deferredChatProcessCleanup: { remember() {} },
     persistentChatHistory: {
       invalidate() {},
       observe() {},
@@ -204,6 +205,7 @@ const ingestionFixture = () => {
     createConversationView,
     isConversationOpeningDetail,
     prepareChatDetailForRenderer,
+    deferredChatProcessCleanup: { close: async () => {} },
     getContainerTargetKey: () => 'host',
     persistentChatHistory: {
       viewScope: () => scope,

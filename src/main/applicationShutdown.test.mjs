@@ -106,6 +106,7 @@ test('failed queue flush still saves final conversation views and releases histo
       compilerOptions: { target: ts.ScriptTarget.ES2022 }
     }).outputText,
     {
+      deferredChatProcessCleanup: { close: async () => calls.push('cleanup-timer') },
       backgroundChatRecovery: { dispose: () => calls.push('recovery') },
       expiringResetCredits: { close: async () => calls.push('credits') },
       limitResetQueue: {
@@ -134,6 +135,7 @@ test('failed queue flush still saves final conversation views and releases histo
   )
   await assert.rejects(dispose(), /disk failure/)
   assert.deepEqual(calls, [
+    'cleanup-timer',
     'recovery',
     'credits',
     'reset',

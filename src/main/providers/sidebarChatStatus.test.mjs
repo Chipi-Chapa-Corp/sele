@@ -74,6 +74,7 @@ const enrich = (metadata) => {
     ),
     {
       isNoProjectChat,
+      deferredChatProcessCleanup: { remember() {} },
       // A fresh installation/restart has no previously observed outcome cache.
       getChatTurnOutcomes: async () => new Map(),
       getChatMetadataByIds: async (ids) => new Map(ids.map((id) => [id, metadata])),

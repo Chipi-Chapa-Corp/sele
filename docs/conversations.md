@@ -91,14 +91,20 @@ uses backpressure rather than disconnecting on large replies. OS shutdown, runti
 remote disconnect, or sandbox termination can still stop work. Other providers retain their
 own process lifetimes.
 
-Marking a chat done stops its active work, subagents, and background terminal commands
-before saving the done flag. Bulk completion uses the same cleanup. On Linux, cleanup also
+Marking a chat done saves the done flag and schedules cleanup after five minutes.
+Starting a new chat in the same project and execution environment during that window
+keeps the old chat's processes and terminal tabs alive for the new chat. When that chat
+is marked done, the five-minute window starts again for all inherited work. Chats in
+other projects or environments do not extend the window. Bulk completion uses the
+same cleanup, and undoing done cancels that chat's cleanup. Pending cleanup and project
+handoffs survive a Sele restart. Cleanup stops active work, subagents, and background
+terminal commands. On Linux, cleanup also
 finds detached helpers by their exact inherited chat environment marker, including Codex
 processes left behind before a Sele restart. It checks the user and process start time before
 signalling, allows graceful termination, then force-kills surviving processes. Cleanup runs
 in the chat's saved host/container/SSH environment and requires Python 3 there. Native
-provider cancellation remains available on other platforms. Undoing done does not restart
-processes. Cleanup errors leave the chat unfinished so the action can be retried.
+provider cancellation remains available on other platforms. Undoing done after cleanup
+does not restart processes. Cleanup errors are logged and retried after five minutes.
 
 ## Chat process ownership
 
@@ -116,8 +122,9 @@ the Sele profile record the exact units and target environment before launch. A
 private target-side launch permit prevents delayed starts after cleanup. A missing
 permit after an OS restart retires the old boundary; the next execution gets a fresh one.
 
-Marking a chat done cancels native work and scheduled retries, then stops its owned
-services through the existing cleanup path. Existing provider terminal attachments
+After a Done chat's grace period expires without a replacement chat, cleanup cancels
+native work and scheduled retries, then stops its owned services through the existing
+cleanup path. Existing provider terminal attachments
 continue to use their original streams.
 
 When the required manager or tools are unavailable, the provider can still run and

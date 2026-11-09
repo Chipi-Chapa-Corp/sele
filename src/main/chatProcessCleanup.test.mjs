@@ -217,7 +217,7 @@ with tempfile.TemporaryDirectory() as directory:
   ])
 })
 
-test('single and bulk done wait for cleanup; undo and failed cleanup cannot kill or save done', async () => {
+test('single and bulk Done schedule cleanup; undo cancels it and scheduling failures cannot save Done', async () => {
   const service = await readFile(new URL('./providers/providerService.ts', import.meta.url), 'utf8')
   const ast = ts.createSourceFile('providerService.ts', service, ts.ScriptTarget.Latest, true)
   const api = ast.statements
@@ -227,9 +227,12 @@ test('single and bulk done wait for cleanup; undo and failed cleanup cannot kill
   const events = []
   let fail = false
   const globals = {
-    cleanupChatProcesses: async (...args) => {
-      events.push(['cleanup', ...args])
-      if (fail) throw new Error('busy')
+    deferredChatProcessCleanup: {
+      schedule: async (...args) => {
+        events.push(['schedule', ...args])
+        if (fail) throw new Error('busy')
+      },
+      cancel: async (...args) => events.push(['cancel', ...args])
     },
     setChatDone: async (...args) => events.push(['save', ...args]),
     setChatsDone: async (...args) => events.push(['save-many', ...args])
@@ -250,10 +253,11 @@ test('single and bulk done wait for cleanup; undo and failed cleanup cannot kill
   await methods.markChatDone('codex', 'one', false)
   await methods.markChatsDone(['one', 'two'])
   assert.deepEqual(JSON.parse(JSON.stringify(events)), [
-    ['cleanup', ['one'], 'codex'],
+    ['schedule', ['one'], 'codex'],
     ['save', 'one', true],
+    ['cancel', 'one'],
     ['save', 'one', false],
-    ['cleanup', ['one', 'two']],
+    ['schedule', ['one', 'two']],
     ['save-many', ['one', 'two'], true]
   ])
   events.length = 0
