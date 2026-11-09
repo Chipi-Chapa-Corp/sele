@@ -27,6 +27,52 @@ const detail = (id = 'one', extra = {}) => ({
   ...extra
 })
 
+test('saved orphaned local Working sections finish when the server answer is restored', () => {
+  const items = [
+    { id: 'client:user', type: 'message', role: 'user', content: 'What are levels?' },
+    { id: 'client:working', type: 'working', status: 'working', startedAt: 1000, items: [] },
+    {
+      id: 'server:answer',
+      type: 'message',
+      role: 'assistant',
+      content: 'Character levels.',
+      startsTurn: true,
+      createdAt: 3000
+    },
+    { id: 'next:user', type: 'message', role: 'user', content: 'Add icons' },
+    { id: 'next:working', type: 'working', status: 'working', items: [] }
+  ]
+  const saved = detail('one', { items, conversationView: true })
+  const views = createConversationViews()
+  views.install('codex', [saved])
+  const restored = views.get(chat('one', { status: 'active' }))
+  assert.equal(restored.items[1].status, 'worked')
+  assert.equal(restored.items[1].completedAt, 3000)
+  assert.equal(restored.items[4].status, 'working')
+  assert.equal(saved.items[1].status, 'working', 'restoring never mutates the stored snapshot')
+  assert.equal(createConversationView(detail('one', { items })).items[1].status, 'worked')
+})
+
+test('sidebar failure recovery takes precedence over a saved provisional answer', () => {
+  const saved = detail('one', {
+    updatedAt: 1,
+    items: [
+      { id: 'u', type: 'message', role: 'user', content: 'Question' },
+      { id: 'w', type: 'working', status: 'working', items: [] },
+      { id: 'a', type: 'message', role: 'assistant', content: 'Provisional answer' }
+    ]
+  })
+  const restored = restoreConversationView(
+    saved,
+    chat('one', {
+      updatedAt: 2,
+      status: 'error',
+      lastTurnOutcome: 'failed'
+    })
+  )
+  assert.equal(restored.items[1].status, 'failed')
+})
+
 test('known views are synchronous mappings, independent of timestamp, status, done, and RAM cache limits', () => {
   const views = createConversationViews()
   views.install('codex', [detail()])

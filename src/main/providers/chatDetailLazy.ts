@@ -10,6 +10,7 @@ import {
   sliceProviderChatTurns
 } from '../../shared/chatTurns.ts'
 import { unloadHistoricalWorkingSteps } from './workingStepLazy.ts'
+import { finishWorkingStepsBeforeAnswers } from '../../shared/chatWorkingLifecycle.ts'
 
 export const rendererChatTurnPageSize = 10
 export const rendererChatPagePayloadBudgetCharacters = 4_000_000
@@ -105,6 +106,7 @@ const prepareMessagePayload = <TMessage extends ProviderMessage | ProviderPendin
 
 export const prepareChatItemsForRenderer = (items: ProviderChatItem[]): ProviderChatItem[] => {
   assertUniqueProviderChatItemIds(items)
+  items = finishWorkingStepsBeforeAnswers(items)
   let remainingCharacters = rendererChatPagePayloadBudgetCharacters
   let changed = false
   const preparedItems = items.map((item) => {

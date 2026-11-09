@@ -5,6 +5,7 @@ import {
   unloadWorkingStepItems
 } from './chatTurns.ts'
 import { asChatPreview } from './chatPreview.ts'
+import { finishWorkingStepsBeforeAnswers } from './chatWorkingLifecycle.ts'
 
 /** Sidebar discovery must not carry a saved transcript or other detail payloads. */
 export const getConversationViewSummary = (
@@ -42,7 +43,12 @@ export const restoreConversationView = (
   view: ProviderChatDetail,
   chat: ProviderChat
 ): ProviderChatDetail => {
-  const restored = asChatPreview({ ...view, ...chat, conversationView: true })
+  const restored = asChatPreview({
+    ...view,
+    ...chat,
+    items: finishWorkingStepsBeforeAnswers(view.items),
+    conversationView: true
+  })
   const outcome = chat.lastTurnOutcome
   if (
     (outcome !== 'stopped' && outcome !== 'failed') ||
@@ -70,7 +76,7 @@ export const restoreConversationView = (
     changed = true
     return { ...item, status: outcome }
   })
-  return changed ? { ...restored, items } : restored
+  return changed ? { ...restored, items: finishWorkingStepsBeforeAnswers(items) } : restored
 }
 
 export const isConversationOpeningDetail = (detail: ProviderChatDetail): boolean =>
@@ -89,7 +95,7 @@ export const createConversationView = (detail: ProviderChatDetail): ProviderChat
   conversationViewSourceRevision: detail.conversationViewSourceRevision ?? detail.revision,
   // Keep message text, attachments, ordering and pagination intact. Hidden tool
   // bodies are fetched on expansion through their existing page API.
-  items: detail.items.map((item) =>
+  items: finishWorkingStepsBeforeAnswers(detail.items).map((item) =>
     item.type === 'working' && (item.items.length > 0 || item.itemSegments)
       ? unloadWorkingStepItems(item)
       : item
