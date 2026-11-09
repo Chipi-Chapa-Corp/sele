@@ -46,6 +46,7 @@ const adapter = (path, methods, globals) => {
   return vm.runInNewContext(
     ts.transpile(
       `new (class {
+    async withTransientClient(container, read) { return read(await this.getClientEntry(container)) }
     ${declaration.members
       .filter((node) => methods.includes(node.name?.getText(parsed)))
       .map((node) => node.getText(parsed))

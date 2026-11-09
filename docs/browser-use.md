@@ -25,6 +25,9 @@ Codex's direct tools do not require `js_repl` or browser plugins. Other provider
 names control attached Chrome, and `native_computer` controls the shared desktop. Chrome
 and desktop connections must still be explicitly connected in Settings. Disconnected tools
 return connection instructions instead of falling back to another browser or desktop.
+Claude always loads the embedded browser's tab listing, navigation, page reading, and
+interaction tools; the remaining actions can be discovered with `ToolSearch`. Its MCP
+instructions distinguish the cross-platform embedded browser from Chrome and desktop connections.
 
 ## Code boundaries
 

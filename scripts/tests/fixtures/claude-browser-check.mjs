@@ -65,6 +65,13 @@ export async function checkClaudeBrowserTools({
         tools.some((tool) => tool.name === name),
         name
       )
+    for (const name of ['tabs_context', 'navigate', 'read_page', 'computer']) {
+      assert.equal(
+        tools.find((tool) => tool.name === name)?._meta?.['anthropic/alwaysLoad'],
+        true,
+        `${name} must be visible without tool search`
+      )
+    }
     // Same session ID, different provider: chat workspaces must remain separate.
     assert.deepEqual((await value('tabs_context')).tabs, [])
     const tab = await value('navigate', { url })

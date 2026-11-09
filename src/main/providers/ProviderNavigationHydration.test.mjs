@@ -223,6 +223,7 @@ const openCodeHarness = (state, client) => {
     stateChecks: new WeakMap(),
     pendingMessageStore: { restore: async () => [] },
     restorePendingMessages: () => {},
+    withTransientClient: async (_container, read) => read({ client, container: null }),
     getClientEntry: async () => ({ client, container: null }),
     createChatDetailFromState: (current) => ({ count: current.messages.length }),
     reportMessageTokenUsage: () => {},

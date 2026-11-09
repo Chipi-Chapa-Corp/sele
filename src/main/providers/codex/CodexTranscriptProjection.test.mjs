@@ -226,6 +226,51 @@ test('a completed goal answer remains above steering received at the end of the 
   assert.equal(items[1].kind, 'steering')
 })
 
+test('steering preserves streamed answers through further work, repeated steers and reopening', () => {
+  const projections = new Map(
+    ['inProgress', 'completed', 'interrupted'].map((status) => [
+      status,
+      new CodexTranscriptProjection()
+    ])
+  )
+  let turn = { id: 'turn', status: 'inProgress', items: [user('u')] }
+  const expectedAnswers = []
+  for (const item of [
+    answer('first', 'Almost complete character sheet.', 'final_answer'),
+    { ...user('steer'), content: [] },
+    user('steer'),
+    tool('pdf'),
+    answer('second', 'PDF draft.', 'final_answer'),
+    user('steer-again'),
+    answer('last', 'Finished PDF.', 'final_answer')
+  ]) {
+    const index = turn.items.findIndex((record) => record.id === item.id)
+    turn = update(turn, index < 0 ? turn.items.length : index, item)
+    if (item.phase === 'final_answer') expectedAnswers.push(item.text)
+    for (const status of ['inProgress', 'completed', 'interrupted']) {
+      const snapshot = { ...turn, status }
+      const items = getChatItems([snapshot], null, options, projections.get(status))
+      assert.deepEqual(items, getChatItems([snapshot], null, options))
+      assert.deepEqual(
+        items
+          .filter((entry) => entry.type === 'message' && entry.role === 'assistant')
+          .map((entry) => entry.content),
+        expectedAnswers,
+        `answers stay outside progress after ${item.id} (${status})`
+      )
+      assert.ok(
+        items
+          .filter((entry) => entry.type === 'working')
+          .flatMap((entry) => entry.items)
+          .every((entry) => !expectedAnswers.includes(entry.content))
+      )
+      const firstAnswer = items.findIndex((entry) => entry.id === 'turn:first')
+      const steer = items.findIndex((entry) => entry.id === 'turn:steer')
+      if (steer >= 0) assert.ok(firstAnswer < steer)
+    }
+  }
+})
+
 test('promotes the live final tail and restores activity if more work follows', () => {
   const projection = new CodexTranscriptProjection()
   let turn = { id: 'turn', status: 'inProgress', items: [user('u')] }

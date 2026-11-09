@@ -38,7 +38,7 @@ const bundle = await build({
                 ? 'export const computerAutomation={execute:async args=>args.action==="screenshot"?{width:16,height:16,data:"aW1hZ2U="}:{success:true,action:args.action}}'
                 : path.endsWith('BrowserAutomation')
                   ? 'export const getBrowserAutomationService=()=>({createClient:()=>({close(){}})})'
-                  : 'export const tool=(name,description,schema,execute)=>({name,description,schema,execute});export const createSdkMcpServer=options=>({...options,instance:{close:async()=>{}}});'
+                  : 'export const tool=(name,description,schema,execute,options)=>({name,description,schema,execute,...options});export const createSdkMcpServer=options=>({...options,instance:{close:async()=>{}}});'
         }))
       }
     }
@@ -74,6 +74,33 @@ test('Claude desktop tools keep unique names and expose native and attached Chro
     .execute({ action: 'scroll', dy: 5 })
   assert.equal(result.isError, undefined)
   integration.close()
+})
+
+test('Claude can discover and use the embedded browser before loading deferred tools', () => {
+  const integration = api.createClaudeBrowserIntegration(
+    { createClient: () => ({ close() {} }) },
+    scope
+  )
+  try {
+    const loaded = integration.server.tools
+      .filter((tool) => tool.alwaysLoad)
+      .map((tool) => tool.name)
+    assert.deepEqual(loaded.sort(), [
+      'chrome_tabs_context',
+      'computer',
+      'navigate',
+      'read_page',
+      'tabs_context'
+    ])
+    assert.match(integration.server.instructions, /macOS, Windows, and Linux/)
+    assert.match(
+      integration.server.instructions,
+      /ToolSearch.*select:mcp__Claude_Browser__tabs_create/
+    )
+    assert.match(integration.server.instructions, /actual error/)
+  } finally {
+    integration.close()
+  }
 })
 
 test('Codex desktop tools advertise executable namespaced tools with valid schemas', async () => {

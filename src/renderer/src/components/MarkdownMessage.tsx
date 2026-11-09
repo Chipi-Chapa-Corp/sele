@@ -20,6 +20,7 @@ import { createChatMarkdownRenderer } from '../chatMarkdownRenderer'
 import { chatMediaId } from '../chatMedia'
 import { useStreamReveal } from '../motion/useStreamReveal'
 import { visualizationExtension } from '../visualizationReference'
+import { codexFileCitationExtension } from '../codexFileCitation'
 import './ChatDetailItem.css'
 import { useChatMedia } from './ChatMediaGallery'
 import { ImageLightbox } from './ImageLightbox'
@@ -272,9 +273,9 @@ const MarkdownMessageComponent: React.FC<{
   )
   const visualizationMarkdown = useMemo(
     () =>
-      new Marked({ extensions: baseUrl ? [] : [visualizationExtension] }).use(
-        markedFootnote({ prefixId: footnotePrefix })
-      ),
+      new Marked({
+        extensions: baseUrl ? [] : [visualizationExtension, codexFileCitationExtension]
+      }).use(markedFootnote({ prefixId: footnotePrefix })),
     [footnotePrefix, baseUrl]
   )
   const renderedMarkdown = useMemo(() => {

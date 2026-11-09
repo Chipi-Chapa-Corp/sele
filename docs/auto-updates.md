@@ -9,6 +9,11 @@ Updating asks to restart, downloads and installs, then relaunches. Preparation f
 leave Sele open for retry. Platform implementations live in `src/main/appUpdate.ts` and
 `macAppUpdate.ts`.
 
+Windows starts the downloaded NSIS installer only on Electron's final `quit` event,
+after provider/terminal cleanup, renderer saves, and database shutdown have finished.
+An abnormal exit does not launch the installer. Windows updater activity and the
+shutdown-to-installer handoff are recorded under `app-update` in diagnostics.
+
 ## Release requirements
 
 | Platform | Required artifacts and installation |

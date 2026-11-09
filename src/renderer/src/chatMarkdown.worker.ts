@@ -2,6 +2,7 @@ import { Marked } from 'marked'
 import markedFootnote from 'marked-footnote'
 import { createChatMarkdownRenderer } from './chatMarkdownRenderer'
 import { visualizationExtension } from './visualizationReference'
+import { codexFileCitationExtension } from './codexFileCitation'
 import { createMarkdownPlan } from './markdownPlan'
 import { getRecentChatReferences } from './chatRecents'
 
@@ -14,9 +15,9 @@ self.onmessage = ({ data }) => {
       })
       return
     }
-    const markdown = new Marked({ extensions: data.baseUrl ? [] : [visualizationExtension] }).use(
-      markedFootnote({ prefixId: data.footnotePrefix })
-    )
+    const markdown = new Marked({
+      extensions: data.baseUrl ? [] : [visualizationExtension, codexFileCitationExtension]
+    }).use(markedFootnote({ prefixId: data.footnotePrefix }))
     const html = markdown.parse(data.content, {
       async: false,
       gfm: true,

@@ -140,6 +140,11 @@ export function registerAppUpdate(): void {
   }
 
   if (installedWindows) {
+    autoUpdater.logger = {
+      info: (...args) => logDiagnostic('info', 'app-update', ...args),
+      warn: (...args) => logDiagnostic('warn', 'app-update', ...args),
+      error: (...args) => logDiagnostic('error', 'app-update', ...args)
+    }
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.allowPrerelease = false
@@ -224,7 +229,24 @@ export function registerAppUpdate(): void {
         app.quit()
       } else {
         await autoUpdater.downloadUpdate()
-        autoUpdater.quitAndInstall(false, true)
+        logDiagnostic('info', 'app-update', 'Download complete; waiting for clean shutdown.')
+        // NSIS starts synchronously inside quitAndInstall, before it requests app.quit().
+        // Wait past our async before-quit/will-quit barriers and renderer saves so
+        // the installer cannot race (or forcibly interrupt) shutdown cleanup.
+        app.once('quit', (_event, exitCode) => {
+          if (exitCode !== 0) {
+            logDiagnostic(
+              'warn',
+              'app-update',
+              'Skipping installation after abnormal exit.',
+              exitCode
+            )
+            return
+          }
+          logDiagnostic('info', 'app-update', 'Clean shutdown complete; launching installer.')
+          autoUpdater.quitAndInstall(false, true)
+        })
+        app.quit()
       }
     } catch (error) {
       fail(error)

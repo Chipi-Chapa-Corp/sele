@@ -140,6 +140,7 @@ import {
 } from './OpenCodeChatTitle.ts'
 import { getOpenCodePermissionRules } from './OpenCodePermissions'
 import { OpenCodeServerClient } from './OpenCodeServerClient'
+import { OpenCodeClientLifetime } from './OpenCodeClientLifetime'
 import { createOpenCodeTerminalTasks } from './OpenCodeTerminalTasks'
 import { getOpenCodeUpdateAvailability, updateOpenCodeProvider } from './OpenCodeProviderUpdate'
 import {
@@ -157,6 +158,7 @@ import {
 import type { BrowserMcpIntegration } from '../../browser/BrowserMcpServer'
 
 type OpenCodeClientEntry = {
+  lifetime: OpenCodeClientLifetime
   server: OpenCodeServerClient
   client: OpencodeClient
   container: AppContainerTarget | null
@@ -460,24 +462,25 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   private freeLimits = new OpenCodeFreeLimitTracker()
 
   /** `forceRefresh` (the Refresh button) tests every listed connection with a real request. */
-  getConnections = async (options: ProviderSourceOptions = {}): Promise<ProviderConnection[]> => {
-    const targetKey = getContainerTargetKey(options.container)
-    const list = (): Promise<ProviderConnection[]> =>
-      listOpenCodeConnections(
-        client,
-        () => readOpenCodeCredentialTypes(options.container),
-        (providerId) => this.credentialHealth.get(targetKey, providerId)
+  getConnections = async (options: ProviderSourceOptions = {}): Promise<ProviderConnection[]> =>
+    this.withTransientClient(options.container, async (entry) => {
+      const targetKey = getContainerTargetKey(options.container)
+      const list = (): Promise<ProviderConnection[]> =>
+        listOpenCodeConnections(
+          client,
+          () => readOpenCodeCredentialTypes(options.container),
+          (providerId) => this.credentialHealth.get(targetKey, providerId)
+        )
+      const client = entry.client
+      const providers = await list()
+      if (!options.forceRefresh) return this.withAdminKeyConnections(providers, false)
+      await Promise.all(
+        providers
+          .filter((provider) => provider.connections.length > 0)
+          .map((provider) => this.checkConnection(provider.id, options))
       )
-    const client = (await this.getClientEntry(options.container)).client
-    const providers = await list()
-    if (!options.forceRefresh) return this.withAdminKeyConnections(providers, false)
-    await Promise.all(
-      providers
-        .filter((provider) => provider.connections.length > 0)
-        .map((provider) => this.checkConnection(provider.id, options))
-    )
-    return this.withAdminKeyConnections(await list(), true)
-  }
+      return this.withAdminKeyConnections(await list(), true)
+    })
 
   /** Adds the usage-only admin key method and any saved admin keys to OpenCode's providers. */
   private withAdminKeyConnections = async (
@@ -647,22 +650,23 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.credentialHealth.clear(getContainerTargetKey(options.container), credentialId)
   }
 
-  login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
-    const client = (await this.getClientEntry(options.container)).client
-    const providers = requireData(await client.provider.list({}, { throwOnError: true }))
-    const connectedNames = providers.all
-      .filter((provider) => providers.connected.includes(provider.id))
-      .map((provider) => provider.name)
-    if (connectedNames.length === 0) {
-      throw new Error(
-        'OpenCode has no connected model providers. Add a connection in Settings → Providers → OpenCode → Connections.'
-      )
-    }
-    return {
-      status: 'authenticated',
-      account: { label: connectedNames.join(', ') }
-    }
-  }
+  login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> =>
+    this.withTransientClient(options.container, async (entry) => {
+      const client = entry.client
+      const providers = requireData(await client.provider.list({}, { throwOnError: true }))
+      const connectedNames = providers.all
+        .filter((provider) => providers.connected.includes(provider.id))
+        .map((provider) => provider.name)
+      if (connectedNames.length === 0) {
+        throw new Error(
+          'OpenCode has no connected model providers. Add a connection in Settings → Providers → OpenCode → Connections.'
+        )
+      }
+      return {
+        status: 'authenticated',
+        account: { label: connectedNames.join(', ') }
+      }
+    })
 
   getUpdateAvailability = async (
     options: ProviderSourceOptions = {}
@@ -686,69 +690,68 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   getSandboxModes = async (): Promise<ProviderSandboxModeOption[]> => openCodeSandboxModes
 
-  getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> => {
-    try {
-      const client = (await this.getClientEntry(options.container)).client
-      const [providerResult, configResult] = await Promise.all([
-        client.config.providers({}, { throwOnError: true }),
-        client.config.get({}, { throwOnError: true })
-      ])
-      const catalog = requireData(providerResult)
-      const config = requireData(configResult)
-      catalog.providers.forEach((provider) => {
-        Object.values(provider.models).forEach((modelValue) => {
-          const model = modelValue as OpenCodeModelRuntime
-          this.modelContextLimits.set(`${provider.id}/${modelValue.id}`, model.limit.context)
-          setNativeModelPricing(
-            `opencode:${getContainerTargetKey(options.container)}:${provider.id}/${modelValue.id}`,
-            {
-              input: modelValue.cost.input,
-              output: modelValue.cost.output,
-              cacheRead: modelValue.cost.cache.read,
-              cacheWrite: modelValue.cost.cache.write,
-              tiers: modelValue.cost.tiers?.map((tier) => ({
-                input: tier.input,
-                output: tier.output,
-                cacheRead: tier.cache.read,
-                cacheWrite: tier.cache.write,
-                contextAbove: tier.tier.size
-              }))
-            }
-          )
+  getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> =>
+    this.withTransientClient(options.container, async (entry) => {
+      try {
+        const client = entry.client
+        const [providerResult, configResult] = await Promise.all([
+          client.config.providers({}, { throwOnError: true }),
+          client.config.get({}, { throwOnError: true })
+        ])
+        const catalog = requireData(providerResult)
+        const config = requireData(configResult)
+        catalog.providers.forEach((provider) => {
+          Object.values(provider.models).forEach((modelValue) => {
+            const model = modelValue as OpenCodeModelRuntime
+            this.modelContextLimits.set(`${provider.id}/${modelValue.id}`, model.limit.context)
+            setNativeModelPricing(
+              `opencode:${getContainerTargetKey(options.container)}:${provider.id}/${modelValue.id}`,
+              {
+                input: modelValue.cost.input,
+                output: modelValue.cost.output,
+                cacheRead: modelValue.cost.cache.read,
+                cacheWrite: modelValue.cost.cache.write,
+                tiers: modelValue.cost.tiers?.map((tier) => ({
+                  input: tier.input,
+                  output: tier.output,
+                  cacheRead: tier.cache.read,
+                  cacheWrite: tier.cache.write,
+                  contextAbove: tier.tier.size
+                }))
+              }
+            )
+          })
         })
-      })
-      const models = mapOpenCodeModels(catalog.providers, catalog.default, config.model)
-      if (models.length === 0) throw new Error('OpenCode returned no available models.')
-      return models
-    } catch (error) {
-      console.error('[OpenCodeProviderAdapter:getModels] Unable to load models', error)
-      throw error
-    }
-  }
+        const models = mapOpenCodeModels(catalog.providers, catalog.default, config.model)
+        if (models.length === 0) throw new Error('OpenCode returned no available models.')
+        return models
+      } catch (error) {
+        console.error('[OpenCodeProviderAdapter:getModels] Unable to load models', error)
+        throw error
+      }
+    })
 
   getSkills = async (
     cwd?: string | null,
     options: ProviderSourceOptions = {}
-  ): Promise<ProviderSkill[]> => {
-    const [entry, disabledSkills] = await Promise.all([
-      this.getClientEntry(options.container),
-      listDisabledProviderSkills(this.id, options.container)
-    ])
-    const discovered = requireData(
-      await entry.client.app.skills(cwd ? { directory: cwd } : {}, { throwOnError: true })
-    ).map(
-      (skill): ProviderSkill => ({
-        name: skill.name,
-        description: skill.description ?? '',
-        shortDescription: skill.description?.trim() || null,
-        displayName: null,
-        path: skill.location,
-        scope: getSkillScope(skill.location, cwd),
-        enabled: true
-      })
-    )
-    return mergeProviderSkills(discovered, disabledSkills)
-  }
+  ): Promise<ProviderSkill[]> =>
+    this.withTransientClient(options.container, async (entry) => {
+      const disabledSkills = await listDisabledProviderSkills(this.id, options.container)
+      const discovered = requireData(
+        await entry.client.app.skills(cwd ? { directory: cwd } : {}, { throwOnError: true })
+      ).map(
+        (skill): ProviderSkill => ({
+          name: skill.name,
+          description: skill.description ?? '',
+          shortDescription: skill.description?.trim() || null,
+          displayName: null,
+          path: skill.location,
+          scope: getSkillScope(skill.location, cwd),
+          enabled: true
+        })
+      )
+      return mergeProviderSkills(discovered, disabledSkills)
+    })
 
   setSkillEnabled = async (
     path: string,
@@ -817,130 +820,131 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     throw new Error('OpenCode does not expose connected apps through its server API.')
   }
 
-  getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
-    const includeStatistics = Boolean(options.includeStatistics)
-    const authStore = (async () => {
-      const client = (await this.getClientEntry(options.container)).client
-      const native = getOpenCodeV2Client(client)
-      if (!native) throw new Error('OpenCode 2 client is unavailable.')
-      const [credentials, providers] = await Promise.all([
-        native.credential.list(),
-        native.provider.list()
-      ])
-      return Object.fromEntries(
-        credentials
-          .filter((credential) => credential.active && credential.value.type === 'key')
-          .flatMap((credential) => {
-            const value = credential.value
-            if (value.type !== 'key') return []
-            return providers.data
-              .filter(
-                (provider) => (provider.integrationID ?? provider.id) === credential.integrationID
-              )
-              .map((provider) => [provider.id, { type: 'api', key: value.key }])
-          })
-      )
-    })()
-    const [rateLimitsResult, statisticsResult, balancesResult] = await Promise.allSettled([
-      (async () => {
-        const native = getOpenCodeV2Client((await this.getClientEntry(options.container)).client)
+  getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> =>
+    this.withTransientClient(options.container, async (entry) => {
+      const includeStatistics = Boolean(options.includeStatistics)
+      const authStore = (async () => {
+        const client = entry.client
+        const native = getOpenCodeV2Client(client)
         if (!native) throw new Error('OpenCode 2 client is unavailable.')
-        const limits = await native.usage.limits()
-        return limits.data?.go ? mapOpenCodeGoUsageToRateLimits(limits.data.go) : []
-      })(),
-      includeStatistics
-        ? (async (): Promise<{ lifetimeTokens: string }> => {
-            const client = (await this.getClientEntry(options.container)).client
-            const sessions = requireData(
-              await client.experimental.session.list({ limit: 1_000 }, { throwOnError: true })
-            )
-            const lifetimeTokens = sessions.reduce(
-              (sum, session) =>
-                sum +
-                (session.tokens?.input ?? 0) +
-                (session.tokens?.output ?? 0) +
-                (session.tokens?.reasoning ?? 0) +
-                (session.tokens?.cache.read ?? 0),
-              0
-            )
-            return { lifetimeTokens: lifetimeTokens.toLocaleString() }
-          })()
-        : Promise.resolve<{ lifetimeTokens: string } | null>(null),
-      (async () => {
-        const [store, adminKeys, local] = await Promise.all([
-          authStore.catch(() => null),
-          this.adminKeys.list().catch((error: unknown) => {
-            console.error('[OpenCodeProviderAdapter:getUsage] Unable to read admin keys', error)
-            return {}
-          }),
-          isLocalOpenCodeTarget(options.container)
+        const [credentials, providers] = await Promise.all([
+          native.credential.list(),
+          native.provider.list()
         ])
-        // OpenCode prefers saved credentials over environment variables; match that order.
-        const apiKeys = {
-          ...(local ? getOpenCodeEnvironmentApiKeys(process.env) : {}),
-          ...extractOpenCodeApiKeys(store)
-        }
-        return this.balanceCache.get(selectOpenCodeBalanceKeys(apiKeys, adminKeys), {
-          forceRefresh: Boolean(options.forceRefresh)
-        })
+        return Object.fromEntries(
+          credentials
+            .filter((credential) => credential.active && credential.value.type === 'key')
+            .flatMap((credential) => {
+              const value = credential.value
+              if (value.type !== 'key') return []
+              return providers.data
+                .filter(
+                  (provider) => (provider.integrationID ?? provider.id) === credential.integrationID
+                )
+                .map((provider) => [provider.id, { type: 'api', key: value.key }])
+            })
+        )
       })()
-    ])
+      const [rateLimitsResult, statisticsResult, balancesResult] = await Promise.allSettled([
+        (async () => {
+          const native = getOpenCodeV2Client(entry.client)
+          if (!native) throw new Error('OpenCode 2 client is unavailable.')
+          const limits = await native.usage.limits()
+          return limits.data?.go ? mapOpenCodeGoUsageToRateLimits(limits.data.go) : []
+        })(),
+        includeStatistics
+          ? (async (): Promise<{ lifetimeTokens: string }> => {
+              const client = entry.client
+              const sessions = requireData(
+                await client.experimental.session.list({ limit: 1_000 }, { throwOnError: true })
+              )
+              const lifetimeTokens = sessions.reduce(
+                (sum, session) =>
+                  sum +
+                  (session.tokens?.input ?? 0) +
+                  (session.tokens?.output ?? 0) +
+                  (session.tokens?.reasoning ?? 0) +
+                  (session.tokens?.cache.read ?? 0),
+                0
+              )
+              return { lifetimeTokens: lifetimeTokens.toLocaleString() }
+            })()
+          : Promise.resolve<{ lifetimeTokens: string } | null>(null),
+        (async () => {
+          const [store, adminKeys, local] = await Promise.all([
+            authStore.catch(() => null),
+            this.adminKeys.list().catch((error: unknown) => {
+              console.error('[OpenCodeProviderAdapter:getUsage] Unable to read admin keys', error)
+              return {}
+            }),
+            isLocalOpenCodeTarget(options.container)
+          ])
+          // OpenCode prefers saved credentials over environment variables; match that order.
+          const apiKeys = {
+            ...(local ? getOpenCodeEnvironmentApiKeys(process.env) : {}),
+            ...extractOpenCodeApiKeys(store)
+          }
+          return this.balanceCache.get(selectOpenCodeBalanceKeys(apiKeys, adminKeys), {
+            forceRefresh: Boolean(options.forceRefresh)
+          })
+        })()
+      ])
 
-    const errors: string[] = []
-    if (rateLimitsResult.status === 'rejected') {
-      console.error(
-        '[OpenCodeProviderAdapter:getUsage] Unable to load rate limits',
-        rateLimitsResult.reason
-      )
-    }
-    if (
-      rateLimitsResult.status === 'rejected' &&
-      !(rateLimitsResult.reason instanceof OpenCodeGoNoSubscriptionError) &&
-      !(rateLimitsResult.reason instanceof OpenCodeGoApiKeyMissingError)
-    ) {
-      errors.push(
-        rateLimitsResult.reason instanceof Error
-          ? rateLimitsResult.reason.message
-          : 'OpenCode Go usage is unavailable.'
-      )
-    }
-    if (statisticsResult.status === 'rejected') {
-      console.error(
-        '[OpenCodeProviderAdapter:getUsage] Unable to load usage statistics',
-        statisticsResult.reason
-      )
-      errors.push(
-        statisticsResult.reason instanceof Error
-          ? statisticsResult.reason.message
-          : 'OpenCode usage is unavailable.'
-      )
-    }
+      const errors: string[] = []
+      if (rateLimitsResult.status === 'rejected') {
+        console.error(
+          '[OpenCodeProviderAdapter:getUsage] Unable to load rate limits',
+          rateLimitsResult.reason
+        )
+      }
+      if (
+        rateLimitsResult.status === 'rejected' &&
+        !(rateLimitsResult.reason instanceof OpenCodeGoNoSubscriptionError) &&
+        !(rateLimitsResult.reason instanceof OpenCodeGoApiKeyMissingError)
+      ) {
+        errors.push(
+          rateLimitsResult.reason instanceof Error
+            ? rateLimitsResult.reason.message
+            : 'OpenCode Go usage is unavailable.'
+        )
+      }
+      if (statisticsResult.status === 'rejected') {
+        console.error(
+          '[OpenCodeProviderAdapter:getUsage] Unable to load usage statistics',
+          statisticsResult.reason
+        )
+        errors.push(
+          statisticsResult.reason instanceof Error
+            ? statisticsResult.reason.message
+            : 'OpenCode usage is unavailable.'
+        )
+      }
 
-    if (balancesResult.status === 'rejected') {
-      console.error(
-        '[OpenCodeProviderAdapter:getUsage] Unable to load balances',
-        balancesResult.reason
-      )
-    } else errors.push(...balancesResult.value.errors)
+      if (balancesResult.status === 'rejected') {
+        console.error(
+          '[OpenCodeProviderAdapter:getUsage] Unable to load balances',
+          balancesResult.reason
+        )
+      } else errors.push(...balancesResult.value.errors)
 
-    const statistics = statisticsResult.status === 'fulfilled' ? statisticsResult.value : null
-    return {
-      updatedAt: Date.now(),
-      statisticsLoaded: includeStatistics && statisticsResult.status === 'fulfilled',
-      summary: {
-        ...emptyUsageSummary,
-        lifetimeTokens: statistics?.lifetimeTokens ?? null
-      },
-      dailyUsageBuckets: null,
-      rateLimits: [
-        ...this.freeLimits.getRateLimits(getContainerTargetKey(options.container)),
-        ...(rateLimitsResult.status === 'fulfilled' ? rateLimitsResult.value : [])
-      ],
-      rateLimitResetCredits: null,
-      balances: balancesResult.status === 'fulfilled' ? balancesResult.value.balances : [],
-      errors
-    }
-  }
+      const statistics = statisticsResult.status === 'fulfilled' ? statisticsResult.value : null
+      return {
+        updatedAt: Date.now(),
+        statisticsLoaded: includeStatistics && statisticsResult.status === 'fulfilled',
+        summary: {
+          ...emptyUsageSummary,
+          lifetimeTokens: statistics?.lifetimeTokens ?? null
+        },
+        dailyUsageBuckets: null,
+        rateLimits: [
+          ...this.freeLimits.getRateLimits(getContainerTargetKey(options.container)),
+          ...(rateLimitsResult.status === 'fulfilled' ? rateLimitsResult.value : [])
+        ],
+        rateLimitResetCredits: null,
+        balances: balancesResult.status === 'fulfilled' ? balancesResult.value.balances : [],
+        errors
+      }
+    })
 
   resetRateLimits = async (): Promise<'nothingToReset'> => 'nothingToReset'
 
@@ -968,67 +972,69 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     )
   }
 
-  getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> => {
-    const entry = await this.getClientEntry(options.container)
-    const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0)
-    const limit = Math.max(1, Math.min(options.limit ?? 50, 100))
-    const sessions = requireData(
-      await entry.client.experimental.session.list(
-        { cursor: offset, limit, roots: true },
-        { throwOnError: true }
+  getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> =>
+    this.withTransientClient(options.container, async (entry) => {
+      const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0)
+      const limit = Math.max(1, Math.min(options.limit ?? 50, 100))
+      const sessions = requireData(
+        await entry.client.experimental.session.list(
+          { cursor: offset, limit, roots: true },
+          { throwOnError: true }
+        )
       )
-    )
-    const visibleSessions = sessions.filter((session) => !isOneShotSession(session))
-    const statusesRead = entry.client.session
-      .status({}, { throwOnError: true })
-      .then(requireData)
-      .catch((error) => {
-        console.error('[caught:OpenCodeProviderAdapter:getChats:status]', error)
-        return null
-      })
-    const native = getOpenCodeV2Client(entry.client)
-    const chats = await Promise.all(
-      visibleSessions.map(async (session) => {
-        const state = this.rememberSession(session, entry.container)
-        const eventRevision = state.eventRevision
-        // A sidebar row needs only a bounded preview. Recovering a default title
-        // must never download a whole conversation (including its tool bodies).
-        let messages = native
-          ? state.messages.filter((message) => message.info.role === 'user').slice(-1)
-          : state.messages
-        let hasOlder = Boolean(state.historyPagination?.olderCursor)
-        if (!state.messagesHydrated || state.messagesDirty) {
-          const result = await readOpenCodeChatPreview(entry.client, session).catch((error) => {
-            console.error('[caught:OpenCodeProviderAdapter:getChats]', error)
-            return null
-          })
-          messages = result?.messages ?? []
-          hasOlder = result?.hasOlder ?? false
-        }
-        if (!hasOlder && isDefaultOpenCodeTitle(session.title) && !state.fallbackTitle) {
-          const title = getOpenCodeDisplayTitle(session.title, messages)
-          if (title !== session.title) state.fallbackTitle = title
-        }
-        const statuses = await statusesRead
-        if (statuses && state.eventRevision === eventRevision) {
-          const status = statuses[session.id]
-          const limitMessage = getOpenCodeUsageLimitMessage('session.status', { status })
-          if (limitMessage) this.failUsageLimitedTurn(state, entry.client, limitMessage)
-          state.active =
-            !state.usageLimitReached && (status?.type === 'busy' || status?.type === 'retry')
-          if (native && !state.active && !state.usageLimitReached && 'outcome' in session) {
-            state.failed = session.outcome === 'failed'
-            state.stopped = session.outcome === 'interrupted'
+      const visibleSessions = sessions.filter((session) => !isOneShotSession(session))
+      const statusesRead = entry.client.session
+        .status({}, { throwOnError: true })
+        .then(requireData)
+        .catch((error) => {
+          console.error('[caught:OpenCodeProviderAdapter:getChats:status]', error)
+          return null
+        })
+      const native = getOpenCodeV2Client(entry.client)
+      const chats = await Promise.all(
+        visibleSessions.map(async (session) => {
+          const state = this.rememberSession(session, entry.container)
+          const eventRevision = state.eventRevision
+          // A sidebar row needs only a bounded preview. Recovering a default title
+          // must never download a whole conversation (including its tool bodies).
+          let messages = native
+            ? state.messages.filter((message) => message.info.role === 'user').slice(-1)
+            : state.messages
+          let hasOlder = Boolean(state.historyPagination?.olderCursor)
+          if (!state.messagesHydrated || state.messagesDirty) {
+            const result = await readOpenCodeChatPreview(entry.client, session).catch((error) => {
+              console.error('[caught:OpenCodeProviderAdapter:getChats]', error)
+              return null
+            })
+            messages = result?.messages ?? []
+            hasOlder = result?.hasOlder ?? false
           }
-        }
-        return this.createChat(session, messages.slice(-8), state)
-      })
-    )
-    return {
-      chats,
-      nextCursor: sessions.length === limit ? String(offset + sessions.length) : null
-    }
-  }
+          if (!hasOlder && isDefaultOpenCodeTitle(session.title) && !state.fallbackTitle) {
+            const title = getOpenCodeDisplayTitle(session.title, messages)
+            if (title !== session.title) state.fallbackTitle = title
+          }
+          const statuses = await statusesRead
+          if (statuses && state.eventRevision === eventRevision) {
+            const status = statuses[session.id]
+            const limitMessage = getOpenCodeUsageLimitMessage('session.status', { status })
+            if (limitMessage) this.failUsageLimitedTurn(state, entry.client, limitMessage)
+            state.active =
+              !state.usageLimitReached && (status?.type === 'busy' || status?.type === 'retry')
+            if (native && !state.active && !state.usageLimitReached && 'outcome' in session) {
+              state.failed = session.outcome === 'failed'
+              state.stopped = session.outcome === 'interrupted'
+            }
+          }
+          return this.createChat(session, messages.slice(-8), state)
+        })
+      )
+      // Empty histories still own the in-flight status request.
+      await statusesRead
+      return {
+        chats,
+        nextCursor: sessions.length === limit ? String(offset + sessions.length) : null
+      }
+    })
 
   getChat = async (
     chatId: string,
@@ -2095,6 +2101,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     })
     await Promise.all(
       Array.from(entries, async (entry) => {
+        entry.lifetime.dispose()
         entry.terminalTasks.dispose()
         entry.terminals?.forEach((terminals) => terminals.dispose())
         entry.eventAbortController.abort()
@@ -2113,6 +2120,31 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     const terminalTasks = createOpenCodeTerminalTasks()
     const client = await server.getClient()
     const entry: OpenCodeClientEntry = {
+      lifetime: new OpenCodeClientLifetime(
+        () =>
+          Array.from(this.states.values()).some(
+            (state) =>
+              getContainerTargetKey(state.container) === getContainerTargetKey(storedContainer) &&
+              (state.active ||
+                state.pendingApprovals.length > 0 ||
+                state.pendingQuestions.length > 0)
+          ),
+        async () => {
+          const key = getContainerTargetKey(storedContainer)
+          if (this.clientEntries.get(key) === entry) this.clientEntries.delete(key)
+          entry.eventAbortController.abort()
+          entry.terminalTasks.dispose()
+          entry.terminals?.forEach((terminals) => terminals.dispose())
+          this.states.forEach((state) => {
+            if (state.client !== client) return
+            this.closeBrowser(state)
+            state.messagesDirty = true
+            state.client = null
+            state.terminals = undefined
+          })
+          await server.dispose()
+        }
+      ),
       server,
       client,
       container: storedContainer,
@@ -2121,6 +2153,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       terminals: new Map()
     }
     server.onExit((error) => {
+      entry.lifetime.dispose()
       terminalTasks.dispose()
       entry.terminals?.forEach((terminals) => terminals.dispose())
       console.error('[OpenCodeProviderAdapter:createClientEntry] OpenCode server exited', error)
@@ -2139,14 +2172,19 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   }
 
   private getClientEntry = (
-    container?: AppContainerTarget | null
+    container?: AppContainerTarget | null,
+    retain = true
   ): Promise<OpenCodeClientEntry> => {
     const storedContainer = normalizeStoredContainer(container)
     const key = getContainerTargetKey(storedContainer)
+    const acquire = (entry: OpenCodeClientEntry): OpenCodeClientEntry => {
+      if (retain) entry.lifetime.retain()
+      return entry
+    }
     const existing = this.clientEntries.get(key)
-    if (existing) return Promise.resolve(existing)
+    if (existing) return Promise.resolve(acquire(existing))
     const pending = this.clientEntryPromises.get(key)
-    if (pending) return pending
+    if (pending) return pending.then(acquire)
     const promise = this.createClientEntry(storedContainer)
       .then((entry) => {
         this.clientEntries.set(key, entry)
@@ -2154,7 +2192,15 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
       })
       .finally(() => this.clientEntryPromises.delete(key))
     this.clientEntryPromises.set(key, promise)
-    return promise
+    return promise.then(acquire)
+  }
+
+  private withTransientClient = async <T>(
+    container: AppContainerTarget | null | undefined,
+    read: (entry: OpenCodeClientEntry) => Promise<T>
+  ): Promise<T> => {
+    const entry = await this.getClientEntry(container, false)
+    return entry.lifetime.use(() => read(entry))
   }
 
   private consumeEvents = async (entry: OpenCodeClientEntry): Promise<void> => {
@@ -2174,6 +2220,7 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         error
       )
     } finally {
+      entry.lifetime.dispose()
       entry.terminalTasks.dispose()
       entry.terminals?.forEach((terminals) => terminals.dispose())
       if (!entry.eventAbortController.signal.aborted) {

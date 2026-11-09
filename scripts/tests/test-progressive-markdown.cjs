@@ -353,6 +353,29 @@ if (!process.versions.electron) {
         'ordinary rich replies must parse in the worker'
       )
       assert.equal(await run(`document.querySelectorAll('code .token').length>0`), true)
+      const citationPath = '/fixture/output/pdf/mark-velt.pdf'
+      const citation = `:codex-file-citation{path="${citationPath}" purpose="output"}`
+      for (const [key, text] of [
+        ['file-citation', citation],
+        ['file-citation-worker', 'Download ' + citation + '\n\n' + content]
+      ]) {
+        await run(
+          `window.links=[];window.render(${JSON.stringify(text)},${JSON.stringify(key)},true)`
+        )
+        await waitFor(`document.querySelector('[data-file-link-path="${citationPath}"]')`)
+        assert.equal(
+          await run(
+            `document.querySelector('[data-file-link-path="${citationPath}"] .chat-detail__file-link-label').textContent`
+          ),
+          'mark-velt.pdf'
+        )
+        assert.equal(
+          await run(`document.body.textContent.includes(':codex-file-citation{')`),
+          false
+        )
+        await run(`document.querySelector('[data-file-link-path="${citationPath}"]').click()`)
+        assert.deepEqual(await run('window.links'), [[citationPath, citationPath, undefined]])
+      }
       const htmlLinks =
         '[Preview](docs/my%20page.html:12) and [other](file:///fixture/index%20%231.HTM) and [source](/fixture/source.ts)'
       for (const [key, text] of [

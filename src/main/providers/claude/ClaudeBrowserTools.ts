@@ -9,6 +9,14 @@ import {
 
 export const claudeBrowserServerName = 'Claude_Browser'
 
+// Keep the basic browsing workflow usable without a tool-search round trip.
+// The rest of the catalog (including attached Chrome) can still be deferred.
+const alwaysLoadedBrowserTools = new Set(['navigate', 'read_page', 'computer'])
+
+const claudeBrowserInstructions = `${providerBrowserToolInstructions}
+You have browser access through the Claude_Browser MCP server. Use tabs_context to inspect Sele's browser workspace, navigate to open a page (including when there are no tabs), read_page to inspect it, and computer to interact with it. These embedded-browser tools work on macOS, Windows, and Linux without a Chrome extension or a native desktop connection.
+Additional browser actions may be deferred. Use ToolSearch to load them by their full name, for example select:mcp__Claude_Browser__tabs_create or select:mcp__Claude_Browser__form_input. Check the supplied tools before reporting that browser access is unavailable. If a tool fails, report its actual error and any setup it requests.`
+
 /** The Agent SDK carries MCP over its control channel; operations remain provider-neutral. */
 export function createClaudeBrowserIntegration(
   service: BrowserAutomationService,
@@ -21,7 +29,7 @@ export function createClaudeBrowserIntegration(
   const server = createSdkMcpServer({
     name: claudeBrowserServerName,
     version: '1.0.0',
-    instructions: providerBrowserToolInstructions,
+    instructions: claudeBrowserInstructions,
     tools: [
       ...browser.tools.map((definition) =>
         tool(
@@ -29,7 +37,7 @@ export function createClaudeBrowserIntegration(
           definition.description,
           definition.schema.shape,
           (args) => definition.execute(args),
-          { alwaysLoad: definition.alwaysLoad }
+          { alwaysLoad: definition.alwaysLoad || alwaysLoadedBrowserTools.has(definition.name) }
         )
       )
     ]

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { OpenCodeClientLifetime } from './opencode/OpenCodeClientLifetime.ts'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import test from 'node:test'
@@ -429,6 +430,7 @@ test('OpenCode server exit, event-stream loss and disposal invalidate outstandin
         console: { error() {} },
         normalizeStoredContainer: (container) => container ?? null,
         createOpenCodeTerminalTasks: () => createOpenCodeTerminalTasks(() => 0),
+        OpenCodeClientLifetime,
         OpenCodeServerClient: class {
           getClient = async () => client
           onExit = (listener) => {

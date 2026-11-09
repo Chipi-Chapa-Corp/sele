@@ -34,7 +34,7 @@ const names = new Set([
 ])
 // Persistence of queued and steering messages is covered by PendingMessageRestore.test.mjs.
 const code = ts.transpileModule(
-  `class Harness { pendingMessageStore = { restore: async () => [], save() {}, track() {}, invalidate() {}, close: async () => {} }; persistPendingMessages() {} restorePendingMessages() {}  ${declaration.members
+  `class Harness { async withTransientClient(container, read) { return read(await this.getClientEntry(container)) }; pendingMessageStore = { restore: async () => [], save() {}, track() {}, invalidate() {}, close: async () => {} }; persistPendingMessages() {} restorePendingMessages() {}  ${declaration.members
     .filter((member) => names.has(member.name?.getText(source)))
     .map((member) => member.getText(source))
     .join('\n')} }; globalThis.Harness = Harness`,

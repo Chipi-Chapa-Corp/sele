@@ -1943,7 +1943,8 @@ const renderChatItems = (
       if (projection) projection.processedRecordCount += 1
     }
     // The live tail can identify a final answer before the terminal turn event, even at
-    // item/started before any text arrives. If more work follows, it becomes activity again.
+    // item/started before any text arrives. More work in the same segment restores activity;
+    // steering seals the segment and keeps its answer above the new user message.
     // Inspect only the tail so streaming never scans or reloads historical chat details.
     const tail = turn.items.at(-1)
     const finalMessageIndex = isFinishedTurn(turn)
@@ -2101,6 +2102,19 @@ const renderChatItems = (
           scan: checkpointScan
         }
       }
+      // Buffer explicit answers until we know whether work or steering follows. Steering
+      // flushes the answer below; further work in this segment demotes it to progress.
+      // Keep the terminal turn's selected final answer even when it has trailing activity.
+      if (
+        finalMessage &&
+        item.type !== 'userMessage' &&
+        finalMessage.id !== `${turn.id}:${turn.items[finalMessageIndex]?.id}`
+      ) {
+        appendWorkingItems([
+          { type: 'message', id: finalMessage.id, content: finalMessage.content }
+        ])
+        finalMessage = null
+      }
       if (isContextCompactionItem(item)) {
         const itemId = `${turn.id}:${item.id}`
         if (
@@ -2180,7 +2194,13 @@ const renderChatItems = (
         continue
       }
 
-      if (itemIndex === finalMessageIndex && (item.text?.trim() || !isFinishedTurn(turn))) {
+      if (
+        (itemIndex === finalMessageIndex ||
+          (item.type === 'agentMessage' &&
+            item.phase === 'final_answer' &&
+            !isQuestionMessage(item))) &&
+        (item.text?.trim() || !isFinishedTurn(turn))
+      ) {
         finalMessage = createAssistantMessage(turn, item, completedAt)
         continue
       }

@@ -79,6 +79,26 @@ if (!process.versions.electron) {
               </React.Fragment>))
             }
             window.renderTurn('early')
+            const answerSteeringProjection = new CodexTranscriptProjection()
+            window.renderAnswerSteering = (stage = 'answer') => {
+              const items = getChatItems([{ id: 'answer-steering', status: stage === 'complete' ? 'completed' : 'inProgress', items: [
+                { id: 'user', type: 'userMessage', content: [{ type: 'text', text: 'Make a character sheet' }] },
+                { id: 'sheet', type: 'agentMessage', phase: 'final_answer', text: 'Almost complete character sheet.' },
+                ...(stage === 'answer' ? [] : [
+                  { id: 'steer', type: 'userMessage', content: [{ type: 'text', text: 'Make a nice PDF please' }] },
+                  ...(stage === 'steer' ? [] : [
+                    { id: 'pdf-tool', type: 'commandExecution', command: 'echo building PDF', status: 'completed' },
+                    ...(stage === 'working' ? [] : [{ id: 'pdf', type: 'agentMessage', phase: 'final_answer', text: 'Finished PDF.' }])
+                  ])
+                ])
+              ] }], null, {}, answerSteeringProjection)
+              const model = buildChatConversationModel(items)
+              flushSync(() => root.render(<React.Fragment key="answer-steering">
+                {items.map(item => <ChatDetailItem key={item.id} item={item}
+                  progressDisclosureTarget={model.steeredWorkingStepDisclosureTargets.get(item.id)}
+                  progressSettings={{expandProgressOnStart:true, collapseProgressOnFinish:true}} />)}
+              </React.Fragment>))
+            }
             window.renderOpenCodeThought = (stage = 'thinking') => {
               const items = ${JSON.stringify(openCodeThoughtItems)}[stage]
               flushSync(() => root.render(<React.Fragment key="opencode-thought-fixture">
@@ -275,6 +295,28 @@ if (!process.versions.electron) {
       })()`),
         true
       )
+      for (const stage of ['answer', 'steer', 'working', 'final', 'complete']) {
+        await run(`window.renderAnswerSteering(${JSON.stringify(stage)})`)
+        state = await inspect()
+        assert.deepEqual(
+          state.standalone,
+          [
+            'Almost complete character sheet.',
+            ...(['final', 'complete'].includes(stage) ? ['Finished PDF.'] : [])
+          ],
+          `steering retains the streamed answer outside progress (${stage})`
+        )
+        assert.equal(
+          await run(`(() => {
+          const answer = document.querySelector('.chat-detail__message--assistant')
+          const steer = [...document.querySelectorAll('.chat-detail__message--user')]
+            .find(element => element.textContent.includes('Make a nice PDF please'))
+          return !answer.closest('details') && (!steer || answer.getBoundingClientRect().bottom <= steer.getBoundingClientRect().top)
+        })()`),
+          true,
+          'the existing answer stays visible above steering'
+        )
+      }
       const steeringSettings = {
         expandProgressOnStart: true,
         collapseProgressOnFinish: true,

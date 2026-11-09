@@ -28,6 +28,8 @@ function harness({
   installed = true
 } = {}) {
   const commands = []
+  const installations = []
+  const diagnostics = []
   const commit = 'a'.repeat(64)
   const handlers = {}
   let tick
@@ -44,7 +46,8 @@ function harness({
       downloads++
       if (downloadError) throw new Error('Download failed')
     },
-    quitAndInstall: () => {
+    quitAndInstall: (...args) => {
+      installations.push(args)
       restarts++
     }
   })
@@ -56,7 +59,17 @@ function harness({
         ? '/Applications/Sele.app/Contents/MacOS/Sele'
         : '/test',
     quit: () => {
-      restarts++
+      for (const name of ['before-quit', 'will-quit']) {
+        let prevented = false
+        app.emit(name, {
+          preventDefault: () => {
+            prevented = true
+          }
+        })
+        if (prevented) return
+      }
+      if ((platform ?? (flatpak ? 'linux' : 'win32')) !== 'win32') restarts++
+      app.emit('quit', {}, 0)
     }
   })
   const channels = Object.fromEntries(
@@ -113,7 +126,7 @@ app-commit=${'b'.repeat(64)}`
       }
     },
     './logging': {
-      logDiagnostic: () => {},
+      logDiagnostic: (...args) => diagnostics.push(args),
       handleLoggedIpc: (channel, callback) => {
         handlers[channel] = callback
       }
@@ -147,7 +160,10 @@ app-commit=${'b'.repeat(64)}`
   vm.runInNewContext(source, context)
   context.exports.registerAppUpdate()
   return {
+    app,
     commands,
+    installations,
+    diagnostics,
     updater,
     state: () => handlers.getAppUpdate(),
     tick: () => tick(),
@@ -204,8 +220,103 @@ test('only an explicit update downloads and restarts; failures retain a retryabl
   assert.equal(failing.state().status, 'error')
   assert.equal(failing.state().version, '2.14.0')
   assert.equal(failing.counts().restarts, 0)
+  assert.equal(failing.app.listenerCount('quit'), 0)
   await failing.install()
   assert.equal(failing.counts().downloads, 2)
+})
+
+test('Windows waits for provider cleanup and database closure before launching NSIS once', async () => {
+  const h = harness()
+  const file = ts.createSourceFile(
+    'application.ts',
+    readFileSync(new URL('./application.ts', import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true
+  )
+  const listeners = file.statements.filter(
+    (node) =>
+      ts.isExpressionStatement(node) &&
+      ts.isCallExpression(node.expression) &&
+      node.expression.expression.getText(file) === 'app.on' &&
+      ['before-quit', 'will-quit'].includes(node.expression.arguments[0]?.text)
+  )
+  assert.equal(listeners.length, 2)
+  let releaseProviders
+  let releaseDatabase
+  let databaseStarted = false
+  const providers = new Promise((resolve) => {
+    releaseProviders = resolve
+  })
+  const database = new Promise((resolve) => {
+    releaseDatabase = resolve
+  })
+  const noop = () => {}
+  vm.runInNewContext(
+    ts.transpileModule(
+      `let finishingQuit = false, quitReady = false, closingDatabase = false, databaseClosed = false;
+       ${listeners.map((node) => node.getText(file)).join('\n')}`,
+      { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
+    ).outputText,
+    {
+      app: h.app,
+      beginProviderIpcShutdown: noop,
+      disposeTerminalSessions: async () => {},
+      stopLocalAccess: noop,
+      disposeProviderAdapters: () => providers,
+      stopPtys: noop,
+      stopModelPricingRefresh: noop,
+      flushTokenUsage: noop,
+      bufferedCommands: { dispose: noop },
+      disposeDatabase: () => {
+        databaseStarted = true
+        return database
+      },
+      setImmediate,
+      console
+    }
+  )
+  await settle()
+  await h.install()
+  await settle()
+  assert.equal(h.state().status, 'updating')
+  assert.equal(databaseStarted, false)
+  assert.deepEqual(h.installations, [], 'installer must not interrupt provider cleanup')
+  await h.install()
+  assert.equal(h.counts().downloads, 1)
+  releaseProviders()
+  await settle()
+  assert.equal(databaseStarted, true)
+  assert.deepEqual(h.installations, [], 'will-quit can still delay database closure')
+  releaseDatabase()
+  await settle()
+  await settle()
+  assert.deepEqual(h.installations, [[false, true]])
+  h.app.emit('quit', {}, 0)
+  assert.equal(h.installations.length, 1)
+})
+
+test('Windows does not install while window close is cancelled or after an abnormal exit', async () => {
+  for (const exitCode of [0, 1]) {
+    const h = harness()
+    h.app.on('will-quit', (event) => event.preventDefault())
+    await settle()
+    await h.install()
+    assert.deepEqual(h.installations, [])
+    h.app.emit('quit', {}, exitCode)
+    assert.equal(h.installations.length, exitCode === 0 ? 1 : 0)
+  }
+})
+
+test('Windows updater diagnostics include informational download and installer messages', async () => {
+  const h = harness()
+  await settle()
+  for (const level of ['info', 'warn', 'error']) {
+    h.updater.logger[level]('updater detail')
+    assert.deepEqual(h.diagnostics.at(-1), [level, 'app-update', 'updater detail'])
+  }
+  await h.install()
+  assert.ok(h.diagnostics.some((entry) => entry[2].includes('waiting for clean shutdown')))
+  assert.ok(h.diagnostics.some((entry) => entry[2].includes('launching installer')))
 })
 
 test('development builds never check or install', async () => {
