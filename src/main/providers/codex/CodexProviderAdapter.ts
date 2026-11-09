@@ -4858,12 +4858,38 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const promise = (async (): Promise<CodexTurn> => {
       try {
-        const started = await start()
-        await bindCodexSubmittedMessageToTurn(pendingTurnId, started.turn.id)
-        return this.reconcileStartedTurn(threadId, pendingTurnId, started.turn)
-      } catch (error) {
-        await deleteCodexSubmittedMessages([pendingTurnId])
-        throw error
+        let started: TurnStartResponse
+        try {
+          started = await start()
+        } catch (error) {
+          // The native echo may have accepted (and even completed) the submission
+          // before its RPC reply was lost. Only an explicit client ID proves delivery.
+          const accepted = this.threads
+            .get(threadId)
+            ?.turns.find(
+              (turn) =>
+                turn.local !== true &&
+                turn.items.some((item) => getCodexUserMessageClientId(item) === pendingTurnId)
+            )
+          if (!accepted) {
+            await deleteCodexSubmittedMessages([pendingTurnId])
+            throw error
+          }
+          started = { turn: accepted }
+        }
+        // The RPC reply is an authoritative identity binding. Install it before yielding
+        // to persistence: live events and history reads can finish this turn meanwhile.
+        const turn = this.reconcileStartedTurn(threadId, pendingTurnId, started.turn)
+        this.emitChatUpdated(threadId)
+        try {
+          await bindCodexSubmittedMessageToTurn(pendingTurnId, started.turn.id)
+        } catch (error) {
+          // Accepted work must not be reported as a failed submission or removed by callers.
+          console.error(`Unable to persist accepted Codex turn ${started.turn.id}`, error)
+        }
+        return (
+          this.threads.get(threadId)?.turns.find((candidate) => candidate.id === turn.id) ?? turn
+        )
       } finally {
         if (this.pendingTurnStarts.get(threadId)?.pendingTurnId === pendingTurnId) {
           this.pendingTurnStarts.delete(threadId)
@@ -5287,8 +5313,44 @@ export class CodexProviderAdapter implements ProviderAdapter {
         })
       )
     )
+    // History is another authoritative source of the client -> server association.
+    // Bind the cached placeholder before projecting the page; otherwise local overlays
+    // retain it alongside the native turn, and cleanup discards the evidence linking them.
+    const echoedTurnsByClientId = new Map(
+      turns.flatMap((turn) =>
+        turn.items.flatMap((item) => {
+          const clientId = getCodexUserMessageClientId(item)
+          return clientId ? [[clientId, turn] as const] : []
+        })
+      )
+    )
+    for (const submission of submissions) {
+      const turn =
+        echoedTurnsByClientId.get(submission.clientMessageId) ??
+        turns.find((turn) => turn.id === submission.turnId)
+      if (
+        !turn ||
+        !this.threads
+          .get(threadId)
+          ?.turns.some(
+            (candidate) => candidate.id === submission.clientMessageId && candidate.local === true
+          ) ||
+        (this.pendingTurnIds.get(threadId) !== submission.clientMessageId &&
+          !isCodexTurnTerminal(turn))
+      )
+        continue
+      const [reconciled] = this.reconcileAuthoritativeTurnLifecycles(threadId, [turn])
+      this.reconcileStartedTurn(threadId, submission.clientMessageId, reconciled)
+    }
     const echoedSubmissionIds = submissions
-      .filter((submission) => echoedClientIds.has(submission.clientMessageId))
+      // An echo may arrive while turn/start is still waiting to bind this row. Deleting
+      // an unbound submission makes that successful start fail its persistence check.
+      .filter(
+        (submission) =>
+          echoedClientIds.has(submission.clientMessageId) &&
+          (submission.turnId ||
+            this.pendingTurnStarts.get(threadId)?.pendingTurnId !== submission.clientMessageId)
+      )
       .map((submission) => submission.clientMessageId)
     await deleteCodexSubmittedMessages(echoedSubmissionIds)
 
@@ -7116,11 +7178,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const pendingTurnId = this.pendingTurnIds.get(threadId) ?? null
     if (!pendingTurnId) return null
 
-    const existingTurn = this.threads
-      .get(threadId)
-      ?.turns.find((candidate) => candidate.id === turn.id)
-    if (existingTurn && isCodexTurnTerminal(existingTurn)) return null
-
+    // A terminal server turn can still have an unbound local submission. Match its
+    // explicit client ID even after completion; reconciliation preserves terminal status.
     return turn.items.some((item) => getCodexUserMessageClientId(item) === pendingTurnId)
       ? pendingTurnId
       : null
