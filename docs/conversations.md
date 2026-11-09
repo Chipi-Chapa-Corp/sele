@@ -116,18 +116,13 @@ the Sele profile record the exact units and target environment before launch. A
 private target-side launch permit prevents delayed starts after cleanup. A missing
 permit after an OS restart retires the old boundary; the next execution gets a fresh one.
 
-The **Chat processes** button in the terminal toolbar lists kernel cgroup members
-with their PID, command, and working directory. With no chat selected, it lists all
-recorded launches, including launches that have not been assigned a chat. **Open log** is available when a
-process's stdout or stderr is a regular file; it tails that exact file in a new
-terminal. It does not recreate an interactive session for a process that discarded
-its terminal. Existing provider terminal attachments continue to use their original
-streams. **Stop all** cancels native work and scheduled retries, then stops the chat's
-owned services. Marking the chat done uses the same ownership cleanup.
+Marking a chat done cancels native work and scheduled retries, then stops its owned
+services through the existing cleanup path. Existing provider terminal attachments
+continue to use their original streams.
 
 When the required manager or tools are unavailable, the provider can still run and
-the process panel explicitly reports **Tracking unavailable**. A previously tracked
-boundary never silently switches to untracked execution. Processes started before
+its ownership record explicitly reports that tracking is unavailable. A previously
+tracked boundary never silently switches to untracked execution. Processes started before
 this feature have no ownership receipt; their existing environment-marker cleanup
 remains a best-effort compatibility path. Deliberate cgroup migration and work
 submitted to external daemons or remote hosts are outside a local descendant boundary.
@@ -144,5 +139,4 @@ The opt-in `providerProcessCgroups` regression uses fixture providers to verify 
 real environment-cleared `setsid` child, receipt recovery, and cleanup that preserves
 a second chat. Run it with `SELE_TEST_PROCESS_CGROUPS=1` inside an isolated session
 with its own systemd user manager. It skips when that private manager is unavailable;
-it must never use the user's session bus as a fallback. `test:ui -- terminal-actions`
-covers the process list, exact log paths (including shell metacharacters), and Stop all.
+it must never use the user's session bus as a fallback.

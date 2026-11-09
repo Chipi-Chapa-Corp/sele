@@ -96,35 +96,3 @@
 .terminal-panel__host .xterm-viewport {
   background-color: var(--control-surface);
 }
-
-.terminal-processes {
-  flex: 0 1 auto;
-  max-height: 45%;
-  overflow: auto;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color, #4444);
-  font-size: 12px;
-}
-.terminal-processes__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.terminal-processes p {
-  color: var(--text-secondary);
-  margin: 4px 0 8px;
-}
-.terminal-processes__process {
-  padding: 6px 0;
-}
-.terminal-processes__process code,
-.terminal-processes__process small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.terminal-processes__process small {
-  color: var(--text-secondary);
-}

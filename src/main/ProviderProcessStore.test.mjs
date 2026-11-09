@@ -127,7 +127,6 @@ test('unavailable tracking is explicit and never silently downgrades an existing
     args: ['arg']
   })
   assert.equal((await h.store.list('claude', 'unavailable'))[0].status, 'unavailable')
-  assert.equal((await h.store.list('claude', 'unavailable'))[0].canStop, false)
   await assert.rejects(h.store.stop(unavailable.record.id), /systemd/)
 })
 
@@ -244,7 +243,6 @@ test('a recorded boundary can still be stopped when process inspection fails', a
   h.units.add(scope.record.units[0])
   const [group] = await h.store.list('codex', 'chat')
   assert.equal(group.status, 'unavailable')
-  assert.equal(group.canStop, true)
   await h.store.stop(group.id)
   assert.equal(h.units.size, 0)
 })

@@ -1,5 +1,5 @@
 import { withChatProcessRuntimes } from './ChatProcessRuntimes'
-import { getProviderProcessStore, setProviderProcessStopper } from '../providerProcesses'
+import { getProviderProcessStore } from '../providerProcesses'
 import { createLimitResetDelivery } from './LimitResetDelivery'
 import { LimitResetQueue } from './LimitResetQueue'
 import { ExpiringResetCredits } from './ExpiringResetCredits'
@@ -404,26 +404,6 @@ const cleanupChatProcesses = createChatProcessCleanup({
   metadata: getChatMetadata,
   stopTerminals: stopChatTerminalSessions,
   killProcesses: killChatProcesses
-})
-
-setProviderProcessStopper(async (id) => {
-  const store = getProviderProcessStore()
-  const record = await store.get(id)
-  const failures: unknown[] = []
-  if (record.chatId) {
-    try {
-      await cleanupChatProcesses([record.chatId], record.providerId)
-    } catch (error) {
-      failures.push(error)
-    }
-  }
-  // The receipt's saved environment can differ from a chat moved since launch.
-  try {
-    await store.stop(id)
-  } catch (error) {
-    failures.push(error)
-  }
-  if (failures.length) throw new AggregateError(failures, 'Unable to stop all chat processes.')
 })
 
 const backgroundChatRecovery = new BackgroundChatRecovery({

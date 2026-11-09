@@ -534,9 +534,6 @@ export const createRendererBridge = (
   }
 
   const terminalApi: TerminalRendererApi = {
-    listProcessGroups: (chatKey) =>
-      transport.invoke(terminalIpcChannels.listProcessGroups, chatKey),
-    stopProcessGroup: (id) => transport.invoke(terminalIpcChannels.stopProcessGroup, id),
     listAgentSessions: () => transport.invoke(terminalIpcChannels.listAgentSessions),
     attachAgentSession: (sessionId, sourceId) =>
       transport.invoke(terminalIpcChannels.attachAgentSession, sessionId, sourceId),

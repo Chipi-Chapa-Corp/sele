@@ -3,8 +3,17 @@ import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { AppContainerTarget } from '../shared/app'
 import type { ProviderId } from '../shared/provider'
-import type { ProviderProcessGroup } from '../shared/terminal'
 import { getContainerTargetKey } from './containerTarget.ts'
+
+export type ProviderProcessGroup = {
+  id: string
+  providerId: ProviderId
+  chatId: string | null
+  container: AppContainerTarget | null
+  status: 'tracked' | 'unavailable'
+  reason: string | null
+  processes: { pid: number; command: string; cwd: string | null; logs: string[] }[]
+}
 
 export type ProviderProcessRecord = {
   id: string
@@ -154,13 +163,6 @@ export class ProviderProcessStore {
     return undefined
   }
 
-  get = async (id: string): Promise<ProviderProcessRecord> => {
-    await this.load()
-    const record = this.records.get(id)
-    if (!record) throw new Error('Unknown provider process boundary.')
-    return record
-  }
-
   create = async (
     providerId: ProviderId,
     accountId: string | null,
@@ -308,7 +310,6 @@ export class ProviderProcessStore {
         chatId: record.chatId,
         container: record.container,
         status: record.unavailable ? 'unavailable' : 'tracked',
-        canStop: !record.unavailable && record.units.length > 0,
         reason: record.unavailable,
         processes: []
       }

@@ -57,10 +57,3 @@ export const getProviderHostExecutableCommand = async (
   const executable = await resolveHostExecutable(file, options)
   return getProviderHostCommand(executable.file, args, { ...options, env: executable.env })
 }
-
-let stopGroup: ((id: string) => Promise<void>) | undefined
-export const setProviderProcessStopper = (stop: (id: string) => Promise<void>): void => {
-  stopGroup = stop
-}
-export const stopProviderProcessGroup = (id: string): Promise<void> =>
-  stopGroup ? stopGroup(id) : getProviderProcessStore().stop(id)

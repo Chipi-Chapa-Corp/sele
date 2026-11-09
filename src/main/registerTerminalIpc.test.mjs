@@ -65,10 +65,6 @@ const harness = (now = Date.now, { persistent = new Map(), cleanup, discoveryErr
     '../shared/expectedAbsence.ts': {}
   })
   const terminal = load(terminalSource, {
-    './providerProcesses': {
-      stopProviderProcessGroup: async () => {},
-      getProviderProcessStore: () => ({ list: async () => [], stop: async () => {} })
-    },
     electron: {
       app: { getPath: () => '/tmp' },
       ipcMain: { on: (channel, handler) => events.set(channel, handler) }

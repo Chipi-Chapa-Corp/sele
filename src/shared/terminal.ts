@@ -18,17 +18,6 @@ export type AgentTerminalSession = {
   closeOnCommandFinish?: boolean
 }
 
-export type ProviderProcessGroup = {
-  id: string
-  providerId: ProviderId
-  chatId: string | null
-  container: AppContainerTarget | null
-  status: 'tracked' | 'unavailable'
-  canStop: boolean
-  reason: string | null
-  processes: { pid: number; command: string; cwd: string | null; logs: string[] }[]
-}
-
 export type TerminalCreateOptions = {
   sessionId: string
   cwd?: string | null
@@ -85,8 +74,6 @@ export type TerminalAttachResult = {
 }
 
 export type TerminalRendererApi = {
-  listProcessGroups: (chatKey: string | null) => Promise<ProviderProcessGroup[]>
-  stopProcessGroup: (groupId: string) => Promise<void>
   listAgentSessions: () => Promise<AgentTerminalSession[]>
   attachAgentSession: (sessionId: string, agentSessionId: string) => Promise<TerminalAttachResult>
   stopAgentSession: (agentSessionId: string) => Promise<void>
@@ -103,8 +90,6 @@ export type TerminalRendererApi = {
 }
 
 export const terminalIpcChannels = {
-  listProcessGroups: 'terminal:list-process-groups',
-  stopProcessGroup: 'terminal:stop-process-group',
   listAgentSessions: 'terminal:list-agent-sessions',
   attachAgentSession: 'terminal:attach-agent-session',
   stopAgentSession: 'terminal:stop-agent-session',

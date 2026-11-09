@@ -1,4 +1,3 @@
-import { getProviderProcessStore, stopProviderProcessGroup } from './providerProcesses'
 import { handleClientRequest } from './logging'
 import { onClientMessage, type ClientEvent, type RendererClient } from './clientIpc'
 import { spawn as spawnChildProcess } from 'node:child_process'
@@ -578,20 +577,6 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
 }
 
 export const registerTerminalIpc = (): void => {
-  handleClientRequest(terminalIpcChannels.listProcessGroups, (_event, key: unknown) => {
-    if (key === null) return getProviderProcessStore().list()
-    if (typeof key !== 'string') throw new Error('A valid chat is required.')
-    const separator = key.indexOf(':')
-    const provider = key.slice(0, separator) as ProviderId
-    const chatId = key.slice(separator + 1)
-    if (separator < 1 || !chatId || !providerIds.includes(provider))
-      throw new Error('A valid chat is required.')
-    return getProviderProcessStore().list(provider, chatId)
-  })
-  handleClientRequest(terminalIpcChannels.stopProcessGroup, (_event, id: unknown) => {
-    if (typeof id !== 'string') throw new Error('A process boundary is required.')
-    return stopProviderProcessGroup(id)
-  })
   handleClientRequest(terminalIpcChannels.listAgentSessions, async () => {
     await recoverPersistentTerminals()
     return agentTerminalSessions.list()
