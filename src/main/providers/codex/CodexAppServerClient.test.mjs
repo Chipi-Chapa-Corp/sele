@@ -1,4 +1,5 @@
 import { supportsLocalHostTools } from '../hostToolTarget.ts'
+import { getCodexNativeChromeConfig } from './CodexNativeChrome.ts'
 import assert from 'node:assert/strict'
 import { EventEmitter, getEventListeners } from 'node:events'
 import { readFileSync } from 'node:fs'
@@ -27,7 +28,10 @@ const brokenPipe = () => Object.assign(new Error('write EPIPE'), { code: 'EPIPE'
 
 // Use real Node streams so a failed write emits the asynchronous 'error' that
 // escapes a synchronous try/catch. No Electron or real Codex process is launched.
-const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
+const fixture = (
+  t,
+  { failInitialize = false, initializeResult = {}, installedPlugins = [] } = {}
+) => {
   const children = []
   const logs = []
   const context = {
@@ -46,8 +50,10 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
     getProviderHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
     getHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
     getCodexExecutableError,
+    getCodexExecutable: () => 'fixture',
     isCodexExecutableUnavailable,
     supportsLocalHostTools,
+    getCodexNativeChromeConfig,
     registerBrowserUseSession() {},
     removeBrowserUseSession() {},
     removeBrowserUseSessions() {},
@@ -91,7 +97,19 @@ const fixture = (t, { failInitialize = false, initializeResult = {} } = {}) => {
               child.stdout.write(
                 `${JSON.stringify({
                   id: message.id,
-                  result: message.method === 'initialize' ? initializeResult : {}
+                  result:
+                    message.method === 'initialize'
+                      ? initializeResult
+                      : message.method === 'plugin/installed'
+                        ? {
+                            marketplaces: [
+                              {
+                                name: 'openai-bundled',
+                                plugins: installedPlugins.map((name) => ({ name, installed: true }))
+                              }
+                            ]
+                          }
+                        : {}
                 })}\n`
               )
             })
@@ -160,6 +178,59 @@ test('browser declarations are sent on interactive start/resume and excluded fro
       )
     }
   }
+})
+
+test('native Codex Chrome reuses installed plugins and omits duplicate Sele Chrome tools', async (t) => {
+  const { client, children } = fixture(t, {
+    installedPlugins: ['chrome', 'browser', 'unified-computer-use']
+  })
+  client.container = null
+  client.dynamicTools.specs = [
+    { type: 'namespace', name: 'chrome', tools: [] },
+    { type: 'namespace', name: 'sele_browser', tools: [] }
+  ]
+  for (const method of ['thread/start', 'thread/resume', 'thread/fork']) {
+    await client.request(
+      method,
+      { threadId: 'fixture', config: { 'features.recommended_plugins': false } },
+      { nativeChrome: true }
+    )
+    const request = children[0].requests.at(-1)
+    assert.equal(request.params.config['features.recommended_plugins'], false)
+    assert.equal(request.params.config['plugins."chrome@openai-bundled".enabled'], true)
+    assert.equal(
+      request.params.config['plugins."unified-computer-use@openai-bundled".enabled'],
+      true
+    )
+    assert.equal(request.params.nativeChrome, undefined)
+    if (method !== 'thread/fork')
+      assert.deepEqual(
+        request.params.dynamicTools.map((tool) => tool.name),
+        ['sele_browser']
+      )
+  }
+})
+
+test('missing native Codex plugins give setup instructions before creating a thread', async (t) => {
+  const { client, children } = fixture(t)
+  client.container = null
+  await assert.rejects(client.request('thread/start', {}, { nativeChrome: true }), /Set up Chrome/)
+  assert.ok(!children[0].requests.some((request) => request.method === 'thread/start'))
+})
+
+test('restricted and remote Codex queries do not enable native browser plugins', async (t) => {
+  const { client, children } = fixture(t)
+  for (const [container, params] of [
+    [null, { sandbox: 'read-only' }],
+    [null, { ephemeral: true }],
+    [{ kind: 'container', tool: 'ssh', name: 'remote' }, {}],
+    [{ kind: 'container', tool: 'distrobox', name: 'dev' }, {}]
+  ]) {
+    client.container = container
+    await client.request('thread/start', params, { nativeChrome: true })
+    assert.equal(children[0].requests.at(-1).params.config, undefined)
+  }
+  assert.ok(!children[0].requests.some((request) => request.method === 'plugin/installed'))
 })
 
 test('background recovery initializes a retained runtime without submitting a turn', async (t) => {

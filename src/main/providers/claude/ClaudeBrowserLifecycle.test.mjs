@@ -1,5 +1,6 @@
 import { getContainerTargetKey } from '../../containerTarget.ts'
 import { supportsLocalHostTools } from '../hostToolTarget.ts'
+import { usesNativeChrome } from '../nativeChrome.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -16,7 +17,7 @@ const source = ts.createSourceFile(
 const adapter = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name.text === 'ClaudeProviderAdapter'
 )
-const members = new Set(['startStateQuery', 'closeStateQuery'])
+const members = new Set(['startStateQuery', 'closeStateQuery', 'ensureStateQuery'])
 const code = ts.transpileModule(
   `class Harness { ${adapter.members
     .filter((member) => members.has(member.name?.getText(source)))
@@ -25,7 +26,13 @@ const code = ts.transpileModule(
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
 ).outputText
 
-function setup({ remote = false, container = null, readOnly = false, failQuery = false } = {}) {
+function setup({
+  remote = false,
+  container = null,
+  readOnly = false,
+  failQuery = false,
+  nativeChrome = false
+} = {}) {
   const events = []
   let queryOptions
   const permissionHandler = async () => ({ behavior: 'deny', message: 'test permission policy' })
@@ -36,6 +43,7 @@ function setup({ remote = false, container = null, readOnly = false, failQuery =
   const control = { close: () => events.push('query.close') }
   const context = vm.createContext({
     supportsLocalHostTools,
+    usesNativeChrome,
     clearTimeout,
     AsyncMessageQueue: class {
       close() {
@@ -44,8 +52,8 @@ function setup({ remote = false, container = null, readOnly = false, failQuery =
     },
     getBrowserAutomationService: () => ({}),
     createClaudeTerminalSessions: () => ({ dispose: () => events.push('terminals.close') }),
-    createClaudeBrowserIntegration: (_service, scope) => {
-      events.push(['browser.create', scope])
+    createClaudeBrowserIntegration: (_service, scope, nativeChrome) => {
+      events.push(['browser.create', scope, nativeChrome])
       return integration
     },
     claudeBrowserServerName: 'Claude_Browser',
@@ -65,7 +73,11 @@ function setup({ remote = false, container = null, readOnly = false, failQuery =
     query: null,
     browser: null,
     queryStartupRevision: 0,
-    options: { cwd: '/project', sandboxMode: readOnly ? 'read-only' : 'workspace-write' },
+    options: {
+      cwd: '/project',
+      sandboxMode: readOnly ? 'read-only' : 'workspace-write',
+      nativeChrome
+    },
     cwd: '/project',
     container: remote ? { kind: 'container', tool: 'ssh', name: 'remote' } : container,
     messages: [],
@@ -119,6 +131,42 @@ test('remote and read-only Claude queries cannot acquire the local browser capab
     assert.equal(harness.options().mcpServers, undefined)
     assert.ok(!harness.events.some((event) => Array.isArray(event)))
   }
+})
+
+test('official Claude Chrome attaches only to local writable interactive queries', async () => {
+  const local = setup({ nativeChrome: true })
+  await local.instance.startStateQuery(local.state)
+  assert.deepEqual(Object.keys(local.options().extraArgs), ['chrome'])
+  assert.equal(local.events.find((event) => Array.isArray(event))[2], true)
+  assert.equal(local.state.queryNativeChrome, true)
+  await local.instance.closeStateQuery(local.state)
+  assert.equal(local.state.queryNativeChrome, null)
+  for (const options of [
+    {},
+    { readOnly: true },
+    { remote: true },
+    { container: { kind: 'container', tool: 'distrobox', name: 'dev' } }
+  ]) {
+    const harness = setup({ ...options, nativeChrome: Boolean(Object.keys(options).length) })
+    await harness.instance.startStateQuery(harness.state)
+    assert.deepEqual(Object.keys(harness.options().extraArgs), ['no-chrome'])
+    assert.equal(harness.state.queryNativeChrome, false)
+    await harness.instance.closeStateQuery(harness.state)
+  }
+})
+
+test('an idle Claude query restarts when official Chrome is enabled or disabled', async () => {
+  const harness = setup()
+  await harness.instance.startStateQuery(harness.state)
+  const options = { ...harness.state.options, nativeChrome: true }
+  await harness.instance.ensureStateQuery(harness.state, options)
+  assert.equal(harness.state.queryNativeChrome, true)
+  assert.deepEqual(Object.keys(harness.options().extraArgs), ['chrome'])
+  await harness.instance.ensureStateQuery(harness.state, { ...options, nativeChrome: false })
+  assert.equal(harness.state.queryNativeChrome, false)
+  assert.deepEqual(Object.keys(harness.options().extraArgs), ['no-chrome'])
+  assert.equal(harness.events.filter((event) => event === 'query.close').length, 2)
+  await harness.instance.closeStateQuery(harness.state)
 })
 
 test('Claude local container queries receive all host tools with their real workspace scope', async () => {

@@ -84,6 +84,7 @@ export type SettingsPanelProps = {
   ) => void
   handleChatUsageDisplayChange: (displayUsage: AppChatUsageDisplay) => void
   handleCodexRecommendedPluginsChange: (showRecommendedPlugins: boolean) => void
+  handleNativeChromeChange: (provider: 'claude' | 'codex', enabled: boolean) => void
   handleNetworkRetrySettingChange: (
     key: 'networkRetryCount' | 'networkRetryDelaySeconds',
     value: number

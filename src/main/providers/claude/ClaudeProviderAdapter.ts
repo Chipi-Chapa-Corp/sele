@@ -1,6 +1,7 @@
 import { getInitialProviderContainers } from '../../providerProcessContext'
 import { getProviderHostExecutableCommand } from '../../providerProcesses'
 import { supportsLocalHostTools } from '../hostToolTarget'
+import { usesNativeChrome } from '../nativeChrome'
 import { isProviderUsageLimitError } from '../../../shared/providerErrors'
 import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createClaudeTerminalSessions } from './ClaudeTerminalSessions'
@@ -239,6 +240,7 @@ type ClaudeSessionState = {
   resultSettling: boolean
   contextUsage: ProviderChatContextUsage | null
   queryReadOnly: boolean | null
+  queryNativeChrome: boolean | null
   queryModel: string | undefined | null
   queryStartupRevision: number
   backgroundTaskIds: Set<string>
@@ -2271,6 +2273,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       },
       tools: options?.sandboxMode === 'read-only' ? [...claudeReadOnlyAllowedTools] : undefined,
       strictMcpConfig: options?.sandboxMode === 'read-only' ? true : undefined,
+      // Background/control queries never attach the user's Chrome session.
+      extraArgs: { 'no-chrome': null },
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,
       forwardSubagentText: true,
@@ -2313,6 +2317,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       resultSettling: false,
       contextUsage: null,
       queryReadOnly: null,
+      queryNativeChrome: null,
       queryModel: null,
       queryStartupRevision: 0,
       backgroundTaskIds: new Set(),
@@ -2721,7 +2726,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
   ): Promise<void> => {
     if (state.query) {
       const enabled = (options ?? state.options)?.promptSuggestions === true
-      if (state.active || state.queryPromptSuggestions === enabled) return
+      const nativeChrome = usesNativeChrome(options ?? state.options, state.container)
+      if (
+        state.active ||
+        (state.queryPromptSuggestions === enabled &&
+          Boolean(state.queryNativeChrome) === nativeChrome)
+      )
+        return
     }
     await this.startStateQuery(state, options)
   }
@@ -2755,6 +2766,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         throw new Error('Claude session startup was canceled.')
       }
       const queryReadOnly = state.options?.sandboxMode === 'read-only'
+      const nativeChrome = usesNativeChrome(state.options, state.container)
       const isNew =
         !state.historyPagination &&
         state.metadata === null &&
@@ -2765,12 +2777,16 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       // Local container sources share Sele’s scoped host tools.
       const browser =
         browserService && supportsLocalHostTools(state.container) && !queryReadOnly
-          ? createClaudeBrowserIntegration(browserService, {
-              providerId: 'claude',
-              sessionId: state.id,
-              cwd: state.cwd ?? state.options?.cwd ?? '',
-              containerKey: getContainerTargetKey(state.container)
-            })
+          ? createClaudeBrowserIntegration(
+              browserService,
+              {
+                providerId: 'claude',
+                sessionId: state.id,
+                cwd: state.cwd ?? state.options?.cwd ?? '',
+                containerKey: getContainerTargetKey(state.container)
+              },
+              nativeChrome
+            )
           : null
       let control: Query
       try {
@@ -2778,6 +2794,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           prompt: input,
           options: {
             ...this.getBaseQueryOptions(state.options, runtime),
+            extraArgs: nativeChrome ? { chrome: null } : { 'no-chrome': null },
             promptSuggestions: state.options?.promptSuggestions === true,
             ...(browser ? { mcpServers: { [claudeBrowserServerName]: browser.server } } : {}),
             canUseTool: this.createPermissionHandler(state),
@@ -2823,6 +2840,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         readOutputFile: (file) => createAgentTerminalOutputReader(file, state.container)
       })
       state.queryReadOnly = queryReadOnly
+      state.queryNativeChrome = nativeChrome
       state.queryModel = getClaudeModel(state.options)
       state.queryPromptSuggestions = state.options?.promptSuggestions === true
       void this.consumeStateQuery(state, control)
@@ -2853,6 +2871,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.input = null
     state.active = false
     state.queryReadOnly = null
+    state.queryNativeChrome = null
     state.queryModel = null
     state.backgroundTaskIds.clear()
     state.terminalTaskIds?.clear()
@@ -2881,7 +2900,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (!options || !state.query) return
     state.options = options
     const needsReadOnlyQuery = options.sandboxMode === 'read-only'
-    if (state.queryReadOnly !== needsReadOnlyQuery) {
+    if (
+      state.queryReadOnly !== needsReadOnlyQuery ||
+      Boolean(state.queryNativeChrome) !== usesNativeChrome(options, state.container)
+    ) {
       const interrupt = state.active
         ? state.query.interrupt().catch((error: unknown) => {
             if (isExpectedClaudeQueryShutdownError(error)) return

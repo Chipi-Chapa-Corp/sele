@@ -1,3 +1,4 @@
+import { usesNativeChrome } from '../nativeChrome.ts'
 import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -73,6 +74,7 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
   const loads = new Map()
   let queryCreations = 0
   const context = vm.createContext({
+    usesNativeChrome,
     isClaudeAuthenticationFailure,
     isProviderUsageLimitError,
     isClaudeInternalUserMessage,

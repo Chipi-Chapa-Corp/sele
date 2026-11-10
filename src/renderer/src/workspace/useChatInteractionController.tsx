@@ -540,13 +540,19 @@ export function useChatInteractionController(dependencies: ChatInteractionContro
     content.addEventListener('sele:visualization-follow-up', followUp)
     return () => content.removeEventListener('sele:visualization-follow-up', followUp)
   }, [contentRef, selectedChat, handleSendMessage])
-  const handleQuoteSelectedMessageText = useCallback((content: string, comment: string): void => {
-    setMessageBoxQuoteRequest((currentRequest) => ({
-      id: (currentRequest?.id ?? 0) + 1,
-      content,
-      comment
-    }))
-  }, [])
+  const quoteRequestSequenceRef = useRef(0)
+  const handleQuoteSelectedMessageText = useCallback(
+    (content: string, comment: string): void => {
+      if (!selectedChat) return
+      setMessageBoxQuoteRequest({
+        id: ++quoteRequestSequenceRef.current,
+        scopeKey: getChatKey(selectedChat),
+        content,
+        comment
+      })
+    },
+    [selectedChat]
+  )
   useEffect(() => {
     runPromptActionRef.current = async (prompt, target) => {
       await handleSendMessage(prompt, undefined, [], null, [], [], undefined, target)

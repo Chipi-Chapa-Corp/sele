@@ -37,6 +37,7 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     selectedReview = null,
     onOpenAttachment,
     onOpenFileLink,
+    onQuoteRequestHandled,
     onSelectedReviewChange,
     onStop
   } = props
@@ -125,7 +126,12 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
   }, [error])
 
   useEffect(() => {
-    if (!quoteRequest || editing || handledQuoteRequestIdRef.current === quoteRequest.id) {
+    if (
+      !quoteRequest ||
+      quoteRequest.scopeKey !== draftScopeKey ||
+      editing ||
+      handledQuoteRequestIdRef.current === quoteRequest.id
+    ) {
       return
     }
 
@@ -133,31 +139,28 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     const comment = quoteRequest.comment.trim()
     if (!content || !comment) return
 
-    let focusFrame: number | null = null
     const updateFrame = window.requestAnimationFrame(() => {
       handledQuoteRequestIdRef.current = quoteRequest.id
       draft.setSelectedQuotes((quotes) => [
         ...quotes,
         { id: crypto.randomUUID(), content, comment }
       ])
+      onQuoteRequestHandled?.(quoteRequest.id)
       mentions.setFileMention(null)
       mentions.setSkillMention(null)
       mentions.setProjectMention(null)
 
-      focusFrame = window.requestAnimationFrame(() => {
-        const textarea = textareaRef.current
-        if (!textarea) return
+      const textarea = textareaRef.current
+      if (!textarea) return
 
-        textarea.focus({ preventScroll: true })
-        textarea.setSelectionRange(textarea.value.length, textarea.value.length)
-      })
+      textarea.focus({ preventScroll: true })
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
     })
 
     return () => {
       window.cancelAnimationFrame(updateFrame)
-      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
     }
-  }, [editing, quoteRequest, draft.setSelectedQuotes])
+  }, [editing, quoteRequest, draftScopeKey, draft.setSelectedQuotes, onQuoteRequestHandled])
   const sending = useComposerSubmission({
     options: props,
     draft: draft,

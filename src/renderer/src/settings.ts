@@ -157,6 +157,7 @@ export type AppBrowserSettings = {
 
 export type AppCodexProviderSettings = {
   showRecommendedPlugins: boolean
+  nativeChrome: boolean
 }
 
 export const appAppearanceZoomLevelDefault = appWindowZoomLevelDefault
@@ -218,6 +219,7 @@ export type AppSettings = {
   performance: AppPerformanceSettings
   providers: {
     codex: AppCodexProviderSettings
+    claude: { nativeChrome: boolean }
   }
   git: {
     enablePullRequests: boolean
@@ -436,8 +438,10 @@ export const defaultAppSettings: AppSettings = {
   performance: defaultAppPerformanceSettings,
   providers: {
     codex: {
-      showRecommendedPlugins: false
-    }
+      showRecommendedPlugins: false,
+      nativeChrome: false
+    },
+    claude: { nativeChrome: false }
   },
   git: {
     enablePullRequests: false,
@@ -1109,6 +1113,10 @@ export const readStoredAppSettings = (): AppSettings => {
       providers.codex && typeof providers.codex === 'object' && !Array.isArray(providers.codex)
         ? (providers.codex as Record<string, unknown>)
         : {}
+    const claudeProvider =
+      providers.claude && typeof providers.claude === 'object' && !Array.isArray(providers.claude)
+        ? (providers.claude as Record<string, unknown>)
+        : {}
     const git =
       parsedValue.git && typeof parsedValue.git === 'object' && !Array.isArray(parsedValue.git)
         ? (parsedValue.git as Record<string, unknown>)
@@ -1244,11 +1252,13 @@ export const readStoredAppSettings = (): AppSettings => {
       },
       providers: {
         codex: {
+          nativeChrome: codexProvider.nativeChrome === true,
           showRecommendedPlugins:
             typeof codexProvider.showRecommendedPlugins === 'boolean'
               ? codexProvider.showRecommendedPlugins
               : defaultAppSettings.providers.codex.showRecommendedPlugins
-        }
+        },
+        claude: { nativeChrome: claudeProvider.nativeChrome === true }
       },
       git: {
         enablePullRequests:
@@ -1432,6 +1442,7 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
       performance?: Partial<AppPerformanceSettings>
       providers?: {
         codex?: Partial<AppCodexProviderSettings>
+        claude?: { nativeChrome: boolean }
       }
       git?: {
         enablePullRequests?: boolean
@@ -1634,12 +1645,16 @@ export const writeStoredAppSettings = (settings: AppSettings): void => {
 
     if (
       settings.providers.codex.showRecommendedPlugins !==
-      defaultAppSettings.providers.codex.showRecommendedPlugins
+        defaultAppSettings.providers.codex.showRecommendedPlugins ||
+      settings.providers.codex.nativeChrome ||
+      settings.providers.claude.nativeChrome
     ) {
       storedSettings.providers = {
         codex: {
-          showRecommendedPlugins: settings.providers.codex.showRecommendedPlugins
-        }
+          showRecommendedPlugins: settings.providers.codex.showRecommendedPlugins,
+          nativeChrome: settings.providers.codex.nativeChrome
+        },
+        claude: { nativeChrome: settings.providers.claude.nativeChrome }
       }
     }
 

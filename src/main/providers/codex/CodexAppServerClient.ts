@@ -22,6 +22,7 @@ import { registerCodexDesktopTools } from './CodexDesktopTools'
 import { registerCodexBrowserTools } from './CodexBrowserTools'
 import { supportsLocalHostTools } from '../hostToolTarget'
 import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
+import { getCodexNativeChromeConfig } from './CodexNativeChrome'
 
 type RpcError = {
   code: number
@@ -56,6 +57,8 @@ type PendingRequest = {
 }
 
 type RequestOptions = {
+  /** Client-only option; never sent as an app-server protocol field. */
+  nativeChrome?: boolean
   signal?: AbortSignal
   isExpectedError?: (error: Error) => boolean
   requireConnection?: boolean
@@ -239,6 +242,25 @@ export class CodexAppServerClient {
     if (options?.requireConnection && !this.process) throw new Error('Codex connection is closed.')
     await this.start()
     const input = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
+    const nativeChrome =
+      options?.nativeChrome === true &&
+      (!this.container || this.container.kind === 'host') &&
+      input.ephemeral !== true &&
+      input.sandbox !== 'read-only' &&
+      ['thread/start', 'thread/resume', 'thread/fork'].includes(method)
+    if (nativeChrome) {
+      const installed = await this.request<Parameters<typeof getCodexNativeChromeConfig>[0]>(
+        'plugin/installed',
+        {}
+      )
+      params = {
+        ...input,
+        config: {
+          ...(input.config as Record<string, unknown> | undefined),
+          ...getCodexNativeChromeConfig(installed)
+        }
+      }
+    }
     if (
       (method === 'thread/start' || method === 'thread/resume') &&
       input.ephemeral !== true &&
@@ -246,7 +268,12 @@ export class CodexAppServerClient {
       input.dynamicTools === undefined &&
       this.dynamicTools.specs.length > 0
     ) {
-      params = { ...input, dynamicTools: this.dynamicTools.specs }
+      params = {
+        ...(params as Record<string, unknown>),
+        dynamicTools: this.dynamicTools.specs.filter(
+          (spec) => !nativeChrome || spec.name !== 'chrome'
+        )
+      }
     }
     if (method === 'turn/start' && typeof input.threadId === 'string') {
       const sandbox = input.sandboxPolicy as { type?: string } | undefined

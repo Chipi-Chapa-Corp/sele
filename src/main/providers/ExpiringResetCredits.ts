@@ -22,6 +22,7 @@ const expiration = (credit: ProviderAccountRateLimitResetCredit): number =>
 
 type Dependencies = {
   sources: () => Promise<(AppContainerTarget | null)[]>
+  available: (container: AppContainerTarget | null) => Promise<boolean>
   accounts: (container: AppContainerTarget | null) => Promise<ProviderAccountConfiguration>
   usage: (options: ProviderSourceOptions) => Promise<ProviderAccountUsage>
   reset: (options: ProviderSourceOptions) => Promise<ProviderAccountRateLimitResetOutcome>
@@ -83,6 +84,8 @@ export class ExpiringResetCredits {
 
   private checkSource = async (container: AppContainerTarget | null): Promise<void> => {
     try {
+      // Saved credentials can outlive the CLI installation in this source.
+      if (!(await this.dependencies.available(container)) || this.stopped) return
       const configuration = await this.dependencies.accounts(container)
       if (this.stopped || !configuration.available) return
       await Promise.all(

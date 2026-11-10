@@ -458,6 +458,7 @@ test('a runtime resolved before switching cannot spawn a process afterward', asy
   const { h, calls } = setup()
   const runtime = await h.getQueryRuntime(null)
   const options = h.getBaseQueryOptions(undefined, runtime)
+  assert.deepEqual(Object.keys(options.extraArgs), ['no-chrome'])
   await h.changeAccount(null, async () => {})
   assert.throws(() => options.spawnClaudeCodeProcess({ args: [], env: {} }), /account changed/)
   assert.equal(

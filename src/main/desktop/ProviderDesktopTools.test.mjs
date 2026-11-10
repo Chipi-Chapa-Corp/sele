@@ -103,6 +103,23 @@ test('Claude can discover and use the embedded browser before loading deferred t
   }
 })
 
+test('official Claude Chrome keeps the embedded browser and avoids Sele pairing tools', () => {
+  const integration = api.createClaudeBrowserIntegration(
+    { createClient: () => ({ close() {} }) },
+    scope,
+    true
+  )
+  try {
+    const names = integration.server.tools.map((tool) => tool.name)
+    assert.ok(names.includes('tabs_context'))
+    assert.ok(names.includes('native_computer'))
+    assert.ok(!names.some((name) => name.startsWith('chrome_')))
+    assert.match(integration.server.instructions, /official claude-in-chrome/)
+  } finally {
+    integration.close()
+  }
+})
+
 test('Codex desktop tools advertise executable namespaced tools with valid schemas', async () => {
   const registry = new CodexDynamicTools()
   const integration = api.registerCodexDesktopTools(registry)

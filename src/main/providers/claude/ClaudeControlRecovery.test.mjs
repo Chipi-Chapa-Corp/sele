@@ -1,3 +1,4 @@
+import { usesNativeChrome } from '../nativeChrome.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
@@ -34,6 +35,7 @@ const helpers = source.statements.filter(
     )
 )
 const context = vm.createContext({
+  usesNativeChrome,
   setTimeout,
   clearTimeout,
   console,

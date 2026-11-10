@@ -388,6 +388,9 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         ? { reasoningEffort: effectiveReasoningEffort }
         : {}),
       sandboxMode: effectiveSandboxMode,
+      ...(configProviderId === 'claude' || configProviderId === 'codex'
+        ? { nativeChrome: effectiveAppSettings.providers[configProviderId].nativeChrome }
+        : {}),
       ...(configProviderId === 'codex'
         ? {
             showRecommendedPlugins: effectiveAppSettings.providers.codex.showRecommendedPlugins

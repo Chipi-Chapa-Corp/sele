@@ -71,7 +71,6 @@ import type {
   AppProjectIconOptions,
   AppSelectedAttachment,
   AppSelectedImage,
-  AppSourceAvailability,
   AppSourceAvailabilityOptions,
   AppUpdateSshEnvironmentOptions,
   AppWriteFileContentsOptions,
@@ -83,14 +82,9 @@ import {
   isAppProjectIconKind,
   normalizeAppWindowZoomLevel
 } from '../shared/app'
-import type { ProviderId } from '../shared/provider'
 import { isExpectedCommandAbsenceError } from '../shared/expectedAbsence.ts'
 import { requireContainerTarget } from './containerTarget'
-import {
-  getCurrentContainerHostBridge,
-  getCurrentContainerTarget,
-  isCurrentContainerTarget
-} from './currentContainer'
+import { getCurrentContainerTarget, isCurrentContainerTarget } from './currentContainer'
 import {
   getProjectIcon as getStoredProjectIcon,
   setProjectIcon as setStoredProjectIcon
@@ -138,20 +132,11 @@ import {
   selectGitPushRemote
 } from './gitSync'
 import { getHostCommand, isRunningInFlatpak } from './hostProcess'
-import {
-  availabilityFoundMarker,
-  getContainerCommandAvailabilityScript,
-  loadOptionalFile,
-  logUnexpectedOptionalGitProbeFailure
-} from './optionalProbe'
+import { loadOptionalFile, logUnexpectedOptionalGitProbeFailure } from './optionalProbe'
+import { getSourceAvailability } from './providerAvailability'
 import { getProcessFailureMessage } from './processFailure'
 import { openExternalLink } from './externalLink'
 import { browserIpcChannels } from '../shared/browser'
-import { getCodexExecutable } from './providers/codex/CodexExecutable'
-import { getClaudeExecutable } from './providers/claude/ClaudeExecutable'
-import { getCopilotExecutable } from './providers/copilot/CopilotExecutable'
-import { getOpenCodeInstallations } from './providers/opencode/OpenCodeInstallations'
-import { supportsOpenCodeServerContainer } from './providers/opencode/OpenCodeServerClient'
 
 export const getAppWindowState = (window: BrowserWindow): AppWindowState => ({
   isMaximized: window.isMaximized()
@@ -176,15 +161,6 @@ const getDefaultPath = (value: unknown): string | undefined => {
 
 const externalLinkProtocols = new Set(['http:', 'https:', 'file:', 'mailto:', 'tel:'])
 const maxExternalLinkLength = 8_192
-const sourceAvailabilityTimeoutMs = 5_000
-const sourceAvailabilityMaxBuffer = 64 * 1024
-const sourceAvailabilityProviderIds = [
-  'codex',
-  'claude',
-  'copilot',
-  'opencode-v2'
-] as const satisfies readonly ProviderId[]
-const sourceAvailabilityCommands = ['git', ...sourceAvailabilityProviderIds] as const
 
 const isExternalLinkAction = (value: unknown): value is AppExternalLinkAction =>
   value === 'copy' || value === 'open'
@@ -1013,161 +989,6 @@ const getSourceAvailabilityOptions = (value: unknown): AppSourceAvailabilityOpti
     container: requireContainerTarget((value as { container?: unknown }).container, {
       optional: true
     })
-  }
-}
-
-const runAvailabilityCommand = async (
-  file: string,
-  args: string[],
-  container: AppContainerTarget | null | undefined
-): Promise<{ success: boolean; stdout: string }> => {
-  const hostCommand = await getHostCommand(file, args, {
-    container,
-    env: process.env
-  }).catch((error: unknown) => {
-    if (container || !isExpectedCommandAbsenceError(error)) {
-      console.warn('Unable to resolve the provider availability command', error)
-    }
-    return null
-  })
-  if (!hostCommand) return { success: false, stdout: '' }
-
-  return new Promise((resolve) => {
-    try {
-      const child = execFile(
-        hostCommand.file,
-        hostCommand.args,
-        {
-          cwd: hostCommand.cwd,
-          encoding: 'utf8',
-          env: hostCommand.env,
-          maxBuffer: sourceAvailabilityMaxBuffer,
-          timeout: sourceAvailabilityTimeoutMs
-        },
-        (error, stdout) => {
-          if (error) {
-            if (container || !isExpectedCommandAbsenceError(error)) {
-              console.warn('Provider availability command failed', error)
-            }
-          }
-          resolve({ success: !error, stdout })
-        }
-      )
-      child.stdin?.end()
-    } catch (error) {
-      if (container || !isExpectedCommandAbsenceError(error)) {
-        console.warn('Unable to start the provider availability command', error)
-      }
-      resolve({ success: false, stdout: '' })
-    }
-  })
-}
-
-const isCommandAvailableInSource = (
-  command: string,
-  container: AppContainerTarget | null | undefined
-): Promise<boolean> => {
-  if (container?.kind === 'container') {
-    return runAvailabilityCommand(
-      'sh',
-      ['-lc', getContainerCommandAvailabilityScript(command)],
-      container
-    ).then(({ success, stdout }) => success && stdout.includes(availabilityFoundMarker))
-  }
-
-  return runAvailabilityCommand(command, ['--version'], null).then(({ success }) => success)
-}
-
-const isProviderAvailableInSource = async (
-  providerId: ProviderId,
-  container: AppContainerTarget | null | undefined
-): Promise<boolean> => {
-  if (providerId === 'codex') {
-    if (container?.kind === 'container') {
-      return isCommandAvailableInSource('codex', container)
-    }
-
-    return runAvailabilityCommand(getCodexExecutable(), ['--version'], null).then(
-      ({ success }) => success
-    )
-  }
-
-  if (providerId === 'copilot') {
-    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
-      return isCommandAvailableInSource('copilot', container)
-    }
-
-    return runAvailabilityCommand(getCopilotExecutable(), ['--version'], null).then(
-      ({ success }) => success
-    )
-  }
-
-  if (providerId === 'claude') {
-    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
-      return isCommandAvailableInSource('claude', container)
-    }
-
-    return runAvailabilityCommand(getClaudeExecutable(), ['--version'], null).then(
-      ({ success }) => success
-    )
-  }
-
-  if (providerId === 'opencode-v2') {
-    if (!(await supportsOpenCodeServerContainer(container))) return false
-    const installations = await getOpenCodeInstallations(container)
-    return installations.some((item) => item.major === 2)
-  }
-
-  return false
-}
-
-const getSourceAvailability = async (
-  options: AppSourceAvailabilityOptions = {}
-): Promise<AppSourceAvailability> => {
-  const container = options.container
-  if (container?.kind === 'container') {
-    const script = sourceAvailabilityCommands
-      .map(
-        (command) => `command -v ${command} >/dev/null 2>&1 && printf '%s\\n' '${command}' || true`
-      )
-      .join('\n')
-    const { stdout } = await runAvailabilityCommand('sh', ['-lc', script], container)
-    const availableCommands = new Set(stdout.split('\n').filter(Boolean))
-    const openCodeServerSupported = await supportsOpenCodeServerContainer(container)
-    const openCodeInstallations = openCodeServerSupported
-      ? await getOpenCodeInstallations(container)
-      : []
-
-    return {
-      gitAvailable: availableCommands.has('git'),
-      providers: sourceAvailabilityProviderIds.map((providerId) => ({
-        providerId,
-        available:
-          providerId === 'opencode-v2'
-            ? openCodeInstallations.some((item) => item.major === 2)
-            : availableCommands.has(providerId)
-      }))
-    }
-  }
-
-  const [gitAvailable, providers] = await Promise.all([
-    isCommandAvailableInSource('git', container),
-    Promise.all(
-      sourceAvailabilityProviderIds.map(async (providerId) => ({
-        providerId,
-        available: await isProviderAvailableInSource(providerId, container).catch(
-          (error: unknown) => {
-            console.warn(`Unable to check availability for provider ${providerId}`, error)
-            return false
-          }
-        )
-      }))
-    )
-  ])
-
-  return {
-    gitAvailable,
-    providers
   }
 }
 

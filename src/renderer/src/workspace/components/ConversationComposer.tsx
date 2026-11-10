@@ -103,6 +103,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     goalObjective,
     onSetGoal,
     messageBoxQuoteRequest,
+    handleQuoteRequestHandled,
     models,
     modelsError,
     modelsLoading,
@@ -499,6 +500,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             providerResourcesRevision={providerResourcesRevision}
             projectCwd={changesProjectCwd}
             quoteRequest={messageBoxQuoteRequest}
+            onQuoteRequestHandled={handleQuoteRequestHandled}
             cwd={changesCwd}
             reasoningEffort={effectiveReasoningEffort}
             sandboxMode={effectiveSandboxMode}

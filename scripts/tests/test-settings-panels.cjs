@@ -63,6 +63,7 @@ if (!process.versions.electron) {
               'handleChatDropdownSettingChange',
               'handleChatUsageDisplayChange',
               'handleCodexRecommendedPluginsChange',
+              'handleNativeChromeChange',
               'handleNetworkRetrySettingChange',
               'handleContinuePromptChange',
               'handleLinkedChatSummaryPromptChange',
@@ -161,6 +162,28 @@ if (!process.versions.electron) {
           await run('document.querySelector("[role=tabpanel]").id'),
           'settings-panel-' + tab
         )
+      }
+      await run("renderPanel('browser'); window.calls=[]")
+      await settle()
+      for (const provider of ['claude', 'codex']) {
+        assert.equal(
+          await run(
+            `document.querySelector('[aria-labelledby="settings-native-chrome-${provider}"]').checked`
+          ),
+          false
+        )
+        await run(
+          `document.querySelector('[aria-labelledby="settings-native-chrome-${provider}"]').click()`
+        )
+      }
+      assert.deepEqual(await run('window.calls'), [
+        ['handleNativeChromeChange', 'claude', true],
+        ['handleNativeChromeChange', 'codex', true]
+      ])
+      for (const provider of ['claude', 'codex', 'copilot', 'opencode']) {
+        await run(`renderPanel('providers', {newSessionProvider:${JSON.stringify(provider)}})`)
+        await settle()
+        assert.equal(await run('document.querySelector("#settings-native-chrome")'), null)
       }
       await run(`renderPanel('localNetwork')`)
       await settle()

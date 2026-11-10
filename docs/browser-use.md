@@ -29,6 +29,45 @@ Claude always loads the embedded browser's tab listing, navigation, page reading
 interaction tools; the remaining actions can be discovered with `ToolSearch`. Its MCP
 instructions distinguish the cross-platform embedded browser from Chrome and desktop connections.
 
+### Official provider Chrome integrations
+
+**Settings → Browser & desktop → Official Chrome integrations**
+opts local writable chats into the provider's own Chrome connection on their next turn.
+These switches persist independently. Copilot and OpenCode keep using Sele's shared-tab connection.
+Native messaging is host-local; SSH, Docker, Podman, Distrobox, and Toolbox sessions do not
+receive the official connection. Background/control and read-only queries do not enable it.
+
+For **Claude**, install [Claude in Chrome](https://code.claude.com/docs/en/chrome) and sign
+in with the same supported Claude account as Claude Code. Sele passes `--chrome` to interactive
+SDK queries. The official account-level bridge can also list Chrome browsers on other devices;
+a connected MCP server alone does not prove a local browser is connected. Sele keeps the usual
+permission handler. Changing the switch restarts an idle query
+on its next turn. The embedded Browser pane remains available; Sele's separate `chrome_*` tools
+are omitted in official mode so the agent does not request the wrong extension pairing.
+Background/control queries explicitly pass `--no-chrome`.
+
+For **Codex**, first set up Chrome in the [official desktop app](https://developers.openai.com/codex/app/chrome-extension)
+and keep that app running. Sele requires the installed `chrome@openai-bundled` plugin and enables
+`unified-computer-use@openai-bundled` alongside it when installed. The in-app Browser plugin is
+not a substitute for Chrome. Thread-local config
+enables those installed plugins without changing global Codex config or the native messaging
+host. Missing plugins produce setup instructions before creating/resuming a thread. New and
+resumed threads omit Sele's `chrome` tool namespace in official mode. Website permissions and
+connection errors come from the official runtime; specialized browser authentication/review
+challenges still have the limitations described in [provider interactions](provider-interactions.md).
+
+Fixture checks cover flags, plugin selection, scope boundaries, settings persistence and the
+settings controls. Real extension pairing and authenticated browsing, including macOS native
+host behavior, require a separate test with those extensions and accounts installed.
+
+`node --experimental-strip-types scripts/diagnostics/check-native-chrome.mjs` checks the real
+Claude SDK/Chrome MCP connection and the real Codex app-server's installed Chrome plugin.
+On Linux, run it through isolated-gui with `SELE_CLAUDE_PATH` and `SELE_CODEX_PATH` pointing
+to container-runnable CLI executables. Set `SELE_NATIVE_CHROME_REPORT` to save its JSON report.
+It never selects browsers, opens tabs or reads pages, and ignores remote Claude browsers.
+Exit 2 means local prerequisites are blocked. A successful readiness check still does not
+prove navigation, typing or clicking; those need an authenticated test browser.
+
 ## Code boundaries
 
 - `BrowserPanel` / `useBrowserAutomation`: tab state, workspace selection, and setting checks.

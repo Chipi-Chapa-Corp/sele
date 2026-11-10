@@ -36,6 +36,28 @@ const setup = () => {
   return { settings: module.exports, stored }
 }
 
+test('official Chrome settings are opt-in per provider and survive reload', () => {
+  const { settings, stored } = setup()
+  stored.set(
+    settings.appSettingsStorageKey,
+    JSON.stringify({ providers: { codex: { showRecommendedPlugins: true } } })
+  )
+  const loaded = settings.readStoredAppSettings()
+  assert.equal(loaded.providers.codex.nativeChrome, false)
+  assert.equal(loaded.providers.claude.nativeChrome, false)
+  for (const provider of ['claude', 'codex']) {
+    const current = settings.readStoredAppSettings()
+    current.providers[provider].nativeChrome = true
+    settings.writeStoredAppSettings(current)
+    const reloaded = settings.readStoredAppSettings()
+    assert.equal(reloaded.providers[provider].nativeChrome, true)
+    assert.equal(reloaded.providers.codex.showRecommendedPlugins, true)
+  }
+  settings.writeStoredAppSettings(settings.defaultAppSettings)
+  assert.equal(settings.readStoredAppSettings().providers.claude.nativeChrome, false)
+  assert.equal(settings.readStoredAppSettings().providers.codex.nativeChrome, false)
+})
+
 test('new and existing settings default to ten retries every two seconds', () => {
   const { settings, stored } = setup()
   assert.equal(settings.readStoredAppSettings().chat.networkRetryCount, 10)

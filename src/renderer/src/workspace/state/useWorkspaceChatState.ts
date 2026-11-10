@@ -117,6 +117,9 @@ export function useWorkspaceChatState() {
 
   const [messageBoxQuoteRequest, setMessageBoxQuoteRequest] =
     useState<MessageBoxQuoteRequest | null>(null)
+  const handleQuoteRequestHandled = useCallback((id: number): void => {
+    setMessageBoxQuoteRequest((request) => (request?.id === id ? null : request))
+  }, [])
 
   const [approvalResolution, setApprovalResolution] = useState<ApprovalResolutionState>({
     approvalId: null,
@@ -214,6 +217,7 @@ export function useWorkspaceChatState() {
     setEditingMessage,
     messageBoxQuoteRequest,
     setMessageBoxQuoteRequest,
+    handleQuoteRequestHandled,
     approvalResolution,
     setApprovalResolution,
     userInputResolution,

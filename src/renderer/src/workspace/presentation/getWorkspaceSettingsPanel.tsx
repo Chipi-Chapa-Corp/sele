@@ -114,6 +114,7 @@ export function getWorkspaceSettingsPanel({
       writeChatGroupingPreference(preference)
     },
     handleCodexRecommendedPluginsChange: settingsActions.handleCodexRecommendedPluginsChange,
+    handleNativeChromeChange: settingsActions.handleNativeChromeChange,
     handleContinuePromptChange: settingsActions.handleContinuePromptChange,
     handleLinkedChatSummaryPromptChange: settingsActions.handleLinkedChatSummaryPromptChange,
     handleDeleteProviderAccount: accountActions.handleDeleteProviderAccount,

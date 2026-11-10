@@ -66,6 +66,7 @@ export type MessageBoxProps = {
   providerResourcesRevision?: number
   projectCwd?: string | null
   quoteRequest?: MessageBoxQuoteRequest | null
+  onQuoteRequestHandled?: (id: number) => void
   cwd?: string | null
   reasoningEffort: ProviderReasoningEffort
   serviceTier: ProviderServiceTier | null
@@ -127,6 +128,7 @@ export type MessageBoxProps = {
 
 export type MessageBoxQuoteRequest = {
   id: number
+  scopeKey: string
   content: string
   comment: string
 }

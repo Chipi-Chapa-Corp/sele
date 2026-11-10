@@ -274,6 +274,15 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
       }
     }))
   }
+  const handleNativeChromeChange = (provider: 'claude' | 'codex', nativeChrome: boolean): void => {
+    updateAppSettings((currentSettings) => ({
+      ...currentSettings,
+      providers: {
+        ...currentSettings.providers,
+        [provider]: { ...currentSettings.providers[provider], nativeChrome }
+      }
+    }))
+  }
   const handleAppearanceZoomLevelInputChange = (value: string): void => {
     setAppearanceZoomLevelInputDraft({ key: settingsScopeKey, value })
 
@@ -735,6 +744,7 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     handleChatDropdownSettingChange,
     handleChatUsageDisplayChange,
     handleCodexRecommendedPluginsChange,
+    handleNativeChromeChange,
     handleContinuePromptChange,
     handleLinkedChatSummaryPromptChange,
     handleGitCommitMessageGenerationChange,

@@ -3595,12 +3595,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.runWithContainer(this.getThreadContainer(chatId ?? '', options), async () => {
       let id = chatId
       if (!id) {
-        const response = await this.client.request<ThreadStartResponse>('thread/start', {
-          cwd: options.cwd,
-          historyMode: 'paginated',
-          ...getThreadAccessOptions(options),
-          ...getThreadModelOptions(options)
-        })
+        const response = await this.client.request<ThreadStartResponse>(
+          'thread/start',
+          {
+            cwd: options.cwd,
+            historyMode: 'paginated',
+            ...getThreadAccessOptions(options),
+            ...getThreadModelOptions(options)
+          },
+          { nativeChrome: options?.nativeChrome }
+        )
         id = response.thread.id
         this.rememberThreadContainer(id)
         this.cacheThread(response.thread)
@@ -3644,13 +3648,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot start a chat with an empty message')
     }
 
-    const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
-      cwd: options?.cwd,
-      historyMode: 'paginated',
-      config: getRecommendedPluginsConfig(options),
-      ...getThreadAccessOptions(options),
-      ...getThreadModelOptions(options)
-    })
+    const startedThread = await this.client.request<ThreadStartResponse>(
+      'thread/start',
+      {
+        cwd: options?.cwd,
+        historyMode: 'paginated',
+        config: getRecommendedPluginsConfig(options),
+        ...getThreadAccessOptions(options),
+        ...getThreadModelOptions(options)
+      },
+      { nativeChrome: options?.nativeChrome }
+    )
     assertSupportedCodexHistory(startedThread.thread)
     this.rememberThreadContainer(startedThread.thread.id)
     await onChatCreated?.(startedThread.thread.id)
@@ -3824,13 +3832,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot fork a chat with an active turn')
     }
 
-    const fork = await this.client.request<ThreadForkResponse>('thread/fork', {
-      threadId: chatId,
-      excludeTurns: true,
-      config: getRecommendedPluginsConfig(options),
-      ...getThreadAccessOptions(options),
-      ...getThreadModelOptions(options)
-    })
+    const fork = await this.client.request<ThreadForkResponse>(
+      'thread/fork',
+      {
+        threadId: chatId,
+        excludeTurns: true,
+        config: getRecommendedPluginsConfig(options),
+        ...getThreadAccessOptions(options),
+        ...getThreadModelOptions(options)
+      },
+      { nativeChrome: options?.nativeChrome }
+    )
     assertSupportedCodexHistory(fork.thread)
     this.rememberThreadContainer(fork.thread.id)
     await onForkCreated?.(fork.thread.id)
@@ -5626,14 +5638,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (existingThread) assertSupportedCodexHistory(existingThread)
     let resume: ThreadResumeResponse
     try {
-      resume = await this.client.request<ThreadResumeResponse>('thread/resume', {
-        threadId,
-        config: getRecommendedPluginsConfig(options),
-        excludeTurns: true,
-        ...(options?.model ? { model: options.model } : {}),
-        ...(options?.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
-        ...getThreadAccessOptions(options)
-      })
+      resume = await this.client.request<ThreadResumeResponse>(
+        'thread/resume',
+        {
+          threadId,
+          config: getRecommendedPluginsConfig(options),
+          excludeTurns: true,
+          ...(options?.model ? { model: options.model } : {}),
+          ...(options?.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
+          ...getThreadAccessOptions(options)
+        },
+        { nativeChrome: options?.nativeChrome }
+      )
       this.externallyOwnedThreadIds.delete(threadId)
     } catch (error) {
       if (isActiveWriterError(error)) this.externallyOwnedThreadIds.add(threadId)

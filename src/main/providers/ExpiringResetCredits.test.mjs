@@ -16,6 +16,7 @@ const fixture = (overrides = {}) => {
   const reads = []
   const dependencies = {
     sources: async () => [null],
+    available: async () => true,
     accounts: async () => ({
       available: true,
       accounts: [{ id: 'work', displayName: 'Work', active: false }]
@@ -42,8 +43,58 @@ const fixture = (overrides = {}) => {
   }
 }
 const flush = async () => {
-  for (let i = 0; i < 20; i++) await Promise.resolve()
+  for (let i = 0; i < 30; i++) await Promise.resolve()
 }
+
+test('skips accounts and usage when Codex is absent, and resumes when it becomes available', async (t) => {
+  const errors = t.mock.method(console, 'error', () => {})
+  const container = { kind: 'container', tool: 'ssh', name: 'remote' }
+  let hostAvailable = false
+  const inspected = []
+  const { monitor, reads, resets } = fixture({
+    sources: async () => [null, container],
+    available: async (source) => source === container || hostAvailable,
+    accounts: async (source) => {
+      inspected.push(source)
+      return { available: true, accounts: [{ id: 'work', active: true }] }
+    }
+  })
+  await monitor.tick()
+  await monitor.tick()
+  assert.deepEqual(inspected, [container, container])
+  assert.ok(reads.every((options) => options.container === container))
+  assert.equal(errors.mock.callCount(), 0)
+
+  hostAvailable = true
+  await monitor.tick()
+  assert.deepEqual(
+    resets.map((options) => options.container),
+    [container, null]
+  )
+  await monitor.close()
+})
+
+test('shutdown during provider discovery prevents account and usage checks', async () => {
+  let resolveAvailable
+  let inspections = 0
+  const { monitor, reads } = fixture({
+    available: () =>
+      new Promise((resolve) => {
+        resolveAvailable = resolve
+      }),
+    accounts: async () => {
+      inspections++
+      throw new Error('Unexpected account check')
+    }
+  })
+  const pending = monitor.tick()
+  await flush()
+  const closing = monitor.close()
+  resolveAvailable(true)
+  await Promise.all([pending, closing])
+  assert.equal(inspections, 0)
+  assert.equal(reads.length, 0)
+})
 
 test('OK resets an inactive account explicitly without switching the selected account', async () => {
   const { monitor, prompts, resets, reads } = fixture()

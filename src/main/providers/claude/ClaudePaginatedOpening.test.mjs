@@ -1,3 +1,4 @@
+import { usesNativeChrome } from '../nativeChrome.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile, appendFile, rm } from 'node:fs/promises'
@@ -59,6 +60,7 @@ const harness = () => {
   let bytes = 0,
     fullReads = 0
   const context = vm.createContext({
+    usesNativeChrome,
     ...renderers,
     getSessionInfo,
     getProviderChatTurns,

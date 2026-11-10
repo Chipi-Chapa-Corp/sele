@@ -3,6 +3,7 @@ import { getProviderProcessStore } from '../providerProcesses'
 import { createLimitResetDelivery } from './LimitResetDelivery'
 import { LimitResetQueue } from './LimitResetQueue'
 import { ExpiringResetCredits } from './ExpiringResetCredits'
+import { isProviderAvailableInSource } from '../providerAvailability'
 import { promptExpiringReset } from './ExpiringResetPrompt'
 import type { AppContainerTarget } from '../../shared/app'
 import { limitResetMessageBackend } from '../database/limitResetMessages'
@@ -1022,6 +1023,7 @@ const expiringResetCredits = new ExpiringResetCredits({
     return [...sources.values()]
   },
   // Codex is currently the only provider exposing consumable manual reset credits.
+  available: (container) => isProviderAvailableInSource('codex', container),
   accounts: getCodexAccountsWithDisplayNames,
   usage: (options) => adapters.codex.getUsage(options),
   reset: (options) => adapters.codex.resetRateLimits(options),

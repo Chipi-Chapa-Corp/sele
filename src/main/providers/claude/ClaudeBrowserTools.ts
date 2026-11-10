@@ -2,6 +2,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import type { BrowserAutomationScope } from '../../../shared/browser'
 import type { BrowserAutomationService } from '../../browser/BrowserAutomation'
+import { browserToolInstructions } from '../../browser/BrowserTools'
 import {
   createProviderBrowserTools,
   providerBrowserToolInstructions
@@ -20,7 +21,8 @@ Additional browser actions may be deferred. Use ToolSearch to load them by their
 /** The Agent SDK carries MCP over its control channel; operations remain provider-neutral. */
 export function createClaudeBrowserIntegration(
   service: BrowserAutomationService,
-  scope: BrowserAutomationScope
+  scope: BrowserAutomationScope,
+  nativeChrome = false
 ): {
   server: ReturnType<typeof createSdkMcpServer>
   close(): void
@@ -29,17 +31,25 @@ export function createClaudeBrowserIntegration(
   const server = createSdkMcpServer({
     name: claudeBrowserServerName,
     version: '1.0.0',
-    instructions: claudeBrowserInstructions,
+    instructions: nativeChrome
+      ? claudeBrowserInstructions.replace(
+          providerBrowserToolInstructions,
+          browserToolInstructions
+        ) +
+        '\nFor the user’s existing Chrome session, use the official claude-in-chrome MCP tools, discovering them with ToolSearch as needed. Sele’s Chrome extension pairing is not used by that integration. Report the official tool’s actual connection error if it is unavailable. The native_computer tool separately controls a user-connected desktop.'
+      : claudeBrowserInstructions,
     tools: [
-      ...browser.tools.map((definition) =>
-        tool(
-          definition.name,
-          definition.description,
-          definition.schema.shape,
-          (args) => definition.execute(args),
-          { alwaysLoad: definition.alwaysLoad || alwaysLoadedBrowserTools.has(definition.name) }
+      ...browser.tools
+        .filter((definition) => !nativeChrome || !definition.name.startsWith('chrome_'))
+        .map((definition) =>
+          tool(
+            definition.name,
+            definition.description,
+            definition.schema.shape,
+            (args) => definition.execute(args),
+            { alwaysLoad: definition.alwaysLoad || alwaysLoadedBrowserTools.has(definition.name) }
+          )
         )
-      )
     ]
   })
   return {

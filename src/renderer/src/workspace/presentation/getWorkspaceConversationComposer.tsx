@@ -176,6 +176,7 @@ export function getWorkspaceConversationComposer({
         ? turnRendering.handleSaveGoalObjective
         : undefined,
     messageBoxQuoteRequest: chatState.messageBoxQuoteRequest,
+    handleQuoteRequestHandled: chatState.handleQuoteRequestHandled,
     models: provider.models,
     modelsError: providerState.modelsError,
     modelsLoading: providerState.modelsLoading,

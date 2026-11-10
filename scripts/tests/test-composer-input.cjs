@@ -54,7 +54,7 @@ if (!process.versions.electron) {
             window.renderFixture = (props = {}) => {
               Object.assign(window.composerProps, props)
               flushSync(() => root.render(<React.StrictMode>
-              <MessageSelectionQuoteButton containerRef={containerRef} onQuote={(content, comment) => window.renderFixture({quoteRequest:{id:Date.now(),content,comment}})}/>
+              <MessageSelectionQuoteButton containerRef={containerRef} onQuote={(content, comment) => window.renderFixture({quoteRequest:{id:Date.now(),scopeKey:window.composerProps.draftScopeKey ?? 'test',content,comment}})}/>
               <Profiler id="composer" onRender={() => window.commits++}>
                 {window.composerProps.fixtureVisible !== false && <MessageBox autoFocus draftScopeKey="test" providerId="codex"
                   cwd="/fixture" model="test" models={[]} agentMode="default" agentModes={[]}
@@ -65,6 +65,9 @@ if (!process.versions.electron) {
                   displayUsage={{context:true,short:false,long:false}}
                   onAgentModeChange={noop} onApprovalModeChange={noop} onModelChange={noop}
                   onReasoningEffortChange={noop} onServiceTierChange={noop} onSandboxModeChange={noop}
+                  onQuoteRequestHandled={id => queueMicrotask(() => {
+                    if (window.composerProps.quoteRequest?.id === id) window.renderFixture({quoteRequest:null})
+                  })}
                   onSend={message => { window.sent = message; window.sendCount = (window.sendCount || 0) + 1; return true }} {...window.composerProps}/>}
               </Profiler>
             </React.StrictMode>))
@@ -926,7 +929,7 @@ if (!process.versions.electron) {
         'another chat keeps its unsent image')
       // Quotes stay out of the textarea and become ordinary Markdown only on send.
       await run(
-        `renderFixture({draftScopeKey:'quote-draft', quoteRequest:{id:1,content:'Original quote\\nsecond line',comment:'  Please explain this part  '}})`
+        `renderFixture({draftScopeKey:'quote-draft', quoteRequest:{id:1,scopeKey:'quote-draft',content:'Original quote\\nsecond line',comment:'  Please explain this part  '}})`
       )
       await settle()
       assert.equal(await run('input.value'), '')
@@ -1044,13 +1047,41 @@ if (!process.versions.electron) {
         0,
         'sent quotes clear'
       )
-      await run(`renderFixture({quoteRequest:{id:2,content:'Another quote',comment:'A long comment '.repeat(10)}})`)
+      assert.equal(await run('window.composerProps.quoteRequest'), null, 'quote requests are consumed')
+      await run(`renderFixture({fixtureVisible:false})`)
+      await run(`renderFixture({fixtureVisible:true,draftScopeKey:'different-project-chat'})`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 0,
+        'remounting in another project cannot replay a sent quote')
+      await run(`renderFixture({draftScopeKey:'quote-draft'})`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 0,
+        'returning to the source chat cannot replay a sent quote')
+      await run(`renderFixture({quoteRequest:{id:2,scopeKey:'quote-draft',content:'Another quote',comment:'A long comment '.repeat(10)}})`)
       await settle()
       assert.equal(await run('document.querySelector(".message-box__quote .attachment-chip__label").textContent.endsWith("…")'), true,
         'long comments are trimmed in the badge')
       await click('.message-box__quote .attachment-chip__remove')
       await settle()
       assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 0, 'quotes can be removed')
+      await run(`renderFixture({quoteRequest:{id:3,scopeKey:'different-project-chat',content:'Scoped quote',comment:'Keep with its source'}})`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 0,
+        'a pending request from another chat cannot attach here')
+      await run(`renderFixture({fixtureVisible:false})`)
+      await run(`renderFixture({fixtureVisible:true})`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 0,
+        'remounting cannot accept a request from another chat')
+      await run(`renderFixture({draftScopeKey:'different-project-chat'})`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 1,
+        'the source chat can accept its pending quote')
+      await run(`renderFixture({fixtureVisible:false})`)
+      await run(`renderFixture({fixtureVisible:true})`)
+      await settle()
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 1,
+        'remounting preserves the unsent draft without duplicating its quote')
       assert.deepEqual(errors, [])
       console.log(
         'Composer input checks passed: prompt keycaps, Enter sending, persistent focus, text selection, mentions, selection without renders, large drafts, native replacement, and message quotes.'
