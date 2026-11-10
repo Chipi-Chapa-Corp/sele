@@ -504,7 +504,7 @@ export const ActionsButton = ({
                 />
                 <Switch
                   className="cwd-actions-dialog__switch-row"
-                  label="Close terminal on finish"
+                  label="Close terminal on success"
                   disabled={!draft.openInTerminal}
                   checked={draft.openInTerminal && draft.closeTerminalOnFinish}
                   onChange={(event) =>

@@ -44,7 +44,7 @@ type TerminalState = 'starting' | 'running' | 'exited' | 'error'
 
 type TerminalOutputCache = { value: string }
 
-type TerminalCompletion = { exited: boolean; focused: boolean }
+type TerminalCompletion = { exited: boolean; focused: boolean; succeeded: boolean }
 
 type TerminalTab = {
   outputCache: TerminalOutputCache
@@ -490,7 +490,12 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
           if (closeOnCommandFinish || nativeSessionId) {
             const focused = terminal?.textarea === document.activeElement
             window.requestAnimationFrame(() => {
-              if (active) onCommandFinish(tabId, { exited: true, focused })
+              if (active)
+                onCommandFinish(tabId, {
+                  exited: true,
+                  focused,
+                  succeeded: event.exitCode === 0 && !event.signal
+                })
             })
           }
         })
@@ -951,6 +956,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           )
           if (closingIndex < 0) continue
           const finished = currentWorkspace.tabs[closingIndex]
+          // Keep failed actions (including recovered workspace tabs) available for inspection.
+          if (completion?.exited && !completion.succeeded && !finished.continueAsShell)
+            return currentWorkspaces
           if (finished.agentSessionId) {
             if (viewedAgentTabsRef.current.has(tabId)) {
               if (!finished.continueAsShell || !completion?.exited) return currentWorkspaces

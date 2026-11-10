@@ -244,15 +244,41 @@ if (!process.versions.electron) {
         await waitFor(`window.terminals[0].options.disableStdin === false &&
           /[>$#]\\s*$/.test(window.text(window.terminals[0]).trim())`)
 
+        // Actions launched from an empty new chat retain failures for inspection.
+        await run('window.selectChat(null)')
+        await run(`window.launch("sh -c 'printf ACTION_FAILED; exit 7'", true)`)
+        await waitFor(
+          `window.terminals.some(t => window.text(t).includes('[process exited with code 7'))`
+        )
+        await run(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+        )
+        assert.equal(
+          await run(`document.querySelectorAll('[aria-label="Deploy"][role="region"]').length`),
+          1,
+          'Failed actions keep their terminal tab even when close-on-finish is enabled'
+        )
+        assert.equal(
+          await run(
+            `window.terminals.find(t => window.text(t).includes('[process exited with code 7')).options.disableStdin`
+          ),
+          true,
+          'Failed output is retained without rerunning the command'
+        )
+        await run(`document.querySelector('[aria-label="Close Deploy"]').click()`)
+        await waitFor(`document.querySelectorAll('.terminal-panel__session').length === 1`)
+
         // Auto-closing actions leave an existing empty tab available for the next action.
         const autoCloseMarker = path.join(directory, 'auto-close-empty')
-        await run(`window.emptySession = document.querySelector('[aria-label="Terminal 1"][role="region"]');
+        await run(`window.terminalCount = window.terminals.length;
+          window.emptySession = document.querySelector('[aria-label="Terminal 1"][role="region"]');
           window.launch(${JSON.stringify(`printf done > '${autoCloseMarker}'`)}, true)`)
         await waitFor(
-          `window.terminals.length >= 2 && document.querySelectorAll('.terminal-panel__session').length === 1`
+          `window.terminals.length > window.terminalCount && document.querySelectorAll('.terminal-panel__session').length === 1`
         )
         assert.equal(await fs.readFile(autoCloseMarker, 'utf8'), 'done')
         assert.equal(await run('window.emptySession.isConnected'), true)
+        await run("window.selectChat('codex:fixture')")
 
         // A function records SSH arguments without making any network connection.
         const command = process.env.SELE_TERMINAL_FIXTURE_SHELL?.endsWith('fish')
@@ -764,7 +790,7 @@ if (!process.versions.electron) {
           })()`)
           await source.finish(7)
           await waitFor(`window.terminals.at(-1).options.disableStdin === false &&
-            window.text(window.terminals.at(-1)).includes('[process exited with code 7]')`)
+            window.text(window.terminals.at(-1)).includes('[process exited with code 7')`)
           assert.equal(
             await run('document.activeElement.id'),
             'focus-target',
