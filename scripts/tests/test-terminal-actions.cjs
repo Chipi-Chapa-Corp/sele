@@ -244,11 +244,18 @@ if (!process.versions.electron) {
         await waitFor(`window.terminals[0].options.disableStdin === false &&
           /[>$#]\\s*$/.test(window.text(window.terminals[0]).trim())`)
 
-        // Actions launched from an empty new chat retain failures for inspection.
+        // Failed actions keep their tab and output, then accept input in a fresh shell.
         await run('window.selectChat(null)')
-        await run(`window.launch("sh -c 'printf ACTION_FAILED; exit 7'", true)`)
+        const failedMarker = path.join(directory, 'failed-action-once')
+        const failedCommand = `sh -c 'printf ACTION_FAILED; printf ran >> "${failedMarker}"; read -r line; exit 7'`
+        await run(`window.launch(${JSON.stringify(failedCommand)}, true)`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('ACTION_FAILED') &&
+          window.terminals.at(-1).options.disableStdin === false`)
+        await run(`window.failedRegion = document.querySelector('[aria-label="Deploy"][role="region"]');
+          document.getElementById('focus-target').focus(); window.terminals.at(-1).input('finish\\r', true)`)
         await waitFor(
-          `window.terminals.some(t => window.text(t).includes('[process exited with code 7'))`
+          `window.text(window.terminals.at(-1)).includes('[process exited with code 7') &&
+          window.terminals.at(-1).options.disableStdin === false`
         )
         await run(
           'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
@@ -258,13 +265,39 @@ if (!process.versions.electron) {
           1,
           'Failed actions keep their terminal tab even when close-on-finish is enabled'
         )
-        assert.equal(
-          await run(
-            `window.terminals.find(t => window.text(t).includes('[process exited with code 7')).options.disableStdin`
-          ),
-          true,
-          'Failed output is retained without rerunning the command'
+        assert.equal(await run('window.failedRegion.isConnected'), true)
+        assert.equal(await run('document.activeElement.id'), 'focus-target')
+        assert.equal(await fs.readFile(failedMarker, 'utf8'), 'ran', 'Failed action runs once')
+        const failedOutput = await run('window.text(window.terminals.at(-1))')
+        assert.equal(failedOutput.split('[process exited with code 7').length, 2)
+        assert.equal(failedOutput.split("$ sh -c 'printf ACTION_FAILED").length, 2)
+        await run(`window.terminals.at(-1).input('printf "FAILED_SHELL:%s\\\\n" "$PWD"\\r', true)`)
+        await waitFor(
+          `window.text(window.terminals.at(-1)).includes(${JSON.stringify(`FAILED_SHELL:${directory}`)})`
         )
+        await run(
+          `window.terminalCount = window.terminals.length; window.terminals.at(-1).input('exit 7\\r', true)`
+        )
+        await waitFor(`window.terminals.at(-1).options.disableStdin`)
+        assert.equal(
+          await run('window.terminals.length'),
+          await run('window.terminalCount'),
+          'Exiting the replacement shell does not start another shell'
+        )
+        await run(`document.querySelector('[aria-label="Close Deploy"]').click()`)
+        await waitFor(`document.querySelectorAll('.terminal-panel__session').length === 1`)
+
+        // Ctrl+C also leaves a usable shell after an auto-closing action exits.
+        await run(`window.launch("sh -c 'printf INTERRUPT_%s ready; sleep 30'", true)`)
+        await waitFor(`window.text(window.terminals.at(-1)).includes('INTERRUPT_ready')`)
+        await run(`window.interruptedRegion = document.querySelector('[aria-label="Deploy"][role="region"]');
+          window.terminals.at(-1).input('\\u0003', true)`)
+        await waitFor(`window.terminals.some(t => window.interruptedRegion.contains(t.textarea) &&
+          window.text(t).includes('[process exited') && !t.options.disableStdin)`)
+        await run(
+          `window.terminals.at(-1).input('printf "AFTER_INTERRUPT_%s\\\\n" ready\\r', true)`
+        )
+        await waitFor(`window.text(window.terminals.at(-1)).includes('AFTER_INTERRUPT_ready')`)
         await run(`document.querySelector('[aria-label="Close Deploy"]').click()`)
         await waitFor(`document.querySelectorAll('.terminal-panel__session').length === 1`)
 
@@ -859,10 +892,39 @@ if (!process.versions.electron) {
           cwd: ${JSON.stringify(directory)}, cols: 80, rows: 24,
           initialCommand: ${JSON.stringify(restartCommand)}
         })`)
+        const recoveredActionMarker = path.join(directory, 'recovered-action-once')
+        await run(`window.terminalApi.createSession({
+          sessionId: crypto.randomUUID(),
+          workspaceKey: ${JSON.stringify(`toolbox:fixture${String.fromCharCode(0)}${directory}`)},
+          chatKey: 'codex:fixture', label: 'Recovered action', closeOnCommandFinish: true,
+          cwd: ${JSON.stringify(directory)}, cols: 80, rows: 24,
+          initialCommand: ${JSON.stringify(`sh -c 'printf ran >> "${recoveredActionMarker}"; read -r line; exit 7'`)}
+        })`)
         await terminal.disposeTerminalSessions({ preserve: true })
         await window.loadFile(path.join(directory, 'index.html'))
         await run(String.raw`window.text = terminal => Array.from({length: terminal.buffer.active.length},
           (_, index) => terminal.buffer.active.getLine(index).translateToString(true)).join('\n'); undefined`)
+        await waitFor(
+          `document.querySelector('[aria-label="Recovered action"][aria-pressed]') !== null`
+        )
+        await run(`document.querySelector('[aria-label="Recovered action"][aria-pressed]').click()`)
+        await waitFor(`window.terminals.some(t =>
+          document.querySelector('[aria-label="Recovered action"][role="region"]').contains(t.textarea) &&
+          !t.options.disableStdin)`)
+        await run(`window.recoveredRegion = document.querySelector('[aria-label="Recovered action"][role="region"]');
+          window.terminals.find(t => window.recoveredRegion.contains(t.textarea)).input('finish\\r', true)`)
+        await waitFor(`window.terminals.some(t => window.recoveredRegion.contains(t.textarea) &&
+          window.text(t).includes('[process exited with code 7') && !t.options.disableStdin)`)
+        await run(
+          `window.terminals.find(t => window.recoveredRegion.contains(t.textarea)).input('printf "RECOVERED_SHELL:%s\\\\n" "$PWD"\\r', true)`
+        )
+        await waitFor(`window.terminals.some(t => window.recoveredRegion.contains(t.textarea) &&
+          window.text(t).includes(${JSON.stringify(`RECOVERED_SHELL:${directory}`)}))`)
+        assert.equal(await fs.readFile(recoveredActionMarker, 'utf8'), 'ran')
+        await run(`document.querySelector('[aria-label="Close Recovered action"]').click()`)
+        await waitFor(
+          `document.querySelector('[aria-label="Recovered action"][aria-pressed]') === null`
+        )
         for (const { label, providerId } of handoffShells) {
           await waitFor(`document.querySelector('[aria-label="${label}"][aria-pressed]') !== null`)
           await run(`document.querySelector('[aria-label="${label}"][aria-pressed]').click()`)

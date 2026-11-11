@@ -956,37 +956,47 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           )
           if (closingIndex < 0) continue
           const finished = currentWorkspace.tabs[closingIndex]
-          // Keep failed actions (including recovered workspace tabs) available for inspection.
+          // Failed actions and viewed agent commands continue without rerunning their command.
+          const continueAsShell =
+            completion?.exited &&
+            ((!completion.succeeded &&
+              finished.closeOnCommandFinish &&
+              !finished.continueAsShell) ||
+              (finished.agentSessionId &&
+                finished.continueAsShell &&
+                viewedAgentTabsRef.current.has(tabId)))
+          if (continueAsShell) {
+            if (finished.agentSessionId)
+              void terminalApi.dismissAgentSession(finished.agentSessionId)
+            usedTabIdsRef.current.add(tabId)
+            const nextWorkspaces = new Map(currentWorkspaces)
+            nextWorkspaces.set(currentWorkspaceKey, {
+              ...currentWorkspace,
+              tabs: currentWorkspace.tabs.map((tab) =>
+                tab.id === tabId
+                  ? {
+                      ...tab,
+                      agentSessionId: undefined,
+                      agentStopScope: undefined,
+                      agentInteractive: undefined,
+                      continueAsShell: false,
+                      initialCommand: null,
+                      initialOutput:
+                        getCommandHeading(tab.initialCommand) +
+                        tab.outputCache.value.replace(/\r?\n/g, '\r\n'),
+                      closeOnCommandFinish: false,
+                      focusOnShow: completion.focused
+                    }
+                  : tab
+              )
+            })
+            return nextWorkspaces
+          }
+          // Keep other failed sessions available for inspection.
           if (completion?.exited && !completion.succeeded && !finished.continueAsShell)
             return currentWorkspaces
           if (finished.agentSessionId) {
-            if (viewedAgentTabsRef.current.has(tabId)) {
-              if (!finished.continueAsShell || !completion?.exited) return currentWorkspaces
-              void terminalApi.dismissAgentSession(finished.agentSessionId)
-              usedTabIdsRef.current.add(tabId)
-              const nextWorkspaces = new Map(currentWorkspaces)
-              nextWorkspaces.set(currentWorkspaceKey, {
-                ...currentWorkspace,
-                tabs: currentWorkspace.tabs.map((tab) =>
-                  tab.id === tabId
-                    ? {
-                        ...tab,
-                        agentSessionId: undefined,
-                        agentStopScope: undefined,
-                        agentInteractive: undefined,
-                        continueAsShell: false,
-                        initialCommand: null,
-                        initialOutput:
-                          getCommandHeading(tab.initialCommand) +
-                          tab.outputCache.value.replace(/\r?\n/g, '\r\n'),
-                        closeOnCommandFinish: false,
-                        focusOnShow: completion.focused
-                      }
-                    : tab
-                )
-              })
-              return nextWorkspaces
-            }
+            if (viewedAgentTabsRef.current.has(tabId)) return currentWorkspaces
             void terminalApi.dismissAgentSession(finished.agentSessionId)
           }
 
