@@ -2,6 +2,7 @@ import { extractFile, getRawHeader } from '@electron/asar'
 import { builtinModules } from 'node:module'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { sep } from 'node:path'
 
 export function verifyPackagedRuntime(archive, platform = process.platform, arch = process.arch) {
   const { header } = getRawHeader(archive)
@@ -13,7 +14,7 @@ export function verifyPackagedRuntime(archive, platform = process.platform, arch
   const builtins = new Set([...builtinModules, 'electron'])
   const modules = new Set(['@github/copilot-sdk', '@lydell/node-pty', 'better-sqlite3'])
   for (const path of paths(entry('out/main'), 'out/main/').filter((name) => name.endsWith('.js'))) {
-    const source = extractFile(archive, path).toString()
+    const source = extractFile(archive, path.split('/').join(sep)).toString()
     for (const match of source.matchAll(/(?:require\(|import\()["']([^"']+)["']/g)) {
       const name = match[1]
       if (name.startsWith('.') || name.startsWith('node:') || builtins.has(name)) continue
