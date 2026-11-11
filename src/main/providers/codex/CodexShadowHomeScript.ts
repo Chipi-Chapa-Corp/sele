@@ -1,4 +1,9 @@
-import { codexPrivateEntries, codexSharedDirectories, codexSharedFiles } from './CodexShadowHome.ts'
+import {
+  codexBundledMarketplacePath,
+  codexPrivateEntries,
+  codexSharedDirectories,
+  codexSharedFiles
+} from './CodexShadowHome.ts'
 
 // POSIX hosts need no Node installation: the same layout is prepared beside the CLI.
 // Inputs: canonical codex_home and validated account ID in active.
@@ -46,6 +51,10 @@ for target in "$codex_home"/* "$codex_home"/.[!.]* "$codex_home"/..?*; do
     }
   fi
 done
+if [ -f "$shadow/${codexBundledMarketplacePath}/.agents/plugins/marketplace.json" ]; then
+  bundled_source=$(printf '%s' "$shadow/${codexBundledMarketplacePath}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  set -- "$@" -c "marketplaces.openai-bundled.source=\"$bundled_source\""
+fi
 CODEX_HOME=$shadow
 # New SQLite/WAL files must be created in the shared home, even on the very first launch.
 CODEX_SQLITE_HOME=${'${'}CODEX_SQLITE_HOME:-$codex_home}

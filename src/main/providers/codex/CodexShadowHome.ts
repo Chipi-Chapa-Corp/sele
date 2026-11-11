@@ -46,6 +46,16 @@ export const codexSharedFiles = [
   '.sqlite-maintenance.lock'
 ] as const
 
+// Codex accepts the reserved bundled marketplace only underneath its current CODEX_HOME.
+export const codexBundledMarketplacePath = '.tmp/bundled-marketplaces/openai-bundled'
+
+export const getCodexBundledMarketplaceArgs = async (shadow: string): Promise<string[]> => {
+  const source = join(shadow, codexBundledMarketplacePath)
+  const manifest = await optionalCodexFile(join(source, '.agents/plugins/marketplace.json'))
+  if (manifest === null) return []
+  return ['-c', `marketplaces.openai-bundled.source=${JSON.stringify(source)}`]
+}
+
 // SQLite's own location is pinned with CODEX_SQLITE_HOME; WAL/SHM files appear and vanish live.
 const isSqliteFile = (name: string): boolean => /\.sqlite(?:-(?:wal|shm|journal))?$/.test(name)
 

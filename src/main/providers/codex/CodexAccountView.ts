@@ -1,6 +1,11 @@
 import { isCodexAccountId } from './CodexAccountConfig.ts'
 import { codexShadowHomeScript } from './CodexShadowHomeScript.ts'
-import { codexHome, prepareCodexShadowHome, resolveCodexAccount } from './CodexShadowHome.ts'
+import {
+  codexHome,
+  getCodexBundledMarketplaceArgs,
+  prepareCodexShadowHome,
+  resolveCodexAccount
+} from './CodexShadowHome.ts'
 
 const accountViewScript = String.raw`
 set -eu
@@ -105,7 +110,12 @@ export const getCodexAccountViewCommand = async (
   const shadow = await prepareCodexShadowHome(home, selected)
   return {
     file: binary,
-    args: [...args, '-c', 'cli_auth_credentials_store="file"'],
+    args: [
+      ...args,
+      '-c',
+      'cli_auth_credentials_store="file"',
+      ...(await getCodexBundledMarketplaceArgs(shadow))
+    ],
     env: { ...env, CODEX_HOME: shadow, CODEX_SQLITE_HOME: env.CODEX_SQLITE_HOME || home }
   }
 }
