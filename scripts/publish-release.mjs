@@ -19,7 +19,9 @@ export function releaseFiles(version, platform) {
       `Sele-${version}-arm64-mac.zip.blockmap`,
       `${channel}-mac.yml`
     ],
-    'linux-x64': ['sele-linux-x64.flatpak', 'sele-linux-x64.tar.gz', 'sele.flatpakrepo']
+    'linux-x64': ['sele-linux-x64.tar.gz', 'sele.flatpakrepo', 'sele.flatpakref'],
+    'linux-bundle': ['sele-linux-x64.flatpak'],
+    'legacy-bundle': ['sele-linux-x64.flatpak']
   }
   if (platform === 'legacy') return platforms.flatMap((key) => files[key])
   if (!files[platform]) throw new Error(`Unsupported release platform: ${platform}`)
@@ -36,7 +38,10 @@ export async function publishRelease(baseTag, platform, directory, run = command
   for (const file of files) {
     if (!present.has(file)) throw new Error(`Missing release asset: ${file}`)
   }
-  const tag = platform === 'legacy' ? baseTag : `${baseTag}-${platform}`
+  const tag =
+    platform === 'legacy' || platform === 'legacy-bundle'
+      ? baseTag
+      : `${baseTag}-${platform === 'linux-bundle' ? 'linux-x64' : platform}`
   const title = platform === 'legacy' ? `Sele ${version}` : `Sele ${version} — ${platform}`
   const sha = run('git', ['rev-parse', 'HEAD']).trim()
   const current = run(
@@ -45,6 +50,18 @@ export async function publishRelease(baseTag, platform, directory, run = command
     true
   )
   const existing = run('gh', ['release', 'view', tag, '--json', 'isDraft'], true)
+  if (platform === 'linux-bundle' || platform === 'legacy-bundle') {
+    if (!existing || JSON.parse(existing).isDraft)
+      throw new Error('The release must be published before attaching its standalone installer')
+    run('gh', [
+      'release',
+      'upload',
+      tag,
+      ...files.map((file) => resolve(directory, file)),
+      '--clobber'
+    ])
+    return
+  }
   if (existing === null) {
     run('gh', [
       'release',

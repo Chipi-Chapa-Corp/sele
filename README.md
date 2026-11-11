@@ -27,6 +27,8 @@ flatpak install --user https://chipi-chapa-corp.github.io/sele/flatpak/sele.flat
 The repository descriptor is also available as
 [`sele.flatpakrepo`](https://chipi-chapa-corp.github.io/sele/flatpak/sele.flatpakrepo) and
 as a downloadable asset on Linux GitHub Releases.
+Use the `.flatpakref` for immediate installation and updates. The standalone `.flatpak`
+download is attached later, once its installer compression finishes.
 
 Install on macOS with Homebrew:
 

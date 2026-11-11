@@ -44,16 +44,19 @@ export function selectPlatformRelease(
       ? [`Sele-${version}-${platform.slice(6)}-mac.zip`]
       : platform === 'windows-x64'
         ? ['latest.yml', 'sele-windows-x64-setup.exe', 'sele-windows-x64-setup.exe.blockmap']
-        : ['sele-linux-x64.flatpak', 'sele.flatpakrepo']
+        : ['sele.flatpakrepo']
+    const hasAsset = (name: string): boolean =>
+      release.assets?.some(
+        (asset) =>
+          asset.name === name &&
+          asset.size > 0 &&
+          asset.browser_download_url === `${releaseDownloadUrl(release)}${name}`
+      ) ?? false
     if (
-      !required.every((name) =>
-        release.assets?.some(
-          (asset) =>
-            asset.name === name &&
-            asset.size > 0 &&
-            asset.browser_download_url === `${releaseDownloadUrl(release)}${name}`
-        )
-      )
+      !required.every(hasAsset) ||
+      (platform === 'linux-x64' &&
+        !hasAsset('sele.flatpakref') &&
+        !hasAsset('sele-linux-x64.flatpak'))
     )
       continue
     selected = { release, version }

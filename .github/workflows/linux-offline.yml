@@ -1,0 +1,61 @@
+name: Build standalone Linux installer
+
+on:
+  workflow_run:
+    workflows: [Build distributables]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: linux-offline-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    # Only successful release-tag pushes in this repository may publish assets.
+    # PR artifacts and forks never enter this privileged workflow.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out the exact validated source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.23.1
+      - name: Install Flatpak bundle tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes flatpak
+      - name: Download repository from the validated run
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: github-pages
+          path: flatpak-repository
+      - name: Extract exported repository
+        run: |
+          mkdir -p dist/flatpak-pages
+          tar --extract --file=flatpak-repository/artifact.tar --directory=dist/flatpak-pages --no-same-owner
+      - name: Create standalone installer
+        run: node scripts/package-flatpak-bundle.mjs
+      - name: Attach installer to platform and compatibility releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          node scripts/publish-release.mjs "$RELEASE_TAG" linux-bundle dist
+          node scripts/publish-release.mjs "$RELEASE_TAG" legacy-bundle dist

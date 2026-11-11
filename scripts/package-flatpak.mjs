@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { packageFlatpakBundle } from './package-flatpak-bundle.mjs'
 
 // Use the same manifest settings as electron-builder, but keep the exported
 // repository. Building a bundle, importing it, then rebuilding it doubles the
@@ -21,7 +22,8 @@ import { fileURLToPath } from 'node:url'
 export async function packageFlatpak({
   appDirectory = 'dist/linux-unpacked',
   bundlePath = 'dist/sele-linux-x64.flatpak',
-  pagesRoot = 'dist/flatpak-pages'
+  pagesRoot = 'dist/flatpak-pages',
+  repositoryOnly = false
 } = {}) {
   await access(join(appDirectory, 'sele'))
   await access(join(appDirectory, 'resources/app.asar'))
@@ -114,16 +116,6 @@ Categories=${config.linux.category};
     await mkdir(pagesRoot, { recursive: true })
     run(['build-export', '--arch=x86_64', repository, buildDirectory, flatpak.branch])
     run([
-      'build-bundle',
-      '--arch=x86_64',
-      `--repo-url=${repoUrl}`,
-      '--runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo',
-      repository,
-      resolve(bundlePath),
-      appId,
-      flatpak.branch
-    ])
-    run([
       'build-update-repo',
       '--title=Sele',
       '--comment=Stable releases of Sele',
@@ -138,13 +130,31 @@ Categories=${config.linux.category};
     await copyFile('build/sele.flatpakref', join(repository, 'sele.flatpakref'))
     await copyFile('build/icon.png', join(repository, 'sele.png'))
     await copyFile('build/sele.flatpakrepo', resolve(bundlePath, '..', 'sele.flatpakrepo'))
+    await copyFile('build/sele.flatpakref', resolve(bundlePath, '..', 'sele.flatpakref'))
+    await writeFile(
+      join(repository, 'sele-build.json'),
+      JSON.stringify({
+        version: JSON.parse(await readFile('package.json', 'utf8')).version,
+        appId,
+        arch: 'x86_64',
+        branch: flatpak.branch,
+        repoUrl
+      })
+    )
     await writeFile(join(pagesRoot, '.nojekyll'), '')
   } finally {
     await rm(stage, { recursive: true, force: true })
   }
+  if (!repositoryOnly) await packageFlatpakBundle({ repository, bundlePath })
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [appDirectory, bundlePath, pagesRoot] = process.argv.slice(2)
-  await packageFlatpak({ appDirectory, bundlePath, pagesRoot })
+  const args = process.argv.slice(2)
+  const [appDirectory, bundlePath, pagesRoot] = args.filter((arg) => arg !== '--repository-only')
+  await packageFlatpak({
+    appDirectory,
+    bundlePath,
+    pagesRoot,
+    repositoryOnly: args.includes('--repository-only')
+  })
 }

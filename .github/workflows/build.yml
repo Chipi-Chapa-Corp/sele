@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: build-${{ github.workflow }}-${{ github.ref }}
@@ -93,7 +94,6 @@ jobs:
   windows:
     name: Windows x64
     if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
-    needs: bundle
     runs-on: windows-latest
     steps:
       - name: Check out repository
@@ -116,6 +116,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Wait for shared application bundle
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/wait-for-bundle.mjs
 
       - name: Download application bundle
         uses: actions/download-artifact@v8
@@ -159,7 +165,6 @@ jobs:
   macos:
     name: macOS arm64
     if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
-    needs: bundle
     runs-on: macos-15
     steps:
       - name: Check out repository
@@ -183,12 +188,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Download application bundle
-        uses: actions/download-artifact@v8
-        with:
-          name: application-bundle
-          path: out
-
       - name: Validate Homebrew cask
         run: |
           ruby -c Casks/sele.rb
@@ -196,6 +195,18 @@ jobs:
 
       - name: Test macOS update helper
         run: npm test -- appUpdate
+
+      - name: Wait for shared application bundle
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/wait-for-bundle.mjs
+
+      - name: Download application bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: application-bundle
+          path: out
 
       - name: Build unsigned DMG and update ZIP
         env:
@@ -221,9 +232,8 @@ jobs:
           compression-level: 0
 
   linux:
-    name: Linux x64 Flatpak
+    name: Linux x64 update repository
     if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
-    needs: bundle
     # Keep Flatpak tooling on a release-tested image when ubuntu-latest changes.
     runs-on: ubuntu-24.04
     steps:
@@ -258,6 +268,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Wait for shared application bundle
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/wait-for-bundle.mjs
+
       - name: Download application bundle
         uses: actions/download-artifact@v8
         with:
@@ -273,15 +289,15 @@ jobs:
       - name: Verify packaged runtime
         run: node scripts/verify-packaged-runtime.mjs dist/linux-unpacked/resources/app.asar
 
-      - name: Build Flatpak repository and bundle once
-        run: npm run package:flatpak-repo
+      - name: Build Flatpak update repository
+        run: npm run package:flatpak-repo -- --repository-only
 
       - name: Package Linux tarball
         run: npm run package:linux-tarball
 
       - name: Verify artifact
         run: |
-          test -f dist/sele-linux-x64.flatpak
+          test -f dist/sele.flatpakref
           test -f dist/sele-linux-x64.tar.gz
           archive_contents="$(tar -tzf dist/sele-linux-x64.tar.gz)"
           grep -Fxq './sele' <<< "$archive_contents"
@@ -303,14 +319,13 @@ jobs:
         with:
           name: sele-linux-x64
           path: |
-            dist/sele-linux-x64.flatpak
+            dist/sele.flatpakref
             dist/sele-linux-x64.tar.gz
             dist/sele.flatpakrepo
           if-no-files-found: error
           compression-level: 0
 
       - name: Upload Flatpak repository for GitHub Pages
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-pages-artifact@v4
         with:
           path: dist/flatpak-pages

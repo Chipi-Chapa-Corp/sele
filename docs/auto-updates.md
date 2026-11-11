@@ -25,8 +25,11 @@ shutdown-to-installer handoff are recorded under `app-update` in diagnostics.
 Source tags (`vX.Y.Z`) start three independent releases: `vX.Y.Z-windows-x64`,
 `vX.Y.Z-macos-arm64`, and `vX.Y.Z-linux-x64`. Each becomes public after validation and
 its own artifacts finish uploading. macOS and Windows never wait for Linux. Linux
-publishes after its Flatpak update repository deploys, so an advertised update is
-installable. `Casks/sele.rb` updates immediately after the macOS release and points to
+publishes its `.flatpakref`, repository descriptor and tarball after the update repository
+deploys. Its slow standalone `.flatpak` installer builds in a separate workflow and is attached
+later; in-app updates and repository installs do not wait for it. Clients from 3.28.1 and
+earlier need one migration update before they can use this faster discovery path.
+`Casks/sele.rb` updates immediately after the macOS release and points to
 that platform's DMG; the workflow needs push permission on `main`.
 
 The updater lists releases, chooses the newest complete stable release for its own
@@ -36,6 +39,9 @@ the published Flatpak remote. Older combined releases remain valid fallback cand
 Drafts, prereleases, incomplete releases and downgrades are excluded.
 
 A combined `vX.Y.Z` compatibility release is also published after all three platforms.
+The background installer workflow then attaches the `.flatpak` to both Linux and
+compatibility entries. It only accepts successful release-tag runs from this repository
+and uses their exact source commit and exported repository artifact.
 Only this entry is marked GitHub's global latest, keeping existing installed versions
 able to upgrade to the platform-aware updater. New installations and subsequent app
 updates use the platform entries directly. Platform-tag pushes are excluded from the
@@ -44,8 +50,9 @@ build trigger, and publication uses drafts until all required assets are present
 CI bundles portable JavaScript once on Linux while validation runs in parallel.
 Main pushes validate and bundle; tags, pull requests and manual runs also build
 installers, avoiding duplicate packaging when a release pushes main and a tag together.
-Packaging runners install their own native dependencies and reuse that bundle and
-cached Electron/installer tools. Linux exports the Flatpak repository directly and
+Packaging runners prepare their native dependencies concurrently with compilation,
+then wait for the completed bundle from the same run. A failed compilation aborts the
+wait and prevents publication. Linux exports the Flatpak repository directly and
 creates its standalone bundle once, instead of importing and recompressing a bundle.
 Static deltas remain enabled for efficient Flatpak downloads. The tarball uses parallel
 gzip when available. The glibc-only Electron package excludes Copilot's musl runtime.
