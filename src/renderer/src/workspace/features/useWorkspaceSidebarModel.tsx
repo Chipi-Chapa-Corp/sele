@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import type { AppContainerTarget, AppProject } from '../../../../shared/app'
-import { noProjectGroupKey } from '../../../../shared/noProject'
+import { isNoProjectChat, noProjectGroupKey } from '../../../../shared/noProject'
 import type { ProviderChat } from '../../../../shared/provider'
 import { matchesChatSidebarFilter } from '../../chatSidebarFilter'
 import { reuseChatGroups } from '../../chatSidebarGroups'
@@ -16,7 +16,12 @@ import {
   mergeChats,
   sortChatsForGroup
 } from '../chatControllerUtils'
-import { activeGroupKey, allDoneProjectsValue, doneGroupKey } from '../controllerTypes'
+import {
+  activeGroupKey,
+  allDoneProjectsValue,
+  doneGroupKey,
+  newSessionNoProjectValue
+} from '../controllerTypes'
 import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
 import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
@@ -249,7 +254,10 @@ export function useWorkspaceSidebarModel({
             label: 'Done',
             kind: 'done' as const,
             chats: (unfilteredDoneChatGroup?.chats ?? []).filter(
-              (chat) => getChatProjectCwd(chat) === projectState.doneProjectFilterValue
+              (chat) =>
+                projectState.doneProjectFilterValue === newSessionNoProjectValue
+                  ? isNoProjectChat(chat)
+                  : getChatProjectCwd(chat) === projectState.doneProjectFilterValue
             )
           },
     [projectState.doneProjectFilterValue, unfilteredDoneChatGroup]

@@ -132,6 +132,7 @@ test('switching Done projects filters loaded chats without provider history requ
   const context = createWorkspaceTestContext({
     useMemo: (fn) => fn(),
     allDoneProjectsValue: allProjects,
+    newSessionNoProjectValue: '__no_project__',
     doneGroupKey: 'done',
     unfilteredDoneChatGroup: { kind: 'done', chats: ordered },
     getChatProjectCwd: (item) => item.projectCwd ?? item.cwd,

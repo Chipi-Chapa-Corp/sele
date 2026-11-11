@@ -161,6 +161,45 @@ test('a saved No Project choice hides project controls for a HOME-backed chat', 
   assert.equal(expression(controller, 'noProject', context), false)
 })
 
+test('Done filters No Project chats by their saved choice or reserved workspace', () => {
+  const noProjectValue = '__no_project__'
+  const allProjectsValue = '__all__'
+  const chats = [
+    { id: 'saved-choice', noProject: true, cwd: '/home/user', projectCwd: '/home/user' },
+    {
+      id: 'reserved-workspace',
+      cwd: '/data/sele-no-project/00000000-0000-4000-8000-000000000001',
+      projectCwd: '/stale-project'
+    },
+    { id: 'home-project', cwd: '/home/user' },
+    { id: 'other-project', cwd: '/runtime', projectCwd: '/stale-project' },
+    { id: 'unknown-folder', cwd: null }
+  ].map((chat) => ({ ...chat, providerId: 'codex', done: true }))
+  const unfiltered = { key: 'done', kind: 'done', chats }
+  const context = createWorkspaceTestContext({
+    useMemo: (compute) => compute(),
+    isNoProjectChat,
+    newSessionNoProjectValue: noProjectValue,
+    allDoneProjectsValue: allProjectsValue,
+    doneGroupKey: 'done',
+    doneProjectFilterValue: noProjectValue,
+    unfilteredDoneChatGroup: unfiltered
+  })
+  context.getChatProjectCwd = expression(utils, 'getChatProjectCwd', context)
+  const filtered = () => expression(controller, 'doneChatGroup', context)
+  const ids = () => Array.from(filtered().chats, (chat) => chat.id)
+  assert.deepEqual(ids(), ['saved-choice', 'reserved-workspace'])
+  context.doneProjectFilterValue = '/home/user'
+  assert.deepEqual(ids(), ['home-project'])
+  context.doneProjectFilterValue = '/stale-project'
+  assert.deepEqual(ids(), ['other-project'])
+  context.doneProjectFilterValue = allProjectsValue
+  assert.equal(filtered(), unfiltered)
+  context.doneProjectFilterValue = noProjectValue
+  context.unfilteredDoneChatGroup = null
+  assert.deepEqual(ids(), [])
+})
+
 test('detail, live summaries and metadata changes preserve the saved No Project flag', () => {
   const context = createWorkspaceTestContext({
     getChatPreview: () => '',
