@@ -42,6 +42,12 @@ A combined `vX.Y.Z` compatibility release is also published after all three plat
 The background installer workflow then attaches the `.flatpak` to both Linux and
 compatibility entries. It only accepts successful release-tag runs from this repository
 and uses their exact source commit and exported repository artifact.
+Tool installation uses Ubuntu's signed official repositories with bounded retries,
+bypassing the hosted runner's Azure mirror lists. To retry only a failed installer,
+push an `offline-run-RUN_ID` tag pointing to current installer tooling on `main`.
+The retry verifies that RUN_ID is a successful release build from this repository
+and checks out that build's exact source; it does not rebuild or republish the app.
+A subsequent retry can use `offline-run-RUN_ID-retry-2`.
 Only this entry is marked GitHub's global latest, keeping existing installed versions
 able to upgrade to the platform-aware updater. New installations and subsequent app
 updates use the platform entries directly. Platform-tag pushes are excluded from the

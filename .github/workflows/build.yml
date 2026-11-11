@@ -257,8 +257,7 @@ jobs:
 
       - name: Install Flatpak tooling
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes appstream flatpak pigz
+          bash scripts/install-ubuntu-ci-tools.sh appstream flatpak pigz
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install --assumeyes --noninteractive flathub \
             org.freedesktop.Platform//25.08 \

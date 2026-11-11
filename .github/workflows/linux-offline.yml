@@ -1,6 +1,9 @@
 name: Build standalone Linux installer
 
 on:
+  push:
+    tags:
+      - 'offline-run-*'
   workflow_run:
     workflows: [Build distributables]
     types: [completed]
@@ -10,7 +13,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: linux-offline-${{ github.event.workflow_run.id }}
+  group: linux-offline-${{ github.event.workflow_run.id || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -18,44 +21,56 @@ jobs:
     # Only successful release-tag pushes in this repository may publish assets.
     # PR artifacts and forks never enter this privileged workflow.
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/offline-run-')) ||
+      (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      startsWith(github.event.workflow_run.head_branch, 'v')
+      startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
     steps:
-      - name: Check out the exact validated source
+      - name: Check out current installer tooling
         uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22.23.1
+      - name: Verify original release build
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          RETRY_REF: ${{ github.ref_name }}
+        run: node scripts/resolve-offline-source.mjs
+      - name: Check out the exact validated release
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          path: release-source
       - name: Install Flatpak bundle tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes flatpak
+        run: bash scripts/install-ubuntu-ci-tools.sh flatpak
       - name: Download repository from the validated run
         uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.source.outputs.run_id }}
           name: github-pages
-          path: flatpak-repository
+          path: release-source/flatpak-repository
       - name: Extract exported repository
+        working-directory: release-source
         run: |
           mkdir -p dist/flatpak-pages
           tar --extract --file=flatpak-repository/artifact.tar --directory=dist/flatpak-pages --no-same-owner
       - name: Create standalone installer
-        run: node scripts/package-flatpak-bundle.mjs
+        working-directory: release-source
+        run: node ../scripts/package-flatpak-bundle.mjs
       - name: Attach installer to platform and compatibility releases
+        working-directory: release-source
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_TAG: ${{ steps.source.outputs.release_tag }}
         run: |
-          node scripts/publish-release.mjs "$RELEASE_TAG" linux-bundle dist
-          node scripts/publish-release.mjs "$RELEASE_TAG" legacy-bundle dist
+          node ../scripts/publish-release.mjs "$RELEASE_TAG" linux-bundle dist
+          node ../scripts/publish-release.mjs "$RELEASE_TAG" legacy-bundle dist
