@@ -4375,10 +4375,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
         chatId,
         getUserInputContent(precedingMessage.content),
         replayOptions,
-        precedingMessage.content
+        precedingMessage.content,
+        undefined,
+        true
       )
     }
-    if (originalInput) await this.steerActiveChat(chatId, text, options)
+    if (originalInput) await this.steerActiveChat(chatId, text, options, undefined, undefined, true)
 
     const detail = this.getCachedChatDetail(chatId)
     if (!detail) throw new Error('Unable to edit message')
@@ -4632,7 +4634,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     message: string,
     options?: ProviderTurnOptions,
     input?: CodexUserInput[],
-    clientMessageId?: string
+    clientMessageId?: string,
+    replayHistory = false
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
     if (!text && !hasAttachmentInput(options) && !input?.length) {
@@ -4642,11 +4645,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
     await this.ensureChatTailLoaded(chatId)
 
     const turnId = this.getActiveTurnId(chatId)
-    if (!turnId) return this.continueChatInContext(chatId, text, options, true, undefined, input)
+    if (!turnId)
+      return replayHistory
+        ? this.continueChatImmediately(chatId, text, options, clientMessageId, input)
+        : this.continueChatInContext(chatId, text, options, true, undefined, input)
 
     // Final-tagged text does not end a turn. Let the active turn accept steering;
     // processWaitingSteeringMessage already handles a concurrent turn completion.
-    if (this.hasPendingSteeringMessage(chatId)) {
+    // Edit replay awaits each steer RPC in order. Its accepted messages can still be
+    // waiting for their history echoes, which must not push the remaining replay into Queue.
+    if (!replayHistory && this.hasPendingSteeringMessage(chatId)) {
       return this.queueChatMessage(chatId, text, options, input)
     }
 

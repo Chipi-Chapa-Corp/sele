@@ -91,6 +91,20 @@ const createAdapter = (methodNames, globals = {}) => {
   )
 }
 
+test('ordinary steering still queues while another steer awaits its history echo', async () => {
+  const adapter = createAdapter(['steerActiveChat'])
+  const queued = []
+  Object.assign(adapter, {
+    ensureChatTailLoaded: async () => {},
+    getActiveTurnId: () => 'turn',
+    hasPendingSteeringMessage: () => true,
+    addWaitingSteeringMessage: () => assert.fail('ordinary steering must respect pending delivery'),
+    queueChatMessage: async (_chat, text) => queued.push(text)
+  })
+  await adapter.steerActiveChat('chat', 'Next instruction')
+  assert.deepEqual(queued, ['Next instruction'])
+})
+
 const userMessage = (id, clientId = id) => ({
   type: 'userMessage',
   id,

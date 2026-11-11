@@ -355,14 +355,16 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn, histor
     )
     .map((node) => node.getText(source))
     .join('\n')
-  const method = declaration.members.find(
-    (node) => node.name?.getText(source) === 'editMessageInContext'
+  const methods = declaration.members.filter((node) =>
+    ['editMessageInContext', 'steerActiveChat'].includes(node.name?.getText(source))
   )
   const adapter = vm.runInNewContext(
-    ts.transpile(`${declarations}; class Adapter { ${method.getText(source)} }; new Adapter()`, {
-      target: ts.ScriptTarget.ES2022
-    }),
+    ts.transpile(
+      `${declarations}; class Adapter { pendingMessageEdits = new PendingMessageEdits(); ${methods.map((method) => method.getText(source)).join('\n')} }; new Adapter()`,
+      { target: ts.ScriptTarget.ES2022 }
+    ),
     {
+      PendingMessageEdits,
       hasAttachmentInput: (options) => Boolean(options?.images?.length),
       getCodexUserMessageClientId: (item) => item.clientId,
       assertSupportedCodexHistory() {},
@@ -409,9 +411,15 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn, histor
     emitChatUpdated() {},
     addSubmittedPendingTurn: async () => ({ id: 'pending' }),
     startSubmittedCodexTurn: async (_chat, _pending, start) => start(),
-    steerActiveChat: async (...args) => {
-      steering.push(args)
+    ensureChatTailLoaded: async () => {},
+    getActiveTurnId: () => 'replacement',
+    hasPendingSteeringMessage: () => steering.length > 0,
+    addWaitingSteeringMessage: (chat, _turn, text, options, input) => {
+      steering.push([chat, text, options, input])
+      return { id: `steer-${steering.length}` }
     },
+    processWaitingSteeringMessage: async () => {},
+    queueChatMessage: () => assert.fail('history replay must not queue accepted steering'),
     getCachedChatDetail: () => ({ id: 'chat' })
   })
   return { adapter, requests, steering, hydrated }
@@ -535,6 +543,59 @@ test('delivered steering resolves its authoritative item id and replays earlier 
   assert.equal(fixture.requests[1].params.input, initialInput)
   assert.equal(fixture.steering[0][3], earlierInput)
   assert.equal(fixture.steering[1][2], options)
+})
+
+test('editing a later steer submits every earlier steer and the edit before their history echoes', async () => {
+  const input = (text) => [{ type: 'text', text }]
+  const originalInput = input('Original prompt')
+  const fixture = createHistoryAdapter({
+    id: 'turn',
+    status: 'inProgress',
+    items: [
+      { type: 'userMessage', id: 'original', content: originalInput },
+      ...['first', 'second', 'third', 'target', 'later'].map((id) => ({
+        type: 'userMessage',
+        id,
+        content: input(id)
+      }))
+    ]
+  })
+  const delivered = []
+  let inFlight = false
+  fixture.adapter.processWaitingSteeringMessage = async (_chat, id) => {
+    assert.equal(inFlight, false, 'replay waits for each submission acknowledgment')
+    inFlight = true
+    await new Promise((resolve) => setImmediate(resolve))
+    delivered.push(id)
+    inFlight = false
+    // Deliberately leave every accepted message awaiting its history echo.
+  }
+
+  await fixture.adapter.editMessageInContext('chat', 'turn:target', 'Revised target')
+
+  assert.equal(fixture.requests[1].params.input, originalInput)
+  assert.deepEqual(
+    fixture.steering.map((args) => args[1]),
+    ['first', 'second', 'third', 'Revised target']
+  )
+  assert.deepEqual(delivered, ['steer-1', 'steer-2', 'steer-3', 'steer-4'])
+})
+
+test('edit replay continues immediately if the replacement turn finishes before replay starts', async () => {
+  const fixture = createHistoryAdapter({
+    id: 'turn',
+    status: 'completed',
+    items: [
+      { type: 'userMessage', id: 'original', content: [{ type: 'text', text: 'Original' }] },
+      { type: 'userMessage', id: 'target', content: [{ type: 'text', text: 'Old' }] }
+    ]
+  })
+  fixture.adapter.getActiveTurnId = () => null
+  fixture.adapter.continueChatInContext = () => assert.fail('replay must not join existing Queue')
+  const continued = []
+  fixture.adapter.continueChatImmediately = async (_chat, text) => continued.push(text)
+  await fixture.adapter.editMessageInContext('chat', 'turn:target', 'Revised')
+  assert.deepEqual(continued, ['Revised'])
 })
 
 test('a pending edit holds automatic Codex delivery and saves in place before resuming', async () => {
