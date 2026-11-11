@@ -58,6 +58,13 @@ export function useWorkspaceGitState() {
 
   const [gitBranchLoadRequest, setGitBranchLoadRequest] = useState(0)
 
+  // Operation locks survive navigation, which invalidates the visible branch request.
+  const [branchActionProjectKeys, setBranchActionProjectKeys] = useState<Set<string>>(
+    () => new Set()
+  )
+
+  const branchActionProjectKeysRef = useRef(new Set<string>())
+
   const [gitBranchActionState, setGitBranchActionState] = useState<SendState>('idle')
 
   const [gitBranchError, setGitBranchError] = useState<string | null>(null)
@@ -198,6 +205,9 @@ export function useWorkspaceGitState() {
     setGitBranchLoadState,
     gitBranchLoadRequest,
     setGitBranchLoadRequest,
+    branchActionProjectKeys,
+    setBranchActionProjectKeys,
+    branchActionProjectKeysRef,
     gitBranchActionState,
     setGitBranchActionState,
     gitBranchError,

@@ -77,6 +77,7 @@ export type GitSyncControllerDependencies = {
     React.SetStateAction<Record<string, GitSyncRecoveryState>>
   >
   changesProjectCwd: string | null
+  branchActionProjectKeysRef: React.RefObject<Set<string>>
   syncProjectKeysRef: React.RefObject<Set<string>>
   hasAiCommitInProgressForProject: (projectKey: string) => boolean
   commitInFlightProjectKeysRef: React.RefObject<Set<string>>
@@ -165,6 +166,7 @@ export type CommitControllerDependencies = {
   projectCommitInProgress: boolean
   commitInFlightProjectKeysRef: React.RefObject<Set<string>>
   commitMessageGenerationProjectKeysRef: React.RefObject<Set<string>>
+  branchActionProjectKeysRef: React.RefObject<Set<string>>
   syncProjectKeysRef: React.RefObject<Set<string>>
   sendInFlightRef: React.RefObject<boolean>
   sendInFlightProjectKeyRef: React.RefObject<string | null>
@@ -243,6 +245,9 @@ export type FileNavigationDependencies = {
   collapsedFileTreeFoldersByCwdRef: React.RefObject<Map<string, Record<string, boolean>>>
   repositoryFileIndex: FileTreeIndex | null
   branchSwitchDisabled: boolean
+  currentProjectKey: string
+  branchActionProjectKeysRef: React.RefObject<Set<string>>
+  setBranchActionProjectKeys: React.Dispatch<React.SetStateAction<Set<string>>>
   gitBranchRequestIdRef: React.RefObject<number>
   setGitBranchActionState: React.Dispatch<React.SetStateAction<SendState>>
   setGitBranchError: React.Dispatch<React.SetStateAction<string | null>>
@@ -331,7 +336,7 @@ export type GitViewModelDependencies = {
   uncommittedChangedFiles: ChangedFile[]
   gitAvailableForCurrentSource: boolean | null
   setGitCommitMode: React.Dispatch<React.SetStateAction<GitCommitMode>>
-  gitBranchActionState: SendState
+  branchActionProjectKeys: Set<string>
   hasUnpulledChanges: boolean
   unpulledCount: number
   handleSyncChanges: (action: GitSyncAction) => Promise<void>

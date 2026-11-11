@@ -49,7 +49,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     uncommittedChangedFiles,
     gitAvailableForCurrentSource,
     setGitCommitMode,
-    gitBranchActionState,
+    branchActionProjectKeys,
     hasUnpulledChanges,
     unpulledCount,
     handleSyncChanges,
@@ -103,6 +103,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
       return nextRecoveries
     })
   }, [currentProjectKey])
+  const branchActionInProgress = branchActionProjectKeys.has(currentProjectKey)
   const syncInProgress = syncProjectKeys.has(currentProjectKey)
   const currentProjectSyncError = syncErrorsByProjectKey[currentProjectKey] ?? null
   const projectSyncRecovery = syncRecoveriesByProjectKey[currentProjectKey] ?? null
@@ -138,6 +139,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     (selectedChat ? !chatDetail || chatLoadState !== 'ready' || chatIsBusy : false)
   const hasDirectCommitChanges = changedFiles.length > 0 || untrackedFilesHiddenForPerformance
   const commitBaseDisabled =
+    branchActionInProgress ||
     !hasDirectCommitChanges ||
     changesLoadState !== 'ready' ||
     commitMessageGenerationInProgress ||
@@ -149,6 +151,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
   ): boolean => commitBaseDisabled || !changesCwd || (action === 'commit' && !message)
   const commitDisabled = getCommitActionDisabled('commit')
   const aiCommitBaseDisabled =
+    branchActionInProgress ||
     providerUpdateInProgress ||
     !changesCwd ||
     uncommittedChangedFiles.length === 0 ||
@@ -163,6 +166,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     [aiCommitBaseDisabled]
   )
   const commitMessageGenerationDisabled =
+    branchActionInProgress ||
     providerUpdateInProgress ||
     !changesCwd ||
     uncommittedChangedFiles.length === 0 ||
@@ -176,6 +180,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
       : 'Commit message'
     : 'AI instructions'
   const syncDisabled =
+    branchActionInProgress ||
     !changesCwd ||
     gitAvailableForCurrentSource === false ||
     syncInProgress ||
@@ -199,7 +204,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
   const branchSwitchDisabled =
     !changesCwd ||
     gitAvailableForCurrentSource === false ||
-    gitBranchActionState === 'sending' ||
+    branchActionInProgress ||
     currentProjectSyncInProgress ||
     commitMessageGenerationInProgress ||
     projectCommitInProgress ||
@@ -281,6 +286,7 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     activeSidebarLoadState,
     activeTreeFolderPaths,
     aiCommitInstructions,
+    branchActionInProgress,
     branchSwitchDisabled,
     changeTree,
     changesEmptyMessage,

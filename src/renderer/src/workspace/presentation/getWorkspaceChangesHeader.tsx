@@ -48,7 +48,9 @@ export function getWorkspaceChangesHeader({
     changesSidebarExpanded: panes.changesSidebarExpanded,
     currentBranchName: changes.currentBranchName,
     effectiveAppSettings: settings.effectiveAppSettings,
-    gitBranchActionState: gitState.gitBranchActionState,
+    gitBranchActionState: gitPresentation.branchActionInProgress
+      ? ('sending' as const)
+      : gitState.gitBranchActionState,
     gitBranchDeleteRetry: gitState.gitBranchDeleteRetry,
     gitBranchError: gitState.gitBranchError,
     gitBranchLoadState: gitState.gitBranchLoadState,

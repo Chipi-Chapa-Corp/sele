@@ -39,6 +39,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
     projectCommitInProgress,
     commitInFlightProjectKeysRef,
     commitMessageGenerationProjectKeysRef,
+    branchActionProjectKeysRef,
     syncProjectKeysRef,
     sendInFlightRef,
     sendInFlightProjectKeyRef,
@@ -100,6 +101,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
       hasAiCommitInProgressForProject(projectKey) ||
       commitInFlightProjectKeysRef.current.has(projectKey) ||
       commitMessageGenerationProjectKeysRef.current.has(projectKey) ||
+      branchActionProjectKeysRef.current.has(projectKey) ||
       syncProjectKeysRef.current.has(projectKey)
     ) {
       return false
@@ -262,6 +264,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
       hasAiCommitInProgressForProject(generationProjectKey) ||
       commitMessageGenerationProjectKeysRef.current.has(generationProjectKey) ||
       commitInFlightProjectKeysRef.current.has(generationProjectKey) ||
+      branchActionProjectKeysRef.current.has(generationProjectKey) ||
       syncProjectKeysRef.current.has(generationProjectKey)
     ) {
       return null
@@ -346,6 +349,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
       hasAiCommitInProgressForProject(commitProjectKey) ||
       commitInFlightProjectKeysRef.current.has(commitProjectKey) ||
       commitMessageGenerationProjectKeysRef.current.has(commitProjectKey) ||
+      branchActionProjectKeysRef.current.has(commitProjectKey) ||
       syncProjectKeysRef.current.has(commitProjectKey)
     ) {
       return false

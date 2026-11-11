@@ -73,6 +73,7 @@ export function useWorkspaceCommits({
     projectCommitInProgress: gitPresentation.projectCommitInProgress,
     commitInFlightProjectKeysRef: gitState.commitInFlightProjectKeysRef,
     commitMessageGenerationProjectKeysRef: gitState.commitMessageGenerationProjectKeysRef,
+    branchActionProjectKeysRef: gitState.branchActionProjectKeysRef,
     syncProjectKeysRef: gitState.syncProjectKeysRef,
     sendInFlightRef: chatState.sendInFlightRef,
     sendInFlightProjectKeyRef: chatState.sendInFlightProjectKeyRef,

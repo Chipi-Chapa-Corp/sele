@@ -69,6 +69,7 @@ function fixture(input = '  Fix the bug\n') {
     },
     commitInFlightProjectKeysRef: { current: new Set() },
     commitMessageGenerationProjectKeysRef: { current: new Set() },
+    branchActionProjectKeysRef: { current: new Set() },
     syncProjectKeysRef: { current: new Set() },
     startingScopedCommitActivitiesRef: { current: {} },
     sendInFlightRef: { current: false },
@@ -192,5 +193,25 @@ for (const nextInput of ['  Fix the bug\n', 'New project instructions']) {
     f.commit.resolve({ id: 'commit-chat', status: 'idle', items: [] })
     assert.equal(await result, true)
     assert.equal(f.input, nextInput.trim() === 'Fix the bug' ? '' : nextInput)
+  })
+}
+
+for (const operation of [
+  'handleManualCommitChangedFiles',
+  'handleQuickCommitChangedFiles',
+  'handleAiCommitChangedFiles'
+]) {
+  test(`${operation} honors only the current project's branch lock`, async () => {
+    const f = fixture()
+    f.dependencies.branchActionProjectKeysRef.current.add('cwd:/project-a')
+    assert.equal(await f.controller[operation](), false)
+    assert.equal(f.commits.length, 0)
+    f.dependencies.branchActionProjectKeysRef.current.clear()
+    f.dependencies.branchActionProjectKeysRef.current.add('cwd:/project-b')
+    const result = f.controller[operation]()
+    f.generation.resolve('Generated message')
+    f.commit.resolve({ id: 'commit-chat', status: 'idle', items: [] })
+    f.push.resolve()
+    assert.equal(await result, true)
   })
 }

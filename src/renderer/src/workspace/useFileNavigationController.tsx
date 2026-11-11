@@ -42,6 +42,9 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
     collapsedFileTreeFoldersByCwdRef,
     repositoryFileIndex,
     branchSwitchDisabled,
+    currentProjectKey,
+    branchActionProjectKeysRef,
+    setBranchActionProjectKeys,
     gitBranchRequestIdRef,
     setGitBranchActionState,
     setGitBranchError,
@@ -106,12 +109,27 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
       return nextFolders
     })
   }
+  const startBranchAction = (): boolean => {
+    if (branchActionProjectKeysRef.current.has(currentProjectKey)) return false
+    const keys = new Set(branchActionProjectKeysRef.current).add(currentProjectKey)
+    branchActionProjectKeysRef.current = keys
+    setBranchActionProjectKeys(keys)
+    return true
+  }
+  const finishBranchAction = (): void => {
+    const keys = new Set(branchActionProjectKeysRef.current)
+    keys.delete(currentProjectKey)
+    branchActionProjectKeysRef.current = keys
+    setBranchActionProjectKeys(keys)
+  }
   const handleSwitchBranch = async (branchName: string, create: boolean): Promise<boolean> => {
     if (branchSwitchDisabled || !changesCwd) return false
 
+    if (!startBranchAction()) return false
+
     const cwd = changesCwd
     const requestId = ++gitBranchRequestIdRef.current
-    setGitBranchActionState('sending')
+    setGitBranchActionState('idle')
     setGitBranchError(null)
     setGitBranchDeleteRetry(null)
     setGitBranchWorktreeDeleteRetry(null)
@@ -144,6 +162,8 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
         )
       }
       return false
+    } finally {
+      finishBranchAction()
     }
   }
   const handleDeleteBranch = async (
@@ -152,11 +172,11 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
     force = false,
     removeWorktree = false
   ): Promise<void> => {
-    if (branchSwitchDisabled || !changesCwd) return
+    if (branchSwitchDisabled || !changesCwd || !startBranchAction()) return
 
     const cwd = changesCwd
     const requestId = ++gitBranchRequestIdRef.current
-    setGitBranchActionState('sending')
+    setGitBranchActionState('idle')
     setGitBranchError(null)
     setGitBranchDeleteRetry(null)
     setGitBranchWorktreeDeleteRetry(null)
@@ -209,6 +229,8 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
 
       setGitBranchActionState('error')
       setGitBranchError(getErrorMessage(error, 'Unable to delete this branch.'))
+    } finally {
+      finishBranchAction()
     }
   }
   const handleForceDeleteBranch = async (): Promise<void> => {

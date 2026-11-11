@@ -52,6 +52,7 @@ export function useWorkspaceGitSync({
     setSyncErrorsByProjectKey: gitState.setSyncErrorsByProjectKey,
     setSyncRecoveriesByProjectKey: gitState.setSyncRecoveriesByProjectKey,
     changesProjectCwd: session.changesProjectCwd,
+    branchActionProjectKeysRef: gitState.branchActionProjectKeysRef,
     syncProjectKeysRef: gitState.syncProjectKeysRef,
     hasAiCommitInProgressForProject,
     commitInFlightProjectKeysRef: gitState.commitInFlightProjectKeysRef,
