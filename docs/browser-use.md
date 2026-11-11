@@ -72,6 +72,12 @@ when official plugins are enabled. Website permissions and
 connection errors come from the official runtime; specialized browser authentication/review
 challenges still have the limitations described in [provider interactions](provider-interactions.md).
 
+When using a separate Codex account, Sele passes the existing bundled marketplace through
+that account's `CODEX_HOME` path. Codex requires the reserved `openai-bundled` marketplace to
+be beneath the active home even when both paths resolve to the same shared directory.
+The override applies to the launched process only; shared configuration and credentials
+remain unchanged. It is added only when the app-managed marketplace manifest exists.
+
 Sele's `chrome` namespace and Claude's `chrome_*` tools are advertised only after the user
 starts pairing Sele's optional extension or connects it. Unpaired tools cannot divert the
 agent from its existing native Chrome connection. Pairing updates the catalog on the next turn.

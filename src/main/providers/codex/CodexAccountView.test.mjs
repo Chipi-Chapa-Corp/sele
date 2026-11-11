@@ -73,7 +73,8 @@ test('missing pinned credentials fail instead of silently using the default acco
 
 for (const usePosix of [true, false]) {
   test(`${usePosix ? 'POSIX host' : 'native Windows path'} starts one provider and preserves stdio and account-private credential replacement`, async (t) => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'sele-shadow-stdio-')))
+    const prefix = process.platform === 'win32' ? 'sele-shadow-stdio-' : 'sele-shadow-stdio-"\\-'
+    const root = await realpath(await mkdtemp(join(tmpdir(), prefix)))
     t.after(() => rm(root, { recursive: true, force: true }))
     const shadow = join(root, 'sele/accounts', account)
     await mkdir(shadow, { recursive: true })
@@ -81,6 +82,14 @@ for (const usePosix of [true, false]) {
     await writeFile(join(root, 'auth.json'), 'default token')
     await writeFile(join(root, 'auth.json.lock'), 'default lock')
     await writeFile(join(shadow, 'auth.json.lock'), 'account lock')
+    const marketplace = '.tmp/bundled-marketplaces/openai-bundled'
+    await mkdir(join(root, marketplace, '.agents/plugins'), { recursive: true })
+    await writeFile(
+      join(root, marketplace, '.agents/plugins/marketplace.json'),
+      JSON.stringify({ name: 'openai-bundled', plugins: [{ name: 'unified-computer-use' }] })
+    )
+    const config = `[marketplaces.openai-bundled]\nsource_type = "local"\nsource = ${JSON.stringify(join(root, marketplace))}\n`
+    await writeFile(join(root, 'config.toml'), config)
     const script = join(root, 'provider.cjs')
     await writeFile(
       script,
@@ -88,14 +97,19 @@ for (const usePosix of [true, false]) {
       const fs = require('node:fs'); const path = require('node:path');
       fs.appendFileSync(path.join(process.env.FIXTURE_ROOT, 'starts'), 'started\\n');
       require('node:readline').createInterface({input: process.stdin}).once('line', line => {
+        const prefix = 'marketplaces.openai-bundled.source=';
+        const override = process.argv.find(value => value.startsWith(prefix));
+        const source = override ? JSON.parse(override.slice(prefix.length)) : path.join(process.env.FIXTURE_ROOT, '${marketplace}');
+        const expected = path.join(process.env.CODEX_HOME, '${marketplace}');
+        const plugins = source === expected ? JSON.parse(fs.readFileSync(path.join(source, '.agents/plugins/marketplace.json'), 'utf8')).plugins : [];
         const auth = path.join(process.env.CODEX_HOME, 'auth.json');
         fs.writeFileSync(auth + '.new', 'rotated token'); fs.renameSync(auth + '.new', auth);
-        process.stdout.write(JSON.stringify({line, home:process.env.CODEX_HOME, sqlite:process.env.CODEX_SQLITE_HOME}) + '\\n');
+        process.stdout.write(JSON.stringify({line, home:process.env.CODEX_HOME, sqlite:process.env.CODEX_SQLITE_HOME, plugins}) + '\\n');
         process.stderr.write('fixture stderr'); process.exit(0);
       });
     `
     )
-    const env = { ...process.env, CODEX_HOME: root, FIXTURE_ROOT: root }
+    const env = { ...process.env, CODEX_HOME: root, CODEX_SQLITE_HOME: root, FIXTURE_ROOT: root }
     const command = await getCodexAccountViewCommand(
       process.execPath,
       [script],
@@ -115,13 +129,19 @@ for (const usePosix of [true, false]) {
     child.stdin.end('fixture request\n')
     const [code] = await once(child, 'close')
     assert.equal(code, 0, stderr)
-    assert.deepEqual(JSON.parse(stdout), { line: 'fixture request', home: shadow, sqlite: root })
+    assert.deepEqual(JSON.parse(stdout), {
+      line: 'fixture request',
+      home: shadow,
+      sqlite: root,
+      plugins: [{ name: 'unified-computer-use' }]
+    })
     assert.equal(stderr, 'fixture stderr')
     assert.equal(await readFile(join(root, 'starts'), 'utf8'), 'started\n')
     assert.equal(await readFile(join(root, 'auth.json'), 'utf8'), 'default token')
     assert.equal(await readFile(join(shadow, 'auth.json'), 'utf8'), 'rotated token')
     assert.equal(await readFile(join(root, 'auth.json.lock'), 'utf8'), 'default lock')
     assert.equal(await readFile(join(shadow, 'auth.json.lock'), 'utf8'), 'account lock')
+    assert.equal(await readFile(join(root, 'config.toml'), 'utf8'), config)
 
     await rm(join(shadow, 'auth.json.lock'))
     await symlink(join(root, 'auth.json.lock'), join(shadow, 'auth.json.lock'))
