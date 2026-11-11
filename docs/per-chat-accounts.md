@@ -19,8 +19,10 @@ Codex uses account shadow homes on Linux, macOS, and Windows. Existing
 `CodexAccountView.ts` and `CodexShadowHome.ts` prepare the selected `CODEX_HOME` with private
 file-backed credentials and links to canonical sessions, config, skills, plugins, memories,
 and writer locks. SQLite stays shared through `CODEX_SQLITE_HOME`. Authentication locks,
-model caches, and temporary files stay private; conflicting files/links fail without being
-overwritten. Discovery and updates use the canonical home.
+model caches, and temporary files stay private. Codex global state (`.codex-global-state.json`
+and its `.bak`) is excluded from new shared links; existing account-local copies are preserved.
+Conflicting shared files/links fail without being overwritten. Discovery and updates use the
+canonical home.
 
 Windows requires Developer Mode or symbolic-link permission. No privileged helper is used;
 legacy installed helpers are left on disk. POSIX launchers track default changes for

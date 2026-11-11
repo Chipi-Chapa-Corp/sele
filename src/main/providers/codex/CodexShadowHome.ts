@@ -35,6 +35,9 @@ export const codexPrivateEntries = new Set([
   'auth.lock',
   'auth.json.lock',
   'models_cache.json',
+  // Codex can replace these files; account-local copies must not block startup.
+  '.codex-global-state.json',
+  '.codex-global-state.json.bak',
   'tmp',
   '.DS_Store'
 ])

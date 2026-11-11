@@ -72,6 +72,53 @@ test('missing pinned credentials fail instead of silently using the default acco
 })
 
 for (const usePosix of [true, false]) {
+  test(`${usePosix ? 'POSIX host' : 'native Windows path'} preserves account-local global state across launches`, async (t) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'sele-global-state-')))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    const shadow = join(root, 'sele/accounts', account)
+    await mkdir(shadow, { recursive: true })
+    await writeFile(join(shadow, 'auth.json'), 'account token')
+    const names = ['.codex-global-state.json', '.codex-global-state.json.bak']
+    for (const name of names) {
+      await writeFile(join(root, name), 'default state')
+      await writeFile(join(shadow, name), 'account state')
+    }
+    const script = join(root, 'provider.cjs')
+    await writeFile(
+      script,
+      `
+      const fs = require('node:fs'); const path = require('node:path');
+      for (const name of ${JSON.stringify(names)}) {
+        const file = path.join(process.env.CODEX_HOME, name);
+        if (fs.readFileSync(file, 'utf8') !== 'account state') process.exit(2);
+        fs.writeFileSync(file + '.new', 'account state');
+        fs.renameSync(file + '.new', file);
+      }
+      `
+    )
+    for (let launch = 0; launch < 2; launch++) {
+      const command = await getCodexAccountViewCommand(
+        process.execPath,
+        [script],
+        usePosix,
+        account,
+        { ...process.env, CODEX_HOME: root }
+      )
+      const child = spawn(command.file, command.args, { env: command.env })
+      let stderr = ''
+      child.stderr.on('data', (value) => {
+        stderr += value
+      })
+      child.stdin.end()
+      const [code] = await once(child, 'close')
+      assert.equal(code, 0, stderr)
+      for (const name of names) {
+        assert.equal(await readFile(join(root, name), 'utf8'), 'default state')
+        assert.equal(await readFile(join(shadow, name), 'utf8'), 'account state')
+      }
+    }
+  })
+
   test(`${usePosix ? 'POSIX host' : 'native Windows path'} starts one provider and preserves stdio and account-private credential replacement`, async (t) => {
     const prefix = process.platform === 'win32' ? 'sele-shadow-stdio-' : 'sele-shadow-stdio-"\\-'
     const root = await realpath(await mkdtemp(join(tmpdir(), prefix)))

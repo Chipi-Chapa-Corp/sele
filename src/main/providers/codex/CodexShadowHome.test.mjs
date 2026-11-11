@@ -62,6 +62,22 @@ test('missing or linked credentials and copied state fail without overwriting ei
   await assert.rejects(resolveCodexAccount(home, '../escape'), /Invalid Codex account/)
 })
 
+test('new account homes do not link Codex global state or its backup', async (t) => {
+  const home = await fixture(t)
+  const names = ['.codex-global-state.json', '.codex-global-state.json.bak']
+  for (const name of names) await writeFile(join(home, name), 'default state')
+  const shadow = await prepareCodexShadowHome(home, a)
+  for (const name of names) {
+    await assert.rejects(realpath(join(shadow, name)), { code: 'ENOENT' })
+    await writeFile(join(shadow, name), 'account state')
+  }
+  await prepareCodexShadowHome(home, a)
+  for (const name of names) {
+    assert.equal(await readFile(join(home, name), 'utf8'), 'default state')
+    assert.equal(await readFile(join(shadow, name), 'utf8'), 'account state')
+  }
+})
+
 test('pinned default and account selections ignore a changed global default', async (t) => {
   const home = await fixture(t)
   await writeFile(join(home, 'sele/active-account'), a)
