@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { handleLoggedIpc } from '../logging'
 import { desktopChannels, type DesktopState } from '../../shared/desktop'
 import { computerAutomation } from './ComputerAutomation'
-import { chromeAutomation } from './ChromeAutomation'
+import { chromeAutomation, configureChromePairingStorage } from './ChromeAutomation'
 import { startBrowserUseBridge } from '../providers/codex/CodexBrowserBridge'
 
 export const getDesktopState = (): DesktopState => ({
@@ -13,7 +13,24 @@ export const getDesktopState = (): DesktopState => ({
 })
 export function registerDesktopIpc(): void {
   let closeChromeBridge: (() => Promise<void>) | null = null
-  handleLoggedIpc(desktopChannels.getState, () => getDesktopState())
+  configureChromePairingStorage(app.getPath('userData'))
+  const ensureBridge = async (): Promise<void> => {
+    if (!closeChromeBridge)
+      closeChromeBridge = await startBrowserUseBridge(chromeAutomation, {
+        type: 'chrome',
+        name: 'Chrome (Sele extension)'
+      })
+  }
+  let initialization = chromeAutomation.restore().then(async (restored) => {
+    if (restored) await ensureBridge()
+  })
+  void initialization.catch((error) =>
+    console.error('Unable to restore saved Chrome pairing.', error)
+  )
+  handleLoggedIpc(desktopChannels.getState, async () => {
+    await initialization
+    return getDesktopState()
+  })
   handleLoggedIpc(desktopChannels.connectComputer, async () => {
     await computerAutomation.connect()
     return getDesktopState()
@@ -23,16 +40,16 @@ export function registerDesktopIpc(): void {
     return getDesktopState()
   })
   handleLoggedIpc(desktopChannels.pairChrome, async () => {
+    await initialization.catch(() => {}) // Explicit pairing repairs a failed saved binding.
     await chromeAutomation.pair()
-    if (!closeChromeBridge)
-      closeChromeBridge = await startBrowserUseBridge(chromeAutomation, {
-        type: 'chrome',
-        name: 'Chrome (Sele extension)'
-      })
+    await ensureBridge()
+    initialization = Promise.resolve()
     return getDesktopState()
   })
   handleLoggedIpc(desktopChannels.disconnectChrome, async () => {
+    await initialization.catch(() => {})
     await chromeAutomation.disconnect()
+    initialization = Promise.resolve()
     return getDesktopState()
   })
   handleLoggedIpc(desktopChannels.openChromeExtension, async () => {
@@ -52,7 +69,9 @@ export function registerDesktopIpc(): void {
   })
   app.once('will-quit', () => {
     computerAutomation.disconnect()
-    chromeAutomation.close()
+    void chromeAutomation
+      .close()
+      .catch((error) => console.error('Unable to close Chrome transport.', error))
     void closeChromeBridge?.()
   })
 }

@@ -5,12 +5,14 @@ import { createRequire } from 'node:module'
 import vm from 'node:vm'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { CodexDynamicTools } from '../providers/codex/CodexDynamicTools.ts'
 const require = createRequire(import.meta.url)
 const bundle = await build({
   stdin: {
     contents:
-      "export {registerCodexDesktopTools} from './src/main/providers/codex/CodexDesktopTools';export {registerCodexBrowserTools} from './src/main/providers/codex/CodexBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {createOpenCodeBrowserBridge} from './src/main/providers/opencode/OpenCodeBrowserBridge';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {chromeAutomation} from './src/main/desktop/ChromeAutomation'",
+      "export {registerCodexDesktopTools} from './src/main/providers/codex/CodexDesktopTools';export {registerCodexBrowserTools} from './src/main/providers/codex/CodexBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {createOpenCodeBrowserBridge} from './src/main/providers/opencode/OpenCodeBrowserBridge';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {chromeAutomation,configureChromePairingStorage} from './src/main/desktop/ChromeAutomation'",
     resolveDir: process.cwd(),
     loader: 'ts'
   },
@@ -33,7 +35,7 @@ const bundle = await build({
         build.onLoad({ filter: /.*/, namespace: 'test' }, ({ path }) => ({
           contents:
             path === 'electron'
-              ? 'export const nativeImage={};export const app={};'
+              ? 'export const nativeImage={};export const app={};export const safeStorage={isEncryptionAvailable:()=>true,encryptString:value=>Buffer.from(value),decryptString:value=>value.toString()};'
               : path.endsWith('ComputerAutomation')
                 ? 'export const computerAutomation={execute:async args=>args.action==="screenshot"?{width:16,height:16,data:"aW1hZ2U="}:{success:true,action:args.action}}'
                 : path.endsWith('BrowserAutomation')
@@ -51,6 +53,12 @@ vm.runInThisContext(`(function(module, exports, require) { ${bundle.outputFiles[
   require
 )
 const api = module.exports
+const pairingDirectory = await mkdtemp(join(tmpdir(), 'sele-desktop-tools-'))
+api.configureChromePairingStorage(pairingDirectory)
+test.after(async () => {
+  await api.chromeAutomation.close()
+  await rm(pairingDirectory, { recursive: true, force: true })
+})
 const scope = { providerId: 'claude', sessionId: 'fixture', cwd: '', containerKey: 'host' }
 
 test('Claude desktop tools expose optional Chrome capabilities after pairing starts', async (t) => {

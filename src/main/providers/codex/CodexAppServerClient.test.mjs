@@ -190,7 +190,7 @@ test('browser declarations are sent on interactive start/resume and excluded fro
   }
 })
 
-test('native Codex Chrome reuses installed plugins and omits unpaired Sele Chrome tools', async (t) => {
+test('native Codex Chrome reuses installed plugins while retaining later-paired Sele tools', async (t) => {
   const { client, children } = fixture(t, {
     installedPlugins: ['chrome', 'browser', 'unified-computer-use']
   })
@@ -216,7 +216,7 @@ test('native Codex Chrome reuses installed plugins and omits unpaired Sele Chrom
     if (method !== 'thread/fork')
       assert.deepEqual(
         request.params.dynamicTools.map((tool) => tool.name),
-        ['sele_browser']
+        ['chrome', 'sele_browser']
       )
   }
 })
@@ -243,7 +243,7 @@ test('default Codex queries leave native browser configuration to the installed 
   assert.ok(!children[0].requests.some((request) => request.method === 'plugin/installed'))
 })
 
-test('official Codex Chrome is additive and leaves paired Sele tools available', async (t) => {
+test('Chrome tools remain registered when pairing happens after a chat starts', async (t) => {
   const { client, children, context } = fixture(t)
   client.container = null
   client.dynamicTools.specs = [
@@ -260,10 +260,7 @@ test('official Codex Chrome is additive and leaves paired Sele tools available',
         context.chromeAutomation.status = status
         await client.request(method, { threadId: 'fixture' }, { nativeChrome })
         const names = children[0].requests.at(-1).params.dynamicTools.map((tool) => tool.name)
-        assert.deepEqual(
-          names,
-          status.connected || status.pairingUrl ? ['chrome', 'sele_browser'] : ['sele_browser']
-        )
+        assert.deepEqual(names, ['chrome', 'sele_browser'])
       }
     }
   }
