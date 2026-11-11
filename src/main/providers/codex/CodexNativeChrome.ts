@@ -13,14 +13,11 @@ export function getCodexNativeChromeConfig(installed: InstalledPlugins): Record<
       .flatMap((marketplace) => marketplace.plugins.filter((plugin) => plugin.installed))
       .map((plugin) => plugin.name)
   )
-  // The real app-server catalog distinguishes Chrome from the in-app Browser.
-  // Browser plus its runtime does not establish a Chrome installation.
-  if (!plugins.has('chrome'))
-    throw new Error(
-      'Set up Chrome in the ChatGPT or Codex desktop app first, then keep that app running. No official Chrome browser plugin is installed. You can also turn off official Chrome integration in Sele Settings → Browser & desktop.'
-    )
+  // Plugin names vary across runtime versions. A missing `chrome` catalog entry
+  // does not disprove an existing native Chrome connection. Preserve the runtime's
+  // configuration and let its browser tools report actual connection failures.
   return {
-    'plugins."chrome@openai-bundled".enabled': true,
+    ...(plugins.has('chrome') ? { 'plugins."chrome@openai-bundled".enabled': true } : {}),
     ...(plugins.has('unified-computer-use')
       ? { 'plugins."unified-computer-use@openai-bundled".enabled': true }
       : {})

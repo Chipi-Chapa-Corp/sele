@@ -1175,7 +1175,7 @@ export type ProviderTurnOptions = {
   review?: ProviderReview
   sandboxMode: ProviderSandboxMode
   showRecommendedPlugins?: boolean
-  /** Use the provider's official Chrome integration in local interactive chats. */
+  /** Explicitly enable official Chrome in local interactive chats; otherwise retain provider defaults. */
   nativeChrome?: boolean
   skills?: ProviderSkillInput[]
 }

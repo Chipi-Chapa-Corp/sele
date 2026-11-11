@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url)
 const bundle = await build({
   stdin: {
     contents:
-      "export {registerCodexDesktopTools} from './src/main/providers/codex/CodexDesktopTools';export {registerCodexBrowserTools} from './src/main/providers/codex/CodexBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {createOpenCodeBrowserBridge} from './src/main/providers/opencode/OpenCodeBrowserBridge';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools'",
+      "export {registerCodexDesktopTools} from './src/main/providers/codex/CodexDesktopTools';export {registerCodexBrowserTools} from './src/main/providers/codex/CodexBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {createOpenCodeBrowserBridge} from './src/main/providers/opencode/OpenCodeBrowserBridge';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {chromeAutomation} from './src/main/desktop/ChromeAutomation'",
     resolveDir: process.cwd(),
     loader: 'ts'
   },
@@ -53,7 +53,9 @@ vm.runInThisContext(`(function(module, exports, require) { ${bundle.outputFiles[
 const api = module.exports
 const scope = { providerId: 'claude', sessionId: 'fixture', cwd: '', containerKey: 'host' }
 
-test('Claude desktop tools keep unique names and expose native and attached Chrome capabilities', async () => {
+test('Claude desktop tools expose optional Chrome capabilities after pairing starts', async (t) => {
+  await api.chromeAutomation.pair()
+  t.after(() => api.chromeAutomation.disconnect())
   const integration = api.createClaudeBrowserIntegration(
     { createClient: () => ({ close() {} }) },
     scope
@@ -73,6 +75,9 @@ test('Claude desktop tools keep unique names and expose native and attached Chro
     .find((tool) => tool.name === 'native_computer')
     .execute({ action: 'scroll', dy: 5 })
   assert.equal(result.isError, undefined)
+  assert.equal(integration.isCurrent(), true)
+  await api.chromeAutomation.disconnect()
+  assert.equal(integration.isCurrent(), false)
   integration.close()
 })
 
@@ -85,13 +90,8 @@ test('Claude can discover and use the embedded browser before loading deferred t
     const loaded = integration.server.tools
       .filter((tool) => tool.alwaysLoad)
       .map((tool) => tool.name)
-    assert.deepEqual(loaded.sort(), [
-      'chrome_tabs_context',
-      'computer',
-      'navigate',
-      'read_page',
-      'tabs_context'
-    ])
+    assert.deepEqual(loaded.sort(), ['computer', 'navigate', 'read_page', 'tabs_context'])
+    assert.ok(!integration.server.tools.some((tool) => tool.name.startsWith('chrome_')))
     assert.match(integration.server.instructions, /macOS, Windows, and Linux/)
     assert.match(
       integration.server.instructions,
@@ -120,6 +120,31 @@ test('official Claude Chrome keeps the embedded browser and avoids Sele pairing 
   }
 })
 
+test('opting into official Claude Chrome also keeps a paired Sele connection available', async (t) => {
+  await api.chromeAutomation.pair()
+  t.after(() => api.chromeAutomation.disconnect())
+  const integration = api.createClaudeBrowserIntegration(
+    { createClient: () => ({ close() {} }) },
+    scope,
+    true
+  )
+  try {
+    const names = integration.server.tools.map((tool) => tool.name)
+    for (const name of [
+      'tabs_context',
+      'native_computer',
+      'chrome_tabs_context',
+      'chrome_computer'
+    ])
+      assert.ok(names.includes(name), name)
+    assert.equal(integration.isCurrent(), true)
+    await api.chromeAutomation.disconnect()
+    assert.equal(integration.isCurrent(), false)
+  } finally {
+    integration.close()
+  }
+})
+
 test('Codex desktop tools advertise executable namespaced tools with valid schemas', async () => {
   const registry = new CodexDynamicTools()
   const integration = api.registerCodexDesktopTools(registry)
@@ -142,7 +167,8 @@ test('Codex desktop tools advertise executable namespaced tools with valid schem
   integration.close()
 })
 
-test('all four providers advertise the complete same catalog and preserve native screenshot images', async () => {
+test('all four providers advertise the same connected catalog and preserve native screenshot images', async () => {
+  await api.chromeAutomation.pair()
   const service = { createClient: () => ({ close() {} }) }
   const registry = new CodexDynamicTools()
   const desktop = api.registerCodexDesktopTools(registry)
@@ -228,5 +254,6 @@ test('all four providers advertise the complete same catalog and preserve native
     claude.close()
     await copilot.close()
     await opencode.close()
+    await api.chromeAutomation.disconnect()
   }
 })

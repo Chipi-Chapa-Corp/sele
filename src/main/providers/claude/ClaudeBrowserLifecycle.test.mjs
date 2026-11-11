@@ -133,6 +133,26 @@ test('remote and read-only Claude queries cannot acquire the local browser capab
   }
 })
 
+test('writable Claude queries preserve existing browser configuration in every environment', async () => {
+  for (const container of [
+    null,
+    ...['ssh', 'docker', 'podman', 'distrobox', 'toolbox'].map((tool) => ({
+      kind: 'container',
+      tool,
+      name: 'fixture'
+    }))
+  ]) {
+    for (const nativeChrome of [undefined, false]) {
+      const harness = setup({ container })
+      harness.state.options.nativeChrome = nativeChrome
+      await harness.instance.startStateQuery(harness.state)
+      assert.deepEqual(Object.keys(harness.options().extraArgs), [], JSON.stringify(container))
+      assert.equal(harness.options().strictMcpConfig, undefined)
+      await harness.instance.closeStateQuery(harness.state)
+    }
+  }
+})
+
 test('official Claude Chrome attaches only to local writable interactive queries', async () => {
   const local = setup({ nativeChrome: true })
   await local.instance.startStateQuery(local.state)
@@ -142,20 +162,22 @@ test('official Claude Chrome attaches only to local writable interactive queries
   await local.instance.closeStateQuery(local.state)
   assert.equal(local.state.queryNativeChrome, null)
   for (const options of [
-    {},
     { readOnly: true },
     { remote: true },
     { container: { kind: 'container', tool: 'distrobox', name: 'dev' } }
   ]) {
     const harness = setup({ ...options, nativeChrome: Boolean(Object.keys(options).length) })
     await harness.instance.startStateQuery(harness.state)
-    assert.deepEqual(Object.keys(harness.options().extraArgs), ['no-chrome'])
+    assert.deepEqual(
+      Object.keys(harness.options().extraArgs),
+      options.readOnly ? ['no-chrome'] : []
+    )
     assert.equal(harness.state.queryNativeChrome, false)
     await harness.instance.closeStateQuery(harness.state)
   }
 })
 
-test('an idle Claude query restarts when official Chrome is enabled or disabled', async () => {
+test('an idle Claude query restarts when switching between explicit Chrome and provider defaults', async () => {
   const harness = setup()
   await harness.instance.startStateQuery(harness.state)
   const options = { ...harness.state.options, nativeChrome: true }
@@ -164,8 +186,17 @@ test('an idle Claude query restarts when official Chrome is enabled or disabled'
   assert.deepEqual(Object.keys(harness.options().extraArgs), ['chrome'])
   await harness.instance.ensureStateQuery(harness.state, { ...options, nativeChrome: false })
   assert.equal(harness.state.queryNativeChrome, false)
-  assert.deepEqual(Object.keys(harness.options().extraArgs), ['no-chrome'])
+  assert.deepEqual(Object.keys(harness.options().extraArgs), [])
   assert.equal(harness.events.filter((event) => event === 'query.close').length, 2)
+  await harness.instance.closeStateQuery(harness.state)
+})
+
+test('pairing or disconnecting the optional Sele extension refreshes an idle Claude catalog', async () => {
+  const harness = setup()
+  await harness.instance.startStateQuery(harness.state)
+  harness.integration.isCurrent = () => false
+  await harness.instance.ensureStateQuery(harness.state)
+  assert.equal(harness.events.filter((event) => event === 'query.close').length, 1)
   await harness.instance.closeStateQuery(harness.state)
 })
 

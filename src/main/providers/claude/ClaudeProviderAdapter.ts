@@ -2730,7 +2730,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       if (
         state.active ||
         (state.queryPromptSuggestions === enabled &&
-          Boolean(state.queryNativeChrome) === nativeChrome)
+          Boolean(state.queryNativeChrome) === nativeChrome &&
+          state.browser?.isCurrent?.() !== false)
       )
         return
     }
@@ -2794,7 +2795,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
           prompt: input,
           options: {
             ...this.getBaseQueryOptions(state.options, runtime),
-            extraArgs: nativeChrome ? { chrome: null } : { 'no-chrome': null },
+            // The default must preserve Chrome enabled in Claude's own settings.
+            // Writable sessions retain their own configuration, including remote/container setups.
+            extraArgs: nativeChrome ? { chrome: null } : queryReadOnly ? { 'no-chrome': null } : {},
             promptSuggestions: state.options?.promptSuggestions === true,
             ...(browser ? { mcpServers: { [claudeBrowserServerName]: browser.server } } : {}),
             canUseTool: this.createPermissionHandler(state),

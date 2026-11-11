@@ -145,48 +145,59 @@ export function SettingsBrowserPanel(props: SettingsBrowserPanelProps): React.Re
           </div>
         </div>
       </section>
-      <BrowserImportSettings key={changesContainerKey} currentEnvironment={changesContainer} />
       <section className="settings-dialog__section" aria-labelledby="settings-native-chrome">
         <h2 className="settings-dialog__section-heading" id="settings-native-chrome">
-          Official Chrome integrations
+          Your Chrome
         </h2>
-        <p>Applies to local, writable chats on their next turn.</p>
-        <div className="settings-dialog__section-cards">
-          {(['claude', 'codex'] as const).map((provider) => (
-            <div className="settings-dialog__field" key={provider}>
-              <div className="settings-dialog__field-header">
-                <h3 id={`settings-native-chrome-${provider}`}>
-                  {provider === 'claude' ? 'Claude in Chrome' : 'Codex in Chrome'}
-                </h3>
-                <p>
-                  {provider === 'claude'
-                    ? 'Install Claude in Chrome and sign in with the same Claude account as Claude Code. Connected browsers on other devices can also appear. Website permissions stay in Chrome.'
-                    : 'Set up Chrome in the ChatGPT or Codex desktop app and keep that app running. Sele uses its installed browser plugins and website permissions.'}
-                </p>
-                <a
-                  href={
-                    provider === 'claude'
-                      ? 'https://code.claude.com/docs/en/chrome'
-                      : 'https://developers.openai.com/codex/app/chrome-extension'
+        <p>
+          Keep using your existing browser setup, including connections without an extension.
+          Official Chrome extensions are optional and keep other browser connections available.
+        </p>
+        <details
+          open={
+            settingsPanelSettings.providers.claude.nativeChrome ||
+            settingsPanelSettings.providers.codex.nativeChrome
+          }
+        >
+          <summary>Official Chrome extensions (optional)</summary>
+          <div className="settings-dialog__section-cards">
+            {(['claude', 'codex'] as const).map((provider) => (
+              <div className="settings-dialog__field" key={provider}>
+                <div className="settings-dialog__field-header">
+                  <h3 id={`settings-native-chrome-${provider}`}>
+                    {provider === 'claude' ? 'Claude in Chrome' : 'Codex in Chrome'}
+                  </h3>
+                  <p>
+                    {provider === 'claude'
+                      ? 'Add the official Claude in Chrome integration for local, writable chats on their next turn. Requires Anthropic’s Chrome extension. When off, Claude follows its existing configuration.'
+                      : 'Enable installed official Chrome plugins for local, writable chats on their next turn. Uses the official extension setup. When off, Codex follows its existing configuration.'}
+                  </p>
+                  <a
+                    href={
+                      provider === 'claude'
+                        ? 'https://code.claude.com/docs/en/chrome'
+                        : 'https://developers.openai.com/codex/app/chrome-extension'
+                    }
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Optional integration setup
+                  </a>
+                </div>
+                <Switch
+                  className="settings-switch"
+                  aria-labelledby={`settings-native-chrome-${provider}`}
+                  checked={settingsPanelSettings.providers[provider].nativeChrome}
+                  onChange={(event) =>
+                    handleNativeChromeChange(provider, event.currentTarget.checked)
                   }
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Chrome setup instructions
-                </a>
+                />
               </div>
-              <Switch
-                className="settings-switch"
-                aria-labelledby={`settings-native-chrome-${provider}`}
-                checked={settingsPanelSettings.providers[provider].nativeChrome}
-                onChange={(event) =>
-                  handleNativeChromeChange(provider, event.currentTarget.checked)
-                }
-              />
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </details>
       </section>
+      <BrowserImportSettings key={changesContainerKey} currentEnvironment={changesContainer} />
       <DesktopAutomationSettings />
     </section>
   )

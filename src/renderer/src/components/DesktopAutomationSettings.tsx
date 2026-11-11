@@ -47,11 +47,8 @@ export function DesktopAutomationSettings(): React.ReactElement {
   }
   return (
     <section className="settings-dialog__section" aria-label="Desktop connections">
-      <h2 className="settings-dialog__section-heading">Native computer and Chrome</h2>
-      <p>
-        These connections are shared with local Codex and Claude conversations. Remote environments
-        cannot use them.
-      </p>
+      <h2 className="settings-dialog__section-heading">Additional connections</h2>
+      <p>Connect Sele's desktop control or shared-tab extension for local conversations.</p>
       <div className="settings-dialog__field settings-dialog__field--stack">
         <div className="settings-dialog__field-header">
           <strong>Native computer control</strong>
@@ -78,51 +75,58 @@ export function DesktopAutomationSettings(): React.ReactElement {
           theme="secondary"
         />
       </div>
-      <div className="settings-dialog__field settings-dialog__field--stack">
-        <div className="settings-dialog__field-header">
-          <strong>Chrome attachment</strong>
-          <p>
-            {state?.chrome.connected
-              ? 'Connected. Use the extension to choose which tabs to share.'
-              : 'Connect your existing Chrome profile through the Sele extension. Only tabs you share are exposed.'}
-          </p>
-        </div>
-        <Button
-          disabled={busy}
-          callback={() =>
-            run(() => (state?.chrome.connected ? api().disconnectChrome() : api().pairChrome()))
-          }
-          label={state?.chrome.connected ? 'Disconnect Chrome' : 'Generate pairing address'}
-          theme="secondary"
-        />
-      </div>
-      <div className="chat-approval__actions">
-        <Button
-          disabled={busy}
-          callback={async () => {
-            try {
-              setDirectory(await api().openChromeExtension())
-            } catch (error) {
-              setError(String(error))
-            }
-          }}
-          label="Open Chrome extension folder"
-          theme="secondary"
-        />
-        {state?.chrome.pairingUrl && (
+      <details open={Boolean(state?.chrome.connected || state?.chrome.pairingUrl)}>
+        <summary>Sele Chrome extension (optional)</summary>
+        <p>
+          This is a separate shared-tab connection. Claude and Codex's official Chrome integrations
+          use their own setup above.
+        </p>
+        <div className="settings-dialog__field settings-dialog__field--stack">
+          <div className="settings-dialog__field-header">
+            <strong>Chrome attachment</strong>
+            <p>
+              {state?.chrome.connected
+                ? 'Connected. Use the extension to choose which tabs to share.'
+                : 'Connect your existing Chrome profile through the Sele extension. Only tabs you share are exposed.'}
+            </p>
+          </div>
           <Button
-            callback={() => appApi.writeClipboardText(state.chrome.pairingUrl!)}
-            label="Copy pairing address"
+            disabled={busy}
+            callback={() =>
+              run(() => (state?.chrome.connected ? api().disconnectChrome() : api().pairChrome()))
+            }
+            label={state?.chrome.connected ? 'Disconnect Chrome' : 'Generate pairing address'}
             theme="secondary"
           />
-        )}
-      </div>
-      <p>
-        In Chrome, open chrome://extensions, enable Developer mode, and Load unpacked from the
-        extension folder. Paste the pairing address in the extension, connect, then Share current
-        tab.
-      </p>
-      {directory && <p>{directory}</p>}
+        </div>
+        <div className="chat-approval__actions">
+          <Button
+            disabled={busy}
+            callback={async () => {
+              try {
+                setDirectory(await api().openChromeExtension())
+              } catch (error) {
+                setError(String(error))
+              }
+            }}
+            label="Open Chrome extension folder"
+            theme="secondary"
+          />
+          {state?.chrome.pairingUrl && (
+            <Button
+              callback={() => appApi.writeClipboardText(state.chrome.pairingUrl!)}
+              label="Copy pairing address"
+              theme="secondary"
+            />
+          )}
+        </div>
+        <p>
+          In Chrome, open chrome://extensions, enable Developer mode, and Load unpacked from the
+          extension folder. Paste the pairing address in the extension, connect, then Share current
+          tab.
+        </p>
+        {directory && <p>{directory}</p>}
+      </details>
       {(error || state?.computer.error) && <p role="alert">{error || state?.computer.error}</p>}
     </section>
   )

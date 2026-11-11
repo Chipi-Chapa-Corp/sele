@@ -7,7 +7,7 @@ const installed = (names, marketplace = 'openai-bundled') => ({
   marketplaces: [{ name: marketplace, plugins: names.map((name) => ({ name, installed: true })) }]
 })
 
-test('official Chrome requires the Chrome plugin, with its installed runtime when available', () => {
+test('official Chrome enables known installed plugins without requiring a particular catalog layout', () => {
   assert.deepEqual(getCodexNativeChromeConfig(installed(['chrome'])), {
     'plugins."chrome@openai-bundled".enabled': true
   })
@@ -21,13 +21,15 @@ test('official Chrome requires the Chrome plugin, with its installed runtime whe
   for (const value of [
     installed([]),
     installed(['browser']),
-    installed(['browser', 'unified-computer-use']),
     installed(['chrome'], 'third-party'),
     {
       marketplaces: [{ name: 'openai-bundled', plugins: [{ name: 'chrome', installed: false }] }]
     }
   ])
-    assert.throws(() => getCodexNativeChromeConfig(value), /Set up Chrome/)
+    assert.deepEqual(getCodexNativeChromeConfig(value), {})
+  assert.deepEqual(getCodexNativeChromeConfig(installed(['browser', 'unified-computer-use'])), {
+    'plugins."unified-computer-use@openai-bundled".enabled': true
+  })
 })
 
 test('native messaging requires an explicit local writable session', () => {

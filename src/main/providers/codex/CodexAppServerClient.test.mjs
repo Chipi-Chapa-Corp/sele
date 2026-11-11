@@ -30,7 +30,7 @@ const brokenPipe = () => Object.assign(new Error('write EPIPE'), { code: 'EPIPE'
 // escapes a synchronous try/catch. No Electron or real Codex process is launched.
 const fixture = (
   t,
-  { failInitialize = false, initializeResult = {}, installedPlugins = [] } = {}
+  { failInitialize = false, initializeResult = {}, installedPlugins = [], pluginError = null } = {}
 ) => {
   const children = []
   const logs = []
@@ -54,6 +54,7 @@ const fixture = (
     isCodexExecutableUnavailable,
     supportsLocalHostTools,
     getCodexNativeChromeConfig,
+    chromeAutomation: { status: { connected: false, pairingUrl: null } },
     registerBrowserUseSession() {},
     removeBrowserUseSession() {},
     removeBrowserUseSessions() {},
@@ -97,6 +98,9 @@ const fixture = (
               child.stdout.write(
                 `${JSON.stringify({
                   id: message.id,
+                  ...(message.method === 'plugin/installed' && pluginError
+                    ? { error: pluginError }
+                    : {}),
                   result:
                     message.method === 'initialize'
                       ? initializeResult
@@ -180,7 +184,7 @@ test('browser declarations are sent on interactive start/resume and excluded fro
   }
 })
 
-test('native Codex Chrome reuses installed plugins and omits duplicate Sele Chrome tools', async (t) => {
+test('native Codex Chrome reuses installed plugins and omits unpaired Sele Chrome tools', async (t) => {
   const { client, children } = fixture(t, {
     installedPlugins: ['chrome', 'browser', 'unified-computer-use']
   })
@@ -211,10 +215,83 @@ test('native Codex Chrome reuses installed plugins and omits duplicate Sele Chro
   }
 })
 
-test('missing native Codex plugins give setup instructions before creating a thread', async (t) => {
+test('an existing Codex Chrome setup is preserved without a separately named Chrome plugin', async (t) => {
   const { client, children } = fixture(t)
   client.container = null
-  await assert.rejects(client.request('thread/start', {}, { nativeChrome: true }), /Set up Chrome/)
+  const config = { 'mcp_servers.existing_browser.enabled': true }
+  for (const method of ['thread/start', 'thread/resume', 'thread/fork']) {
+    await client.request(method, { threadId: 'fixture', config }, { nativeChrome: true })
+    assert.equal(children[0].requests.at(-1).method, method)
+    assert.deepEqual(children[0].requests.at(-1).params.config, config)
+  }
+})
+
+test('default Codex queries leave native browser configuration to the installed runtime', async (t) => {
+  const { client, children } = fixture(t)
+  client.container = null
+  const config = { 'plugins."browser@openai-bundled".enabled': true }
+  for (const nativeChrome of [undefined, false]) {
+    await client.request('thread/start', { config }, { nativeChrome })
+    assert.deepEqual(children[0].requests.at(-1).params.config, config)
+  }
+  assert.ok(!children[0].requests.some((request) => request.method === 'plugin/installed'))
+})
+
+test('official Codex Chrome is additive and leaves paired Sele tools available', async (t) => {
+  const { client, children, context } = fixture(t)
+  client.container = null
+  client.dynamicTools.specs = [
+    { type: 'namespace', name: 'chrome', tools: [] },
+    { type: 'namespace', name: 'sele_browser', tools: [] }
+  ]
+  for (const nativeChrome of [undefined, false, true]) {
+    for (const method of ['thread/start', 'thread/resume']) {
+      for (const status of [
+        { connected: false, pairingUrl: null },
+        { connected: false, pairingUrl: 'fixture-pairing' },
+        { connected: true, pairingUrl: null }
+      ]) {
+        context.chromeAutomation.status = status
+        await client.request(method, { threadId: 'fixture' }, { nativeChrome })
+        const names = children[0].requests.at(-1).params.dynamicTools.map((tool) => tool.name)
+        assert.deepEqual(
+          names,
+          status.connected || status.pairingUrl ? ['chrome', 'sele_browser'] : ['sele_browser']
+        )
+      }
+    }
+  }
+})
+
+test('Codex runtimes without plugin discovery retain existing Chrome configuration', async (t) => {
+  const { client, children } = fixture(t, {
+    pluginError: { code: -32601, message: 'Method not found' }
+  })
+  client.container = null
+  const config = { 'mcp_servers.existing_browser.enabled': true }
+  await client.request('thread/start', { config }, { nativeChrome: true })
+  assert.equal(children[0].requests.at(-1).method, 'thread/start')
+  assert.deepEqual(children[0].requests.at(-1).params.config, config)
+})
+
+test('optional Codex plugin discovery RPC failures do not block configured browser tools', async (t) => {
+  const { client, children } = fixture(t, {
+    pluginError: { code: -32603, message: 'Plugin catalog unavailable' }
+  })
+  client.container = null
+  const config = { 'mcp_servers.existing_browser.enabled': true }
+  await client.request('thread/start', { config }, { nativeChrome: true })
+  assert.equal(children[0].requests.at(-1).method, 'thread/start')
+  assert.deepEqual(children[0].requests.at(-1).params.config, config)
+})
+
+test('Codex plugin discovery transport failures still surface to the caller', async (t) => {
+  const { client, children } = fixture(t)
+  client.container = null
+  const request = client.request
+  client.request = (method, ...args) =>
+    method === 'plugin/installed' ? Promise.reject(brokenPipe()) : request(method, ...args)
+  await assert.rejects(client.request('thread/start', {}, { nativeChrome: true }), /EPIPE/)
   assert.ok(!children[0].requests.some((request) => request.method === 'thread/start'))
 })
 

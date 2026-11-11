@@ -36,7 +36,7 @@ export class ComputerAutomation {
     try {
       if (process.platform !== 'linux')
         throw new Error(
-          'The native desktop backend currently supports Linux. Chrome attachment is available separately.'
+          'Sele desktop control currently supports Linux. This does not affect Claude or Codex Chrome integration.'
         )
       const script = await readFile(join(app.getAppPath(), 'resources/computer-helper.py'), 'utf8')
       const command = await getHostCommand('python3', ['-u', '-c', script])

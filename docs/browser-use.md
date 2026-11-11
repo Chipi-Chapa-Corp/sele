@@ -31,30 +31,50 @@ instructions distinguish the cross-platform embedded browser from Chrome and des
 
 ### Official provider Chrome integrations
 
-**Settings → Browser & desktop → Official Chrome integrations**
-opts local writable chats into the provider's own Chrome connection on their next turn.
-These switches persist independently. Copilot and OpenCode keep using Sele's shared-tab connection.
-Native messaging is host-local; SSH, Docker, Podman, Distrobox, and Toolbox sessions do not
-receive the official connection. Background/control and read-only queries do not enable it.
+**Settings → Browser & desktop → Your Chrome** preserves each provider's existing Chrome
+configuration by default, on macOS, Windows, and Linux. The optional switches add the official
+extension integration for Sele on the next turn; leaving them off follows the provider's own
+configuration. These switches persist independently. Copilot and OpenCode keep using Sele's
+shared-tab connection.
+Existing connections that work without an extension remain available; Sele does not add an
+extension prerequisite. **Official Chrome extensions (optional)** contains independent opt-in
+switches for Claude and Codex, both off by default. Enabled switches are shown expanded.
+Adding an official integration keeps the embedded browser, configured MCP servers, and a
+paired Sele connection available. Sele does not install extensions or modify native hosts.
+The explicit official-extension switches apply only to host-local writable chats. Writable
+SSH, Docker, Podman, Distrobox, and Toolbox sessions retain their own existing provider browser
+configuration; Sele does not inject the local machine's official connection into them.
+Background/control and read-only queries do not enable it.
 
-For **Claude**, install [Claude in Chrome](https://code.claude.com/docs/en/chrome) and sign
-in with the same supported Claude account as Claude Code. Sele passes `--chrome` to interactive
-SDK queries. The official account-level bridge can also list Chrome browsers on other devices;
+The optional **Claude in Chrome** override uses [Claude's official integration](https://code.claude.com/docs/en/chrome).
+That integration requires its extension and the same supported Claude account as Claude Code.
+When the override is on, Sele passes `--chrome` to interactive SDK queries.
+The official account-level bridge can also list Chrome browsers on other devices;
 a connected MCP server alone does not prove a local browser is connected. Sele keeps the usual
 permission handler. Changing the switch restarts an idle query
-on its next turn. The embedded Browser pane remains available; Sele's separate `chrome_*` tools
-are omitted in official mode so the agent does not request the wrong extension pairing.
+on its next turn. The embedded Browser pane and a paired Sele connection remain available.
 Background/control queries explicitly pass `--no-chrome`.
+Writable interactive queries without a local explicit override pass neither `--chrome` nor
+`--no-chrome`, preserving Chrome enabled in Claude's own settings in every environment.
+Read-only interactive queries still pass `--no-chrome`.
 
-For **Codex**, first set up Chrome in the [official desktop app](https://developers.openai.com/codex/app/chrome-extension)
-and keep that app running. Sele requires the installed `chrome@openai-bundled` plugin and enables
-`unified-computer-use@openai-bundled` alongside it when installed. The in-app Browser plugin is
-not a substitute for Chrome. Thread-local config
-enables those installed plugins without changing global Codex config or the native messaging
-host. Missing plugins produce setup instructions before creating/resuming a thread. New and
-resumed threads omit Sele's `chrome` tool namespace in official mode. Website permissions and
+The optional **Codex** override enables known plugins managed by the
+[official desktop app](https://developers.openai.com/codex/app/chrome-extension).
+Keep that app running when using a connection it manages. Sele enables installed
+`chrome@openai-bundled` and `unified-computer-use@openai-bundled` plugins when present.
+Plugin catalog layouts vary across runtime versions; an absent `chrome` entry or an older
+runtime without plugin discovery does not block creating or resuming a chat. Plugin-catalog
+RPC errors preserve existing configuration; actual transport failures still surface. Existing browser,
+MCP, and native-host configuration is retained. A catalog entry alone does not prove a browser
+connection. Thread-local config enables known installed plugins without changing global Codex
+config or the native messaging host. A paired Sele `chrome` namespace remains available even
+when official plugins are enabled. Website permissions and
 connection errors come from the official runtime; specialized browser authentication/review
 challenges still have the limitations described in [provider interactions](provider-interactions.md).
+
+Sele's `chrome` namespace and Claude's `chrome_*` tools are advertised only after the user
+starts pairing Sele's optional extension or connects it. Unpaired tools cannot divert the
+agent from its existing native Chrome connection. Pairing updates the catalog on the next turn.
 
 Fixture checks cover flags, plugin selection, scope boundaries, settings persistence and the
 settings controls. Real extension pairing and authenticated browsing, including macOS native
@@ -66,7 +86,8 @@ On Linux, run it through isolated-gui with `SELE_CLAUDE_PATH` and `SELE_CODEX_PA
 to container-runnable CLI executables. Set `SELE_NATIVE_CHROME_REPORT` to save its JSON report.
 It never selects browsers, opens tabs or reads pages, and ignores remote Claude browsers.
 Exit 2 means local prerequisites are blocked. A successful readiness check still does not
-prove navigation, typing or clicking; those need an authenticated test browser.
+prove navigation, typing or clicking; those need an authenticated test browser. Codex's catalog
+check reports its limited scope rather than treating an absent plugin name as a broken connection.
 
 ## Code boundaries
 
@@ -94,11 +115,13 @@ Wayland requires PyGObject, RemoteDesktop/ScreenCast portals, GStreamer Gst/GstA
 Missing support fails without falling back to unrestricted X11 control. Disconnect or portal
 revocation stops access.
 
-For Chrome, open the extension folder from Settings, load it unpacked in
+For Sele's optional shared-tab connection, expand **Sele Chrome extension (optional)**,
+open the extension folder from Settings, load it unpacked in
 `chrome://extensions`, pair using Sele's temporary address, and select **Share current tab**.
 Treat the pairing address as a credential. Only shared/created tabs are exposed, each leased
 to one conversation. Unsharing or disconnecting revokes access; regenerating the address
 revokes the old credential. Chrome 125+ is required for flattened iframe sessions.
+This pairing is independent of Claude and Codex's official Chrome connections.
 
 ## Checks
 

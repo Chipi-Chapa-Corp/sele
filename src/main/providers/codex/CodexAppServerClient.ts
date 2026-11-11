@@ -23,6 +23,7 @@ import { registerCodexBrowserTools } from './CodexBrowserTools'
 import { supportsLocalHostTools } from '../hostToolTarget'
 import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
 import { getCodexNativeChromeConfig } from './CodexNativeChrome'
+import { chromeAutomation } from '../../desktop/ChromeAutomation'
 
 type RpcError = {
   code: number
@@ -252,7 +253,13 @@ export class CodexAppServerClient {
       const installed = await this.request<Parameters<typeof getCodexNativeChromeConfig>[0]>(
         'plugin/installed',
         {}
-      )
+      ).catch((error: unknown) => {
+        // Optional plugin discovery must not block other configured browser tools.
+        // A transport failure still needs to surface; an RPC failure can leave the
+        // runtime healthy and its existing browser connection available.
+        if (typeof (error as { code?: unknown })?.code === 'number') return { marketplaces: [] }
+        throw error
+      })
       params = {
         ...input,
         config: {
@@ -271,7 +278,10 @@ export class CodexAppServerClient {
       params = {
         ...(params as Record<string, unknown>),
         dynamicTools: this.dynamicTools.specs.filter(
-          (spec) => !nativeChrome || spec.name !== 'chrome'
+          (spec) =>
+            spec.name !== 'chrome' ||
+            chromeAutomation.status.connected ||
+            Boolean(chromeAutomation.status.pairingUrl)
         )
       }
     }

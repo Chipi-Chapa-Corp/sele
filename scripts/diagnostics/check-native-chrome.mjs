@@ -142,7 +142,9 @@ async function checkCodex() {
     if (!item) return
     pending.delete(message.id)
     clearTimeout(item.timer)
-    message.error ? item.reject(new Error(message.error.message)) : item.resolve(message.result)
+    message.error
+      ? item.reject(Object.assign(new Error(message.error.message), { code: message.error.code }))
+      : item.resolve(message.result)
   })
   const rpc = (method, params) =>
     new Promise((resolve, reject) => {
@@ -160,16 +162,15 @@ async function checkCodex() {
       capabilities: { experimentalApi: true }
     })
     child.stdin.write(JSON.stringify({ method: 'initialized' }) + '\n')
-    const installed = await rpc('plugin/installed', {})
-    try {
-      const config = getCodexNativeChromeConfig(installed)
-      return {
-        appServer: 'initialized',
-        readiness: 'plugins installed; native runtime and browser interactions still untested',
-        enabledPluginKeys: Object.keys(config)
-      }
-    } catch (error) {
-      return { appServer: 'initialized', readiness: 'blocked', reason: error.message }
+    const installed = await rpc('plugin/installed', {}).catch((error) => {
+      if (error.code === -32601) return { marketplaces: [] }
+      throw error
+    })
+    const config = getCodexNativeChromeConfig(installed)
+    return {
+      appServer: 'initialized',
+      readiness: 'plugin catalog inspected; native connection and browser interactions untested',
+      enabledPluginKeys: Object.keys(config)
     }
   } finally {
     child.stdin.end()

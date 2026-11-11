@@ -54,7 +54,7 @@ export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(
       {
         type: 'function',
         name: definition.name,
-        description: `Chrome attachment: ${definition.description} Only tabs shared using the Sele Chrome extension are available.`,
+        description: `Optional Sele Chrome connection: ${definition.description} Only tabs shared using the Sele Chrome extension are available. Use this connection when the user chooses Sele's shared-tab extension. An existing official Chrome connection uses the provider's browser tools and does not require Sele pairing.`,
         inputSchema: z.toJSONSchema(definition.schema)
       },
       async (args, context) => {

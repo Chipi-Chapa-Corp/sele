@@ -165,6 +165,32 @@ if (!process.versions.electron) {
       }
       await run("renderPanel('browser'); window.calls=[]")
       await settle()
+      assert.match(
+        await run('document.querySelector("#settings-native-chrome").parentElement.textContent'),
+        /Keep using your existing browser setup/
+      )
+      assert.equal(
+        await run(
+          'document.querySelector("#settings-native-chrome").parentElement.querySelector("details").open'
+        ),
+        false,
+        'official Chrome integrations are optional and off by default'
+      )
+      assert.equal(
+        await run('document.querySelector("[aria-label^=Desktop] details").open'),
+        false,
+        'Sele extension pairing is collapsed by default'
+      )
+      await run(
+        'document.querySelector("#settings-native-chrome").parentElement.querySelector("summary").click()'
+      )
+      assert.equal(
+        await run(
+          'Array.from(document.querySelectorAll("button")).find(button=>button.textContent==="Connect computer").closest("details")'
+        ),
+        null,
+        'desktop control is separate from the optional Chrome extension'
+      )
       for (const provider of ['claude', 'codex']) {
         assert.equal(
           await run(
@@ -180,6 +206,17 @@ if (!process.versions.electron) {
         ['handleNativeChromeChange', 'claude', true],
         ['handleNativeChromeChange', 'codex', true]
       ])
+      await run('settings.providers.codex.nativeChrome=true; renderPanel("browser")')
+      assert.equal(
+        await run(
+          'document.querySelector("#settings-native-chrome").parentElement.querySelector("details").open'
+        ),
+        true,
+        'an enabled official integration is visible when reopening Settings'
+      )
+      await run('settings.providers.codex.nativeChrome=false; renderPanel("browser")')
+      await run('document.querySelector("[aria-label^=Desktop] summary").click()')
+      assert.equal(await run('document.querySelector("[aria-label^=Desktop] details").open'), true)
       for (const provider of ['claude', 'codex', 'copilot', 'opencode']) {
         await run(`renderPanel('providers', {newSessionProvider:${JSON.stringify(provider)}})`)
         await settle()

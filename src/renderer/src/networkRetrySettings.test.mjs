@@ -53,6 +53,11 @@ test('official Chrome settings are opt-in per provider and survive reload', () =
     assert.equal(reloaded.providers[provider].nativeChrome, true)
     assert.equal(reloaded.providers.codex.showRecommendedPlugins, true)
   }
+  const current = settings.readStoredAppSettings()
+  current.providers.claude.nativeChrome = false
+  settings.writeStoredAppSettings(current)
+  assert.equal(settings.readStoredAppSettings().providers.claude.nativeChrome, false)
+  assert.equal(settings.readStoredAppSettings().providers.codex.nativeChrome, true)
   settings.writeStoredAppSettings(settings.defaultAppSettings)
   assert.equal(settings.readStoredAppSettings().providers.claude.nativeChrome, false)
   assert.equal(settings.readStoredAppSettings().providers.codex.nativeChrome, false)
