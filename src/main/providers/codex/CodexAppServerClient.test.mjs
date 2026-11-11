@@ -30,7 +30,13 @@ const brokenPipe = () => Object.assign(new Error('write EPIPE'), { code: 'EPIPE'
 // escapes a synchronous try/catch. No Electron or real Codex process is launched.
 const fixture = (
   t,
-  { failInitialize = false, initializeResult = {}, installedPlugins = [], pluginError = null } = {}
+  {
+    failInitialize = false,
+    initializeResult = {},
+    installedPlugins = [],
+    pluginError = null,
+    processScope = undefined
+  } = {}
 ) => {
   const children = []
   const logs = []
@@ -46,7 +52,7 @@ const fixture = (
     app: { getPath: () => '/fixture-profile' },
     console: { error: (...args) => logs.push(args) },
     getAppServerCommand: () => ({ command: 'fixture', args: [] }),
-    providerProcessContext: { getStore: () => undefined },
+    providerProcessContext: { getStore: () => processScope },
     getProviderHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
     getHostCommand: async () => ({ file: 'fixture', args: [], env: {} }),
     getCodexExecutableError,
@@ -588,6 +594,58 @@ const captureTimers = (context) => {
     }
   }
 }
+
+test('stopping the owning boundary does not log an unexpected exit or reconnect', async (t) => {
+  const processScope = { record: { id: 'chat-boundary', stopped: false } }
+  const { client, children, context, logs } = fixture(t, { processScope })
+  const { timers } = captureTimers(context)
+  client.persistent = true
+  await client.request('model/list')
+  // Process cleanup can deliver close events outside the original launch context.
+  context.providerProcessContext.getStore = () => undefined
+  processScope.record.stopped = true
+  children[0].emit('close', 0)
+  await tick()
+  assert.equal(client.connectionIdentity, null)
+  assert.equal(timers.size, 0)
+  assert.equal(children.length, 1)
+  assert.equal(logs.length, 0)
+})
+
+test('stopping the owning boundary prevents an already scheduled reconnect', async (t) => {
+  const processScope = { record: { id: 'chat-boundary', stopped: false } }
+  const { client, children, context, logs } = fixture(t, { processScope })
+  const { timers, fire } = captureTimers(context)
+  client.persistent = true
+  await client.request('model/list')
+  children[0].emit('error', brokenPipe())
+  assert.equal(logs.length, 1)
+  processScope.record.stopped = true
+  await fire(250)
+  assert.equal(client.reconnectTimer, null)
+  assert.equal(timers.size, 0)
+  assert.equal(children.length, 1)
+  assert.equal(logs.length, 1)
+})
+
+test('stopping the owning boundary during reconnect ends recovery without repeated errors', async (t) => {
+  const processScope = { record: { id: 'chat-boundary', stopped: false } }
+  const { client, children, context, logs } = fixture(t, { processScope })
+  const { timers, fire } = captureTimers(context)
+  client.persistent = true
+  await client.request('model/list')
+  context.getProviderHostCommand = async () => {
+    processScope.record.stopped = true
+    throw new Error('This chat process boundary has been stopped.')
+  }
+  children[0].emit('error', brokenPipe())
+  await fire(250)
+  assert.equal(client.connectionIdentity, null)
+  assert.equal(client.reconnectTimer, null)
+  assert.equal(timers.size, 0)
+  assert.equal(children.length, 1)
+  assert.equal(logs.length, 1, 'only the original unexpected disconnect is logged')
+})
 
 test('failed initial startup does not launch a background retry loop', async (t) => {
   const { client, children, context } = fixture(t, { failInitialize: true })

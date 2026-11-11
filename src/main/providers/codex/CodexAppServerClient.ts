@@ -166,6 +166,7 @@ export class CodexAppServerClient {
   private initialized = false
   private startPromise: Promise<void> | null = null
   private runtimeRecovery: Promise<void> | null = null
+  private readonly processScope = providerProcessContext.getStore()
   private lifecycle = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectDelay = 250
@@ -738,7 +739,8 @@ export class CodexAppServerClient {
     if (child?.detach) child.detach()
     else child?.kill()
     if (child) {
-      if (wasInitialized) console.error('Codex app-server stopped unexpectedly', error)
+      if (wasInitialized && !this.processScope?.record.stopped)
+        console.error('Codex app-server stopped unexpectedly', error)
       this.stoppedListeners.forEach((listener) => listener(error))
       // Startup failures are returned to the caller. Only an established
       // connection starts background recovery; its catch owns subsequent retries.
@@ -747,13 +749,15 @@ export class CodexAppServerClient {
   }
 
   private scheduleReconnect = (): void => {
-    if (this.reconnectTimer || this.process) return
+    // Stopping a chat revokes its launch boundary permanently. Its retained
+    // client must not keep trying to revive the worker after process cleanup.
+    if (this.reconnectTimer || this.process || this.processScope?.record.stopped) return
     const lifecycle = this.lifecycle
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      if (lifecycle !== this.lifecycle || this.process) return
+      if (lifecycle !== this.lifecycle || this.process || this.processScope?.record.stopped) return
       void this.start().catch((error: unknown) => {
-        if (lifecycle !== this.lifecycle) return
+        if (lifecycle !== this.lifecycle || this.processScope?.record.stopped) return
         console.error('Unable to reconnect to the Codex runtime.', error)
         if (isCodexExecutableUnavailable(error)) return
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000)
