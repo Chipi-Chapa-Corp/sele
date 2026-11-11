@@ -668,13 +668,15 @@ export const ChatListItem = memo(function ChatListItem({
                 <span className="chat-list-item__detail-project">{projectName}</span>
               </div>
             )}
-            <div className="chat-list-item__detail-location">
-              <LocationIcon
-                aria-label={isGitWorktree ? 'Worktree' : 'Folder'}
-                className="chat-list-item__detail-location-icon"
-              />
-              <span className="chat-list-item__detail-branch">{branchName}</span>
-            </div>
+            {!noProject && (
+              <div className="chat-list-item__detail-location">
+                <LocationIcon
+                  aria-label={isGitWorktree ? 'Worktree' : 'Folder'}
+                  className="chat-list-item__detail-location-icon"
+                />
+                <span className="chat-list-item__detail-branch">{branchName}</span>
+              </div>
+            )}
             {sleeping && (
               <div className="chat-list-item__detail-location">
                 <Bed aria-hidden="true" className="chat-list-item__detail-location-icon" />
