@@ -134,6 +134,44 @@ database from existing OpenCode data. The original database is untouched. Existi
 `OPENCODE_DB` overrides are respected. Custom v1 plugins need v2 implementations; expired
 credentials or unsupported remote MCP OAuth credentials may require sign-in again.
 
+## Parallel work in your signed-in Chrome
+
+Sele's optional shared-tab extension lets Codex and Claude use your existing Chrome
+profile while you keep working. Each chat creates its own background tabs; Sele rejects
+access to tabs owned by another conversation. Input is sent to the target tab rather
+than the system mouse, keyboard or clipboard.
+
+1. Open **Settings → Browser & desktop → Sele Chrome extension (optional)**.
+2. Select **Open Chrome extension folder**. In Chrome, open `chrome://extensions`, enable
+   Developer mode, choose **Load unpacked**, and select that folder.
+3. In Sele, choose **Generate pairing address**, then **Copy pairing address**. Paste it
+   into the extension and select **Connect**. Keep the address private.
+4. Install the bundled `skills/parallel-chrome` folder from that same extension folder
+   into `~/.codex/skills/parallel-chrome` for Codex and `~/.claude/skills/parallel-chrome`
+   for Claude (on Windows, `~` means your user home). Copy the entire folder, then start
+   a new chat so the agent can discover it. From a source checkout, the folder is
+   [resources/sele-chrome-extension/skills/parallel-chrome](resources/sele-chrome-extension/skills/parallel-chrome/SKILL.md).
+5. Ask the chat to use the `parallel-chrome` skill and work in its own background tab
+   in your existing Chrome. Use **Share current tab** only to hand a specific existing
+   website tab to an agent; do not share your active personal tab for concurrent work.
+
+Pairing survives normal Sele and Chrome restarts and reconnects automatically. A cold
+extension can take up to one minute to retry. Full Chrome restart or extension reload
+clears previous tab grants; agents must revalidate ownership rather than reuse old IDs.
+**Disconnect** deliberately removes pairing. The skill guides agent behavior; the extension
+connection supplies and enforces access. It does not configure standalone agent CLIs.
+
+The transport is designed for **macOS, Windows and Linux**, using the same Chrome extension.
+Sele stores its credential with Electron's OS-backed `safeStorage`: Keychain on macOS,
+DPAPI on Windows, and GNOME Keyring/libsecret or KWallet on Linux. Linux without a working
+secret store reports an error instead of using the insecure `basic_text` backend. Flatpak
+also needs access to its desktop secret service and the same host loopback connection.
+Live profile, restart and four-chat acceptance have been exercised on macOS; Windows and
+Linux host acceptance remain unverified. The separate **Connect computer** Linux desktop
+helper is not required for tab-scoped Chrome input.
+
+See [browser access and troubleshooting](docs/browser-use.md) for scopes and limitations.
+
 ## GitHub pull requests
 
 Enable **Settings → Git → Features → Enable pull requests** (off by default), then

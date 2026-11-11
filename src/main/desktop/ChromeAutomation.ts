@@ -1,3 +1,9 @@
+import {
+  EncryptedChromePairingStore,
+  validatePairing,
+  type ChromePairingStore
+} from './ChromePairingStore.ts'
+import { join } from 'node:path'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -12,11 +18,32 @@ import type { BrowserAutomationScope, BrowserAutomationTab } from '../../shared/
 
 /** User-paired extension transport. Only tabs explicitly shared in Chrome are visible. */
 export class ChromeAutomation implements BrowserAutomationService {
+  private readonly pairingStore?: ChromePairingStore
+  constructor(pairingStore?: ChromePairingStore) {
+    this.pairingStore = pairingStore
+  }
+  private lifecycle: Promise<unknown> = Promise.resolve()
+  private serialized<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.lifecycle.then(action)
+    this.lifecycle = result.catch(() => {})
+    return result
+  }
+  restore(): Promise<boolean> {
+    return this.serialized(async () => {
+      if (this.http) return true
+      const saved = await this.pairingStore?.load()
+      if (!saved) return false
+      const config = validatePairing(saved)
+      await this.listen(config.port, config.token)
+      return true
+    })
+  }
   private http: Server | null = null
   private sockets: WebSocketServer | null = null
   private socket: WebSocket | null = null
   private token = ''
   private pairingUrl: string | null = null
+  private extensionEpoch: string | null = null
   private nextId = 0
   private pending = new Map<
     number,
@@ -27,46 +54,77 @@ export class ChromeAutomation implements BrowserAutomationService {
     }
   >()
   private detaching = new Set<number>()
-  private owners = new Map<number, object>()
-  private listeners = new Map<object, (event: BrowserCdpEvent) => void>()
+  private owners = new Map<number, string>()
+  private listeners = new Map<object, { owner: string; onEvent(event: BrowserCdpEvent): void }>()
+
+  private emit(owner: string, event: BrowserCdpEvent): void {
+    for (const listener of this.listeners.values())
+      if (listener.owner === owner) listener.onEvent(event)
+  }
   get status(): { connected: boolean; pairingUrl: string | null } {
     return { connected: this.socket?.readyState === WebSocket.OPEN, pairingUrl: this.pairingUrl }
   }
 
-  async pair(): Promise<void> {
-    await this.disconnect()
-    this.token = randomBytes(32).toString('base64url')
+  pair(): Promise<void> {
+    return this.serialized(async () => {
+      await this.stop()
+      await this.pairingStore?.clear()
+      try {
+        const port = await this.listen(0, randomBytes(32).toString('base64url'))
+        await this.pairingStore?.save({ port, token: this.token })
+      } catch (error) {
+        await this.stop()
+        throw error
+      }
+    })
+  }
+  private async listen(port: number, token: string): Promise<number> {
+    this.token = token
     const server = createServer((_request, response) => response.writeHead(404).end())
     const sockets = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 })
     this.http = server
     this.sockets = sockets
     server.on('upgrade', (request, socket, head) => {
-      const supplied = Buffer.from(
-        new URL(request.url ?? '/', 'http://localhost').searchParams.get('token') ?? ''
-      )
+      const params = new URL(request.url ?? '/', 'http://localhost').searchParams
+      const supplied = Buffer.from(params.get('token') ?? '')
+      const epoch = params.get('epoch') ?? ''
       const expected = Buffer.from(this.token)
       if (
         server !== this.http ||
         this.socket ||
         !/^chrome-extension:\/\/[a-p]{32}$/.test(request.headers.origin ?? '') ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(epoch) ||
         supplied.length !== expected.length ||
         !timingSafeEqual(supplied, expected)
       ) {
         socket.end('HTTP/1.1 403 Forbidden\r\n\r\n')
         return
       }
-      sockets.handleUpgrade(request, socket, head, (extension) => this.attachExtension(extension))
-    })
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', () => {
-        server.removeListener('error', reject)
-        resolve()
+      sockets.handleUpgrade(request, socket, head, (extension) => {
+        if (this.extensionEpoch !== epoch) {
+          for (const [id, owner] of this.owners) this.emit(owner, { type: 'detach', tabId: id })
+          this.owners.clear()
+          this.extensionEpoch = epoch
+        }
+        this.attachExtension(extension)
       })
     })
-    const address = server.address()
-    if (!address || typeof address === 'string') throw new Error('Unable to listen for Chrome.')
-    this.pairingUrl = `ws://127.0.0.1:${address.port}/extension?token=${this.token}`
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(port, '127.0.0.1', () => {
+          server.removeListener('error', reject)
+          resolve()
+        })
+      })
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Unable to listen for Chrome.')
+      this.pairingUrl = `ws://127.0.0.1:${address.port}/extension?token=${this.token}`
+      return address.port
+    } catch (error) {
+      await this.stop()
+      throw error
+    }
   }
 
   private attachExtension(socket: WebSocket): void {
@@ -91,7 +149,7 @@ export class ChromeAutomation implements BrowserAutomationService {
         if (message.event && typeof message.event.tabId === 'number') {
           const owner = this.owners.get(message.event.tabId)
           if (owner) {
-            this.listeners.get(owner)?.(message.event)
+            this.emit(owner, message.event)
             if (message.event.type === 'detach') this.owners.delete(message.event.tabId)
           }
         }
@@ -103,9 +161,9 @@ export class ChromeAutomation implements BrowserAutomationService {
     socket.on('close', () => {
       if (this.socket !== socket) return
       this.socket = null
-      for (const [id, owner] of this.owners)
-        this.listeners.get(owner)?.({ type: 'detach', tabId: id })
-      this.owners.clear()
+      for (const [id, owner] of this.owners) this.emit(owner, { type: 'detach', tabId: id })
+      // A transient transport loss does not transfer tabs to other conversations.
+      // Explicit disconnect/pairing still revokes the ownership map below.
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timer)
         pending.reject(new Error('Chrome was disconnected.'))
@@ -140,7 +198,10 @@ export class ChromeAutomation implements BrowserAutomationService {
     scope: BrowserAutomationScope,
     onEvent?: (event: BrowserCdpEvent) => void
   ): BrowserAutomationClient {
-    const owner = {}
+    // A chat keeps its tabs across turns and transport/client replacements.
+    // Provider is part of the identity: equal IDs from two providers are unrelated.
+    const owner = JSON.stringify([scope.providerId, scope.sessionId, scope.containerKey])
+    const listener = {}
     let closed = false
     const request = async <T>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
       if (closed) throw new Error('Chrome capability was revoked.')
@@ -150,17 +211,33 @@ export class ChromeAutomation implements BrowserAutomationService {
     }
     const downloads = new Map<number, BrowserDownload[]>()
     const authorizedDownloads = new Set<string>()
-    this.listeners.set(owner, (event) => {
-      if (!closed) onEvent?.(event)
+    this.listeners.set(listener, {
+      owner,
+      onEvent: (event) => {
+        if (!closed) onEvent?.(event)
+      }
     })
     const tabs = async (): Promise<BrowserAutomationTab[]> => {
       if (closed) throw new Error('Chrome capability was revoked.')
-      const all = await request<BrowserAutomationTab[]>('getTabs')
-      return all.filter(
-        (tab) =>
-          !this.detaching.has(tab.id) &&
-          (!this.owners.has(tab.id) || this.owners.get(tab.id) === owner)
-      )
+      const all = await request<Array<BrowserAutomationTab & { owner?: string }>>('getTabs')
+      // Extension session storage is authoritative, including offline Unshare.
+      // Claims use extension-side compare-and-set before any tab operation.
+      for (const tab of all) {
+        const previous = this.owners.get(tab.id)
+        if (previous && previous !== tab.owner) {
+          this.emit(previous, { type: 'detach', tabId: tab.id })
+          this.owners.delete(tab.id)
+        }
+        if (tab.owner !== undefined) this.owners.set(tab.id, tab.owner)
+      }
+      return all
+        .filter(
+          (tab) =>
+            !this.detaching.has(tab.id) &&
+            (tab.owner === undefined || tab.owner === owner) &&
+            (!this.owners.has(tab.id) || this.owners.get(tab.id) === owner)
+        )
+        .map(({ owner: _allocationOwner, ...tab }) => tab)
     }
     const claim = async (id: number): Promise<void> => {
       if (!(await tabs()).some((tab) => tab.id === id))
@@ -168,11 +245,13 @@ export class ChromeAutomation implements BrowserAutomationService {
       const existing = this.owners.get(id)
       if (closed || (existing && existing !== owner))
         throw new Error('Chrome tab access was revoked.')
+      await request('claimTab', { tabId: id, owner })
+      if (closed) throw new Error('Chrome capability was revoked.')
       this.owners.set(id, owner)
     }
     const detach = (id: number): void => {
-      if (this.owners.get(id) !== owner) return
-      this.owners.delete(id)
+      if (closed || this.owners.get(id) !== owner) return
+      // Detaching a debugger is not a transfer of the tab to another chat.
       this.detaching.add(id)
       void this.request('detach', { tabId: id })
         .catch((error) => console.error('Unable to detach Chrome tab.', error))
@@ -183,9 +262,13 @@ export class ChromeAutomation implements BrowserAutomationService {
       listTabs: tabs,
       createTab: async (options) => {
         if (closed) throw new Error('Chrome capability was revoked.')
-        const tab = await request<BrowserAutomationTab>('createTab', {
-          foreground: options?.foreground ?? true
+        const { owner: allocationOwner, ...tab } = await request<
+          BrowserAutomationTab & { owner: string }
+        >('createTab', {
+          foreground: options?.foreground ?? false,
+          owner
         })
+        if (allocationOwner !== owner) throw new Error('Chrome tab allocation ownership mismatch.')
         if (closed) throw new Error('Chrome capability was revoked.')
         this.owners.set(tab.id, owner)
         return tab
@@ -256,15 +339,22 @@ export class ChromeAutomation implements BrowserAutomationService {
       },
       close: () => {
         if (closed) return
-        client.detachAll()
+        this.listeners.delete(listener)
+        if (![...this.listeners.values()].some((current) => current.owner === owner))
+          client.detachAll()
         closed = true
-        this.listeners.delete(owner)
       }
     }
     return client
   }
 
-  async disconnect(): Promise<void> {
+  disconnect(): Promise<void> {
+    return this.serialized(async () => {
+      await this.stop()
+      await this.pairingStore?.clear()
+    })
+  }
+  private async stop(): Promise<void> {
     this.socket?.terminate()
     this.socket = null
     for (const pending of this.pending.values()) {
@@ -272,7 +362,9 @@ export class ChromeAutomation implements BrowserAutomationService {
       pending.reject(new Error('Chrome was disconnected.'))
     }
     this.pending.clear()
+    for (const [id, owner] of this.owners) this.emit(owner, { type: 'detach', tabId: id })
     this.owners.clear()
+    this.extensionEpoch = null
     const server = this.http
     this.http = null
     this.pairingUrl = null
@@ -281,11 +373,26 @@ export class ChromeAutomation implements BrowserAutomationService {
     this.sockets = null
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
   }
-  close(): void {
-    void this.disconnect().catch((error) =>
-      console.error('Unable to close Chrome transport.', error)
-    )
+  close(): Promise<void> {
+    return this.serialized(() => this.stop())
   }
 }
 
-export const chromeAutomation = new ChromeAutomation()
+export const chromeAutomation = new ChromeAutomation(
+  new EncryptedChromePairingStore(
+    () => {
+      // Lazy Electron access keeps the transport testable without starting Electron.
+      return join(chromeUserData(), 'desktop-chrome', 'pairing.enc.json')
+    },
+    async () => (await import('electron')).safeStorage
+  )
+)
+function chromeUserData(): string {
+  // Set during Electron startup, before restore or pairing is requested.
+  if (!userDataPath) throw new Error('Chrome pairing storage has not been initialized.')
+  return userDataPath
+}
+let userDataPath: string | undefined
+export function configureChromePairingStorage(path: string): void {
+  userDataPath = path
+}

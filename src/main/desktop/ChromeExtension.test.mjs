@@ -2,11 +2,35 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { WebSocket as NodeWebSocket } from 'ws'
+import { ChromeAutomation } from './ChromeAutomation.ts'
 
-function fixture() {
+async function fixture(overrides = {}) {
   const listeners = {}
   const commands = []
+  const local = overrides.local ?? {}
+  const session = overrides.session ?? {}
+  const area = (data) => ({
+    get: async (key) => ({ [key]: data[key] }),
+    set: async (value) => Object.assign(data, structuredClone(value)),
+    remove: async (key) => {
+      delete data[key]
+    },
+    setAccessLevel: async () => {}
+  })
   const chrome = {
+    storage: { local: area(local), session: area(session) },
+    alarms: {
+      get: async () => undefined,
+      create: async () => {},
+      clear: async () => {},
+      onAlarm: {
+        addListener: (fn) => {
+          listeners.alarm = fn
+        }
+      }
+    },
     debugger: {
       attach: async () => {},
       detach: async () => {},
@@ -42,6 +66,12 @@ function fixture() {
       }
     },
     runtime: {
+      onStartup: {
+        addListener: (fn) => {
+          listeners.startup = fn
+        }
+      },
+      onInstalled: { addListener: () => {} },
       onMessage: {
         addListener: (fn) => {
           listeners.message = fn
@@ -53,16 +83,59 @@ function fixture() {
     new URL('../../../resources/sele-chrome-extension/background.js', import.meta.url),
     'utf8'
   )
-  const context = { chrome, URL, WebSocket: { OPEN: 1 }, setInterval, clearInterval, Date }
+  const context = {
+    chrome,
+    URL,
+    WebSocket: { OPEN: 1 },
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    Date,
+    crypto: { randomUUID },
+    ...overrides
+  }
   vm.runInNewContext(
-    `${code}\nglobalThis.fixture = {handle,shared,attached,downloads,allowedDownloads,disconnect};`,
+    `${code}\nglobalThis.fixture = {handle,shared,attached,downloads,allowedDownloads,connect,disconnect,ready,stopWorker:()=>{if(heartbeat)clearInterval(heartbeat);if(reconnectTimer!==null)clearTimeout(reconnectTimer);const previous=socket;socket=null;previous?.close()}};`,
     context
   )
-  return { ...context.fixture, listeners, commands, chrome }
+  await context.fixture.ready
+  return { ...context.fixture, listeners, commands, chrome, local, session }
 }
 
+test('Chrome extension creates a background tab when foreground is omitted', async () => {
+  const h = await fixture()
+  const created = []
+  h.chrome.tabs.create = async (options) => {
+    created.push(options)
+    return { id: 99, url: options.url, active: options.active }
+  }
+  await h.handle('createTab', { owner: 'codex-owner' })
+  assert.equal(created[0].active, false)
+  assert.equal(h.shared.has(99), true)
+  assert.equal((await h.handle('getTabs', {}))[0].owner, 'codex-owner')
+})
+
+test('a new background tab remains accessible before its blank URL commits', async () => {
+  const h = await fixture()
+  h.chrome.tabs.create = async () => ({ id: 99, pendingUrl: 'about:blank', active: false })
+  h.chrome.tabs.get = async () => ({ id: 99, pendingUrl: 'about:blank', active: false })
+  const created = await h.handle('createTab', { owner: 'codex-owner' })
+  const listed = await h.handle('getTabs', {})
+  assert.equal(listed.length, 1)
+  assert.equal(listed[0].id, created.id)
+  assert.equal(listed[0].url, 'about:blank')
+  assert.equal(h.shared.has(99), true)
+  await h.handle('attach', { tabId: created.id })
+
+  for (const tab of [{ id: 99 }, { id: 99, pendingUrl: 'chrome://settings' }]) {
+    h.chrome.tabs.get = async () => tab
+    await assert.rejects(h.handle('attach', { tabId: 99 }), /cannot be automated/)
+  }
+})
+
 test('Chrome extension enforces explicit sharing and forwards flattened CDP sessions', async () => {
-  const h = fixture()
+  const h = await fixture()
   await assert.rejects(
     h.handle('executeCdp', { tabId: 3, method: 'Runtime.evaluate' }),
     /Share this tab/
@@ -105,7 +178,7 @@ test('Chrome extension enforces explicit sharing and forwards flattened CDP sess
 })
 
 test('Chrome download grants expire and are consumed once', async () => {
-  const h = fixture()
+  const h = await fixture()
   h.shared.add(3)
   await h.handle('allowDownload', { tabId: 3, url: 'https://example.com/file' })
   h.listeners.created({ id: 1, url: 'https://example.com/file', filename: 'file', totalBytes: 5 })
@@ -119,7 +192,7 @@ test('Chrome download grants expire and are consumed once', async () => {
 })
 
 test('disconnect cancels a late debugger attachment instead of restoring access', async () => {
-  const h = fixture()
+  const h = await fixture()
   h.shared.add(3)
   let finish
   h.chrome.debugger.attach = () =>
@@ -133,4 +206,233 @@ test('disconnect cancels a late debugger attachment instead of restoring access'
   await assert.rejects(pending, /revoked/)
   assert.equal(h.attached.size, 0)
   assert.equal(h.commands.length, 0)
+})
+
+test('a transient connection loss reconnects without losing shared tabs; explicit disconnect revokes them', async () => {
+  const sockets = []
+  const timers = new Map()
+  let nextTimer = 0
+  class Socket {
+    static OPEN = 1
+    readyState = 1
+    constructor(endpoint) {
+      this.endpoint = endpoint
+      sockets.push(this)
+      queueMicrotask(() => this.onopen?.())
+    }
+    send() {}
+    close() {
+      this.readyState = 3
+      this.onclose?.()
+    }
+  }
+  const h = await fixture({
+    WebSocket: Socket,
+    setTimeout: (callback) => {
+      const id = ++nextTimer
+      timers.set(id, callback)
+      return id
+    },
+    clearTimeout: (id) => timers.delete(id)
+  })
+  await h.connect('ws://127.0.0.1:12345/extension?token=fixture')
+  h.shared.add(99)
+  await h.handle('attach', { tabId: 99 })
+  sockets[0].close()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(h.shared.has(99), true, 'a network interruption must not revoke tab sharing')
+  assert.equal(h.attached.size, 0)
+  assert.equal(timers.size, 1)
+  const retry = timers.values().next().value
+  timers.clear()
+  retry()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(sockets.length, 2)
+  assert.equal(sockets[1].endpoint, sockets[0].endpoint)
+  assert.equal((await h.handle('getTabs', {}))[0].id, 99)
+  sockets[1].close()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(timers.size, 1)
+  const canceledRetry = timers.values().next().value
+  await h.disconnect()
+  assert.equal(h.shared.size, 0)
+  assert.equal(timers.size, 0, 'an explicit disconnect must not retry')
+  canceledRetry()
+  assert.equal(sockets.length, 2)
+})
+
+function automaticSocket() {
+  const sockets = []
+  class Socket {
+    static OPEN = 1
+    readyState = 1
+    constructor(endpoint) {
+      this.endpoint = endpoint
+      sockets.push(this)
+      queueMicrotask(() => this.onopen?.())
+    }
+    send() {}
+    close() {
+      this.readyState = 3
+      this.onclose?.()
+    }
+  }
+  return {
+    WebSocket: Socket,
+    sockets,
+    setInterval: () => 1,
+    clearInterval: () => {},
+    setTimeout: () => 1,
+    clearTimeout: () => {}
+  }
+}
+
+test('worker restart restores pairing and owned tabs; Chrome restart restores only pairing', async () => {
+  const transport = automaticSocket()
+  const first = await fixture(transport)
+  await first.connect('ws://127.0.0.1:12345/extension?token=fixture')
+  first.chrome.tabs.create = async () => ({ id: 99, url: 'about:blank', active: false })
+  await first.handle('createTab', { owner: 'codex-a' })
+  const address = transport.sockets[0].endpoint
+  const resumedTransport = automaticSocket()
+  const resumed = await fixture({ ...resumedTransport, local: first.local, session: first.session })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(resumedTransport.sockets[0].endpoint, address)
+  assert.equal((await resumed.handle('getTabs', {}))[0].owner, 'codex-a')
+  await assert.rejects(
+    resumed.handle('claimTab', { tabId: 99, owner: 'claude-b' }),
+    /another conversation/
+  )
+  const restartedTransport = automaticSocket()
+  const restarted = await fixture({ ...restartedTransport, local: first.local, session: {} })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.notEqual(
+    restartedTransport.sockets[0].endpoint,
+    address,
+    'fresh Chrome has a fresh ownership epoch'
+  )
+  assert.equal(new URL(restartedTransport.sockets[0].endpoint).searchParams.get('token'), 'fixture')
+  assert.equal((await restarted.handle('getTabs', {})).length, 0)
+  await restarted.disconnect()
+  const disconnectedTransport = automaticSocket()
+  await fixture({ ...disconnectedTransport, local: restarted.local, session: restarted.session })
+  assert.equal(
+    disconnectedTransport.sockets.length,
+    0,
+    'Disconnect persists across worker/browser restart'
+  )
+})
+
+test('an alarm retries a saved connection when Sele starts after Chrome', async () => {
+  const transport = automaticSocket()
+  const h = await fixture({
+    ...transport,
+    local: { selePairingV1: 'ws://127.0.0.1:12345/extension?token=fixture' }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  transport.sockets[0].close()
+  await new Promise((resolve) => setImmediate(resolve))
+  h.listeners.alarm({ name: 'sele-reconnect' })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(transport.sockets.length, 2)
+  assert.equal(transport.sockets[1].endpoint, transport.sockets[0].endpoint)
+  await h.disconnect()
+})
+
+test('ownership storage failure blocks subsequent automation rather than losing isolation', async () => {
+  const h = await fixture()
+  h.chrome.tabs.create = async () => ({ id: 99, url: 'about:blank', active: false })
+  h.chrome.storage.session.set = async () => {
+    throw new Error('storage unavailable')
+  }
+  await assert.rejects(h.handle('createTab', { owner: 'codex-a' }), /storage unavailable/)
+  await assert.rejects(h.handle('getTabs', {}), /storage unavailable/)
+  await assert.rejects(
+    fixture({ local: { selePairingV1: 'https://remote.example' } }),
+    /pairing address/
+  )
+})
+
+test('Disconnect revokes live control before delayed or failed durable removal', async () => {
+  const h = await fixture()
+  h.shared.add(3)
+  let release
+  h.chrome.storage.local.remove = () =>
+    new Promise((resolve) => {
+      release = resolve
+    })
+  const disconnecting = h.disconnect()
+  await new Promise((resolve) => setImmediate(resolve))
+  await assert.rejects(
+    h.handle('executeCdp', { tabId: 3, method: 'Input.insertText', params: { text: 'forbidden' } }),
+    /disconnected|Share this tab/
+  )
+  assert.equal(h.commands.length, 0)
+  release()
+  await disconnecting
+  h.chrome.storage.local.remove = async () => {
+    throw new Error('storage removal failed')
+  }
+  await assert.rejects(h.disconnect(), /storage removal failed/)
+  await assert.rejects(h.handle('createTab', { owner: 'other' }), /storage removal failed/)
+})
+
+test('actual WebSocket transport recovers after Sele restarts and after a fresh Chrome session', async (t) => {
+  let value = null
+  const store = {
+    load: async () => value,
+    save: async (next) => {
+      value = next
+    },
+    clear: async () => {
+      value = null
+    }
+  }
+  const first = new ChromeAutomation(store)
+  const restored = new ChromeAutomation(store)
+  const coldHost = new ChromeAutomation(store)
+  const workers = []
+  t.after(async () => {
+    for (const worker of workers) worker.stopWorker()
+    await first.close()
+    await restored.close()
+    await coldHost.close()
+  })
+  class ExtensionSocket extends NodeWebSocket {
+    constructor(url) {
+      super(url, { origin: `chrome-extension://${'a'.repeat(32)}` })
+    }
+  }
+  const until = async (predicate) => {
+    const deadline = Date.now() + 5000
+    while (!predicate()) {
+      if (Date.now() > deadline) throw new Error('Transport did not reconnect')
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+  await first.pair()
+  const local = { selePairingV1: first.status.pairingUrl }
+  const h = await fixture({ WebSocket: ExtensionSocket, local })
+  workers.push(h)
+  await until(() => first.status.connected)
+  h.chrome.tabs.create = async () => ({ id: 99, url: 'about:blank', active: false })
+  const scope = (sessionId) => ({ providerId: 'codex', sessionId, cwd: '', containerKey: 'host' })
+  const owner = JSON.stringify(['codex', 'owner', 'host'])
+  await h.handle('createTab', { owner })
+  assert.equal((await first.createClient(scope('owner')).listTabs())[0].id, 99)
+  await first.close()
+  await restored.restore()
+  await until(() => restored.status.connected)
+  assert.equal((await restored.createClient(scope('owner')).listTabs())[0].id, 99)
+  assert.deepEqual(await restored.createClient(scope('foreign')).listTabs(), [])
+  h.stopWorker()
+  await until(() => !restored.status.connected)
+  await restored.close()
+  // New browser session starts while Sele is absent; local pairing survives, session grants do not.
+  const coldWorker = await fixture({ WebSocket: ExtensionSocket, local, session: {} })
+  workers.push(coldWorker)
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  await coldHost.restore()
+  await until(() => coldHost.status.connected)
+  assert.deepEqual(await coldHost.createClient(scope('owner')).listTabs(), [])
 })

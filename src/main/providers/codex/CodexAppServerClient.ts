@@ -23,7 +23,6 @@ import { registerCodexBrowserTools } from './CodexBrowserTools'
 import { supportsLocalHostTools } from '../hostToolTarget'
 import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
 import { getCodexNativeChromeConfig } from './CodexNativeChrome'
-import { chromeAutomation } from '../../desktop/ChromeAutomation'
 
 type RpcError = {
   code: number
@@ -282,12 +281,9 @@ export class CodexAppServerClient {
     ) {
       params = {
         ...(params as Record<string, unknown>),
-        dynamicTools: this.dynamicTools.specs.filter(
-          (spec) =>
-            spec.name !== 'chrome' ||
-            chromeAutomation.status.connected ||
-            Boolean(chromeAutomation.status.pairingUrl)
-        )
+        // Pairing can happen after the thread's tool catalog has been fixed.
+        // Keep the scoped transport available; its calls report connection state.
+        dynamicTools: this.dynamicTools.specs
       }
     }
     if (method === 'turn/start' && typeof input.threadId === 'string') {

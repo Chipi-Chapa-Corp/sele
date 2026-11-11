@@ -2,12 +2,118 @@ const chrome = globalThis.chrome
 let socket = null
 let generation = 0
 let heartbeat = null
+let pairingEndpoint = null
+let reconnectTimer = null
+let sharingEpoch = crypto.randomUUID()
 const shared = new Set()
+const tabOwners = new Map()
 const attached = new Set()
 const allowedDownloads = new Map()
 const downloads = new Map()
 const childSessions = new Map()
 let connectionError = ''
+const PAIRING_KEY = 'selePairingV1'
+const SESSION_KEY = 'seleSharingV1'
+const RECONNECT_ALARM = 'sele-reconnect'
+let storageError = null
+let writes = Promise.resolve()
+function validEndpoint(endpoint) {
+  const url = new URL(endpoint)
+  if (
+    url.protocol !== 'ws:' ||
+    url.hostname !== '127.0.0.1' ||
+    url.pathname !== '/extension' ||
+    !url.port ||
+    !url.searchParams.get('token') ||
+    url.username ||
+    url.password ||
+    url.hash
+  )
+    throw new Error('Paste the local pairing address from Sele Settings.')
+  return url.href
+}
+function persistSession() {
+  const value = { epoch: sharingEpoch, tabs: [...shared], owners: [...tabOwners] }
+  const write = writes.then(() => chrome.storage.session.set({ [SESSION_KEY]: value }))
+  writes = write.catch((error) => {
+    storageError = error
+    throw error
+  })
+  // Events may have no caller, but the failure remains latched and blocks automation.
+  void writes.catch((error) => {
+    connectionError = 'Unable to save Chrome tab ownership: ' + error.message
+  })
+  return write
+}
+async function ensureAlarm() {
+  if (!(await chrome.alarms.get(RECONNECT_ALARM)))
+    await chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 1 })
+}
+async function bootstrap() {
+  await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })
+  await chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })
+  const local = await chrome.storage.local.get(PAIRING_KEY)
+  const session = (await chrome.storage.session.get(SESSION_KEY))[SESSION_KEY]
+  if (session !== undefined) {
+    if (
+      !session ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(session.epoch) ||
+      !Array.isArray(session.tabs) ||
+      !session.tabs.every((id) => Number.isInteger(id) && id > 0) ||
+      new Set(session.tabs).size !== session.tabs.length ||
+      !Array.isArray(session.owners) ||
+      !session.owners.every(
+        (entry) =>
+          Array.isArray(entry) &&
+          entry.length === 2 &&
+          session.tabs.includes(entry[0]) &&
+          typeof entry[1] === 'string' &&
+          entry[1].length > 0 &&
+          entry[1].length <= 2048
+      )
+    )
+      throw new Error('Invalid saved Chrome sharing session. Reconnect the extension explicitly.')
+    if (new Set(session.owners.map(([id]) => id)).size !== session.owners.length)
+      throw new Error('Duplicate saved Chrome ownership. Reconnect the extension explicitly.')
+    sharingEpoch = session.epoch
+    for (const id of session.tabs) shared.add(id)
+    for (const [id, owner] of session.owners) tabOwners.set(id, owner)
+  } else await persistSession()
+  if (local[PAIRING_KEY] !== undefined) {
+    pairingEndpoint = validEndpoint(local[PAIRING_KEY])
+    await ensureAlarm()
+    void connect(pairingEndpoint, true).catch((error) => {
+      connectionError = error.message
+    })
+  }
+}
+let ready = bootstrap().catch((error) => {
+  storageError = error
+  connectionError = 'Unable to restore Chrome connection: ' + error.message
+  throw error
+})
+void ready.catch(() => {})
+async function checkReady() {
+  await ready
+  await writes
+  if (storageError) throw storageError
+}
+function wake() {
+  void checkReady()
+    .then(async () => {
+      if (!pairingEndpoint) return
+      await ensureAlarm()
+      if (!socket) await connect(pairingEndpoint, true)
+    })
+    .catch((error) => {
+      connectionError = error.message
+    })
+}
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === RECONNECT_ALARM) wake()
+})
+chrome.runtime.onStartup.addListener(wake)
+chrome.runtime.onInstalled.addListener(wake)
 const send = (value) => {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value))
 }
@@ -15,6 +121,9 @@ const safeTab = async (id) => {
   if (!shared.has(id)) throw new Error('Share this tab using the Sele extension first.')
   const tab = await chrome.tabs.get(id)
   if (!shared.has(id)) throw new Error('Tab sharing was revoked.')
+  // Chrome can return a newly created blank tab before its URL has committed.
+  // Accept only that explicit pending navigation; a missing URL alone is invalid.
+  if (!tab.url && tab.pendingUrl === 'about:blank') return { ...tab, url: tab.pendingUrl }
   if (!/^https?:\/\//.test(tab.url ?? '') && tab.url !== 'about:blank')
     throw new Error('This browser page cannot be automated.')
   return tab
@@ -48,39 +157,85 @@ const detach = async (id) => {
   }
 }
 async function disconnect() {
+  // Revoke live access synchronously, before any potentially slow storage call.
   generation++
+  storageError = new Error('Chrome connection is being disconnected.')
+  pairingEndpoint = null
+  sharingEpoch = crypto.randomUUID()
+  if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+  reconnectTimer = null
   const previous = socket
   socket = null
   if (heartbeat) clearInterval(heartbeat)
   heartbeat = null
   shared.clear()
-  for (const id of attached) await detach(id)
+  tabOwners.clear()
   allowedDownloads.clear()
   downloads.clear()
   previous?.close()
+  const detachments = [...attached].map((id) => detach(id))
+  try {
+    await writes.catch(() => {})
+    // Keep automation blocked until all durable revocation has completed.
+    storageError = new Error('Chrome connection is being disconnected.')
+    await chrome.storage.local.remove(PAIRING_KEY)
+    await chrome.alarms.clear(RECONNECT_ALARM)
+    writes = Promise.resolve()
+    await persistSession()
+    storageError = null
+  } catch (error) {
+    storageError = error
+    connectionError = 'Unable to remove saved Chrome connection: ' + error.message
+    throw error
+  } finally {
+    await Promise.all(detachments)
+  }
 }
-async function connect(endpoint) {
-  const url = new URL(endpoint)
-  if (
-    url.protocol !== 'ws:' ||
-    url.hostname !== '127.0.0.1' ||
-    url.pathname !== '/extension' ||
-    !url.searchParams.get('token')
-  )
-    throw new Error('Paste the local pairing address from Sele Settings.')
-  await disconnect()
+function retryConnection() {
+  if (!pairingEndpoint || socket || reconnectTimer !== null) return
+  const endpoint = pairingEndpoint
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    if (pairingEndpoint === endpoint && !socket)
+      void connect(endpoint, true).catch((error) => {
+        connectionError = error instanceof Error ? error.message : String(error)
+      })
+  }, 1000)
+}
+async function connect(endpoint, reconnect = false) {
+  const url = new URL(validEndpoint(endpoint))
+  if (!reconnect) {
+    await disconnect()
+    await chrome.storage.local.set({ [PAIRING_KEY]: url.href })
+    await ensureAlarm()
+  }
+  pairingEndpoint = url.href
   connectionError = ''
-  const connection = new WebSocket(url.href)
+  const connectionUrl = new URL(url.href)
+  connectionUrl.searchParams.set('epoch', sharingEpoch)
+  const connection = new WebSocket(connectionUrl.href)
   socket = connection
+  connection.onclose = async () => {
+    if (socket !== connection) return
+    socket = null
+    generation++
+    if (heartbeat) clearInterval(heartbeat)
+    heartbeat = null
+    // Keep explicit sharing while retrying the same authenticated connection.
+    // Drop old debugger attachments before that connection can resume actions.
+    await Promise.all([...attached].map((id) => detach(id)))
+    retryConnection()
+  }
   await new Promise((resolve, reject) => {
     connection.onopen = resolve
-    connection.onerror = () =>
-      reject(new Error('Unable to connect to Sele. Generate a new pairing address and retry.'))
+    connection.onerror = () => {
+      connectionError = 'Unable to connect to Sele. Waiting to reconnect.'
+      reject(new Error('Sele is unavailable. The saved connection will retry automatically.'))
+    }
   })
+  if (socket !== connection) return
+  connectionError = ''
   heartbeat = setInterval(() => send({ method: 'ping' }), 20000)
-  connection.onclose = () => {
-    if (socket === connection) void disconnect()
-  }
   connection.onerror = () => {
     connectionError = 'Connection failed.'
   }
@@ -98,31 +253,59 @@ async function connect(endpoint) {
     }
   }
 }
-async function handle(method, params) {
+let operations = Promise.resolve()
+function handle(method, params) {
+  const operation = operations.then(async () => {
+    await checkReady()
+    return perform(method, params)
+  })
+  operations = operation.catch(() => {})
+  return operation
+}
+async function perform(method, params) {
   const revision = generation
   if (method === 'getTabs') {
     const tabs = []
     for (const id of shared) {
       try {
-        tabs.push(summary(await safeTab(id)))
+        const tab = summary(await safeTab(id))
+        if (tabOwners.has(id)) tab.owner = tabOwners.get(id)
+        tabs.push(tab)
       } catch {
         shared.delete(id)
+        tabOwners.delete(id)
       }
     }
+    await persistSession()
     return tabs
   }
   if (method === 'createTab') {
+    if (typeof params.owner !== 'string' || !params.owner || params.owner.length > 2048)
+      throw new Error('A conversation owner is required to create a Chrome tab.')
     const tab = await chrome.tabs.create({
       url: 'about:blank',
-      active: params.foreground !== false
+      active: params.foreground === true
     })
     if (generation !== revision) throw new Error('Chrome connection was revoked.')
+    // Bind the allocation before exposing it, even if its response is lost.
+    tabOwners.set(tab.id, params.owner)
     shared.add(tab.id)
-    return summary(tab)
+    await persistSession()
+    if (generation !== revision) throw new Error('Chrome connection was revoked.')
+    return { ...summary(tab), owner: params.owner }
   }
   const id = params.tabId
   await safeTab(id)
   if (generation !== revision) throw new Error('Chrome connection was revoked.')
+  if (method === 'claimTab') {
+    if (typeof params.owner !== 'string' || !params.owner || params.owner.length > 2048)
+      throw new Error('A conversation owner is required to claim a Chrome tab.')
+    if (tabOwners.has(id) && tabOwners.get(id) !== params.owner)
+      throw new Error('Chrome tab belongs to another conversation.')
+    tabOwners.set(id, params.owner)
+    await persistSession()
+    return null
+  }
   if (method === 'attach') {
     await attach(id)
     return null
@@ -138,6 +321,8 @@ async function handle(method, params) {
   if (method === 'closeTab') {
     await chrome.tabs.remove(id)
     shared.delete(id)
+    tabOwners.delete(id)
+    await persistSession()
     return null
   }
   if (method === 'allowDownload') {
@@ -237,13 +422,19 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (!attached.delete(source.tabId)) return
   childSessions.delete(source.tabId)
-  if (reason === 'canceled_by_user') shared.delete(source.tabId)
+  if (reason === 'canceled_by_user') {
+    shared.delete(source.tabId)
+    tabOwners.delete(source.tabId)
+    void persistSession().catch(() => {})
+  }
   send({ event: { type: 'detach', tabId: source.tabId } })
 })
 chrome.tabs.onRemoved.addListener((id) => {
   if (shared.delete(id)) send({ event: { type: 'detach', tabId: id } })
+  tabOwners.delete(id)
   attached.delete(id)
   childSessions.delete(id)
+  void ready.then(() => persistSession()).catch(() => {})
 })
 chrome.downloads.onCreated.addListener((item) => {
   const permission = allowedDownloads.get(item.url)
@@ -284,8 +475,18 @@ chrome.downloads.onChanged.addListener((delta) => {
 })
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   ;(async () => {
-    if (message.action === 'connect') await connect(message.endpoint)
-    if (message.action === 'disconnect') await disconnect()
+    await ready.catch((error) => {
+      if (!['connect', 'disconnect'].includes(message.action)) throw error
+    })
+    if (!['connect', 'disconnect'].includes(message.action)) await checkReady()
+    if (message.action === 'connect') {
+      ready = Promise.resolve()
+      await connect(message.endpoint)
+    }
+    if (message.action === 'disconnect') {
+      await disconnect()
+      ready = Promise.resolve()
+    }
     if (message.action === 'share') {
       if (socket?.readyState !== WebSocket.OPEN)
         throw new Error('Connect to Sele before sharing a tab.')
@@ -293,10 +494,13 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       if (!tab?.id || !/^https?:\/\//.test(tab.url ?? ''))
         throw new Error('Open a normal website tab first.')
       shared.add(tab.id)
+      await persistSession()
     }
     if (message.action === 'unshare') {
       await detach(message.tabId)
       shared.delete(message.tabId)
+      tabOwners.delete(message.tabId)
+      await persistSession()
       send({ event: { type: 'detach', tabId: message.tabId } })
     }
     const tabs = []
@@ -307,6 +511,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
         shared.delete(id)
       }
     }
+    await persistSession()
     return { connected: socket?.readyState === WebSocket.OPEN, tabs, error: connectionError }
   })().then(
     (result) => respond(result),

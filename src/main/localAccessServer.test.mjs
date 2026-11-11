@@ -184,7 +184,9 @@ test('development proxy limits filesystem access and forwards the Vite HMR conne
   ws.terminate()
 })
 
-test('isolates simultaneous clients, carries binary media, and releases owners on disconnect', async (t) => {
+test('isolates simultaneous clients, carries binary media, and releases owners on disconnect', {
+  timeout: 5000
+}, async (t) => {
   const f = await fixture(t)
   const first = await f.connect()
   const second = await f.connect()
@@ -211,15 +213,12 @@ test('isolates simultaneous clients, carries binary media, and releases owners o
   const media = await invoke(first, 2, 'media', [])
   assert.deepEqual([...new Uint8Array(media.result.data)], [0, 127, 128, 255])
   assert.equal((await invoke(first, 3, 'fail', [])).error, 'Expected operation failure')
-  let released = false
-  f.requests[0].client.once('destroyed', () => {
-    released = true
-  })
+  const released = once(f.requests[0].client, 'destroyed')
   const closed = once(first, 'close')
   first.close()
   await closed
-  await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(released, true)
+  // The server's close notification may arrive after the client's close event.
+  await released
 })
 
 test('a slow phone receives large startup history and later replies without disconnecting', {
