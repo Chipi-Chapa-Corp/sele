@@ -1,5 +1,8 @@
 import { app, protocol } from 'electron'
 import { startSingleInstance } from './singleInstance'
+import { disableMiddleClickPaste } from './middleClickPaste'
+
+disableMiddleClickPaste(app.commandLine)
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'sele-visualize', privileges: { standard: true, secure: true } },
