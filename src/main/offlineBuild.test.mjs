@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { resolveOfflineSource } from '../../scripts/resolve-offline-source.mjs'
+import { resolveUbuntuMirror } from '../../scripts/resolve-ubuntu-mirror.mjs'
 
 const source = {
   status: 'completed',
@@ -74,6 +75,8 @@ test('Ubuntu tooling uses signed official sources and recovers from a transient 
     sudo: '#!/bin/sh\nexec "$@"\n',
     dpkg: '#!/bin/sh\necho amd64\n',
     sleep: '#!/bin/sh\nexit 0\n',
+    getent: '#!/bin/sh\nexit 2\n',
+    node: '#!/bin/sh\necho 192.0.2.1\n',
     'apt-get': `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path');
 const root=process.env.SELE_APT_FIXTURE;
@@ -90,6 +93,7 @@ if(process.env.SELE_APT_ALWAYS_FAIL==='1'||calls.length===1)process.exit(100);
   await writeFile(osRelease, 'ID=ubuntu\nVERSION_CODENAME=noble\n')
   const env = {
     ...process.env,
+    GITHUB_ACTIONS: 'false',
     PATH: `${bin}:${process.env.PATH}`,
     SELE_APT_FIXTURE: directory,
     SELE_OS_RELEASE_FILE: osRelease
@@ -116,4 +120,45 @@ if(process.env.SELE_APT_ALWAYS_FAIL==='1'||calls.length===1)process.exit(100);
   assert.equal(failed.status, 1)
   assert.equal(JSON.parse(await readFile(join(directory, 'calls.json'), 'utf8')).length, 3)
   assert.match(failed.stderr, /three bounded attempts/)
+  await rm(join(directory, 'calls.json'))
+  const hosts = join(directory, 'hosts')
+  const repaired = spawnSync('bash', ['scripts/install-ubuntu-ci-tools.sh', 'flatpak'], {
+    env: { ...env, GITHUB_ACTIONS: 'true', SELE_CI_HOSTS_FILE: hosts },
+    encoding: 'utf8'
+  })
+  assert.equal(repaired.status, 0, repaired.stderr)
+  assert.match(repaired.stdout, /Restored Ubuntu mirror resolution/)
+  assert.match(await readFile(hosts, 'utf8'), /192\.0\.2\.1 archive\.ubuntu\.com/)
+  assert.match(await readFile(hosts, 'utf8'), /192\.0\.2\.1 security\.ubuntu\.com/)
+})
+
+test('Ubuntu DNS fallback validates answers and tries an independent HTTPS provider', async () => {
+  const providers = []
+  const address = await resolveUbuntuMirror('archive.ubuntu.com', {
+    queryDns: async (provider, hostname) => {
+      providers.push(provider.hostname)
+      assert.equal(hostname, 'archive.ubuntu.com')
+      if (providers.length === 1) throw new Error('First resolver unavailable')
+      return {
+        Status: 0,
+        Answer: [
+          { type: 5, data: 'alias.example' },
+          { type: 1, data: '91.189.90.13' }
+        ]
+      }
+    }
+  })
+  assert.equal(address, '91.189.90.13')
+  assert.deepEqual(providers, ['dns.google', 'cloudflare-dns.com'])
+  for (const response of [
+    { Status: 3, Answer: [{ type: 1, data: '91.189.90.13' }] },
+    { Status: 0, Answer: [{ type: 1, data: 'invalid\ninjected-host' }] },
+    { Status: 0, Answer: [{ type: 5, data: '91.189.90.13' }] }
+  ]) {
+    await assert.rejects(
+      resolveUbuntuMirror('security.ubuntu.com', { queryDns: async () => response }),
+      /Unable to resolve/
+    )
+  }
+  await assert.rejects(resolveUbuntuMirror('unrelated.example'), /Only Ubuntu/)
 })

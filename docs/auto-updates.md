@@ -43,7 +43,11 @@ The background installer workflow then attaches the `.flatpak` to both Linux and
 compatibility entries. It only accepts successful release-tag runs from this repository
 and uses their exact source commit and exported repository artifact.
 Tool installation uses Ubuntu's signed official repositories with bounded retries,
-bypassing the hosted runner's Azure mirror lists. To retry only a failed installer,
+bypassing the hosted runner's Azure mirror lists.
+If worker DNS fails, an Actions-only fallback resolves Ubuntu mirror addresses through
+TLS-verified HTTPS DNS and adds temporary hosts entries. Apt still validates server
+certificates and Ubuntu archive signatures; system DNS configuration stays unchanged.
+To retry only a failed installer,
 push an `offline-run-RUN_ID` tag pointing to current installer tooling on `main`.
 The retry verifies that RUN_ID is a successful release build from this repository
 and checks out that build's exact source; it does not rebuild or republish the app.

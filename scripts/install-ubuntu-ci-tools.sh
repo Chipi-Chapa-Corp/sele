@@ -46,6 +46,21 @@ options=(
 )
 packages=("$@")
 if [[ ${#packages[@]} == 0 ]]; then packages=(flatpak); fi
+repair_mirror_dns() {
+  # Only an agent-owned Actions worker may receive temporary hosts overrides.
+  [[ "${GITHUB_ACTIONS:-false}" == true ]] || return 0
+  local host address
+  local hosts_file="${SELE_CI_HOSTS_FILE:-/etc/hosts}"
+  for host in "${archive#https://}" "${security#https://}"; do
+    host="${host%%/*}"
+    if [[ "${1:-}" != force ]] && timeout 10s getent ahostsv4 "$host" >/dev/null; then continue; fi
+    if address="$(node "$(dirname "${BASH_SOURCE[0]}")/resolve-ubuntu-mirror.mjs" "$host")"; then
+      printf '%s %s\n' "$address" "$host" | sudo tee -a "$hosts_file" >/dev/null
+      echo "Restored Ubuntu mirror resolution for $host using verified HTTPS DNS."
+    fi
+  done
+}
+repair_mirror_dns
 for attempt in 1 2 3; do
   if sudo timeout --kill-after=10s 60s apt-get "${options[@]}" update &&
      sudo timeout --kill-after=10s 180s apt-get "${options[@]}" install --yes --no-install-recommends "${packages[@]}"; then
@@ -53,6 +68,7 @@ for attempt in 1 2 3; do
   fi
   if [[ "$attempt" != 3 ]]; then
     echo "Ubuntu package download failed; retrying ($attempt/3)." >&2
+    repair_mirror_dns force
     sleep "$((attempt * 2))"
   fi
 done
