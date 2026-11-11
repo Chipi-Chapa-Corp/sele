@@ -11,4 +11,8 @@ if [[ ! -x "$app_dir/sele" || ! -f "$app_dir/resources/app.asar" ]]; then
 fi
 
 # Preserve the original release layout expected by downstream installers.
-tar -czf "$archive_path" -C "$app_dir" .
+if command -v pigz >/dev/null 2>&1; then
+  tar -I 'pigz -6' -cf "$archive_path" -C "$app_dir" .
+else
+  tar -czf "$archive_path" -C "$app_dir" .
+fi

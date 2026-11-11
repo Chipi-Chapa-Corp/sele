@@ -6,6 +6,9 @@ on:
       - main
     tags:
       - 'v*'
+      - '!v*-windows-*'
+      - '!v*-macos-*'
+      - '!v*-linux-*'
   pull_request:
   workflow_dispatch:
 
@@ -59,10 +62,9 @@ jobs:
       - name: Integration tests
         run: npm run test:integration
 
-  windows:
-    name: Windows x64
-    needs: validate
-    runs-on: windows-latest
+  bundle:
+    name: Bundle application once
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -76,6 +78,51 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # JS and renderer assets are portable. Each packaging runner still installs
+      # its own native modules; validation runs in parallel and gates publishing.
+      - name: Bundle main, preload and renderer
+        run: node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build
+
+      - name: Upload application bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: application-bundle
+          path: out
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+    needs: bundle
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Cache packaging tools
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: packaging-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: packaging-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download application bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: application-bundle
+          path: out
+
       - name: Build NSIS installer
         shell: pwsh
         env:
@@ -87,11 +134,12 @@ jobs:
             Remove-Item Env:WIN_CSC_KEY_PASSWORD -ErrorAction SilentlyContinue
           }
 
-          npm run build:win -- --x64 --publish never
+          npx --no-install electron-builder --win nsis --x64 --publish never
 
       - name: Verify artifact
         shell: pwsh
         run: |
+          node scripts/verify-packaged-runtime.mjs dist/win-unpacked/resources/app.asar
           if (-not (Test-Path "dist/sele-windows-x64-setup.exe")) {
             throw "Windows installer was not produced."
           }
@@ -110,7 +158,8 @@ jobs:
 
   macos:
     name: macOS arm64
-    needs: validate
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+    needs: bundle
     runs-on: macos-15
     steps:
       - name: Check out repository
@@ -122,8 +171,23 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      - name: Cache packaging tools
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: packaging-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: packaging-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Download application bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: application-bundle
+          path: out
 
       - name: Validate Homebrew cask
         run: |
@@ -136,10 +200,12 @@ jobs:
       - name: Build unsigned DMG and update ZIP
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run build:mac -- --arm64 --publish never
+        run: npx --no-install electron-builder --mac dmg zip --arm64 --publish never
 
       - name: Verify artifact
-        run: hdiutil verify "dist/sele-macos-arm64.dmg"
+        run: |
+          node scripts/verify-packaged-runtime.mjs dist/mac-arm64/Sele.app/Contents/Resources/app.asar
+          hdiutil verify "dist/sele-macos-arm64.dmg"
 
       - name: Upload macOS disk image
         uses: actions/upload-artifact@v7
@@ -156,7 +222,8 @@ jobs:
 
   linux:
     name: Linux x64 Flatpak
-    needs: validate
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+    needs: bundle
     # Keep Flatpak tooling on a release-tested image when ubuntu-latest changes.
     runs-on: ubuntu-24.04
     steps:
@@ -169,10 +236,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      - name: Cache packaging tools
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: packaging-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: packaging-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install --yes appstream flatpak flatpak-builder
+          sudo apt-get install --yes appstream flatpak pigz
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install --assumeyes --noninteractive flathub \
             org.freedesktop.Platform//25.08 \
@@ -182,17 +258,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Download application bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: application-bundle
+          path: out
+
       - name: Validate AppStream metadata
         run: appstreamcli validate --strict --explain build/com.chipichapa.sele.metainfo.xml
 
-      - name: Build Flatpak bundle
-        run: npm run build:linux -- --x64 --publish never
+      - name: Package Linux application
+        run: npx --no-install electron-builder --linux --dir --x64 --publish never
+
+      - name: Verify packaged runtime
+        run: node scripts/verify-packaged-runtime.mjs dist/linux-unpacked/resources/app.asar
+
+      - name: Build Flatpak repository and bundle once
+        run: npm run package:flatpak-repo
 
       - name: Package Linux tarball
         run: npm run package:linux-tarball
-
-      - name: Build Flatpak update repository
-        run: npm run package:flatpak-repo
 
       - name: Verify artifact
         run: |
@@ -233,7 +318,7 @@ jobs:
   flatpak-pages:
     name: Publish Flatpak repository
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: linux
+    needs: [validate, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -250,14 +335,60 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  release:
-    name: Publish GitHub Release
+  release-windows:
+    name: Publish Windows release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs:
-      - windows
-      - macos
-      - linux
-      - flatpak-pages
+    needs: [validate, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: sele-windows-x64
+          path: release-artifacts
+      - name: Publish Windows release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/publish-release.mjs "$RELEASE_TAG" windows-x64 release-artifacts
+
+  release-linux:
+    name: Publish Linux release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [validate, linux, flatpak-pages]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: sele-linux-x64
+          path: release-artifacts
+      - name: Publish Linux release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/publish-release.mjs "$RELEASE_TAG" linux-x64 release-artifacts
+
+  release-macos:
+    name: Publish macOS release and Homebrew cask
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [validate, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -265,43 +396,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Download distributables
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download macOS artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-artifacts
-          pattern: sele-*
-          merge-multiple: true
+          name: sele-macos-arm64
 
-      - name: Verify release contents
-        run: |
-          test -f release-artifacts/sele-windows-x64-setup.exe
-          test -f release-artifacts/sele-macos-arm64.dmg
-          test -f release-artifacts/sele-linux-x64.flatpak
-          test -f release-artifacts/sele-linux-x64.tar.gz
-          test -f release-artifacts/sele.flatpakrepo
-          test -n "$(find release-artifacts -name '*-mac.yml' -print -quit)"
-          test -n "$(find release-artifacts -name '*.yml' ! -name '*-mac.yml' -print -quit)"
-          test -n "$(find release-artifacts -name '*.zip' -print -quit)"
-
-      - name: Create or update release
-        shell: bash
+      - name: Publish macOS release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release-artifacts/* --clobber
-            exit 0
-          fi
-
-          prerelease_args=()
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            prerelease_args+=(--prerelease)
-          fi
-
-          gh release create "$GITHUB_REF_NAME" release-artifacts/* \
-            --generate-notes \
-            --title "Sele ${GITHUB_REF_NAME#v}" \
-            "${prerelease_args[@]}"
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/publish-release.mjs "$RELEASE_TAG" macos-arm64 release-artifacts
 
       # The tap tracks main, not the release tag. Update only after assets are public.
       - name: Check out Homebrew tap branch
@@ -315,7 +425,7 @@ jobs:
         if: ${{ !contains(github.ref_name, '-') }}
         run: >-
           node homebrew-tap/scripts/update-homebrew-cask.mjs
-          "$GITHUB_REF_NAME" release-artifacts/sele-macos-arm64.dmg
+          "${GITHUB_REF_NAME}-macos-arm64" release-artifacts/sele-macos-arm64.dmg
           homebrew-tap/Casks/sele.rb
 
       - name: Publish Homebrew cask
@@ -330,3 +440,29 @@ jobs:
           fi
           git commit -m "Update Homebrew cask for ${GITHUB_REF_NAME}"
           git push origin HEAD:main
+
+  legacy-release:
+    name: Publish compatibility release for older updaters
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [release-windows, release-macos, release-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Download distributables
+        uses: actions/download-artifact@v8
+        with:
+          pattern: sele-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Publish compatibility release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/publish-release.mjs "$RELEASE_TAG" legacy release-artifacts

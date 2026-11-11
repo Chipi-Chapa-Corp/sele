@@ -14,7 +14,9 @@ predictions in the composer. Press Tab to accept a suggestion or Escape to dismi
 ## Install
 
 Download the latest Windows, macOS, or Linux package from
-[GitHub Releases](https://github.com/Chipi-Chapa-Corp/sele/releases/latest).
+[GitHub Releases](https://github.com/Chipi-Chapa-Corp/sele/releases).
+Each platform has its own release entry and becomes available as soon as its build
+finishes. Installed apps check their platform's releases independently.
 
 Install the Linux Flatpak from Sele's update repository:
 
@@ -24,7 +26,7 @@ flatpak install --user https://chipi-chapa-corp.github.io/sele/flatpak/sele.flat
 
 The repository descriptor is also available as
 [`sele.flatpakrepo`](https://chipi-chapa-corp.github.io/sele/flatpak/sele.flatpakrepo) and
-as a downloadable asset on each GitHub Release.
+as a downloadable asset on Linux GitHub Releases.
 
 Install on macOS with Homebrew:
 

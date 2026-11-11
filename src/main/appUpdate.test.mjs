@@ -30,6 +30,8 @@ function harness({
   const commands = []
   const installations = []
   const diagnostics = []
+  const releaseChecks = []
+  const feeds = []
   const commit = 'a'.repeat(64)
   const handlers = {}
   let tick
@@ -38,6 +40,7 @@ function harness({
   let restarts = 0
   let saved
   const updater = Object.assign(new EventEmitter(), {
+    setFeedURL: (feed) => feeds.push(feed),
     checkForUpdates: async () => {
       checks++
       return { isUpdateAvailable: true, updateInfo: { version: '2.14.0' } }
@@ -131,6 +134,14 @@ app-commit=${'b'.repeat(64)}`
         handlers[channel] = callback
       }
     },
+    './platformRelease': {
+      findLatestPlatformRelease: async (platform, current) => {
+        releaseChecks.push({ platform, current })
+        return { release: { tag_name: `v2.14.0-${platform}` }, version: '2.14.0' }
+      },
+      releaseDownloadUrl: (release) =>
+        `https://github.com/Chipi-Chapa-Corp/sele/releases/download/${release.tag_name}/`
+    },
     '../shared/expectedAbsence.ts': {
       isExpectedFileAbsenceError: (error) => error?.code === 'ENOENT' || error?.code === 'ENOTDIR'
     },
@@ -165,6 +176,8 @@ app-commit=${'b'.repeat(64)}`
     installations,
     diagnostics,
     updater,
+    feeds,
+    releaseChecks,
     state: () => handlers.getAppUpdate(),
     tick: () => tick(),
     dismiss: (mode) => handlers.dismissAppUpdate(null, mode),
@@ -193,6 +206,44 @@ test('checks at startup and every five minutes without downloading; skip lasts t
   assert.equal(h.counts().checks, 2)
 })
 
+test('Windows pins update metadata and downloads to its selected platform release', async () => {
+  const h = harness()
+  await settle()
+  assert.deepEqual(h.releaseChecks, [{ platform: 'windows-x64', current: '2.13.0' }])
+  assert.equal(h.feeds[0].provider, 'generic')
+  assert.equal(
+    h.feeds[0].url,
+    'https://github.com/Chipi-Chapa-Corp/sele/releases/download/v2.14.0-windows-x64/'
+  )
+  assert.equal(h.feeds[0].useMultipleRangeRequest, false)
+})
+
+test('Windows rejects updater metadata for a version other than the selected release', async () => {
+  const h = harness()
+  h.updater.checkForUpdates = async () => ({
+    isUpdateAvailable: true,
+    updateInfo: { version: '2.15.0' }
+  })
+  await settle()
+  assert.equal(h.state().version, null)
+})
+
+test('a later failed Windows check cannot install metadata from a different release', async () => {
+  const h = harness()
+  await settle()
+  assert.equal(h.state().version, '2.14.0')
+  h.updater.checkForUpdates = async () => ({
+    isUpdateAvailable: true,
+    updateInfo: { version: '2.15.0' }
+  })
+  h.tick()
+  await settle()
+  await h.install()
+  assert.equal(h.state().status, 'error')
+  assert.equal(h.counts().downloads, 0)
+  assert.equal(h.counts().restarts, 0)
+})
+
 test('persistent dismissal survives startup and rejects invalid modes', async () => {
   const h = harness()
   await settle()
@@ -211,7 +262,7 @@ test('only an explicit update downloads and restarts; failures retain a retryabl
   const h = harness()
   await settle()
   await h.install()
-  assert.deepEqual(h.counts(), { checks: 1, downloads: 1, restarts: 1 })
+  assert.deepEqual(h.counts(), { checks: 2, downloads: 1, restarts: 1 })
   assert.equal(h.updater.autoDownload, false)
   assert.equal(h.updater.autoInstallOnAppQuit, false)
   const failing = harness({ downloadError: true })
@@ -331,6 +382,7 @@ test('Flatpak updates the installed scope and exact commit before scheduling a f
   const h = harness({ flatpak: true })
   await settle()
   assert.equal(h.state().version, '2.14.0')
+  assert.deepEqual(h.releaseChecks, [{ platform: 'linux-x64', current: '2.13.0' }])
   await h.install()
   const update = h.commands.find((args) => args.includes('update'))
   assert.ok(update.includes('--system'))

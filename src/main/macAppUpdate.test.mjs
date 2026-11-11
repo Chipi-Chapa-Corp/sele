@@ -49,6 +49,26 @@ test('release selection requires a newer stable version, matching architecture a
   }
 })
 
+test('macOS accepts its platform tag and rejects other architectures and platforms', () => {
+  const tag = 'v2.16.0-macos-arm64'
+  const platformRelease = {
+    ...release,
+    tag_name: tag,
+    assets: release.assets.map((asset) => ({
+      ...asset,
+      browser_download_url: asset.browser_download_url.replace('/v2.16.0/', `/${tag}/`)
+    }))
+  }
+  const selected = selectMacUpdate(platformRelease, '2.15.0', 'arm64')
+  assert.equal(selected.version, '2.16.0')
+  assert.ok(selected.url.includes(`/${tag}/`))
+  assert.equal(selectMacUpdate(platformRelease, '2.15.0', 'x64'), null)
+  assert.equal(
+    selectMacUpdate({ ...platformRelease, tag_name: 'v2.16.0-windows-x64' }, '2.15.0', 'arm64'),
+    null
+  )
+})
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const exists = async (path) => {
   try {

@@ -15,10 +15,10 @@ import {
 import { appIpcChannels } from '../shared/app'
 import { isNewerStableVersion, type AppUpdateState } from '../shared/appUpdate'
 import { isExpectedFileAbsenceError } from '../shared/expectedAbsence.ts'
+import { findLatestPlatformRelease, releaseDownloadUrl } from './platformRelease'
 
 const exec = promisify(execFile)
 const appId = 'com.chipichapa.sele'
-const repository = 'https://api.github.com/repos/Chipi-Chapa-Corp/sele/releases/latest'
 const intervalMs = 5 * 60 * 1000
 
 export function registerAppUpdate(): void {
@@ -41,6 +41,7 @@ export function registerAppUpdate(): void {
   let flatpakTarget: { scope: string; ref: string; commit: string; instance: string } | null = null
 
   let macTarget: MacUpdate | null = null
+  let windowsTarget: { version: string; url: string } | null = null
 
   const publish = (patch: Partial<AppUpdateState>): void => {
     state = { ...state, ...patch }
@@ -77,24 +78,9 @@ export function registerAppUpdate(): void {
           available: version
         })
       } else if (flatpak) {
-        const response = await fetch(repository, {
-          signal: AbortSignal.timeout(20_000),
-          headers: { Accept: 'application/vnd.github+json' }
-        })
-        if (!response.ok) throw new Error(`Release check failed (${response.status}).`)
-        const release = (await response.json()) as {
-          tag_name?: string
-          draft?: boolean
-          prerelease?: boolean
-        }
-        if (
-          release.draft ||
-          release.prerelease ||
-          typeof release.tag_name !== 'string' ||
-          !isNewerStableVersion(release.tag_name, app.getVersion())
-        )
-          return
-        version = release.tag_name.replace(/^v/, '')
+        const selected = await findLatestPlatformRelease('linux-x64', app.getVersion())
+        if (!selected) return
+        version = selected.version
         if (ignored.includes(version) || skipped.has(version)) return
         const info = await readFile('/.flatpak-info', 'utf8')
         const field = (name: string): string =>
@@ -116,12 +102,22 @@ export function registerAppUpdate(): void {
           throw new Error('Unable to identify the running Flatpak instance.')
         flatpakTarget = { scope, ref, commit, instance }
       } else {
+        const selected = await findLatestPlatformRelease('windows-x64', app.getVersion())
+        if (!selected) return
+        autoUpdater.setFeedURL({
+          provider: 'generic',
+          url: releaseDownloadUrl(selected.release),
+          useMultipleRangeRequest: false
+        })
         const result = await autoUpdater.checkForUpdates()
         if (
           result?.isUpdateAvailable &&
+          result.updateInfo.version === selected.version &&
           isNewerStableVersion(result.updateInfo.version, app.getVersion())
-        )
+        ) {
           version = result.updateInfo.version
+          windowsTarget = { version, url: releaseDownloadUrl(selected.release) }
+        }
       }
       if (version && !ignored.includes(version) && !skipped.has(version))
         publish({
@@ -228,6 +224,17 @@ export function registerAppUpdate(): void {
         })
         app.quit()
       } else {
+        const target = windowsTarget
+        if (!target || target.version !== state.version)
+          throw new Error('Please wait for the next update check.')
+        autoUpdater.setFeedURL({
+          provider: 'generic',
+          url: target.url,
+          useMultipleRangeRequest: false
+        })
+        const available = await autoUpdater.checkForUpdates()
+        if (!available?.isUpdateAvailable || available.updateInfo.version !== target.version)
+          throw new Error('The selected Windows update is no longer available. Please try again.')
         await autoUpdater.downloadUpdate()
         logDiagnostic('info', 'app-update', 'Download complete; waiting for clean shutdown.')
         // NSIS starts synchronously inside quitAndInstall, before it requests app.quit().

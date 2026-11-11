@@ -19,28 +19,23 @@ import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { isNewerStableVersion } from '../shared/appUpdate.ts'
 import { isExpectedFileAbsenceError } from '../shared/expectedAbsence.ts'
+import {
+  findLatestPlatformRelease,
+  platformReleaseVersion,
+  type PlatformRelease
+} from './platformRelease.ts'
 
 const exec = promisify(execFile)
-const releaseUrl = 'https://api.github.com/repos/Chipi-Chapa-Corp/sele/releases/latest'
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 export type MacUpdate = { version: string; url: string; sha256: string; size: number }
-type Release = {
-  tag_name?: string
-  draft?: boolean
-  prerelease?: boolean
-  assets?: { name: string; browser_download_url: string; digest?: string; size: number }[]
-}
-
-export function selectMacUpdate(release: Release, current: string, arch: string): MacUpdate | null {
-  if (
-    release.draft ||
-    release.prerelease ||
-    !release.tag_name ||
-    !isNewerStableVersion(release.tag_name, current)
-  )
-    return null
+export function selectMacUpdate(
+  release: PlatformRelease,
+  current: string,
+  arch: string
+): MacUpdate | null {
   if (arch !== 'arm64' && arch !== 'x64') throw new Error(`Unsupported Mac architecture: ${arch}`)
-  const version = release.tag_name.replace(/^v/, '')
+  const version = platformReleaseVersion(release, `macos-${arch}`)
+  if (!version || !isNewerStableVersion(version, current)) return null
   const name = `Sele-${version}-${arch}-mac.zip`
   const asset = release.assets?.find((asset) => asset.name === name)
   if (!asset) throw new Error(`Release ${version} has no update for ${arch}.`)
@@ -57,12 +52,10 @@ export function selectMacUpdate(release: Release, current: string, arch: string)
 }
 
 export async function checkMacUpdate(current: string): Promise<MacUpdate | null> {
-  const response = await fetch(releaseUrl, {
-    signal: AbortSignal.timeout(20_000),
-    headers: { Accept: 'application/vnd.github+json' }
-  })
-  if (!response.ok) throw new Error(`Release check failed (${response.status}).`)
-  return selectMacUpdate((await response.json()) as Release, current, process.arch)
+  if (process.arch !== 'arm64' && process.arch !== 'x64')
+    throw new Error(`Unsupported Mac architecture: ${process.arch}`)
+  const selected = await findLatestPlatformRelease(`macos-${process.arch}`, current)
+  return selected ? selectMacUpdate(selected.release, current, process.arch) : null
 }
 
 export const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`

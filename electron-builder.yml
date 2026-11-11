@@ -20,6 +20,8 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   # Sele intentionally uses the user's Claude CLI. Do not package the SDK's 295 MB optional CLI.
   - '!node_modules/@anthropic-ai/claude-agent-sdk-*/**'
+  # Electron itself requires glibc, so its packages cannot use Copilot's musl runtime.
+  - '!node_modules/@github/copilot-sdk-linuxmusl-*/**'
 asarUnpack:
   - resources/**
   - node_modules/@github/copilot*/**
