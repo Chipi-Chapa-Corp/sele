@@ -385,17 +385,48 @@ test('bundled runtime accepts native goal reservations, replacement, rollback an
 
 test('native goal submission reaches the configured model transport and can be interrupted', {
   timeout: 15000
-}, async () => {
+}, async (t) => {
   const profile = await mkdtemp(join(directory, 'transport-'))
   let received
   const request = new Promise((resolve) => {
     received = resolve
   })
-  const server = createServer(async (req, _res) => {
+  let interrupted
+  const interruption = new Promise((resolve) => {
+    interrupted = resolve
+  })
+  const server = createServer(async (req, res) => {
     let body = ''
     for await (const chunk of req) body += chunk
+    res.on('close', interrupted)
+    // Exercise interruption of an active model stream, rather than a stalled
+    // HTTP request whose cancellation depends on the bundled runtime's transport.
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+    res.write(
+      `data: ${JSON.stringify({
+        id: 'fixture',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: { role: 'assistant', content: 'Fixture response' },
+            finish_reason: null
+          }
+        ]
+      })}\n\n`
+    )
+    const chunks = setInterval(() => {
+      res.write(
+        `data: ${JSON.stringify({
+          id: 'fixture',
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { content: '.' }, finish_reason: null }]
+        })}\n\n`
+      )
+    }, 20)
+    res.on('close', () => clearInterval(chunks))
     received(JSON.parse(body))
-    // Hold the request open: check admission and abort without model inference.
+    // Hold the stream open: check admission and abort without model inference.
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const client = new CopilotClient({
@@ -403,7 +434,24 @@ test('native goal submission reaches the configured model transport and can be i
     useLoggedInUser: false,
     env: { ...process.env, COPILOT_GITHUB_TELEMETRY_DISABLED: 'true' }
   })
-  let timeout
+  const forceStop = () => {
+    server.closeAllConnections()
+    void client.forceStop()
+  }
+  t.signal.addEventListener('abort', forceStop, { once: true })
+  const wait = async (operation, description) => {
+    let timeout
+    try {
+      return await Promise.race([
+        operation,
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error(description)), 5000)
+        })
+      ])
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
   try {
     await client.start()
     const native = await client.createSession({
@@ -415,23 +463,21 @@ test('native goal submission reaches the configured model transport and can be i
         baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
         apiKey: 'fixture'
       },
+      streaming: true,
       enableConfigDiscovery: false,
       availableTools: [],
       onPermissionRequest: async () => ({ kind: 'denied-interactively-by-user' })
     })
+    const streaming = new Promise((resolve) => {
+      native.on('assistant.message_delta', resolve)
+    })
     await runCopilotGoal(native, 'autopilot', 'Transport fixture condition', () => {})
-    const body = await Promise.race([
-      request,
-      new Promise((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error('Goal prompt did not reach the model transport')),
-          5000
-        )
-      })
-    ])
+    const body = await wait(request, 'Goal prompt did not reach the model transport')
     assert.match(JSON.stringify(body.messages), /Transport fixture condition/)
+    await wait(streaming, 'Goal response did not start streaming')
     assert.equal((await native.rpc.autopilotObjective.getState()).state.status, 'active')
-    await native.abort()
+    await wait(native.abort(), 'Goal interruption did not finish')
+    await wait(interruption, 'Goal interruption did not close the model stream')
     await runCopilotGoal(native, 'autopilot', null, () => {})
     assert.equal(await native.rpc.mode.get(), 'interactive')
     await native.disconnect()
@@ -452,9 +498,11 @@ test('native goal submission reaches the configured model transport and can be i
     assert.equal(restored.objective, 'Transport fixture condition')
     assert.equal(restored.status, 'paused')
   } finally {
-    clearTimeout(timeout)
-    await client.stop()
+    // Release the held transport even if an assertion/RPC fails, before waiting
+    // for the runtime to disconnect its sessions.
     server.closeAllConnections()
+    await client.forceStop()
+    t.signal.removeEventListener('abort', forceStop)
     await new Promise((resolve) => server.close(resolve))
   }
 })
