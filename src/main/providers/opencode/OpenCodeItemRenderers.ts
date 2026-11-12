@@ -1,7 +1,11 @@
 import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { isDefaultOpenCodeTitle } from './OpenCodeChatTitle.ts'
-import { getProviderToolPresentation } from '../ToolPresentation.ts'
+import {
+  createPresentedTool,
+  createSubagentTool,
+  getProviderToolPresentation
+} from '../ToolPresentation.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -24,6 +28,13 @@ import {
   getTrailingAssistantEntryIndex,
   type ProviderConversationEntry
 } from '../ProviderConversationEngine.ts'
+import {
+  getString,
+  isRecord,
+  boundSerializedToolValue,
+  getToolArgument,
+  truncateEarlierToolOutput
+} from '../providerValues.ts'
 
 export type OpenCodeMessageWithParts = {
   info: Message
@@ -50,16 +61,7 @@ type Segment = {
   finalMessageIndex?: number
 }
 
-const maxToolOutputLength = 160_000
-const maxRawToolValueLength = 80_000
 const maxChatTitleLength = 80
-const truncatedMarker = '… [truncated to keep the app responsive]'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
 
 export const getOpenCodeErrorMessage = (error: unknown): string => {
   const errorRecord = isRecord(error) ? error : null
@@ -103,37 +105,11 @@ export const getOpenCodeTurnOutcome = (
 
 export const isOpenCodeRateLimitError = isProviderUsageLimitError
 
-const getArgument = (input: unknown, ...keys: string[]): string | null => {
-  if (!isRecord(input)) return null
-  for (const key of keys) {
-    const value = getString(input[key])
-    if (value) return value
-  }
-  return null
-}
-
 const getToolPath = (input: unknown): string | null =>
-  getArgument(input, 'filePath', 'file_path', 'path', 'file', 'directory')
+  getToolArgument(input, 'filePath', 'file_path', 'path', 'file', 'directory')
 
 const getToolCwd = (input: unknown): string | null =>
-  getArgument(input, 'cwd', 'workingDirectory', 'working_directory', 'directory', 'workdir')
-
-const truncateOutput = (value: string | null): string | null => {
-  if (value == null || value.length <= maxToolOutputLength) return value
-  return `${truncatedMarker}\n${value.slice(-maxToolOutputLength)}`
-}
-
-const boundRawValue = (value: unknown): unknown => {
-  try {
-    const serialized = JSON.stringify(value)
-    return !serialized || serialized.length <= maxRawToolValueLength
-      ? value
-      : `${serialized.slice(0, maxRawToolValueLength)}\n${truncatedMarker}`
-  } catch (error) {
-    console.error('[caught:OpenCodeItemRenderers:boundRawValue]', error)
-    return String(value)
-  }
-}
+  getToolArgument(input, 'cwd', 'workingDirectory', 'working_directory', 'directory', 'workdir')
 
 const getToolDiffs = (
   activity: ProviderToolActivity,
@@ -158,72 +134,47 @@ const getToolDiffs = (
   ]
 }
 
-/**
- * Delegation is a compact row in the parent. The subagent's prompt and report belong to its own
- * chat (a child session), listed under the parent in the sidebar.
- */
-const renderSubagentTool = (
-  id: string,
-  toolId: string,
-  finished: boolean,
-  label: string
-): ProviderWorkingTool => ({
-  type: 'tool',
-  id,
-  toolId,
-  status: finished ? 'finished' : 'running',
-  compact: true,
-  activity: 'other',
-  icon: 'subagent',
-  label,
-  command: null,
-  cwd: null,
-  stdout: null,
-  diffs: [],
-  backgroundSessionId: null,
-  finishedBackgroundSessionId: null,
-  rawInput: null,
-  rawOutput: null,
-  images: []
-})
-
+// Delegation is a compact row in the parent. The subagent's prompt and report belong to its own
+// chat (a child session), listed under the parent in the sidebar.
 const renderTool = (part: Extract<Part, { type: 'tool' }>): ProviderWorkingTool => {
   const state = part.state
-  const finished = state.status === 'completed' || state.status === 'error'
+  const status = state.status === 'completed' || state.status === 'error' ? 'finished' : 'running'
   if (part.tool === 'task') {
-    return renderSubagentTool(
+    return createSubagentTool(
       part.id,
       part.callID,
-      finished,
-      getArgument(state.input, 'description', 'subagent_type') ?? 'Subagent'
+      getToolArgument(state.input, 'description', 'subagent_type') ?? 'Subagent',
+      status
     )
   }
   const input = state.input
   const output =
     state.status === 'completed' ? state.output : state.status === 'error' ? state.error : null
-  const metadata = 'metadata' in state ? state.metadata : null
-  const presentation = getProviderToolPresentation('opencode', part.tool, input, { finished })
-  const activity = presentation?.activity ?? 'other'
-  const hidePayload = presentation?.hidePayload === true
+  const tool = createPresentedTool(
+    getProviderToolPresentation('opencode', part.tool, input, { finished: status === 'finished' }),
+    {
+      id: part.id,
+      toolId: part.callID,
+      status,
+      cwd: getToolCwd(input),
+      fallbackLabel: `Used ${part.tool}`,
+      rawInput: () => boundSerializedToolValue(input)
+    }
+  )
   return {
-    type: 'tool',
-    id: part.id,
-    toolId: part.callID,
-    status: finished ? 'finished' : 'running',
-    activity,
-    icon: presentation?.icon ?? null,
-    label: presentation?.label ?? `Used ${part.tool}`,
-    summaryLabel: presentation?.summaryLabel,
-    ...(presentation?.compact ? { compact: true } : {}),
-    ...(hidePayload ? { hidePayload: true } : {}),
-    command: presentation?.command ?? null,
-    cwd: getToolCwd(input),
-    stdout: hidePayload ? null : truncateOutput(output),
-    diffs: hidePayload ? [] : getToolDiffs(activity, input, metadata, output),
-    backgroundSessionId: null,
-    finishedBackgroundSessionId: null,
-    rawInput: hidePayload ? null : boundRawValue(input),
-    rawOutput: hidePayload ? null : boundRawValue(output),
+    ...tool,
+    ...(tool.hidePayload
+      ? {}
+      : {
+          stdout: truncateEarlierToolOutput(output),
+          diffs: getToolDiffs(
+            tool.activity,
+            input,
+            'metadata' in state ? state.metadata : null,
+            output
+          ),
+          rawOutput: boundSerializedToolValue(output)
+        }),
     images:
       state.status === 'completed'
         ? getAttachments(state.attachments ?? []).flatMap((attachment) =>
@@ -456,7 +407,12 @@ export const renderOpenCodeChatItems = (
       } else if (part.type === 'subtask') {
         current.entries.push({
           kind: 'working',
-          item: renderSubagentTool(part.id, part.id, true, part.description || `Run ${part.agent}`)
+          item: createSubagentTool(
+            part.id,
+            part.id,
+            part.description || `Run ${part.agent}`,
+            'finished'
+          )
         })
       }
     })

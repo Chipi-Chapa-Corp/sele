@@ -25,36 +25,45 @@ vm.runInNewContext(bundled.outputFiles[0].text, {
       : require(name)
 })
 
-function model(overrides = {}) {
+function model({ sendState = 'idle', sendInFlightProjectKey, ...gitState } = {}) {
   // biome-ignore lint/correctness/useHookAtTopLevel: hooks are stubbed to evaluate the actual view model without a GUI.
   return module.exports.useGitViewModel({
-    commitInput: 'Fix bug',
-    effectiveAppSettings: {
-      git: { quickActions: { showManualCommit: true }, untrackedFilesPrompt: 'Review files' }
+    gitState: {
+      commitInput: 'Fix bug',
+      syncProjectKeys: new Set(),
+      branchActionProjectKeys: new Set(),
+      syncErrorsByProjectKey: {},
+      syncRecoveriesByProjectKey: {},
+      commitMessageGenerationProjectKeys: new Set(),
+      commitErrorsByProjectKey: {},
+      scopedCommitActivities: {},
+      directCommitActivities: {},
+      startingScopedCommitActivities: {},
+      collapsedFileTreeFolders: {},
+      collapsedChangeTreeFolders: {},
+      ...gitState
     },
-    changesCwd: '/project-b/worktree',
-    changesProjectCwd: '/project-b',
-    syncProjectKeys: new Set(),
-    branchActionProjectKeys: new Set(),
-    syncErrorsByProjectKey: {},
-    syncRecoveriesByProjectKey: {},
-    commitMessageGenerationProjectKeys: new Set(),
-    commitErrorsByProjectKey: {},
-    scopedCommitActivities: {},
-    directCommitActivities: {},
-    startingScopedCommitActivities: {},
-    sendState: 'idle',
-    chatIsBusy: false,
-    changeSource: 'uncommitted',
-    selectedChat: null,
-    changedFiles: [{ path: 'file.txt', kind: 'modified' }],
-    uncommittedChangedFiles: [{ path: 'file.txt', kind: 'modified' }],
-    changesLoadState: 'ready',
-    gitAvailableForCurrentSource: true,
-    repositoryFileIndex: null,
-    collapsedFileTreeFolders: {},
-    collapsedChangeTreeFolders: {},
-    ...overrides
+    settings: {
+      effectiveAppSettings: {
+        git: { quickActions: { showManualCommit: true }, untrackedFilesPrompt: 'Review files' }
+      }
+    },
+    session: {
+      changesCwd: '/project-b/worktree',
+      changesProjectCwd: '/project-b',
+      gitAvailableForCurrentSource: true
+    },
+    chatState: { sendState, sendInFlightProjectKey, selectedChat: null },
+    interactions: { chatIsBusy: false },
+    changes: {
+      changedFiles: [{ path: 'file.txt', kind: 'modified' }],
+      uncommittedChangedFiles: [{ path: 'file.txt', kind: 'modified' }],
+      changesLoadState: 'ready',
+      repositoryFileIndex: null
+    },
+    providerUpdates: {},
+    sourceState: {},
+    panes: {}
   })
 }
 

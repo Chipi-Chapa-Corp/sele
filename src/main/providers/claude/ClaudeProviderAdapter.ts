@@ -158,7 +158,9 @@ import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import { mapClaudeRateLimits } from './ClaudeUsage'
 import { mapClaudeResetCredits } from './ClaudeResetCredits'
 import { getClaudeUserQuestions } from './ClaudeUserQuestions'
-import { parseClaudeVersion, supportsClaudeResumeDropsTurn } from './ClaudeVersion'
+import { supportsClaudeResumeDropsTurn } from './ClaudeVersion'
+import { parseProviderVersion } from '../providerUpdate'
+import { emptyUsageSummary, getRuntimeEnvironment, getString, isRecord } from '../providerValues.ts'
 
 type ClaudePendingApproval = {
   id: string
@@ -361,14 +363,6 @@ const claudeSandboxModes: ProviderSandboxModeOption[] = [
   }
 ]
 
-const emptyUsageSummary = {
-  lifetimeTokens: null,
-  peakDailyTokens: null,
-  longestRunningTurnSec: null,
-  currentStreakDays: null,
-  longestStreakDays: null
-}
-
 const updateDelayMs = 35
 const contextUsageCloseGraceMs = 1_000
 // Time for the last background task's notification to start its main-thread turn.
@@ -415,9 +409,6 @@ const runRemoteTranscriptCommand = async <Result>(run: () => Promise<Result>): P
     pendingRemoteTranscriptCommands.shift()?.()
   }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const runHostCommand = (command: HostCommand): Promise<string> =>
   runRemoteTranscriptCommand(
@@ -507,9 +498,6 @@ const getClaudeSessionStoreOption = async (
   return sessionStore ? { sessionStore } : {}
 }
 
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
-
 const isExpectedClaudeSessionMetadataAbsenceError = (error: unknown): boolean =>
   isExpectedFileAbsenceError(error) || isExpectedCommandAbsenceError(error, [4])
 
@@ -522,13 +510,6 @@ const toEffortLevel = (value: ProviderReasoningEffort | undefined): EffortLevel 
 const getClaudeModel = (
   options: ProviderTurnOptions | ProviderOneShotOptions | undefined
 ): string | undefined => (options?.model === 'default' ? undefined : options?.model)
-
-const getRuntimeEnvironment = (env: NodeJS.ProcessEnv | undefined): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(env ?? process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  )
 
 const isStoredContainer = (
   container: AppContainerTarget | null | undefined
@@ -2471,7 +2452,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
     const support = runHostCommand(command).then(
       (output) => {
-        const version = parseClaudeVersion(output)
+        const version = parseProviderVersion(output)
         return version ? supportsClaudeResumeDropsTurn(version) : false
       },
       (error: unknown) => {

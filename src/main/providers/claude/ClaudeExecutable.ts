@@ -1,3 +1,5 @@
+import { getErrorMessage, shouldAppendExecutableHint } from '../providerValues.ts'
+
 export const claudeExecutablePathEnvKey = 'SELE_CLAUDE_PATH'
 export const claudeSdkExecutablePathEnvKey = 'CLAUDE_CODE_EXECUTABLE'
 
@@ -7,15 +9,6 @@ export const getClaudeExecutable = (): string => {
     process.env[claudeSdkExecutablePathEnvKey]?.trim()
   return configuredExecutable || 'claude'
 }
-
-const getErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
-
-const shouldAppendExecutableHint = (message: string, hasConfiguredExecutable: boolean): boolean =>
-  hasConfiguredExecutable ||
-  message.includes('Executable was not found') ||
-  message.includes('ENOENT') ||
-  message.includes('A coding-agent CLI invocation resolved to Sele itself')
 
 export const getClaudeExecutableError = (error: unknown): Error => {
   const configuredExecutable =

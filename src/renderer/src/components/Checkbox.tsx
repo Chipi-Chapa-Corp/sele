@@ -1,25 +1,16 @@
-import { forwardRef, useCallback, type InputHTMLAttributes, type ReactNode } from 'react'
+import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react'
 import './Checkbox.css'
 
 export type CheckboxProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
   label?: ReactNode
-  indeterminate?: boolean
 }
 
 export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
-  ({ className, label, indeterminate = false, ...inputProps }, ref) => {
-    const setRef = useCallback(
-      (input: HTMLInputElement | null) => {
-        if (input) input.indeterminate = indeterminate
-        if (typeof ref === 'function') return ref(input)
-        if (ref) ref.current = input
-      },
-      [ref, indeterminate]
-    )
+  ({ className, label, ...inputProps }, ref) => {
     const input = (
       <input
         {...inputProps}
-        ref={setRef}
+        ref={ref}
         type="checkbox"
         className={['ui-checkbox', className].filter(Boolean).join(' ')}
       />

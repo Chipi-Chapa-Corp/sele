@@ -30,7 +30,7 @@ import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
 import { useSidebarSearch } from '../useSidebarSearch'
 import { useWorkspaceChatReadState } from './useWorkspaceChatReadState'
 
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import type { useWorkspaceSelection } from '../useWorkspaceSelection'
 type WorkspaceSidebarModelDependencies = {
   searchState: ReturnType<typeof useWorkspaceSearchState>
   sourceState: ReturnType<typeof useWorkspaceSourceState>
@@ -40,7 +40,7 @@ type WorkspaceSidebarModelDependencies = {
   projectState: ReturnType<typeof useWorkspaceProjectState>
   projectRecordsByCwd: Map<string, AppProject>
   session: Pick<
-    ReturnType<typeof useWorkspaceSession>,
+    ReturnType<typeof useWorkspaceSelection>,
     'latestCommitFinishedAtByChatKey' | 'committingChatKeys'
   >
 }
@@ -253,11 +253,10 @@ export function useWorkspaceSidebarModel({
             cwd: null,
             label: 'Done',
             kind: 'done' as const,
-            chats: (unfilteredDoneChatGroup?.chats ?? []).filter(
-              (chat) =>
-                projectState.doneProjectFilterValue === newSessionNoProjectValue
-                  ? isNoProjectChat(chat)
-                  : getChatProjectCwd(chat) === projectState.doneProjectFilterValue
+            chats: (unfilteredDoneChatGroup?.chats ?? []).filter((chat) =>
+              projectState.doneProjectFilterValue === newSessionNoProjectValue
+                ? isNoProjectChat(chat)
+                : getChatProjectCwd(chat) === projectState.doneProjectFilterValue
             )
           },
     [projectState.doneProjectFilterValue, unfilteredDoneChatGroup]
@@ -283,12 +282,7 @@ export function useWorkspaceSidebarModel({
     searchTerms,
     sidebarSearch,
     chatReadState,
-    filteredChats,
     projectNamesByCwd,
-    importedChatGroup,
-    pinnedChatGroup,
-    activeChatGroups,
-    displayedActiveChatGroups,
-    doneChatGroup
+    activeChatGroups
   }
 }

@@ -157,19 +157,13 @@ export function startBrowserAutomationService(): BrowserAutomationService {
     })
   }
 
-  const tabs = async (
-    scope: BrowserAutomationScope,
-    owner: object
-  ): Promise<BrowserAutomationTab[]> =>
-    (await ui(scope, { method: 'list' }, owner)) as BrowserAutomationTab[]
-
   const guestFor = async (
     scope: BrowserAutomationScope,
     id: number,
     owner: object
   ): Promise<WebContents> => {
-    if (!(await tabs(scope, owner)).some((tab) => tab.id === id))
-      throw new Error('Tab is outside this browser workspace')
+    const tabs = (await ui(scope, { method: 'list' }, owner)) as BrowserAutomationTab[]
+    if (!tabs.some((tab) => tab.id === id)) throw new Error('Tab is outside this browser workspace')
     const guest = webContents.fromId(id)
     if (
       !guest ||

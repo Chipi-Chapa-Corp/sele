@@ -6,11 +6,12 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
 import { getClaudeExecutableError } from './ClaudeExecutable.ts'
-import { getClaudeUpdateAvailabilityFromVersions, parseClaudeVersion } from './ClaudeVersion.ts'
 
-const code = ts.transpile(
-  readFileSync(new URL('./ClaudeProviderUpdate.ts', import.meta.url), 'utf8'),
-  { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+const [code, sharedCode] = ['./ClaudeProviderUpdate.ts', '../providerUpdate.ts'].map((file) =>
+  ts.transpile(readFileSync(new URL(file, import.meta.url), 'utf8'), {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022
+  })
 )
 
 function fixture({
@@ -24,7 +25,7 @@ function fixture({
   const exports = {}
   const commands = []
   const requests = []
-  vm.runInNewContext(code, {
+  const context = {
     exports,
     console,
     AbortController,
@@ -38,8 +39,11 @@ function fixture({
       if (name === 'node:util') return { stripVTControlCharacters }
       if (name.includes('ClaudeExecutable'))
         return { getClaudeExecutable: () => '/fixture/claude', getClaudeExecutableError }
-      if (name.includes('ClaudeVersion'))
-        return { getClaudeUpdateAvailabilityFromVersions, parseClaudeVersion }
+      if (name.includes('providerUpdate')) {
+        const shared = {}
+        vm.runInNewContext(sharedCode, { ...context, exports: shared })
+        return shared
+      }
       if (name.includes('expectedAbsence')) return { isExpectedCommandAbsenceError }
       if (name.includes('hostProcess'))
         return {
@@ -67,7 +71,8 @@ function fixture({
         }
       throw Error(name)
     }
-  })
+  }
+  vm.runInNewContext(code, context)
   return { ...exports, commands, requests }
 }
 

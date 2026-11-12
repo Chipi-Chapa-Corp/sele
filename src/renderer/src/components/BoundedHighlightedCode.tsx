@@ -1,30 +1,29 @@
 import { memo, useState } from 'react'
 import { HighlightedCode } from './HighlightedCode'
 
-export const defaultRenderedCodeLimit = 200_000
+const defaultRenderedCodeLimit = 200_000
 
 type BoundedHighlightedCodeProps = {
   children: string
   language: string | null
-  maxLength?: number
 }
 
 const BoundedHighlightedCodeComponent = ({
   children,
-  language,
-  maxLength = defaultRenderedCodeLimit
+  language
 }: BoundedHighlightedCodeProps): React.ReactElement => {
   const [expansion, setExpansion] = useState({ content: children, expanded: false })
   const expanded = expansion.content === children && expansion.expanded
-  const truncated = children.length > maxLength
-  const visibleContent = truncated && !expanded ? children.slice(-maxLength) : children
+  const truncated = children.length > defaultRenderedCodeLimit
+  const visibleContent =
+    truncated && !expanded ? children.slice(-defaultRenderedCodeLimit) : children
   const omittedCharacterCount = children.length - visibleContent.length
 
   return (
     <div className="chat-detail__bounded-output">
       {omittedCharacterCount > 0 && (
         <p className="chat-detail__bounded-output-note">
-          Showing the latest {maxLength.toLocaleString()} characters;{' '}
+          Showing the latest {defaultRenderedCodeLimit.toLocaleString()} characters;{' '}
           {omittedCharacterCount.toLocaleString()} earlier characters are hidden.
         </p>
       )}

@@ -1,4 +1,5 @@
 import type { ProviderAccountRateLimit } from '../../../shared/provider'
+import { isRecord } from '../providerValues.ts'
 
 /**
  * OpenCode Zen's keyless free tier has no usage endpoint: the server limits free models per IP
@@ -6,9 +7,6 @@ import type { ProviderAccountRateLimit } from '../../../shared/provider'
  * `retry-after`). Sele records that signal so the usage indicator can show the reset time.
  */
 export type OpenCodeFreeLimitSignal = { resetsAt: number | null }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const freeLimitPattern = /FreeUsageLimitError|free usage exceeded|free[_ -]tier[_ -]limit/i
 

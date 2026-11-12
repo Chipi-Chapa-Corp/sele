@@ -1,12 +1,12 @@
 import { useWorkspaceNavigation } from '../features/useWorkspaceNavigation'
 import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import { useWorkspaceSelection } from '../useWorkspaceSelection'
 
 type WorkspaceConversationSearchDependencies = {
   chatState: ReturnType<typeof useWorkspaceChatState>
   searchState: ReturnType<typeof useWorkspaceSearchState>
-  session: ReturnType<typeof useWorkspaceSession>
+  session: ReturnType<typeof useWorkspaceSelection>
   navigation: ReturnType<typeof useWorkspaceNavigation>
 }
 

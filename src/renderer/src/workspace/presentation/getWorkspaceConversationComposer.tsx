@@ -1,5 +1,4 @@
 import type { DropdownOption } from '../../components/Dropdown'
-import { approvalTypeLabels } from '../appearanceControllerUtils'
 import { type NewSessionLocation } from '../controllerTypes'
 import { useWorkspaceChatErrors } from '../features/useWorkspaceChatErrors'
 import { useWorkspaceChatPreset } from '../features/useWorkspaceChatPreset'
@@ -11,39 +10,38 @@ import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsCon
 import { useWorkspaceSidebarActions } from '../features/useWorkspaceSidebarActions'
 import { useWorkspaceSourceControls } from '../features/useWorkspaceSourceControls'
 import { useWorkspaceTurnRendering } from '../features/useWorkspaceTurnRendering'
-import { getApprovalSummary } from '../gitControllerUtils'
 import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceDialogState } from '../state/useWorkspaceDialogState'
 import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
 import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
 import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import { useWorkspaceInteractions } from '../wiring/useWorkspaceInteractions'
-import { useWorkspaceMessaging } from '../wiring/useWorkspaceMessaging'
+import { useConversationViewModel } from '../useConversationViewModel'
+import { useFileNavigationController } from '../useFileNavigationController'
+import { useChatInteractionController } from '../useChatInteractionController'
+import { useChatMessagingController } from '../useChatMessagingController'
 import { useWorkspaceProviderUpdates } from '../wiring/useWorkspaceProviderUpdates'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import { useWorkspaceSettingsActions } from '../wiring/useWorkspaceSettingsActions'
+import { useWorkspaceSelection } from '../useWorkspaceSelection'
+import { useSettingsController } from '../useSettingsController'
 
 type WorkspaceConversationComposerDependencies = {
   chatPreset: ReturnType<typeof useWorkspaceChatPreset>
   chatErrors: ReturnType<typeof useWorkspaceChatErrors>
-  session: ReturnType<typeof useWorkspaceSession>
+  session: ReturnType<typeof useWorkspaceSelection>
   providerState: ReturnType<typeof useWorkspaceProviderState>
   preferences: ReturnType<typeof useWorkspacePreferenceState>
-  interactions: ReturnType<typeof useWorkspaceInteractions>
+  interactions: ReturnType<typeof useChatInteractionController>
   sourceControls: ReturnType<typeof useWorkspaceSourceControls>
   projectState: ReturnType<typeof useWorkspaceProjectState>
   chatState: ReturnType<typeof useWorkspaceChatState>
   settings: ReturnType<typeof useWorkspaceSettingsContext>
   effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-  settingsActions: ReturnType<typeof useWorkspaceSettingsActions>
-  messaging: ReturnType<typeof useWorkspaceMessaging>
+  settingsActions: ReturnType<typeof useSettingsController>
+  messaging: ReturnType<typeof useChatMessagingController>
   sidebarActions: ReturnType<typeof useWorkspaceSidebarActions>
   providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
-  files: ReturnType<typeof useWorkspaceFiles>
-  conversation: ReturnType<typeof useWorkspaceConversation>
+  files: ReturnType<typeof useFileNavigationController>
+  conversation: ReturnType<typeof useConversationViewModel>
   projectResources: ReturnType<typeof useWorkspaceProjectResources>
   sourceState: ReturnType<typeof useWorkspaceSourceState>
   turnRendering: ReturnType<typeof useWorkspaceTurnRendering>
@@ -103,7 +101,6 @@ export function getWorkspaceConversationComposer({
     approvalDecisionInFlight: session.approvalDecisionInFlight,
     approvalError: session.approvalError,
     approvalModes: providerState.approvalModes,
-    approvalTypeLabels,
     changesContainer: session.changesContainer,
     changesCwd: session.changesCwd,
     changesProjectCwd: session.changesProjectCwd,
@@ -119,7 +116,6 @@ export function getWorkspaceConversationComposer({
     effectiveReasoningEffort: effectiveSelection.effectiveReasoningEffort,
     effectiveSandboxMode: effectiveSelection.effectiveSandboxMode,
     effectiveServiceTier: effectiveSelection.effectiveServiceTier,
-    getApprovalSummary,
     handleActionsChange: settingsActions.handleActionsChange,
     handleApprovalModeChange: settingsActions.handleApprovalModeChange,
     handleCancelEditMessage: messaging.handleCancelEditMessage,

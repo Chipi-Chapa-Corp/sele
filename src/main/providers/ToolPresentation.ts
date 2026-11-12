@@ -1,8 +1,13 @@
 import { basename } from 'node:path'
-import type { ProviderToolActivity, ProviderToolIcon } from '../../shared/provider'
+import type {
+  ProviderToolActivity,
+  ProviderToolIcon,
+  ProviderWorkingTool
+} from '../../shared/provider'
 import { getAppToolPresentation } from './AppToolPresentation.ts'
 import { getBrowserToolLabel } from './BrowserToolPresentation.ts'
 import { getTimeToolPresentation } from './TimeToolPresentation.ts'
+import { getToolArgument } from './providerValues.ts'
 
 type NativeProvider = 'claude' | 'opencode' | 'copilot'
 type Operation =
@@ -141,13 +146,61 @@ const nativeTools: Record<NativeProvider, Map<string, Operation>> = {
   ])
 }
 
-const argument = (input: unknown, ...keys: string[]): string | null => {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
-  const values = input as Record<string, unknown>
-  for (const key of keys) {
-    if (typeof values[key] === 'string' && values[key].trim()) return values[key].trim()
+export const createSubagentTool = (
+  id: string,
+  toolId: string,
+  label: string,
+  status: ProviderWorkingTool['status'] = 'running'
+): ProviderWorkingTool => ({
+  type: 'tool',
+  id,
+  toolId,
+  status,
+  compact: true,
+  activity: 'other',
+  icon: 'subagent',
+  label,
+  command: null,
+  cwd: null,
+  stdout: null,
+  diffs: [],
+  backgroundSessionId: null,
+  finishedBackgroundSessionId: null,
+  rawInput: null,
+  rawOutput: null,
+  images: []
+})
+
+export const createPresentedTool = (
+  presentation: ToolPresentation | null,
+  tool: Pick<ProviderWorkingTool, 'id' | 'toolId' | 'status' | 'cwd' | 'mcpApp'> & {
+    fallbackLabel: string
+    rawInput: () => unknown
   }
-  return null
+): ProviderWorkingTool => {
+  const hidePayload = presentation?.hidePayload === true
+  return {
+    type: 'tool',
+    id: tool.id,
+    ...(tool.mcpApp ? { mcpApp: tool.mcpApp } : {}),
+    toolId: tool.toolId,
+    status: tool.status,
+    activity: presentation?.activity ?? 'other',
+    icon: presentation?.icon ?? null,
+    label: presentation?.label ?? tool.fallbackLabel,
+    summaryLabel: presentation?.summaryLabel,
+    ...(presentation?.compact ? { compact: true } : {}),
+    ...(hidePayload ? { hidePayload: true } : {}),
+    command: presentation?.command ?? null,
+    cwd: tool.cwd,
+    stdout: null,
+    diffs: [],
+    backgroundSessionId: null,
+    finishedBackgroundSessionId: null,
+    rawInput: hidePayload ? null : tool.rawInput(),
+    rawOutput: null,
+    images: []
+  }
 }
 
 export const getProviderToolPresentation = (
@@ -194,7 +247,7 @@ export const getProviderToolPresentation = (
   const operation = nativeTools[provider].get(name.toLowerCase())
   if (!operation) return null
 
-  const path = argument(
+  const path = getToolArgument(
     input,
     'file_path',
     'filePath',
@@ -209,10 +262,10 @@ export const getProviderToolPresentation = (
     return {
       activity: 'script',
       label: 'Ran script',
-      command: argument(input, 'code', 'script', 'command', 'cmd')
+      command: getToolArgument(input, 'code', 'script', 'command', 'cmd')
     }
   if (operation === 'shell') {
-    const command = argument(input, 'command', 'cmd', 'script')
+    const command = getToolArgument(input, 'command', 'cmd', 'script')
     const activity = command?.match(/^(git|npm|npx)(?:\s|$)/)?.[1] as
       | 'git'
       | 'npm'
@@ -253,14 +306,14 @@ export const getProviderToolPresentation = (
     return { activity: operation, label: `${verb} ${file ?? 'file'}` }
   }
   if (operation === 'search' || operation === 'websearch') {
-    const query = argument(input, 'pattern', 'query')
+    const query = getToolArgument(input, 'pattern', 'query')
     return {
       activity: 'search',
       label: `Searched${operation === 'websearch' ? ' the web' : ''}${query ? ` for ${query}` : ''}${file ? ` in ${file}` : ''}`
     }
   }
   if (operation === 'webfetch') {
-    const url = argument(input, 'url')
+    const url = getToolArgument(input, 'url')
     return {
       activity: 'other',
       icon: 'browser',
@@ -284,7 +337,7 @@ export const getProviderToolPresentation = (
       hidePayload: true
     }
   if (operation === 'skill') {
-    const skill = argument(input, 'skill', 'name', 'skill_name')
+    const skill = getToolArgument(input, 'skill', 'name', 'skill_name')
     return {
       activity: 'skill',
       icon: 'skill',

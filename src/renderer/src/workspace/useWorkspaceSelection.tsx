@@ -1,4 +1,3 @@
-import { useUncommittedPatchFilter } from './useUncommittedPatchFilter'
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useAccountUsageState } from './useAccountUsageState'
 import { reuseChatSnapshotItems } from '../chatSnapshotItems'
@@ -25,7 +24,6 @@ import {
   scrollChatSearchMatchIntoView,
   setChatSearchHighlights
 } from '../chatSearch'
-import { type GitChangeSource } from '../changeTree'
 import { getDefaultFileTreeCollapsedFolders } from '../fileTreeIndex'
 import { indexFileTreeListing } from '../fileTreeIndexClient'
 import {
@@ -55,7 +53,20 @@ import {
   isChatDetailSnapshotStale,
   mergeAccountUsage
 } from './chatControllerUtils'
-import type { WorkspaceSelectionDependencies } from './selectionDependencies'
+import type { useWorkspaceChatCache } from './features/useWorkspaceChatCache'
+import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
+import type { useWorkspacePanes } from './features/useWorkspacePanes'
+import type { useWorkspaceScroll } from './features/useWorkspaceScroll'
+import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
+import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
+import type { useWorkspaceDialogState } from './state/useWorkspaceDialogState'
+import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
+import type { useWorkspacePreferenceState } from './state/useWorkspacePreferenceState'
+import type { useWorkspaceProviderState } from './state/useWorkspaceProviderState'
+import type { useWorkspaceSearchState } from './state/useWorkspaceSearchState'
+import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
+import type { useWorkspaceSubagentState } from './state/useWorkspaceSubagentState'
+import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
 
 const areSubagentSummariesEqual = (first: ProviderSubagent, second: ProviderSubagent): boolean =>
   first.id === second.id &&
@@ -78,103 +89,85 @@ const areSubagentListsEqual = (first: ProviderSubagent[], second: ProviderSubage
   first.every((subagent, index) => areSubagentSummariesEqual(subagent, second[index]))
 
 // Return shape is inferred from the synchronized selection declarations below.
-export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependencies) {
+export function useWorkspaceSelection({
+  chatState,
+  subagentState,
+  gitState,
+  settings,
+  sourceState,
+  panes,
+  dialogState,
+  preferences,
+  providerState,
+  chatCache,
+  chatRead,
+  viewportState,
+  scroll,
+  searchState
+}: {
+  chatState: ReturnType<typeof useWorkspaceChatState>
+  subagentState: ReturnType<typeof useWorkspaceSubagentState>
+  gitState: ReturnType<typeof useWorkspaceGitState>
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+  sourceState: ReturnType<typeof useWorkspaceSourceState>
+  panes: ReturnType<typeof useWorkspacePanes>
+  dialogState: ReturnType<typeof useWorkspaceDialogState>
+  preferences: ReturnType<typeof useWorkspacePreferenceState>
+  providerState: ReturnType<typeof useWorkspaceProviderState>
+  chatCache: ReturnType<typeof useWorkspaceChatCache>
+  chatRead: ReturnType<typeof useWorkspaceChatReadState>
+  viewportState: ReturnType<typeof useWorkspaceViewportState>
+  scroll: ReturnType<typeof useWorkspaceScroll>
+  searchState: ReturnType<typeof useWorkspaceSearchState>
+}) {
   const {
     selectedChat,
-    subagentChatView,
-    subagentListState,
     chatDetail,
-    setSubagentListState,
-    setSubagentChatView,
     selectedChatKeyRef,
-    subagentChatLoadRequestRef,
     chatDetailResyncRequestIdRef,
     chatDetailResyncRef,
+    extractedChatPlan,
+    setExtractedChatPlan,
+    runPromptActionRef,
+    approvalResolution,
+    userInputResolution,
+    chatDetailRef,
+    selectedChatUpdatedAtRef,
+    setChatDetail,
+    chatLoadState,
+    setChatLoadState,
+    setChatLoadError,
+    chatLoadRequest,
+    loadedWorkingStepIdsRef,
+    chatTurnWindowRef
+  } = chatState
+  const {
+    subagentChatView,
+    subagentListState,
+    setSubagentListState,
+    setSubagentChatView,
+    subagentChatLoadRequestRef
+  } = subagentState
+  const {
     scopedCommitActivities,
     startingScopedCommitActivities,
     chatCommitMarkers,
-    extractedChatPlan,
-    effectiveAppSettings,
-    setExtractedChatPlan,
-    newSessionProvider,
-    newSessionProviderAvailable,
-    newSessionSourceAvailabilityReady,
-    newSessionCwd,
-    noProject,
-    newSessionContainer,
     gitSourceAvailability,
     lastGitAvailable,
     changesContainerRef,
-    changeSourceRef,
-    changeSource,
     setGitSourceAvailability,
     setLastGitAvailable,
     setGitAvailabilityChangeId,
     gitAvailableRef,
     gitBranchLoadRequest,
     gitChangeLoadRequest,
-    setTerminalOpened,
-    setBrowserOpened,
-    terminalOpened,
-    browserOpened,
-    lastNonTerminalChangesPaneViewRef,
-    setChangesPaneView,
-    changesPaneView,
-    setAppSettings,
-    runPromptActionRef,
-    setTerminalCommandLaunchRequest,
-    updateAppearanceZoomLevel,
-    settingsOpen,
-    fileEditorTarget,
-    appSettings,
     changesCwdRef,
-    approvalResolution,
-    userInputResolution,
-    providerAccountRevision,
-    chatDetailRef,
-    cacheRecentChatDetail,
-    selectedChatUpdatedAtRef,
-    setChatDetail,
-    chatLoadState,
-    setChatLoadState,
-    setChatLoadError,
-    markChatSeenAt,
-    chatLoadRequest,
-    chatInitialLayoutKeyRef,
-    contentRef,
-    chatAutoScrollEnabledRef,
-    chatUserScrollIntentRef,
-    chatAutoScrollTargetRef,
-    scrollChatContentToBottom,
-    scheduleChatAutoScroll,
-    loadedWorkingStepIdsRef,
-    chatScrollAdjustmentTargetRef,
-    pendingChatScrollAnchorRef,
-    chatViewportAnchorRef,
-    previousChatScrollTopRef,
-    searchOpen,
-    searchInputRef,
-    chatSearchReturnFocusRef,
-    resetChatSearch,
-    chatTurnWindowRef,
-    chatSearchOpen,
-    setChatSearchOpen,
-    chatSearchInputRef,
-    chatSearchContentRef,
-    chatSearchQuery,
-    chatSearchActiveIndexRef,
-    chatSearchMatchesRef,
-    setChatSearchMatchCount,
-    setChatSearchActiveIndex,
     setGitBranchActionState,
     setGitBranchError,
     setGitBranchDeleteRetry,
     setGitBranchWorktreeDeleteRetry,
     setGitChangeLoadError,
-    setUncommittedPatchFilterError,
     setGitChangeLoadErrorDismissed,
-    newChatOpen,
-    initializeNewSessionCwd,
     gitBranchRequestIdRef,
     setGitBranches,
     setGitBranchesScope,
@@ -184,8 +177,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     setGitChangeLoadState,
     setGitChanges,
     setGitChangesScope,
-    setUncommittedPatchFilterState,
-    setUncommittedPatchFilter,
     setFileTreeLoadScope,
     setFileTreeLoadState,
     setFileTreeLoadError,
@@ -194,7 +185,57 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     collapsedFileTreeFoldersByCwdRef,
     setCollapsedFileTreeFolders,
     fileTreeLoadRequest
-  } = dependencies
+  } = gitState
+  const { effectiveAppSettings, noProject, updateAppearanceZoomLevel } = settings
+  const {
+    newSessionProvider,
+    newSessionProviderAvailable,
+    newSessionSourceAvailabilityReady,
+    newSessionCwd,
+    newSessionContainer,
+    newChatOpen,
+    initializeNewSessionCwd
+  } = sourceState
+  const { lastNonTerminalChangesPaneViewRef, setChangesPaneView, changesPaneView } = panes
+  const {
+    setTerminalOpened,
+    setBrowserOpened,
+    terminalOpened,
+    browserOpened,
+    setTerminalCommandLaunchRequest,
+    fileEditorTarget
+  } = dialogState
+  const { setAppSettings, settingsOpen, appSettings } = preferences
+  const { providerAccountRevision } = providerState
+  const { cacheRecentChatDetail } = chatCache
+  const { markChatSeenAt } = chatRead
+  const {
+    chatInitialLayoutKeyRef,
+    contentRef,
+    chatAutoScrollEnabledRef,
+    chatUserScrollIntentRef,
+    chatAutoScrollTargetRef,
+    chatScrollAdjustmentTargetRef,
+    pendingChatScrollAnchorRef,
+    chatViewportAnchorRef,
+    previousChatScrollTopRef
+  } = viewportState
+  const { scrollChatContentToBottom, scheduleChatAutoScroll } = scroll
+  const {
+    searchOpen,
+    searchInputRef,
+    chatSearchReturnFocusRef,
+    resetChatSearch,
+    chatSearchOpen,
+    setChatSearchOpen,
+    chatSearchInputRef,
+    chatSearchContentRef,
+    chatSearchQuery,
+    chatSearchActiveIndexRef,
+    chatSearchMatchesRef,
+    setChatSearchMatchCount,
+    setChatSearchActiveIndex
+  } = searchState
 
   const selectedProviderId = selectedChat?.providerId
   const selectedChatId = selectedChat?.id
@@ -711,9 +752,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
   useEffect(() => {
     changesContainerRef.current = changesContainer
   }, [changesContainer])
-  useEffect(() => {
-    changeSourceRef.current = changeSource
-  }, [changeSource])
   useEffect(() => {
     let active = true
     const container = normalizeContainerTarget(changesContainer)
@@ -1490,7 +1528,6 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       setGitBranchDeleteRetry(null)
       setGitBranchWorktreeDeleteRetry(null)
       setGitChangeLoadError(null)
-      setUncommittedPatchFilterError(null)
       setGitChangeLoadErrorDismissed(false)
     })
 
@@ -1590,14 +1627,11 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     if (!changesCwd) return
 
     let active = true
-    const gitChangeSource: GitChangeSource = 'uncommitted'
     let refreshTimeout: number | undefined
     const gitChangeScope: GitChangesScope = {
       sourceKey: gitAvailabilityScopeKey,
-      cwd: changesCwd,
-      source: gitChangeSource
+      cwd: changesCwd
     }
-    const visibleChangeSource = changeSourceRef.current
 
     if (gitAvailableForCurrentSource === false) {
       queueMicrotask(() => {
@@ -1611,7 +1645,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
           error,
           operation: 'Load Git changes'
         })
-        if (visibleChangeSource === 'uncommitted') setGitChangeLoadState('error')
+        setGitChangeLoadState('error')
       })
 
       return () => {
@@ -1619,22 +1653,20 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       }
     }
 
-    if (visibleChangeSource === 'uncommitted') {
-      queueMicrotask(() => {
-        if (!active) return
-        setGitChangeLoadScope(gitChangeScope)
-        setGitChangeLoadErrorDismissed(false)
-        setGitChangeLoadError(null)
-        setGitChangeLoadState('loading')
-      })
-    }
+    queueMicrotask(() => {
+      if (!active) return
+      setGitChangeLoadScope(gitChangeScope)
+      setGitChangeLoadErrorDismissed(false)
+      setGitChangeLoadError(null)
+      setGitChangeLoadState('loading')
+    })
 
     const refresh = (): void => {
       appApi
         .getGitChanges({
           container: changesContainerRef.current,
           cwd: changesCwd,
-          source: gitChangeSource,
+          source: 'uncommitted',
           fetchRemote: true
         })
         .then((result) => {
@@ -1654,9 +1686,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
                   }
                 : null
             )
-            if (changeSourceRef.current === 'uncommitted') {
-              setGitChangeLoadState(result.remoteFetchError ? 'error' : 'ready')
-            }
+            setGitChangeLoadState(result.remoteFetchError ? 'error' : 'ready')
           })
         })
         .catch((error) => {
@@ -1672,7 +1702,7 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
             error: message,
             operation: 'Load Git changes'
           })
-          if (changeSourceRef.current === 'uncommitted') setGitChangeLoadState('error')
+          setGitChangeLoadState('error')
         })
         .finally(() => {
           if (active) refreshTimeout = window.setTimeout(refresh, gitRemoteFetchInterval)
@@ -1693,18 +1723,9 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
     gitChangeLoadRequest,
     changesContainerKey
   ])
-  useUncommittedPatchFilter({
-    changeSource,
-    changesContainer,
-    changesContainerKey,
-    changesCwd,
-    items: chatDetail?.items,
-    gitChangeLoadRequest,
-    setUncommittedPatchFilter,
-    setUncommittedPatchFilterState,
-    setUncommittedPatchFilterError,
-    setGitChangeLoadErrorDismissed
-  })
+  useEffect(() => {
+    startTransition(() => setGitChangeLoadErrorDismissed(false))
+  }, [changesContainer, changesContainerKey, changesCwd, gitChangeLoadRequest])
   useEffect(() => {
     if (changesPaneView !== 'files' || !changesCwd) return
 

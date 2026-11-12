@@ -396,8 +396,6 @@ export type ProviderManagedAccount = {
   active: boolean
 }
 
-export const providerDefaultAccountId = 'default'
-
 export type ProviderAccountConfiguration = {
   available: boolean
   unavailableMessage: string | null

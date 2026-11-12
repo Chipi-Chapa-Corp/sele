@@ -32,7 +32,6 @@ type OpenCodeProviderProps = OpenCodeProviderPicker & {
 export function useSidebarOpenCodeProvider(
   picker: OpenCodeProviderPicker | undefined,
   container: AppContainerTarget | null,
-  providerId: 'opencode-v2',
   available: boolean
 ) {
   const {
@@ -46,7 +45,7 @@ export function useSidebarOpenCodeProvider(
     onManage,
     onClose
   } = picker ?? {}
-  const sourceKey = JSON.stringify([Boolean(picker), providerId, container])
+  const sourceKey = JSON.stringify([Boolean(picker), 'opencode-v2', container])
   const [deletingSource, setDeletingSource] = useState<string | null>(null)
   const deleting = deletingSource === sourceKey
   const [failure, setFailure] = useState<{ sourceKey: string; message: string } | null>(null)
@@ -67,7 +66,7 @@ export function useSidebarOpenCodeProvider(
     try {
       for (const connection of provider.connections)
         if (connection.type === 'credential')
-          await providerApi.deleteConnection(providerId, connection.id, { container })
+          await providerApi.deleteConnection('opencode-v2', connection.id, { container })
       onChanged?.()
     } catch (error) {
       setFailure({
@@ -139,7 +138,7 @@ export function useSidebarOpenCodeProvider(
                 }}
               >
                 <ProviderConnectionsPanel
-                  providerId={providerId}
+                  providerId="opencode-v2"
                   key={sourceKey}
                   container={container ?? { kind: 'host' }}
                   onChanged={onChanged}
@@ -174,12 +173,7 @@ export function SidebarOpenCodeProvider({
   available,
   ...picker
 }: OpenCodeProviderProps): ReactElement {
-  const { label, dropdownProps, content } = useSidebarOpenCodeProvider(
-    picker,
-    container,
-    'opencode-v2',
-    available
-  )
+  const { label, dropdownProps, content } = useSidebarOpenCodeProvider(picker, container, available)
   return (
     <div aria-label="Current OpenCode provider">
       <Dropdown

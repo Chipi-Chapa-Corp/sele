@@ -5,14 +5,14 @@ import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
 import { useWorkspaceSubagentPresentation } from './useWorkspaceSubagentPresentation'
 
-import type { useWorkspaceInteractions } from '../wiring/useWorkspaceInteractions'
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import type { useChatInteractionController } from '../useChatInteractionController'
+import type { useWorkspaceSelection } from '../useWorkspaceSelection'
 type WorkspaceSidebarPresentationDependencies = {
   chatState: ReturnType<typeof useWorkspaceChatState>
   subagentState: ReturnType<typeof useWorkspaceSubagentState>
   subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
-  session: Pick<ReturnType<typeof useWorkspaceSession>, 'committingChatKeys' | 'selectedChatKey'>
-  interactions: Pick<ReturnType<typeof useWorkspaceInteractions>, 'renderChatGroup'>
+  session: Pick<ReturnType<typeof useWorkspaceSelection>, 'committingChatKeys' | 'selectedChatKey'>
+  interactions: Pick<ReturnType<typeof useChatInteractionController>, 'renderChatGroup'>
 }
 
 export function useWorkspaceSidebarPresentation({
@@ -50,10 +50,7 @@ export function useWorkspaceSidebarPresentation({
   const renderSidebarChatGroup = useCallback(
     (group: ChatListGroupData, contentId: string): React.ReactElement => {
       const holdsSelectedChat = Boolean(
-        selectedChatKey &&
-          group.chats.some(
-            (chat) => getChatKey({ providerId: chat.providerId, id: chat.id }) === selectedChatKey
-          )
+        selectedChatKey && group.chats.some((chat) => getChatKey(chat) === selectedChatKey)
       )
       return renderChatGroup(
         group.kind === 'cwd'

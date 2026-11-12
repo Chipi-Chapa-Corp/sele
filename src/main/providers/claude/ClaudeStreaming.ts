@@ -1,9 +1,7 @@
 import type { SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeTranscriptMessage } from './ClaudeItemRenderers'
 import { parsePartialJson } from './partialJson.ts'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+import { isRecord } from '../providerValues.ts'
 
 const getContent = (message: ClaudeTranscriptMessage): Record<string, unknown>[] => {
   if (!isRecord(message.message)) return []

@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react'
 import type { AppContainerTarget } from '../../../../shared/app'
 import type {
-  ProviderAccountConfiguration,
   ProviderAgentMode,
   ProviderAgentModeOption,
   ProviderApprovalMode,
@@ -42,15 +41,6 @@ export function useWorkspaceProviderState({ preferences }: WorkspaceProviderStat
   const [settingsProviderSkills, setSettingsProviderSkills] = useState<SettingsProviderSkill[]>([])
 
   const [settingsProviderApps, setSettingsProviderApps] = useState<SettingsProviderApp[]>([])
-
-  const [settingsProviderAccounts, setSettingsProviderAccounts] =
-    useState<ProviderAccountConfiguration | null>(null)
-
-  const [providerAccountsLoadState, setProviderAccountsLoadState] = useState<
-    'idle' | 'loading' | 'ready'
-  >('idle')
-
-  const [providerAccountsError, setProviderAccountsError] = useState<string | null>(null)
 
   const [providerAccountsRefresh, setProviderAccountsRefresh] = useState(0)
 
@@ -183,12 +173,6 @@ export function useWorkspaceProviderState({ preferences }: WorkspaceProviderStat
     setSettingsProviderSkills,
     settingsProviderApps,
     setSettingsProviderApps,
-    settingsProviderAccounts,
-    setSettingsProviderAccounts,
-    providerAccountsLoadState,
-    setProviderAccountsLoadState,
-    providerAccountsError,
-    setProviderAccountsError,
     providerAccountsRefresh,
     setProviderAccountsRefresh,
     providerAccountRevision,

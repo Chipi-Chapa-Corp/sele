@@ -40,11 +40,6 @@ type ResolvedHostFile = {
   path?: string
 }
 
-type ShellLookupResult = {
-  file: string
-  path?: string
-}
-
 const forwardedEnvironmentVariables = new Set([
   'ALL_PROXY',
   'ANTHROPIC_API_KEY',
@@ -88,8 +83,7 @@ const shellLookupMaxBuffer = 64 * 1024
 const hostEnvironmentTimeoutMs = 5_000
 const hostEnvironmentMaxBuffer = 512 * 1024
 const resolvedCommandCache = new Map<string, Promise<ResolvedHostFile>>()
-const hostBridgeExecutableCache = new Map<string, Promise<string>>()
-const commandExecutableCache = new Map<string, Promise<string>>()
+const executableWrapperCache = new Map<string, Promise<string>>()
 let flatpakHostEnvironment: Promise<NodeJS.ProcessEnv> | null = null
 
 export const isRunningInFlatpak = (): boolean => Boolean(process.env.FLATPAK_ID)
@@ -114,10 +108,8 @@ const getEnvironmentPathKey = (env: NodeJS.ProcessEnv | undefined): string | nul
   return Object.keys(env).find((key) => key.toLocaleLowerCase() === 'path') ?? null
 }
 
-const getEnvironmentPath = (env: NodeJS.ProcessEnv | undefined): string | undefined => {
-  const pathKey = getEnvironmentPathKey(env)
-  return pathKey ? env?.[pathKey] : undefined
-}
+const getEnvironmentPath = (env: NodeJS.ProcessEnv | undefined): string | undefined =>
+  getEnvironmentValue(env, 'path')
 
 const setEnvironmentPath = (
   env: NodeJS.ProcessEnv,
@@ -130,13 +122,6 @@ const setEnvironmentPath = (
     ...env,
     [pathKey]: pathValue
   }
-}
-
-const getEnvironmentPathExt = (env: NodeJS.ProcessEnv | undefined): string | undefined => {
-  if (!env) return undefined
-
-  const pathExtKey = Object.keys(env).find((key) => key.toLocaleLowerCase() === 'pathext')
-  return pathExtKey ? env[pathExtKey] : undefined
 }
 
 const getEnvironmentValue = (
@@ -190,21 +175,18 @@ const getFlatpakHostEnvironment = (): Promise<NodeJS.ProcessEnv> => {
   return flatpakHostEnvironment
 }
 
-const getEnvironmentOverrides = (
-  env: NodeJS.ProcessEnv | undefined,
-  options: { skipUnchangedPath?: boolean } = {}
-): NodeJS.ProcessEnv => {
+const getEnvironmentOverrides = (env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv => {
   if (!env) return {}
 
   return Object.fromEntries(
     Object.entries(env).flatMap(([key, value]) => {
       if (value == null || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return []
 
-      const isOverride = value !== process.env[key]
-      if (key.toLocaleLowerCase() === 'path' && options.skipUnchangedPath && !isOverride) {
+      if (
+        value === process.env[key] &&
+        (key.toLocaleLowerCase() === 'path' || !forwardedEnvironmentVariables.has(key))
+      )
         return []
-      }
-      if (!isOverride && !forwardedEnvironmentVariables.has(key)) return []
 
       return [[key, value]]
     })
@@ -219,19 +201,9 @@ const getLookupEnvironment = async (
   }
 
   const baseEnv = await getFlatpakHostEnvironment()
-  const overrides = getEnvironmentOverrides(env, { skipUnchangedPath: true })
 
-  return {
-    baseEnv,
-    env: {
-      ...baseEnv,
-      ...overrides
-    }
-  }
+  return { baseEnv, env: { ...baseEnv, ...getEnvironmentOverrides(env) } }
 }
-
-const getToolPathEntries = (...basePaths: Array<string | undefined>): string[] =>
-  unique(basePaths.flatMap(splitPath))
 
 const getCommandNameCandidates = (
   commandName: string,
@@ -239,7 +211,7 @@ const getCommandNameCandidates = (
 ): string[] => {
   if (process.platform !== 'win32' || extname(commandName)) return [commandName]
 
-  const extensions = splitPath(getEnvironmentPathExt(env) ?? '.COM;.EXE;.BAT;.CMD')
+  const extensions = splitPath(getEnvironmentValue(env, 'pathext') ?? '.COM;.EXE;.BAT;.CMD')
   return unique([commandName, ...extensions.map((extension) => `${commandName}${extension}`)])
 }
 
@@ -270,8 +242,8 @@ const getConfiguredUserShell = (): string | null => {
 }
 
 const getShellCandidates = async (
-  shell: string | undefined = process.env.SHELL,
-  checkAccess = true
+  shell: string | undefined,
+  checkAccess: boolean
 ): Promise<string[]> => {
   const candidates = unique([
     getConfiguredUserShell(),
@@ -287,7 +259,6 @@ const getShellCandidates = async (
   return unique(executableCandidates)
 }
 
-const quoteFishShellArg = quotePosixShellArg
 const quotePowerShellArg = (value: string): string => `'${value.replace(/'/g, "''")}'`
 const lookupResultStart = '__SELE_EXECUTABLE_LOOKUP_START__'
 const lookupResultEnd = '__SELE_EXECUTABLE_LOOKUP_END__'
@@ -302,7 +273,7 @@ printf '\\n${lookupResultStart}\\nFOUND=%s\\nPATH=%s\\n${lookupResultEnd}\\n' "$
 }
 
 const getFishLookupScript = (commandName: string): string => {
-  const quotedCommandName = quoteFishShellArg(commandName)
+  const quotedCommandName = quotePosixShellArg(commandName)
 
   return `
 set --local found (command -v ${quotedCommandName} 2>/dev/null; or which ${quotedCommandName} 2>/dev/null)
@@ -443,7 +414,7 @@ const getLookupResultLines = (stdout: string): string[] => {
   return normalizedOutput.split('\n')
 }
 
-const parseShellLookupOutput = (stdout: string): ShellLookupResult | null => {
+const parseShellLookupOutput = (stdout: string): ResolvedHostFile | null => {
   const lines = getLookupResultLines(stdout)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -456,71 +427,70 @@ const parseShellLookupOutput = (stdout: string): ShellLookupResult | null => {
   return null
 }
 
-const runLocalShellLookup = (
-  shell: string,
+const getFlatpakSpawnArgs = (
+  file: string,
   args: string[],
-  env: NodeJS.ProcessEnv,
-  cwd: string | undefined
-): Promise<ShellLookupResult | null> =>
-  new Promise((resolve) => {
-    execFile(
-      shell,
-      args,
-      {
-        cwd,
-        encoding: 'utf8',
-        env,
-        maxBuffer: shellLookupMaxBuffer,
-        timeout: shellLookupTimeoutMs
-      },
-      (error, stdout) => {
-        if (error) {
-          if (!isExpectedFileAbsenceError(error)) {
-            console.error('[hostProcess:runLocalShellLookup] Shell lookup failed', error)
-          }
-          resolve(null)
-          return
-        }
+  cwd: string | undefined,
+  env: NodeJS.ProcessEnv | undefined,
+  baseEnv?: NodeJS.ProcessEnv
+): string[] => [
+  '--host',
+  '--watch-bus',
+  ...(cwd ? [`--directory=${cwd}`] : []),
+  ...getEnvironmentArguments(env, baseEnv),
+  file,
+  ...args
+]
 
-        resolve(parseShellLookupOutput(stdout))
-      }
-    )
-  })
-
-const runFlatpakShellLookup = (
+const getShellLookupLaunch = (
   shell: string,
   args: string[],
   env: NodeJS.ProcessEnv,
   cwd: string | undefined,
   baseEnv?: NodeJS.ProcessEnv
-): Promise<ShellLookupResult | null> =>
+) =>
+  isRunningInFlatpak()
+    ? {
+        file: 'flatpak-spawn',
+        args: getFlatpakSpawnArgs(shell, args, cwd, env, baseEnv),
+        cwd: undefined,
+        env: process.env
+      }
+    : { file: shell, args, cwd, env }
+
+const runShellLookup = (
+  shell: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string | undefined,
+  baseEnv?: NodeJS.ProcessEnv
+): Promise<ResolvedHostFile | null> =>
   new Promise((resolve) => {
+    const flatpak = isRunningInFlatpak()
+    const launch = getShellLookupLaunch(shell, args, env, cwd, baseEnv)
     execFile(
-      'flatpak-spawn',
-      [
-        '--host',
-        '--watch-bus',
-        ...(cwd ? [`--directory=${cwd}`] : []),
-        ...getEnvironmentArguments(env, baseEnv),
-        shell,
-        ...args
-      ],
+      launch.file,
+      launch.args,
       {
+        cwd: launch.cwd,
         encoding: 'utf8',
-        env: process.env,
+        env: launch.env,
         maxBuffer: shellLookupMaxBuffer,
         timeout: shellLookupTimeoutMs
       },
       (error, stdout, stderr) => {
-        if (error) {
+        if (!error) {
+          resolve(parseShellLookupOutput(stdout))
+          return
+        }
+        if (flatpak) {
           if (!isExpectedShellCandidateAbsence(error, stderr)) {
             console.error('[hostProcess:runFlatpakShellLookup] Host shell lookup failed', error)
           }
-          resolve(null)
-          return
+        } else if (!isExpectedFileAbsenceError(error)) {
+          console.error('[hostProcess:runLocalShellLookup] Shell lookup failed', error)
         }
-
-        resolve(parseShellLookupOutput(stdout))
+        resolve(null)
       }
     )
   })
@@ -536,77 +506,23 @@ const killPty = (pty: ReturnType<typeof spawnPty> | null): void => {
   }
 }
 
-const runLocalPtyShellLookup = (
-  shell: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  cwd: string | undefined
-): Promise<ShellLookupResult | null> =>
-  new Promise((resolve) => {
-    let output = ''
-    let pty: ReturnType<typeof spawnPty> | null = null
-    let settled = false
-
-    const settle = (candidate: ShellLookupResult | null): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      resolve(candidate)
-    }
-
-    const timeout = setTimeout(() => {
-      if (!isPtyShutdown()) {
-        console.warn('[hostProcess:runLocalPtyShellLookup] Shell lookup timed out')
-      }
-      killPty(pty)
-      settle(null)
-    }, shellLookupTimeoutMs)
-
-    try {
-      pty = spawnPty(shell, args, {
-        cols: 80,
-        cwd: cwd ?? homedir(),
-        env,
-        name: 'xterm-256color',
-        rows: 24
-      })
-    } catch (error) {
-      if (!isExpectedFileAbsenceError(error)) {
-        console.error('[hostProcess:runLocalPtyShellLookup] Unable to start shell lookup', error)
-      }
-      clearTimeout(timeout)
-      resolve(null)
-      return
-    }
-
-    pty.onData((data) => {
-      output = `${output}${data}`.slice(-shellLookupMaxBuffer)
-    })
-    pty.onExit(({ exitCode, signal }) => {
-      if (!settled && !isPtyShutdown() && exitCode !== 0) {
-        console.error('[hostProcess:runLocalPtyShellLookup] Shell lookup exited unsuccessfully', {
-          exitCode,
-          shell,
-          signal
-        })
-      }
-      settle(exitCode === 0 ? parseShellLookupOutput(output) : null)
-    })
-  })
-
-const runFlatpakPtyShellLookup = (
+const runPtyShellLookup = (
   shell: string,
   args: string[],
   env: NodeJS.ProcessEnv,
   cwd: string | undefined,
   baseEnv?: NodeJS.ProcessEnv
-): Promise<ShellLookupResult | null> =>
+): Promise<ResolvedHostFile | null> =>
   new Promise((resolve) => {
+    const flatpak = isRunningInFlatpak()
+    const label = flatpak
+      ? '[hostProcess:runFlatpakPtyShellLookup] Host shell lookup'
+      : '[hostProcess:runLocalPtyShellLookup] Shell lookup'
     let output = ''
     let pty: ReturnType<typeof spawnPty> | null = null
     let settled = false
 
-    const settle = (candidate: ShellLookupResult | null): void => {
+    const settle = (candidate: ResolvedHostFile | null): void => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
@@ -615,33 +531,27 @@ const runFlatpakPtyShellLookup = (
 
     const timeout = setTimeout(() => {
       if (!isPtyShutdown()) {
-        console.warn('[hostProcess:runFlatpakPtyShellLookup] Host shell lookup timed out')
+        console.warn(`${label} timed out`)
       }
       killPty(pty)
       settle(null)
     }, shellLookupTimeoutMs)
 
     try {
-      pty = spawnPty(
-        'flatpak-spawn',
-        [
-          '--host',
-          '--watch-bus',
-          ...(cwd ? [`--directory=${cwd}`] : []),
-          ...getEnvironmentArguments(env, baseEnv),
-          shell,
-          ...args
-        ],
-        {
-          cols: 80,
-          cwd: homedir(),
-          env: process.env,
-          name: 'xterm-256color',
-          rows: 24
-        }
-      )
+      const launch = getShellLookupLaunch(shell, args, env, cwd, baseEnv)
+      pty = spawnPty(launch.file, launch.args, {
+        cols: 80,
+        cwd: launch.cwd ?? homedir(),
+        env: launch.env,
+        name: 'xterm-256color',
+        rows: 24
+      })
     } catch (error) {
-      console.error('[caught:hostProcess:runFlatpakPtyShellLookup]', error)
+      if (flatpak) {
+        console.error('[caught:hostProcess:runFlatpakPtyShellLookup]', error)
+      } else if (!isExpectedFileAbsenceError(error)) {
+        console.error('[hostProcess:runLocalPtyShellLookup] Unable to start shell lookup', error)
+      }
       clearTimeout(timeout)
       resolve(null)
       return
@@ -655,38 +565,13 @@ const runFlatpakPtyShellLookup = (
         !settled &&
         !isPtyShutdown() &&
         exitCode !== 0 &&
-        !isExpectedShellCandidateAbsence({ code: exitCode }, output)
+        !(flatpak && isExpectedShellCandidateAbsence({ code: exitCode }, output))
       ) {
-        console.error(
-          '[hostProcess:runFlatpakPtyShellLookup] Host shell lookup exited unsuccessfully',
-          { exitCode, shell, signal }
-        )
+        console.error(`${label} exited unsuccessfully`, { exitCode, shell, signal })
       }
       settle(exitCode === 0 ? parseShellLookupOutput(output) : null)
     })
   })
-
-const runShellLookup = (
-  shell: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  cwd: string | undefined,
-  baseEnv?: NodeJS.ProcessEnv
-): Promise<ShellLookupResult | null> =>
-  isRunningInFlatpak()
-    ? runFlatpakShellLookup(shell, args, env, cwd, baseEnv)
-    : runLocalShellLookup(shell, args, env, cwd)
-
-const runPtyShellLookup = (
-  shell: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  cwd: string | undefined,
-  baseEnv?: NodeJS.ProcessEnv
-): Promise<ShellLookupResult | null> =>
-  isRunningInFlatpak()
-    ? runFlatpakPtyShellLookup(shell, args, env, cwd, baseEnv)
-    : runLocalPtyShellLookup(shell, args, env, cwd)
 
 const resolveFromShell = async (
   commandName: string,
@@ -703,20 +588,20 @@ const resolveFromShell = async (
   }
 
   for (const shell of shells) {
-    for (const args of getShellLookupArgSets(shell, commandName, true)) {
-      // A previous probe may have been killed by stopPtys while we awaited it.
-      if (isPtyShutdown()) return null
-      const result = await runPtyShellLookup(shell, args, shellEnv, cwd, baseEnv)
-      if (result && (isRunningInFlatpak() || (await isExecutableFile(result.file)))) {
-        return { file: result.file, path: result.path ?? lookupPath }
-      }
-    }
-
-    for (const args of getShellLookupArgSets(shell, commandName, false)) {
-      if (isPtyShutdown()) return null
-      const result = await runShellLookup(shell, args, shellEnv, cwd, baseEnv)
-      if (result && (isRunningInFlatpak() || (await isExecutableFile(result.file)))) {
-        return { file: result.file, path: result.path ?? lookupPath }
+    for (const interactive of [true, false]) {
+      for (const args of getShellLookupArgSets(shell, commandName, interactive)) {
+        // A previous probe may have been killed by stopPtys while we awaited it.
+        if (isPtyShutdown()) return null
+        const result = await (interactive ? runPtyShellLookup : runShellLookup)(
+          shell,
+          args,
+          shellEnv,
+          cwd,
+          baseEnv
+        )
+        if (result && (isRunningInFlatpak() || (await isExecutableFile(result.file)))) {
+          return { file: result.file, path: result.path ?? lookupPath }
+        }
       }
     }
   }
@@ -734,7 +619,7 @@ const resolveFromWindowsPowerShell = async (
   const script = getWindowsPowerShellLookupScript(commandName)
   const powershells = await getWindowsPowerShellCandidates(env)
   for (const powershell of powershells) {
-    const result = await runLocalShellLookup(
+    const result = await runShellLookup(
       powershell,
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
       env,
@@ -784,7 +669,7 @@ const resolveHostFile = async (
   if (!resolved) {
     resolved = (async () => {
       const lookupEnvironment = await getLookupEnvironment(env)
-      const pathEntries = getToolPathEntries(getEnvironmentPath(lookupEnvironment.env))
+      const pathEntries = splitPath(getEnvironmentPath(lookupEnvironment.env))
       const lookupPath = pathEntries.join(delimiter)
       const windowsShellCandidate = await resolveFromWindowsPowerShell(
         file,
@@ -827,18 +712,7 @@ const getHostEnvironment = async (
 ): Promise<NodeJS.ProcessEnv | undefined> => {
   if (!path && !isRunningInFlatpak()) return env
 
-  const baseEnv = isRunningInFlatpak() ? await getFlatpakHostEnvironment() : (env ?? process.env)
-  const overrides = isRunningInFlatpak()
-    ? getEnvironmentOverrides(env, { skipUnchangedPath: true })
-    : {}
-
-  return setEnvironmentPath(
-    {
-      ...baseEnv,
-      ...overrides
-    },
-    path ?? getEnvironmentPath({ ...baseEnv, ...overrides })
-  )
+  return setEnvironmentPath((await getLookupEnvironment(env)).env, path)
 }
 
 const getEnvironmentArguments = (
@@ -858,8 +732,8 @@ const getEnvironmentArguments = (
 }
 
 const getShellEnvironmentAssignments = (env: NodeJS.ProcessEnv | undefined): string[] =>
-  Object.entries(getEnvironmentOverrides(env, { skipUnchangedPath: true })).flatMap(
-    ([key, value]) => (value == null ? [] : [`${key}=${quotePosixShellArg(value)}`])
+  Object.entries(getEnvironmentOverrides(env)).flatMap(([key, value]) =>
+    value == null ? [] : [`${key}=${quotePosixShellArg(value)}`]
   )
 
 const getShellExecLine = (
@@ -876,56 +750,32 @@ const getShellExecLine = (
     : `exec ${command}`
 }
 
-const getBridgeCommandScript = (
+const getCommandScript = (
   file: string,
   args: string[],
-  options: HostCommandOptions
-): string => {
-  const lines = [
+  options: HostCommandOptions,
+  rawTrailingArgs?: string[]
+): string =>
+  [
     ...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : []),
-    getShellExecLine(file, args, options.env)
-  ]
-  return lines.join('\n')
-}
+    getShellExecLine(file, args, options.env, rawTrailingArgs)
+  ].join('\n')
 
 const buildHostBridgeCommand = (
   bridge: CurrentContainerHostBridge,
   file: string,
   args: string[],
-  options: HostCommandOptions = {}
+  options: HostCommandOptions
 ): HostCommand => ({
   file: bridge.file,
   args: [
     ...bridge.argsPrefix,
-    ...getStdinSafeLoginShellArgs(getBridgeCommandScript(file, args, options))
+    ...getStdinSafeLoginShellArgs(getCommandScript(file, args, options))
   ],
   env: process.env
 })
 
-const containerRuntimeExecutables = {
-  distrobox: 'distrobox',
-  toolbox: 'toolbox',
-  podman: 'podman',
-  docker: 'docker'
-} satisfies Record<AppContainerTool, string>
-
 type LocalContainerTarget = Extract<AppLocalContainerTarget, { kind: 'container' }>
-
-const getContainerRuntimeExecutable = (container: LocalContainerTarget): string => {
-  return containerRuntimeExecutables[container.tool]
-}
-
-const getContainerCommandScript = (
-  file: string,
-  args: string[],
-  options: HostCommandOptions
-): string => {
-  const lines = [
-    ...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : []),
-    getShellExecLine(file, args, options.env)
-  ]
-  return lines.join('\n')
-}
 
 const getContainerScriptArgs = (
   container: LocalContainerTarget,
@@ -952,10 +802,7 @@ const getContainerExecutableArgs = (
   // Executable commands may receive more arguments after this function returns
   // (the Claude SDK does this when it spawns the CLI). Keep those arguments inside
   // the selected container while still applying its cwd and environment.
-  const script = [
-    ...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : []),
-    getShellExecLine(file, args, options.env, ['"$@"'])
-  ].join('\n')
+  const script = getCommandScript(file, args, options, ['"$@"'])
   return [...getContainerScriptArgs(container, script, false), 'sele-provider']
 }
 
@@ -971,7 +818,7 @@ const getSshHostCommand = async (
   const targetScript =
     runtime?.kind === 'container'
       ? getShellExecLine(
-          getContainerRuntimeExecutable(runtime),
+          runtime.tool,
           getContainerScriptArgs(runtime, script, Boolean(options.interactive)),
           undefined
         )
@@ -984,7 +831,7 @@ const getSshHostCommand = async (
 const buildResolvedHostCommand = async (
   file: string,
   args: string[],
-  options: HostCommandOptions = {}
+  options: HostCommandOptions
 ): Promise<HostCommand> => {
   const bridge = await getCurrentContainerHostBridge()
   if (bridge) return buildHostBridgeCommand(bridge, file, args, options)
@@ -992,39 +839,23 @@ const buildResolvedHostCommand = async (
   return buildResolvedLocalCommand(file, args, options)
 }
 
-const getHostBridgeExecutablePath = async (
-  bridge: CurrentContainerHostBridge,
-  file: string,
-  args: string[],
-  options: HostCommandOptions = {}
-): Promise<string> => {
-  const commandScript = [
-    ...(options.cwd ? [getRequiredWorkingDirectoryShellLine(options.cwd)] : []),
-    getShellExecLine(file, args, undefined, ['"$@"'])
-  ].join('\n')
+const writeExecutableWrapper = (safeFile: string, command: string[]): Promise<string> => {
   const wrapperScript = [
     '#!/bin/sh',
-    `exec ${[
-      bridge.file,
-      ...bridge.argsPrefix,
-      ...getStdinSafeLoginShellArgs(commandScript),
-      'sele-host-bridge'
-    ]
-      .map(quotePosixShellArg)
-      .join(' ')} "$@"`,
+    `exec ${command.map(quotePosixShellArg).join(' ')} "$@"`,
     ''
   ].join('\n')
   const hash = createHash('sha256').update(wrapperScript).digest('hex').slice(0, 16)
-  const safeFile = basename(file).replace(/[^A-Za-z0-9._-]/g, '_') || 'command'
-  const wrapperPath = join(tmpdir(), 'sele-host-bridges', `${safeFile}-${hash}.sh`)
-  const existing = hostBridgeExecutableCache.get(wrapperPath)
+  const safeName = basename(safeFile).replace(/[^A-Za-z0-9._-]/g, '_') || 'command'
+  const wrapperPath = join(tmpdir(), 'sele-host-bridges', `${safeName}-${hash}.sh`)
+  const existing = executableWrapperCache.get(wrapperPath)
   if (existing) return existing
 
   const writePromise = mkdir(join(tmpdir(), 'sele-host-bridges'), { recursive: true })
     .then(() => writeFile(wrapperPath, wrapperScript, { mode: 0o755 }))
     .then(() => chmod(wrapperPath, 0o755))
     .then(() => wrapperPath)
-  hostBridgeExecutableCache.set(wrapperPath, writePromise)
+  executableWrapperCache.set(wrapperPath, writePromise)
   return writePromise
 }
 
@@ -1032,42 +863,23 @@ const buildHostBridgeExecutableCommand = async (
   bridge: CurrentContainerHostBridge,
   file: string,
   args: string[],
-  options: HostCommandOptions = {}
+  options: HostCommandOptions
 ): Promise<HostCommand> => ({
-  file: await getHostBridgeExecutablePath(bridge, file, args, options),
+  file: await writeExecutableWrapper(file, [
+    bridge.file,
+    ...bridge.argsPrefix,
+    ...getStdinSafeLoginShellArgs(getCommandScript(file, args, { cwd: options.cwd }, ['"$@"'])),
+    'sele-host-bridge'
+  ]),
   args: [],
   env: await getHostEnvironment(options.env, undefined)
 })
-
-const getCommandExecutablePath = async (
-  file: string,
-  args: string[],
-  safeFile: string
-): Promise<string> => {
-  const wrapperScript = [
-    '#!/bin/sh',
-    `exec ${[file, ...args].map(quotePosixShellArg).join(' ')} "$@"`,
-    ''
-  ].join('\n')
-  const hash = createHash('sha256').update(wrapperScript).digest('hex').slice(0, 16)
-  const safeName = basename(safeFile).replace(/[^A-Za-z0-9._-]/g, '_') || 'command'
-  const wrapperPath = join(tmpdir(), 'sele-host-bridges', `${safeName}-${hash}.sh`)
-  const existing = commandExecutableCache.get(wrapperPath)
-  if (existing) return existing
-
-  const writePromise = mkdir(join(tmpdir(), 'sele-host-bridges'), { recursive: true })
-    .then(() => writeFile(wrapperPath, wrapperScript, { mode: 0o755 }))
-    .then(() => chmod(wrapperPath, 0o755))
-    .then(() => wrapperPath)
-  commandExecutableCache.set(wrapperPath, writePromise)
-  return writePromise
-}
 
 const buildFlatpakExecutableCommand = async (
   command: HostCommand,
   safeFile: string
 ): Promise<HostCommand> => ({
-  file: await getCommandExecutablePath(command.file, command.args, safeFile),
+  file: await writeExecutableWrapper(safeFile, [command.file, ...command.args]),
   args: [],
   cwd: command.cwd,
   env: command.env
@@ -1076,11 +888,10 @@ const buildFlatpakExecutableCommand = async (
 const buildResolvedLocalCommand = async (
   file: string,
   args: string[],
-  options: HostCommandOptions = {}
+  options: HostCommandOptions
 ): Promise<HostCommand> => {
   const resolvedFile = await resolveHostFile(file, options.cwd, options.env)
   const env = await getHostEnvironment(options.env, resolvedFile.path)
-  const baseEnv = isRunningInFlatpak() ? await getFlatpakHostEnvironment() : process.env
 
   if (!isRunningInFlatpak()) {
     return {
@@ -1100,47 +911,37 @@ const buildResolvedLocalCommand = async (
 
   return {
     file: flatpakSpawnFile.file,
-    args: [
-      '--host',
-      '--watch-bus',
-      ...(options.cwd ? [`--directory=${options.cwd}`] : []),
-      ...getEnvironmentArguments(env, baseEnv),
+    args: getFlatpakSpawnArgs(
       resolvedFile.file,
-      ...args
-    ],
+      args,
+      options.cwd,
+      env,
+      await getFlatpakHostEnvironment()
+    ),
     env: process.env
   }
 }
 
-const getContainerRuntimeHostCommand = async (
-  container: LocalContainerTarget,
-  args: string[],
-  options: HostCommandOptions = {}
-): Promise<HostCommand> =>
-  buildResolvedHostCommand(getContainerRuntimeExecutable(container), args, {
-    env: options.env
-  })
-
 const getContainerHostCommand = async (
   file: string,
   args: string[],
-  options: HostCommandOptions = {}
+  options: HostCommandOptions
 ): Promise<HostCommand> => {
   const container = options.container
   if (!container || container.kind !== 'container')
     return buildResolvedHostCommand(file, args, options)
   if (container.tool === 'ssh') {
-    return getSshHostCommand(container, getContainerCommandScript(file, args, options), {
+    return getSshHostCommand(container, getCommandScript(file, args, options), {
       env: process.env
     })
   }
   if (await isCurrentContainerTarget(container))
     return buildResolvedLocalCommand(file, args, options)
 
-  return getContainerRuntimeHostCommand(
-    container,
-    getContainerScriptArgs(container, getContainerCommandScript(file, args, options), false),
-    options
+  return buildResolvedHostCommand(
+    container.tool,
+    getContainerScriptArgs(container, getCommandScript(file, args, options), false),
+    { env: options.env }
   )
 }
 
@@ -1183,7 +984,7 @@ export const getHostExecutableCommand = async (
   }
   if (container.tool === 'ssh') {
     return normalizeExecutableCommand(
-      await getSshHostCommand(container, getContainerCommandScript(file, args, options), {
+      await getSshHostCommand(container, getCommandScript(file, args, options), {
         env: process.env
       })
     )
@@ -1192,10 +993,10 @@ export const getHostExecutableCommand = async (
     return normalizeExecutableCommand(await buildResolvedLocalCommand(file, args, options))
 
   return normalizeExecutableCommand(
-    await getContainerRuntimeHostCommand(
-      container,
+    await buildResolvedHostCommand(
+      container.tool,
       getContainerExecutableArgs(container, file, args, options),
-      options
+      { env: options.env }
     )
   )
 }
@@ -1210,10 +1011,7 @@ export const getHostTerminalCommand = async (options: {
 }): Promise<HostCommand> => {
   const container = options.container
   if (!container || container.kind !== 'container') {
-    return getHostCommand(options.shell.file, options.shell.args, {
-      cwd: options.cwd,
-      env: options.env
-    })
+    return getHostCommand(options.shell.file, options.shell.args, options)
   }
   if (container.tool === 'ssh') {
     return getSshHostCommand(container, getTargetTerminalScript(options), {
@@ -1222,18 +1020,12 @@ export const getHostTerminalCommand = async (options: {
     })
   }
   if (await isCurrentContainerTarget(container)) {
-    return buildResolvedLocalCommand(options.shell.file, options.shell.args, {
-      cwd: options.cwd,
-      env: options.env
-    })
+    return buildResolvedLocalCommand(options.shell.file, options.shell.args, options)
   }
 
-  return getContainerRuntimeHostCommand(
-    container,
+  return buildResolvedHostCommand(
+    container.tool,
     getContainerScriptArgs(container, getTargetTerminalScript(options), true),
-    {
-      cwd: options.cwd,
-      env: options.env
-    }
+    { env: options.env }
   )
 }

@@ -4,20 +4,12 @@ import type {
   AppSshEnvironment,
   AppUpdateSshEnvironmentOptions
 } from '../../shared/app'
-import { getDatabase } from './sqlite'
+import type { Selectable } from 'kysely'
+import { getDatabase, type LocalDatabase } from './sqlite'
 
-type SshEnvironmentRow = {
-  id: string
-  name: string
-  host: string
-  port: number
-  user: string | null
-  identity_file: string | null
-  created_at: number
-  updated_at: number
-}
-
-const mapSshEnvironmentRow = (row: SshEnvironmentRow): AppSshEnvironment => ({
+const mapSshEnvironmentRow = (
+  row: Selectable<LocalDatabase['ssh_environments']>
+): AppSshEnvironment => ({
   id: row.id,
   name: row.name,
   host: row.host,

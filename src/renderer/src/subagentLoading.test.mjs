@@ -55,18 +55,30 @@ const setup = (api, items, detailFields = {}, dependencies = {}) => {
     detail: { id: 'child', items, ...detailFields }
   }
   const request = { current: 1 }
+  const { subagents = [], ...subagentState } = dependencies
   const controller = module.exports.useSubagentController({
-    activeSubagentChatView: view,
-    selectedProviderId: 'codex',
-    selectedChatId: 'parent',
-    selectedChatKey: 'codex:parent',
-    selectedChatKeyRef: { current: 'codex:parent' },
-    subagentChatLoadRequestRef: request,
-    subagentContentRef: { current: { scrollTop: 0, scrollHeight: 1000 } },
-    setSubagentChatView: (update) => {
-      view = typeof update === 'function' ? update(view) : update
+    viewportState: {},
+    chatRead: {},
+    session: {
+      activeSubagentChatView: view,
+      selectedProviderId: 'codex',
+      selectedChatId: 'parent',
+      selectedChatKey: 'codex:parent',
+      selectedChatSubagents: subagents
     },
-    ...dependencies
+    subagentState: {
+      subagentChatLoadRequestRef: request,
+      subagentContentRef: { current: { scrollTop: 0, scrollHeight: 1000 } },
+      setSubagentChatView: (update) => {
+        view = typeof update === 'function' ? update(view) : update
+      },
+      ...subagentState
+    },
+    searchState: {},
+    chatState: { selectedChatKeyRef: { current: 'codex:parent' } },
+    scroll: {},
+    gitState: {},
+    commits: {}
   })
   return { controller, request, view: () => view }
 }

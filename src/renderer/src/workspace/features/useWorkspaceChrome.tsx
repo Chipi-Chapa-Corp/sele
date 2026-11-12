@@ -32,9 +32,7 @@ export function useWorkspaceChrome({
         console.error('Unable to load the window state.', error)
       })
 
-    const unsubscribe = appApi.onWindowStateUpdated((nextWindowState) => {
-      dialogState.setWindowState(nextWindowState)
-    })
+    const unsubscribe = appApi.onWindowStateUpdated(dialogState.setWindowState)
 
     return () => {
       active = false
@@ -42,31 +40,25 @@ export function useWorkspaceChrome({
     }
   }, [])
 
-  const handleMinimizeWindow = (): void => {
-    void appApi.minimizeWindow()
-  }
-
-  const handleToggleWindowMaximized = (): void => {
-    void appApi
-      .toggleWindowMaximized()
-      .then((nextWindowState) => dialogState.setWindowState(nextWindowState))
-      .catch((error: unknown) => {
-        console.error('Unable to toggle the window maximized state.', error)
-      })
-  }
-
-  const handleCloseWindow = (): void => {
-    void appApi.closeWindow()
-  }
-
   const windowControlsHidden = settings.settingsPanelSettings.appearance.position === 'hidden'
 
   // Render functions handed to memoized panels must only change with their output.
-  const minimizeWindow = useLatestHandler(handleMinimizeWindow)
+  const minimizeWindow = useLatestHandler((): void => {
+    void appApi.minimizeWindow()
+  })
 
-  const toggleWindowMaximized = useLatestHandler(handleToggleWindowMaximized)
+  const toggleWindowMaximized = useLatestHandler((): void => {
+    void appApi
+      .toggleWindowMaximized()
+      .then(dialogState.setWindowState)
+      .catch((error: unknown) => {
+        console.error('Unable to toggle the window maximized state.', error)
+      })
+  })
 
-  const closeWindow = useLatestHandler(handleCloseWindow)
+  const closeWindow = useLatestHandler((): void => {
+    void appApi.closeWindow()
+  })
 
   const windowMaximized = dialogState.windowState.isMaximized
 

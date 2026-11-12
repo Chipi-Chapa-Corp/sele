@@ -10,11 +10,9 @@ import {
 export type { WorkingMarkAnimation } from './workingMarkAnimation'
 
 export function WorkingMark({
-  className,
   animation = 'swap',
   speed = 1
 }: {
-  className?: string
   animation?: WorkingMarkAnimation
   speed?: number
 }): ReactElement {
@@ -41,7 +39,7 @@ export function WorkingMark({
   }, [animation, speed, reduced])
 
   return (
-    <svg viewBox="0 0 100 100" className={className} aria-hidden="true" focusable="false">
+    <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
       <path ref={pathRef} d={restD} fill="currentColor" fillRule="evenodd" />
     </svg>
   )

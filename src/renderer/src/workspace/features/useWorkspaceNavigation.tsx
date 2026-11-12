@@ -17,7 +17,7 @@ import { useWorkspaceChatCache } from './useWorkspaceChatCache'
 import { useWorkspaceChatProjection } from './useWorkspaceChatProjection'
 import { useWorkspaceChatReadState } from './useWorkspaceChatReadState'
 
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import type { useWorkspaceSelection } from '../useWorkspaceSelection'
 type WorkspaceNavigationDependencies = {
   onConversationRequested: (() => void) | undefined
   chatState: ReturnType<typeof useWorkspaceChatState>
@@ -31,7 +31,7 @@ type WorkspaceNavigationDependencies = {
   handleReturnFromSubagentChat: () => void
   chatProjection: ReturnType<typeof useWorkspaceChatProjection>
   viewportState: ReturnType<typeof useWorkspaceViewportState>
-  session: Pick<ReturnType<typeof useWorkspaceSession>, 'activeSubagentChatView'>
+  session: Pick<ReturnType<typeof useWorkspaceSelection>, 'activeSubagentChatView'>
 }
 
 export function useWorkspaceNavigation({

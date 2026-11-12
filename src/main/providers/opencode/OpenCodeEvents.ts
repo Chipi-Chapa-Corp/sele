@@ -1,6 +1,7 @@
 import type { OpenCodeMessageWithParts } from './OpenCodeItemRenderers'
 import type { Message, Part } from '@opencode-ai/sdk/v2'
 import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
+import { getString, isRecord } from '../providerValues.ts'
 
 type OpenCodeSessionEvent = {
   type: string
@@ -207,12 +208,6 @@ export const reconcileOpenCodeMessageSnapshot = (
   next.sort((a, b) => a.info.id.localeCompare(b.info.id))
   return next
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
 
 export const parseOpenCodeSessionEvent = (globalEvent: unknown): OpenCodeSessionEvent | null => {
   if (!isRecord(globalEvent) || !isRecord(globalEvent.payload)) return null

@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { normalizeContainerTarget } from '../../containerSelection'
 import { providerApi } from '../../providerApi'
 import { mergeSettingsProviderSkills } from '../../providerSettings'
-import { getErrorMessage } from '../chatControllerUtils'
 import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
 import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
@@ -21,49 +20,6 @@ export function useWorkspaceProviderSettings({
   providerState,
   settings
 }: WorkspaceProviderSettingsDependencies) {
-  useEffect(() => {
-    if (!preferences.settingsOpen || preferences.settingsTab !== 'providers') return
-
-    let active = true
-    const providerId = sourceState.newSessionProvider
-    const container = normalizeContainerTarget(sourceState.newSessionContainer)
-    queueMicrotask(() => {
-      if (!active) return
-      providerState.setSettingsProviderAccounts(null)
-      providerState.setProviderAccountsError(null)
-      providerState.setProviderAccountsLoadState('loading')
-    })
-
-    providerApi
-      .getAccounts(providerId, { container })
-      .then((configuration) => {
-        if (!active) return
-        providerState.setSettingsProviderAccounts(configuration)
-        providerState.setProviderAccountsError(null)
-        providerState.setProviderAccountsLoadState('ready')
-      })
-      .catch((error) => {
-        console.error('Unable to inspect provider accounts.', error)
-        if (!active) return
-        providerState.setSettingsProviderAccounts(null)
-        providerState.setProviderAccountsError(
-          getErrorMessage(error, 'Unable to inspect provider accounts in this environment.')
-        )
-        providerState.setProviderAccountsLoadState('ready')
-      })
-
-    return () => {
-      active = false
-    }
-  }, [
-    sourceState.newSessionContainer,
-    sourceState.newSessionContainerKey,
-    sourceState.newSessionProvider,
-    providerState.providerAccountsRefresh,
-    preferences.settingsOpen,
-    preferences.settingsTab
-  ])
-
   useEffect(() => {
     let active = true
     queueMicrotask(() => {

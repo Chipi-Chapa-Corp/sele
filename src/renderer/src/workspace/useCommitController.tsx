@@ -7,7 +7,6 @@ import {
   normalizeGeneratedCommitMessage
 } from '../gitCommitMessage'
 import { providerApi } from '../providerApi'
-import { getCommitPatches } from '../changeTree'
 import { type ChatCommitMarker } from '../components/AppStatusStates'
 import { type ScopedCommitActivity, type StartingScopedCommitActivity } from '../chatCommitStorage'
 import { type DirectCommitActivity, type GitCommitPromptAction } from './controllerTypes'
@@ -23,67 +22,109 @@ import {
   getScopedChatCommitPrompt,
   isActiveChatStatus
 } from './chatControllerUtils'
-import type { CommitControllerDependencies } from './controllerDependencies'
+import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
+import type { useWorkspaceProviderUpdates } from './wiring/useWorkspaceProviderUpdates'
+import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
+import type { useWorkspaceSelection } from './useWorkspaceSelection'
+import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
+import type { useGitViewModel } from './useGitViewModel'
+import type { useChatMessagingController } from './useChatMessagingController'
+import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
+import type { useWorkspaceChatProjection } from './features/useWorkspaceChatProjection'
+import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
+import type { useGitSyncController } from './useGitSyncController'
+import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
+import type { useWorkspaceSearchState } from './state/useWorkspaceSearchState'
+import type { useWorkspaceSubagentState } from './state/useWorkspaceSubagentState'
+import type { useWorkspaceNavigation } from './features/useWorkspaceNavigation'
 
 // Return shape is inferred from the controller declarations below.
-export function useCommitController(dependencies: CommitControllerDependencies) {
+export function useCommitController({
+  gitState,
+  providerUpdates,
+  chatState,
+  session,
+  sourceState,
+  gitPresentation,
+  messaging,
+  viewportState,
+  chatProjection,
+  settings,
+  gitSync,
+  chatRead,
+  searchState,
+  subagentState,
+  navigation
+}: {
+  gitState: ReturnType<typeof useWorkspaceGitState>
+  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
+  chatState: ReturnType<typeof useWorkspaceChatState>
+  session: ReturnType<typeof useWorkspaceSelection>
+  sourceState: ReturnType<typeof useWorkspaceSourceState>
+  gitPresentation: ReturnType<typeof useGitViewModel>
+  messaging: ReturnType<typeof useChatMessagingController>
+  viewportState: ReturnType<typeof useWorkspaceViewportState>
+  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+  gitSync: ReturnType<typeof useGitSyncController>
+  chatRead: ReturnType<typeof useWorkspaceChatReadState>
+  searchState: ReturnType<typeof useWorkspaceSearchState>
+  subagentState: ReturnType<typeof useWorkspaceSubagentState>
+  navigation: ReturnType<typeof useWorkspaceNavigation>
+}) {
   const {
     startingScopedCommitActivitiesRef,
     scopedCommitActivitiesRef,
-    providerUpdateInProgress,
-    selectedChat,
-    chatDetail,
-    changesCwd,
-    newSessionProvider,
-    changesProjectCwd,
-    projectCommitInProgress,
     commitInFlightProjectKeysRef,
     commitMessageGenerationProjectKeysRef,
     branchActionProjectKeysRef,
     syncProjectKeysRef,
-    sendInFlightRef,
-    sendInFlightProjectKeyRef,
-    getGitTurnOptions,
     setStartingScopedCommitActivities,
-    chatAutoScrollEnabledRef,
     setCommitErrorsByProjectKey,
     setChatCommitMarkers,
-    applyChatDetail,
     changesCwdRef,
     setCommitInput,
     setScopedCommitActivities,
-    commitMessageGenerationDisabled,
     setCommitMessageGenerationProjectKeys,
-    changesContainer,
-    effectiveAppSettings,
-    aiCommitInstructions,
-    commitInputValue,
-    getCommitActionDisabled,
     setDirectCommitActivities,
-    patchChangeSourceSelected,
-    changedFiles,
     setGitChangeLoadRequest,
-    pushAfterCommit,
-    runSyncChanges,
-    getAiCommitActionDisabled,
     cancelingAiCommitKeys,
     setCancelingAiCommitKeys,
     openingAiCommitChatIds,
-    chatsRef,
     setOpeningAiCommitChatIds,
-    markSelectedChatSeen,
-    setSendState,
-    setEditingMessage,
-    setSearchOpen,
-    setSearchQuery,
-    subagentChatLoadRequestRef,
-    setSubagentChatView,
     setCommitChatReturnTarget,
-    applyViewedChatDetail,
-    commitChatReturnTarget,
-    handleSelectChat,
-    hasAiCommitInProgressForProject
-  } = dependencies
+    commitChatReturnTarget
+  } = gitState
+  const { providerUpdateInProgress } = providerUpdates
+  const {
+    selectedChat,
+    chatDetail,
+    sendInFlightRef,
+    sendInFlightProjectKeyRef,
+    chatsRef,
+    setSendState,
+    setEditingMessage
+  } = chatState
+  const { changesCwd, changesProjectCwd, changesContainer } = session
+  const { newSessionProvider } = sourceState
+  const {
+    projectCommitInProgress,
+    commitMessageGenerationDisabled,
+    aiCommitInstructions,
+    commitInputValue,
+    getCommitActionDisabled,
+    pushAfterCommit,
+    getAiCommitActionDisabled
+  } = gitPresentation
+  const { getGitTurnOptions } = messaging
+  const { chatAutoScrollEnabledRef } = viewportState
+  const { applyChatDetail } = chatProjection
+  const { effectiveAppSettings } = settings
+  const { runSyncChanges, hasAiCommitInProgressForProject } = gitSync
+  const { markSelectedChatSeen, applyViewedChatDetail } = chatRead
+  const { setSearchOpen, setSearchQuery } = searchState
+  const { subagentChatLoadRequestRef, setSubagentChatView } = subagentState
+  const { handleSelectChat } = navigation
   const handleScopedChatCommit = async (
     action: GitCommitPromptAction,
     prompt: string
@@ -385,8 +426,7 @@ export function useCommitController(dependencies: CommitControllerDependencies) 
         action,
         container: changesContainer,
         cwd: changesCwd,
-        message: action === 'amend' ? null : commitMessage,
-        patches: patchChangeSourceSelected ? getCommitPatches(changedFiles) : undefined
+        message: action === 'amend' ? null : commitMessage
       })
       // The input is shared across projects. Clear the submitted text even after navigation,
       // while preserving anything typed during the operation. Quick commits may replace the

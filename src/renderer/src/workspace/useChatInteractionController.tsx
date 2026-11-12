@@ -2,7 +2,11 @@
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { FolderKanban, FolderTree } from 'lucide-react'
 import type { ProviderMessage } from '../../../shared/provider'
-import { AnimatedChatListGroup, type ChatListGroupData } from '../components/ChatListGroup'
+import {
+  AnimatedChatListGroup,
+  type ChatListGroupData,
+  type ChatListGroupProps
+} from '../components/ChatListGroup'
 import { Dropdown } from '../components/Dropdown'
 import { providerApi } from '../providerApi'
 import { renderProjectGlyph } from '../projectPresentation'
@@ -16,52 +20,53 @@ import {
   isActiveChatStatus
 } from './chatControllerUtils'
 import { allDoneProjectsValue } from './controllerTypes'
-import type { ChatInteractionControllerDependencies } from './featureControllerDependencies'
+import type { AppProject } from '../../../shared/app'
+import type { useWorkspaceChatErrors } from './features/useWorkspaceChatErrors'
+import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
+import type { useWorkspaceProjectCatalog } from './features/useWorkspaceProjectCatalog'
+import type { useWorkspaceScroll } from './features/useWorkspaceScroll'
+import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
+import type { useWorkspaceNavigation } from './features/useWorkspaceNavigation'
+import type { useWorkspaceSidebarActions } from './features/useWorkspaceSidebarActions'
+import type { useWorkspaceSidebarModel } from './features/useWorkspaceSidebarModel'
+import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
+import type { useWorkspaceProjectState } from './state/useWorkspaceProjectState'
+import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
+import type { useChatMessagingController } from './useChatMessagingController'
+import type { useWorkspaceSelection } from './useWorkspaceSelection'
+import type { useWorkspaceChatListActions } from './wiring/useWorkspaceChatListActions'
 import { useLatestHandler, useShallowStable } from './stableProps'
 
-type Dependencies = ChatInteractionControllerDependencies
-
 type ChatGroupRenderInputs = Pick<
-  Dependencies,
-  | 'searchTerms'
-  | 'collapsedCwdGroups'
-  | 'visibleChatPageCountsByGroup'
-  | 'activeChatGroups'
-  | 'chatGroupingPreference'
-  | 'projectDropInsertionIndex'
-  | 'doneProjectFilterValue'
-  | 'handleDoneProjectFilterChange'
-  | 'projectOptions'
-  | 'committingChatKeys'
-  | 'latestCommitFinishedAtByChatKey'
-  | 'draggedProjectGroupKey'
-  | 'projectNamesByCwd'
-  | 'resolvingApprovalId'
-> & {
-  chatPageSize: number
-  selectedChatKey: string | null
-  projectIconsByCwd: Map<string, React.ReactElement>
-  sidebarActions: SidebarActions
-}
+  ReturnType<typeof useWorkspaceSidebarModel>,
+  'searchTerms' | 'activeChatGroups' | 'projectNamesByCwd'
+> &
+  Pick<
+    ReturnType<typeof useWorkspaceProjectState>,
+    | 'collapsedCwdGroups'
+    | 'visibleChatPageCountsByGroup'
+    | 'chatGroupingPreference'
+    | 'projectDropInsertionIndex'
+    | 'doneProjectFilterValue'
+    | 'draggedProjectGroupKey'
+  > &
+  Pick<ReturnType<typeof useWorkspaceSidebarActions>, 'handleDoneProjectFilterChange'> &
+  Pick<ReturnType<typeof useWorkspaceProjectCatalog>, 'projectOptions'> &
+  Pick<
+    ReturnType<typeof useWorkspaceSelection>,
+    'committingChatKeys' | 'latestCommitFinishedAtByChatKey' | 'resolvingApprovalId'
+  > & {
+    chatPageSize: number
+    selectedChatKey: string | null
+    projectIconsByCwd: Map<string, React.ReactElement>
+    sidebarActions: SidebarActions
+  }
 
-type SidebarActions = {
-  [Name in
-    | 'onLoadMoreChats'
-    | 'onShowLessChats'
-    | 'onMarkChatDone'
-    | 'onProjectDragEnd'
-    | 'onProjectDragStart'
-    | 'onMarkCwdChatsDone'
-    | 'onNewChatInCwd'
-    | 'onRenameChat'
-    | 'onSelectProjectIcon'
-    | 'onResolveApproval'
-    | 'onReorderChats'
-    | 'onSelectChat'
-    | 'onToggle'
-    | 'onToggleChatPinned'
-    | 'onUnpinPinnedChats']: NonNullable<React.ComponentProps<typeof AnimatedChatListGroup>[Name]>
-}
+type SidebarActions = Required<{
+  [Name in keyof ChatListGroupProps as Name extends `on${string}`
+    ? Name
+    : never]: ChatListGroupProps[Name]
+}>
 
 // Module scope keeps this pure: everything it shows comes from `inputs`, so the
 // memoized sidebar rerenders exactly when one of those inputs changes.
@@ -177,22 +182,12 @@ const renderChatListGroup = (
       headerAction={doneProjectFilter}
       projectNamesByCwd={projectNamesByCwd}
       projectIconsByCwd={projectIconsByCwd}
+      {...sidebarActions}
       onLoadMoreChats={group.kind === 'pinned' ? undefined : sidebarActions.onLoadMoreChats}
       onShowLessChats={group.kind === 'pinned' ? undefined : sidebarActions.onShowLessChats}
       projectIcon={projectIconsByCwd.get(group.cwd ?? '')}
-      onMarkChatDone={sidebarActions.onMarkChatDone}
       onProjectDragEnd={projectDraggable ? sidebarActions.onProjectDragEnd : undefined}
       onProjectDragStart={projectDraggable ? sidebarActions.onProjectDragStart : undefined}
-      onMarkCwdChatsDone={sidebarActions.onMarkCwdChatsDone}
-      onNewChatInCwd={sidebarActions.onNewChatInCwd}
-      onRenameChat={sidebarActions.onRenameChat}
-      onSelectProjectIcon={sidebarActions.onSelectProjectIcon}
-      onResolveApproval={sidebarActions.onResolveApproval}
-      onReorderChats={sidebarActions.onReorderChats}
-      onSelectChat={sidebarActions.onSelectChat}
-      onToggle={sidebarActions.onToggle}
-      onToggleChatPinned={sidebarActions.onToggleChatPinned}
-      onUnpinPinnedChats={sidebarActions.onUnpinPinnedChats}
       resolvingApprovalId={resolvingApprovalId}
       selectedChatChildren={selectedChatChildren}
       selectedChatChildOpen={selectedChatChildOpen}
@@ -201,106 +196,129 @@ const renderChatListGroup = (
 }
 
 // Return shape is inferred from the controller declarations below.
-export function useChatInteractionController(dependencies: ChatInteractionControllerDependencies) {
+export function useChatInteractionController({
+  viewportState,
+  chatState,
+  scroll,
+  sidebarModel,
+  projectState,
+  settings,
+  projectRecordsByCwd,
+  projectCatalog,
+  session,
+  sidebarActions: sidebarActionHandlers,
+  listActions,
+  navigation,
+  messaging,
+  chatRead,
+  chatErrors
+}: {
+  viewportState: ReturnType<typeof useWorkspaceViewportState>
+  chatState: ReturnType<typeof useWorkspaceChatState>
+  scroll: ReturnType<typeof useWorkspaceScroll>
+  sidebarModel: ReturnType<typeof useWorkspaceSidebarModel>
+  projectState: ReturnType<typeof useWorkspaceProjectState>
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+  projectRecordsByCwd: Map<string, AppProject>
+  projectCatalog: ReturnType<typeof useWorkspaceProjectCatalog>
+  session: ReturnType<typeof useWorkspaceSelection>
+  sidebarActions: ReturnType<typeof useWorkspaceSidebarActions>
+  listActions: ReturnType<typeof useWorkspaceChatListActions>
+  navigation: ReturnType<typeof useWorkspaceNavigation>
+  messaging: ReturnType<typeof useChatMessagingController>
+  chatRead: ReturnType<typeof useWorkspaceChatReadState>
+  chatErrors: ReturnType<typeof useWorkspaceChatErrors>
+}) {
   const {
     contentRef,
-    chatTurnWindowRef,
     chatScrollAdjustmentTargetRef,
     previousChatScrollTopRef,
     chatTurnScrollDirectionRef,
-    setChatAtConversationBottom,
     chatViewportAnchorRef,
     chatAutoScrollEnabledRef,
     chatUserScrollIntentRef,
     chatAutoScrollTargetRef,
-    scheduleChatAutoScroll,
-    chatUserScrollIntentFrameRef,
-    searchTerms,
-    collapsedCwdGroups,
-    effectiveAppSettings,
-    visibleChatPageCountsByGroup,
-    projectRecordsByCwd,
-    projectIconsByGroup,
-    activeChatGroups,
-    chatGroupingPreference,
-    doneProjectFilterValue,
-    projectOptions,
-    projectDropInsertionIndex,
+    chatUserScrollIntentFrameRef
+  } = viewportState
+  const {
+    chatTurnWindowRef,
+    setChatAtConversationBottom,
     selectedChat,
-    committingChatKeys,
-    latestCommitFinishedAtByChatKey,
-    draggedProjectGroupKey,
-    projectNamesByCwd,
-    handleDoneProjectFilterChange,
-    resolvingApprovalId,
     chatDetail,
     sendState,
     forkInFlightRef,
     setSendState,
     setSendError,
     setForkingMessageId,
-    applyViewedChatDetail,
-    handleSendFailure,
     setMessageBoxQuoteRequest,
-    runPromptActionRef,
-    handleSendMessage
-  } = dependencies
+    runPromptActionRef
+  } = chatState
+  const { scheduleChatAutoScroll } = scroll
+  const { searchTerms, activeChatGroups, projectNamesByCwd } = sidebarModel
+  const {
+    collapsedCwdGroups,
+    visibleChatPageCountsByGroup,
+    projectIconsByGroup,
+    chatGroupingPreference,
+    doneProjectFilterValue,
+    projectDropInsertionIndex,
+    draggedProjectGroupKey
+  } = projectState
+  const { effectiveAppSettings } = settings
+  const { projectOptions } = projectCatalog
+  const { committingChatKeys, latestCommitFinishedAtByChatKey, resolvingApprovalId } = session
+  const {
+    handleDoneProjectFilterChange,
+    handleLoadMoreChatsInGroup,
+    handleShowLessChatsInGroup,
+    handleSelectProjectIcon,
+    handleToggleCwdGroup
+  } = sidebarActionHandlers
+  const {
+    handleMarkChatDone,
+    restoreExpandedProjectsAfterDrag,
+    handleProjectDragStart,
+    handleMarkCwdChatsDone,
+    handleRenameChat,
+    handleReorderChats,
+    handleToggleChatPinned,
+    handleUnpinPinnedChats
+  } = listActions
+  const { handleNewChatInCwd, handleSelectChat } = navigation
+  const { handleSendMessage, handleResolveChatApproval } = messaging
+  const { applyViewedChatDetail } = chatRead
+  const { handleSendFailure } = chatErrors
 
   // Memoized groups must always invoke handlers from the latest committed workspace.
-  const sidebarActionsRef = useRef(dependencies)
+  const sidebarHandlers = {
+    onLoadMoreChats: handleLoadMoreChatsInGroup,
+    onShowLessChats: handleShowLessChatsInGroup,
+    onMarkChatDone: handleMarkChatDone,
+    onProjectDragEnd: restoreExpandedProjectsAfterDrag,
+    onProjectDragStart: handleProjectDragStart,
+    onMarkCwdChatsDone: handleMarkCwdChatsDone,
+    onNewChatInCwd: handleNewChatInCwd,
+    onRenameChat: handleRenameChat,
+    onSelectProjectIcon: handleSelectProjectIcon,
+    onResolveApproval: handleResolveChatApproval,
+    onReorderChats: handleReorderChats,
+    onSelectChat: handleSelectChat,
+    onToggle: handleToggleCwdGroup,
+    onToggleChatPinned: handleToggleChatPinned,
+    onUnpinPinnedChats: handleUnpinPinnedChats
+  }
+  const sidebarActionsRef = useRef<Record<string, (...args: never[]) => unknown>>(sidebarHandlers)
   useLayoutEffect(() => {
-    sidebarActionsRef.current = dependencies
+    sidebarActionsRef.current = sidebarHandlers
   })
   const sidebarActions = useMemo(
-    () => ({
-      onLoadMoreChats: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleLoadMoreChatsInGroup']>
-      ) => sidebarActionsRef.current.handleLoadMoreChatsInGroup(...args),
-      onShowLessChats: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleShowLessChatsInGroup']>
-      ) => sidebarActionsRef.current.handleShowLessChatsInGroup(...args),
-      onMarkChatDone: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleMarkChatDone']>
-      ) => sidebarActionsRef.current.handleMarkChatDone(...args),
-      onProjectDragEnd: (
-        ...args: Parameters<
-          ChatInteractionControllerDependencies['restoreExpandedProjectsAfterDrag']
-        >
-      ) => sidebarActionsRef.current.restoreExpandedProjectsAfterDrag(...args),
-      onProjectDragStart: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleProjectDragStart']>
-      ) => sidebarActionsRef.current.handleProjectDragStart(...args),
-      onMarkCwdChatsDone: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleMarkCwdChatsDone']>
-      ) => sidebarActionsRef.current.handleMarkCwdChatsDone(...args),
-      onNewChatInCwd: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleNewChatInCwd']>
-      ) => sidebarActionsRef.current.handleNewChatInCwd(...args),
-      onRenameChat: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleRenameChat']>
-      ) => sidebarActionsRef.current.handleRenameChat(...args),
-      onSelectProjectIcon: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleSelectProjectIcon']>
-      ) => sidebarActionsRef.current.handleSelectProjectIcon(...args),
-      onResolveApproval: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleResolveChatApproval']>
-      ) => sidebarActionsRef.current.handleResolveChatApproval(...args),
-      onReorderChats: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleReorderChats']>
-      ) => sidebarActionsRef.current.handleReorderChats(...args),
-      onSelectChat: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleSelectChat']>
-      ) => sidebarActionsRef.current.handleSelectChat(...args),
-      onToggle: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleToggleCwdGroup']>
-      ) => sidebarActionsRef.current.handleToggleCwdGroup(...args),
-      onToggleChatPinned: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleToggleChatPinned']>
-      ) => sidebarActionsRef.current.handleToggleChatPinned(...args),
-      onUnpinPinnedChats: (
-        ...args: Parameters<ChatInteractionControllerDependencies['handleUnpinPinnedChats']>
-      ) => sidebarActionsRef.current.handleUnpinPinnedChats(...args)
-    }),
+    () =>
+      Object.fromEntries(
+        Object.keys(sidebarHandlers).map((name) => [
+          name,
+          (...args: never[]) => sidebarActionsRef.current[name](...args)
+        ])
+      ) as typeof sidebarHandlers,
     []
   )
 

@@ -8,6 +8,7 @@ import type {
 } from '../../../shared/provider'
 import { getComposerMentionAtCaret } from '../composerMention'
 import { toCssRem } from '../cssUnits'
+import { getFirstSentence } from '../providerSettings'
 import { maxSelectedSkillCount } from './composerLimits'
 const maxFileMentionResultCount = 50
 export type FileMention = {
@@ -136,13 +137,6 @@ export const getFileMentionResults = (
 
 export const getComposerResultLabel = (result: ComposerResult): string =>
   result.kind === 'skill' ? result.skill.displayName || result.skill.name : result.app.name
-
-export const getFirstSentence = (value: string): string => {
-  const normalizedValue = value.replace(/\s+/g, ' ').trim()
-  if (!normalizedValue) return ''
-
-  return /^.*?[.!?](?=\s|$)/.exec(normalizedValue)?.[0] ?? normalizedValue
-}
 
 export const getSkillSummary = (skill: ProviderSkill): string =>
   getFirstSentence(skill.description || skill.shortDescription || '')

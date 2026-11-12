@@ -6,12 +6,12 @@ import { getChatCwdGroupKey, getChatCwdLabel } from '../chatControllerUtils'
 import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
 import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import { useWorkspaceSelection } from '../useWorkspaceSelection'
 import { useWorkspaceSidebarModel } from './useWorkspaceSidebarModel'
 
 type WorkspaceProjectResourcesDependencies = {
   chatState: ReturnType<typeof useWorkspaceChatState>
-  session: ReturnType<typeof useWorkspaceSession>
+  session: ReturnType<typeof useWorkspaceSelection>
   sourceState: ReturnType<typeof useWorkspaceSourceState>
   sidebarModel: ReturnType<typeof useWorkspaceSidebarModel>
   projectState: ReturnType<typeof useWorkspaceProjectState>

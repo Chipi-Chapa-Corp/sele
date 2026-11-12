@@ -30,10 +30,10 @@ export const ToolSequence: React.FC<{
   items: ProviderToolItem[]
   activeToolIds: Set<string>
   expanded: boolean
-  onLoadItem?: (itemId: string) => Promise<void> | void
-  onLoadPage?: (workingItemId: string, startIndex: number) => Promise<void> | void
-  onDisclosureToggle?: () => void
-  projectCwd?: string | null
+  onLoadItem: ((itemId: string) => Promise<void> | void) | undefined
+  onLoadPage: ((workingItemId: string, startIndex: number) => Promise<void> | void) | undefined
+  onDisclosureToggle: (() => void) | undefined
+  projectCwd: string | null | undefined
 }> = ({
   items,
   activeToolIds,

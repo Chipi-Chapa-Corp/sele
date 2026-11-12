@@ -57,11 +57,7 @@ import type {
   ProviderChatUpdatedEvent,
   ProviderId,
   ProviderReview,
-  ProviderSubagent,
   ProviderSubagentDetail,
-  ProviderUpdateOptions,
-  ProviderUserInputResponse,
-  ProviderUsageOptions,
   ProviderWorkingItem,
   ProviderWorkingStep,
   ProviderStartChatOptions,
@@ -254,7 +250,7 @@ export const getProviderKnownChats = async (
 export const getProviderCachedChat = async (
   providerId: ProviderId,
   chatId: string,
-  options?: { container?: import('../../shared/app').AppContainerTarget | null; opening?: boolean }
+  options?: { container?: AppContainerTarget | null; opening?: boolean }
 ): Promise<ProviderChatDetail | null> => {
   const metadata = await getChatMetadata(chatId)
   if (metadata.done || metadata.purpose) return null
@@ -317,34 +313,26 @@ const connectionAdapter = (providerId: ProviderId): OpenCodeProviderAdapter => {
   return openCodeAdapter
 }
 
-const codexAccountAdapters = new Map<string, CodexProviderAdapter>()
-const claudeAccountAdapters = new Map<string, ClaudeProviderAdapter>()
-const codexAccountAdapter = (account: string): CodexProviderAdapter => {
-  let adapter = codexAccountAdapters.get(account)
-  if (!adapter) {
-    adapter = withChatProcessRuntimes(new CodexProviderAdapter(account), {
-      store: getProviderProcessStore(),
-      accountId: account,
-      metadata: getChatMetadata,
-      create: () => new CodexProviderAdapter(account)
-    })
-    codexAccountAdapters.set(account, adapter)
+const createAccountAdapters = <T extends ProviderAdapter>(Adapter: new (account: string) => T) => {
+  const adapters = new Map<string, T>()
+  const get = (account: string): T => {
+    let adapter = adapters.get(account)
+    if (!adapter) {
+      adapter = withChatProcessRuntimes(new Adapter(account), {
+        store: getProviderProcessStore(),
+        accountId: account,
+        metadata: getChatMetadata,
+        create: () => new Adapter(account)
+      })
+      adapters.set(account, adapter)
+    }
+    return adapter
   }
-  return adapter
+  return { adapters, get }
 }
-const claudeAccountAdapter = (account: string): ClaudeProviderAdapter => {
-  let adapter = claudeAccountAdapters.get(account)
-  if (!adapter) {
-    adapter = withChatProcessRuntimes(new ClaudeProviderAdapter(account), {
-      store: getProviderProcessStore(),
-      accountId: account,
-      metadata: getChatMetadata,
-      create: () => new ClaudeProviderAdapter(account)
-    })
-    claudeAccountAdapters.set(account, adapter)
-  }
-  return adapter
-}
+const { get: codexAccountAdapter } = createAccountAdapters(CodexProviderAdapter)
+const { adapters: claudeAccountAdapters, get: claudeAccountAdapter } =
+  createAccountAdapters(ClaudeProviderAdapter)
 
 const withFailureRetries = (adapter: ProviderAdapter): ProviderAdapter =>
   withProviderNetworkRetries(adapter, (chatId, prompt, options, isCurrent) =>
@@ -623,6 +611,11 @@ const applyMetadataToDetail = async (
     })
   }
 }
+
+const withMetadata =
+  (providerId: ProviderId) =>
+  (detail: ProviderChatDetail): Promise<ProviderChatDetail> =>
+    applyMetadataToDetail(detail, providerId)
 
 const drainProviderChatUpdates = async (chatKey: string): Promise<void> => {
   if (processingProviderChatUpdateKeys.has(chatKey)) return
@@ -1295,7 +1288,7 @@ export const providerApi: ProviderApi = {
     adapters[providerId].getUpdateAvailability(options),
   getProviderUpdateImpact: (providerId, options) =>
     getProviderUpdateImpact(adapters[providerId], options),
-  updateProvider: async (providerId, options: ProviderUpdateOptions = {}) => {
+  updateProvider: async (providerId, options = {}) => {
     const adapter = adapters[providerId]
     const { stopActiveChats, ...sourceOptions } = options
     const activeChats = await collectActiveProviderChats(adapter, sourceOptions)
@@ -1344,7 +1337,7 @@ export const providerApi: ProviderApi = {
     adapters[providerId].setSkillsEnabled(paths, enabled, cwd, options),
   setAppEnabled: (providerId, appId, enabled, options) =>
     adapters[providerId].setAppEnabled(appId, enabled, options),
-  getUsage: async (providerId, options?: ProviderUsageOptions) => {
+  getUsage: async (providerId, options) => {
     const usage = await adapters[providerId].getUsage(options)
     if (options?.chatId && !usage.authenticationRequired) {
       await limitResetQueue.observe(providerId, options.chatId, usage.rateLimits)
@@ -1450,33 +1443,26 @@ export const providerApi: ProviderApi = {
       providerId
     )
   },
-  getSubagents: async (providerId, chatId): Promise<ProviderSubagent[]> => {
+  getSubagents: async (providerId, chatId) => {
     const metadata = await getChatMetadata(chatId)
     return adapters[providerId].getSubagents(chatId, { container: metadata.container })
   },
-  getSubagent: async (
-    providerId,
-    chatId,
-    subagentId,
-    window?: ProviderChatTurnWindow
-  ): Promise<ProviderSubagentDetail> => {
+  getSubagent: async (providerId, chatId, subagentId, window) => {
     const metadata = await getChatMetadata(chatId)
     return adapters[providerId].getSubagent(
       chatId,
       subagentId,
-      {
-        container: metadata.container
-      },
+      { container: metadata.container },
       window
     )
   },
-  cancelSubagent: async (providerId, chatId, subagentId): Promise<void> => {
+  cancelSubagent: async (providerId, chatId, subagentId) => {
     const metadata = await getChatMetadata(chatId)
     return adapters[providerId].cancelSubagent(chatId, subagentId, {
       container: metadata.container
     })
   },
-  sendSubagentMessage: async (providerId, chatId, subagentId, message): Promise<void> => {
+  sendSubagentMessage: async (providerId, chatId, subagentId, message) => {
     const adapter = adapters[providerId]
     if (!adapter.sendSubagentMessage) {
       throw new Error('Messaging subagents is not supported by this provider')
@@ -1493,9 +1479,7 @@ export const providerApi: ProviderApi = {
     return adapter.setChatGoal(chatId, objective, { container: metadata.container })
   },
   setChatTitle: (providerId, chatId, title) =>
-    adapters[providerId]
-      .setChatTitle(chatId, title)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+    adapters[providerId].setChatTitle(chatId, title).then(withMetadata(providerId)),
   generateOneShot: (providerId, message, options) =>
     adapters[providerId].generateOneShot(message, options),
   cancelOneShot: (providerId, generationId) => adapters[providerId].cancelOneShot(generationId),
@@ -1527,7 +1511,7 @@ export const providerApi: ProviderApi = {
   continueChat: (providerId, chatId, message, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].continueChat(chatId, message, options)
-    ).then((detail) => applyMetadataToDetail(detail, providerId)),
+    ).then(withMetadata(providerId)),
   continueChatInFork: async (providerId, chatId, message, purpose, options) => {
     try {
       const sourceMetadata = await getChatMetadata(chatId)
@@ -1573,10 +1557,9 @@ export const providerApi: ProviderApi = {
   sendActiveChatMessage: (providerId, chatId, message, mode, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].sendActiveChatMessage(chatId, message, mode, options)
-    ).then((detail) => applyMetadataToDetail(detail, providerId)),
+    ).then(withMetadata(providerId)),
   getLimitResetMessages: (providerId, chatId) => limitResetQueue.list(providerId, chatId),
-  addLimitResetMessage: (providerId, target, message, options) =>
-    queueLimitResetMessage(providerId, target, message, options),
+  addLimitResetMessage: queueLimitResetMessage,
   deleteLimitResetMessage: (providerId, target, messageId) =>
     limitResetQueue.remove(providerId, target, messageId, async (entry) => {
       if (!entry.chatId || !uncommittedResetHandoffs.has(entry.id)) return
@@ -1585,33 +1568,27 @@ export const providerApi: ProviderApi = {
       uncommittedResetHandoffs.delete(entry.id)
     }),
   deletePendingMessage: (providerId, chatId, messageId) =>
-    adapters[providerId]
-      .deletePendingMessage(chatId, messageId)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+    adapters[providerId].deletePendingMessage(chatId, messageId).then(withMetadata(providerId)),
   beginPendingMessageEdit: (providerId, chatId, messageId, editId) =>
     adapters[providerId]
       .beginPendingMessageEdit(chatId, messageId, editId)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+      .then(withMetadata(providerId)),
   cancelPendingMessageEdit: (providerId, chatId, messageId, editId) =>
     adapters[providerId]
       .cancelPendingMessageEdit(chatId, messageId, editId)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+      .then(withMetadata(providerId)),
   editPendingMessage: (providerId, chatId, messageId, message, options, editId) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].editPendingMessage(chatId, messageId, message, options, editId)
-    ).then((detail) => applyMetadataToDetail(detail, providerId)),
+    ).then(withMetadata(providerId)),
   steerPendingMessage: (providerId, chatId, messageId) =>
-    adapters[providerId]
-      .steerPendingMessage(chatId, messageId)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+    adapters[providerId].steerPendingMessage(chatId, messageId).then(withMetadata(providerId)),
   interruptPendingMessage: (providerId, chatId, messageId) =>
-    adapters[providerId]
-      .interruptPendingMessage(chatId, messageId)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+    adapters[providerId].interruptPendingMessage(chatId, messageId).then(withMetadata(providerId)),
   editMessage: (providerId, chatId, messageId, message, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].editMessage(chatId, messageId, message, options)
-    ).then((detail) => applyMetadataToDetail(detail, providerId)),
+    ).then(withMetadata(providerId)),
   updateChatPermissions: async (providerId, chatId, options) => {
     const metadata = await getChatMetadata(chatId)
     await adapters[providerId].updateChatPermissions!(chatId, {
@@ -1620,17 +1597,13 @@ export const providerApi: ProviderApi = {
     })
   },
   resolveApproval: (providerId, chatId, decision) =>
-    adapters[providerId]
-      .resolveApproval(chatId, decision)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
-  resolveUserInput: (providerId, chatId, requestId, response: ProviderUserInputResponse, options) =>
+    adapters[providerId].resolveApproval(chatId, decision).then(withMetadata(providerId)),
+  resolveUserInput: (providerId, chatId, requestId, response, options) =>
     adapters[providerId]
       .resolveUserInput(chatId, requestId, response, options)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+      .then(withMetadata(providerId)),
   compactChat: (providerId, chatId) =>
-    adapters[providerId]
-      .compactChat(chatId)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+    adapters[providerId].compactChat(chatId).then(withMetadata(providerId)),
   prepareLinkedChatContext: async (providerId, chatId, options) => {
     if (linkedChatOperations.has(options.operationId)) {
       throw new Error('This linked chat is already loading.')
@@ -1666,9 +1639,7 @@ export const providerApi: ProviderApi = {
     linkedChatOperations.get(operationId)?.abort()
   },
   stopChat: (providerId, chatId) =>
-    adapters[providerId]
-      .stopChat(chatId)
-      .then((detail) => applyMetadataToDetail(detail, providerId)),
+    adapters[providerId].stopChat(chatId).then(withMetadata(providerId)),
   markChatDone: async (providerId, chatId, done = true) => {
     if (done) await deferredChatProcessCleanup.schedule([chatId], providerId)
     else await deferredChatProcessCleanup.cancel(chatId)
@@ -1678,11 +1649,11 @@ export const providerApi: ProviderApi = {
     await deferredChatProcessCleanup.schedule(chatIds)
     return setChatsDone(chatIds, true)
   },
-  getCwdNotes: (providerId, cwd) => getCwdNotes(providerId, cwd),
-  setCwdNotes: (providerId, cwd, notes) => setCwdNotes(providerId, cwd, notes),
+  getCwdNotes,
+  setCwdNotes,
   markChatSeen: (_providerId, chatId, seenUpdatedAt) => setChatSeen(chatId, seenUpdatedAt),
   setChatPinned: (_providerId, chatId, pinned) => setChatPinned(chatId, pinned),
-  setChatOrder: (chatIds) => setChatOrder(chatIds),
+  setChatOrder,
   onChatUpdated: (listener) => {
     chatUpdatedListeners.add(listener)
     return () => chatUpdatedListeners.delete(listener)

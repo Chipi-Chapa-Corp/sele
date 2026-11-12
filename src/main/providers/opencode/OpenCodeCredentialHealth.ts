@@ -1,9 +1,7 @@
 import type { OpencodeClient, Provider } from '@opencode-ai/sdk/v2'
 import type { ProviderConnectionStatus } from '../../../shared/providerConnections'
 import { getOpenCodeErrorMessage, isOpenCodeAbortError } from './OpenCodeItemRenderers.ts'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+import { isRecord } from '../providerValues.ts'
 
 const credentialErrorTypes = new Set(['authentication_error', 'permission_error'])
 const credentialMessage = /\b(?:api[\s_-]?key|credential|unauthori[sz]ed|authenticat)/i

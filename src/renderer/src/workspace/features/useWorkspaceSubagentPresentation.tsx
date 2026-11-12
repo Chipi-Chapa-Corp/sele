@@ -9,25 +9,25 @@ import { useLatestHandler } from '../stableProps'
 import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
 
-import type { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import type { useWorkspaceSubagents } from '../wiring/useWorkspaceSubagents'
+import type { useConversationViewModel } from '../useConversationViewModel'
+import type { useWorkspaceSelection } from '../useWorkspaceSelection'
+import type { useSubagentController } from '../useSubagentController'
 type WorkspaceSubagentPresentationDependencies = {
   subagentState: ReturnType<typeof useWorkspaceSubagentState>
   chatState: ReturnType<typeof useWorkspaceChatState>
   session: Pick<
-    ReturnType<typeof useWorkspaceSession>,
+    ReturnType<typeof useWorkspaceSelection>,
     'selectedChatKey' | 'selectedChatSubagents' | 'activeSubagentChatView'
   >
   conversation: Pick<
-    ReturnType<typeof useWorkspaceConversation>,
+    ReturnType<typeof useConversationViewModel>,
     | 'effectiveChatTurnWindow'
     | 'visibleChatItems'
     | 'subagentChatConversationModel'
     | 'subagentVisibleChatItems'
   >
   subagents: Pick<
-    ReturnType<typeof useWorkspaceSubagents>,
+    ReturnType<typeof useSubagentController>,
     'handleOpenSubagentChat' | 'handleCancelSubagent'
   >
 }

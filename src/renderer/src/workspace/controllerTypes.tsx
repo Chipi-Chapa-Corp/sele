@@ -7,7 +7,6 @@ import type {
   AppGitCommitAction,
   AppSourceAvailability,
   AppGitDeleteBranchScope,
-  AppGitPatchChange,
   AppGitRecoverableFailure
 } from '../../../shared/app'
 
@@ -27,14 +26,6 @@ import {
   fallbackProviderModels,
   fallbackProviderSandboxModes
 } from '../../../shared/provider'
-
-import {
-  type ChangeSource,
-  type ChangedFile,
-  type GitChangeSource,
-  type PatchChangeSource,
-  type PatchFilterScope
-} from '../changeTree'
 
 import { type CommitActivityAction } from '../chatCommitStorage'
 
@@ -82,8 +73,6 @@ export type UserInputResolutionState = {
   resolving: boolean
   error: string | null
 }
-
-export type ProviderUpdateState = 'idle' | 'updating'
 
 export type UsageLoadState = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -151,13 +140,6 @@ export type DeferredProviderResourceRefresh = {
   container: AppContainerTarget
 }
 
-export type CachedPatchChangedFiles = {
-  containerKey: string
-  cwd: string
-  source: PatchChangeSource
-  files: ChangedFile[]
-}
-
 export type FileTreeScope = {
   containerKey: string
   cwd: string
@@ -186,11 +168,10 @@ export type RecentChatCacheEntry = {
 export type GitChangesScope = {
   sourceKey: string
   cwd: string
-  source: GitChangeSource
 }
 
-export type ScopedGitOperationError<TScope> = {
-  scope: TScope
+export type ScopedGitOperationError = {
+  scope: GitChangesScope
   cwd: string
   error: string
   operation: string
@@ -200,11 +181,6 @@ export type SourceAvailabilityState = {
   containerKey: string
   availability: AppSourceAvailability
   error: string | null
-}
-
-export type UncommittedPatchFilter = {
-  scope: PatchFilterScope
-  patches: AppGitPatchChange[]
 }
 
 export const chatListFetchPageSize = 100
@@ -301,14 +277,6 @@ export const writeGitCommitMode = (mode: GitCommitMode): void => {
     console.error('[caught:controllerTypes:writeGitCommitMode]', error)
   }
 }
-
-export const changeSourceLabels = {
-  uncommitted: 'Uncommitted',
-  lastTurn: 'Last turn',
-  chat: 'Chat'
-} satisfies Record<ChangeSource, string>
-
-export const getFixedChangeSource = (): ChangeSource => 'uncommitted'
 
 export const commitActionLabels = {
   commit: 'Commit',

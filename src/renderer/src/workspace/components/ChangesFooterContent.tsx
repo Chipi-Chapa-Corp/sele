@@ -5,12 +5,13 @@ import { Button, type ButtonDropdownAction } from '../../components/Button'
 import { Textarea } from '../../components/Textarea'
 import { AnimatedStatusIcon, GitSyncCountsLabel } from '../../components/AppStatusStates'
 import { useSwitchSettledDisabled } from '../../useSwitchSettledDisabled'
+import { commitActionLabels } from '../controllerTypes'
+import { getGitRecoveryActionIcon, getGitRecoveryRememberLabel } from '../gitControllerUtils'
 
 type ChangesFooterContentProps = WorkspaceController['changesFooter']
 
 export function ChangesFooterContent(props: ChangesFooterContentProps): ReactElement {
   const {
-    commitActionLabels,
     commitDisabled,
     commitInput,
     commitInputLabel,
@@ -21,8 +22,6 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
     currentProjectSyncError,
     directProjectCommitInProgress,
     getAiCommitActionDisabled,
-    getGitRecoveryActionIcon,
-    getGitRecoveryRememberLabel,
     gitCommitModeToggle,
     handleAiCommitChangedFiles,
     handleDismissGitCommitError,

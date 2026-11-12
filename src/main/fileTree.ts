@@ -38,9 +38,6 @@ export const readLocalFileTreePaths = async (cwd: string): Promise<FileTreePaths
   return { root, paths }
 }
 
-export const readLocalFileTree = async (cwd: string): Promise<AppFileTreeResult> =>
-  createFileTreeResult(await readLocalFileTreePaths(cwd))
-
 export const targetFileTreeScript = [
   'set -eu',
   'cd -- "$1"',
@@ -53,9 +50,6 @@ export const parseTargetFileTreePaths = (output: Buffer): FileTreePaths => {
   if (!root || output.at(-1) !== 0) throw new Error('Invalid file listing response')
   return { root, paths: paths.filter(Boolean).map((path) => path.replace(/^\.\//, '')) }
 }
-
-export const parseTargetFileTree = (output: Buffer): AppFileTreeResult =>
-  createFileTreeResult(parseTargetFileTreePaths(output))
 
 export const createFileTreeResult = ({ root, paths }: FileTreePaths): AppFileTreeResult => ({
   repositoryRoot: root,

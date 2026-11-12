@@ -16,17 +16,7 @@ export function useWorkspaceProviderUpdates({
   providerState,
   provider
 }: WorkspaceProviderUpdatesDependencies) {
-  const {
-    providerUpdateSuggestions,
-    providerUpdateErrors,
-    updatingProviderUpdateKey,
-    providerUpdateInProgress: anyProviderUpdateInProgress,
-    isProviderUpdating,
-    handleSkipProviderUpdate,
-    handleNeverSuggestProviderUpdate,
-    handleNeverSuggestProviderUpdateVersion,
-    handleUpdateProvider
-  } = useProviderUpdates({
+  const updates = useProviderUpdates({
     providerIds: sourceState.newSessionAvailableProviderIds,
     container: sourceState.newSessionContainer,
     onUpdated: async (_result, container) => {
@@ -43,21 +33,13 @@ export function useWorkspaceProviderUpdates({
     }
   })
 
-  // Chat operations depend only on the provider and runtime they will use.
-  const providerUpdateInProgress = isProviderUpdating(
-    provider.configProviderId,
-    provider.configProviderContainer
-  )
   return {
-    providerUpdateSuggestions,
-    providerUpdateErrors,
-    updatingProviderUpdateKey,
-    anyProviderUpdateInProgress,
-    isProviderUpdating,
-    handleSkipProviderUpdate,
-    handleNeverSuggestProviderUpdate,
-    handleNeverSuggestProviderUpdateVersion,
-    handleUpdateProvider,
-    providerUpdateInProgress
+    ...updates,
+    anyProviderUpdateInProgress: updates.providerUpdateInProgress,
+    // Chat operations depend only on the provider and runtime they will use.
+    providerUpdateInProgress: updates.isProviderUpdating(
+      provider.configProviderId,
+      provider.configProviderContainer
+    )
   }
 }

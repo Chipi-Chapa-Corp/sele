@@ -141,27 +141,18 @@ export class SqliteChatHistoryCache implements ChatHistoryStore {
         .execute()
       const byId = new Map(previous.map((turn) => [turn.turn_id, turn]))
       const now = this.now()
+      const page = {
+        fingerprint,
+        format_version: formatVersion,
+        coordinates: serializedCoordinates,
+        byte_size: bytes,
+        saved_at: now,
+        accessed_at: now
+      }
       await trx
         .insertInto('chat_history_page')
-        .values({
-          cache_key: key,
-          fingerprint,
-          format_version: formatVersion,
-          coordinates: serializedCoordinates,
-          byte_size: bytes,
-          saved_at: now,
-          accessed_at: now
-        })
-        .onConflict((c) =>
-          c.column('cache_key').doUpdateSet({
-            fingerprint,
-            format_version: formatVersion,
-            coordinates: serializedCoordinates,
-            byte_size: bytes,
-            saved_at: now,
-            accessed_at: now
-          })
-        )
+        .values({ cache_key: key, ...page })
+        .onConflict((c) => c.column('cache_key').doUpdateSet(page))
         .execute()
       for (const turn of payloads) {
         const old = byId.get(turn.turn_id)

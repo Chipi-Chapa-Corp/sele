@@ -157,7 +157,6 @@ function startRuntime(config) {
   })
 }
 
-module.exports = { startRuntime }
 if (require.main === module) {
   const input = createInterface({ input: process.stdin })
   input.once('line', (line) => {

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Target, X } from 'lucide-react'
 import { Button } from './Button'
@@ -6,18 +6,38 @@ import { PopupWindow } from './PopupWindow'
 import { Textarea } from './Textarea'
 import './ChatGoalButton.css'
 
-type ChatGoalButtonProps = {
-  triggerLabel?: string
-  disabled?: boolean
-  objective?: string | null
-  onSetGoal: (objective: string) => Promise<void>
+type PromptDialogButtonProps = {
+  title: string
+  icon: ReactNode
+  triggerLabel: string | undefined
+  disabled: boolean
+  initialDraft: string
+  headingDetail?: ReactNode
+  closeLabel: string
+  inputLabel: string
+  placeholder: string
+  submitLabel: string
+  errorTag: string
+  errorMessage: string
+  onOpen?: () => void
+  onSubmit: (value: string) => Promise<void>
 }
 
-export const ChatGoalButton: React.FC<ChatGoalButtonProps> = ({
+export const PromptDialogButton: React.FC<PromptDialogButtonProps> = ({
+  title,
+  icon,
   triggerLabel,
-  disabled = false,
-  objective = null,
-  onSetGoal
+  disabled,
+  initialDraft,
+  headingDetail,
+  closeLabel,
+  inputLabel,
+  placeholder,
+  submitLabel,
+  errorTag,
+  errorMessage,
+  onOpen,
+  onSubmit
 }) => {
   const id = useId()
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -53,34 +73,37 @@ export const ChatGoalButton: React.FC<ChatGoalButtonProps> = ({
     setSaving(true)
     setError(null)
     try {
-      await onSetGoal(value)
+      await onSubmit(value)
       setOpen(false)
     } catch (error) {
-      console.error('[caught:ChatGoalButton:save]', error)
-      setError(error instanceof Error ? error.message : 'Unable to set goal.')
+      console.error(errorTag, error)
+      setError(error instanceof Error ? error.message : errorMessage)
     } finally {
       savingRef.current = false
       setSaving(false)
     }
   }
 
+  const heading = <h2 id={`${id}-title`}>{title}</h2>
+
   return (
     <>
       <Button
         ref={buttonRef}
         theme="secondary"
-        aria-label="Set goal"
+        aria-label={title}
         label={triggerLabel}
-        title="Set goal"
+        title={title}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? `${id}-dialog` : undefined}
         disabled={disabled}
-        icon={<Target aria-hidden="true" />}
+        icon={icon}
         callback={() => {
-          setDraft(objective ?? '')
+          setDraft(initialDraft)
           setError(null)
           setOpen(true)
+          onOpen?.()
         }}
       />
       {open &&
@@ -110,11 +133,18 @@ export const ChatGoalButton: React.FC<ChatGoalButtonProps> = ({
                 }}
               >
                 <header className="chat-goal-dialog__header">
-                  <h2 id={`${id}-title`}>Set goal</h2>
+                  {headingDetail ? (
+                    <div className="limit-reset-dialog__heading">
+                      {heading}
+                      {headingDetail}
+                    </div>
+                  ) : (
+                    heading
+                  )}
                   <Button
                     theme="transparent"
                     size="small"
-                    aria-label="Close goal window"
+                    aria-label={closeLabel}
                     title="Close"
                     disabled={saving}
                     icon={<X aria-hidden="true" />}
@@ -122,12 +152,12 @@ export const ChatGoalButton: React.FC<ChatGoalButtonProps> = ({
                   />
                 </header>
                 <div className="chat-goal-dialog__body">
-                  <label htmlFor={`${id}-objective`}>Goal description</label>
+                  <label htmlFor={`${id}-objective`}>{inputLabel}</label>
                   <Textarea
                     ref={inputRef}
                     id={`${id}-objective`}
                     value={draft}
-                    placeholder="Describe the goal…"
+                    placeholder={placeholder}
                     rows={4}
                     disabled={saving}
                     onChange={(event) => setDraft(event.target.value)}
@@ -149,7 +179,7 @@ export const ChatGoalButton: React.FC<ChatGoalButtonProps> = ({
                   <Button theme="secondary" label="Cancel" disabled={saving} callback={close} />
                   <Button
                     theme="primary"
-                    label={saving ? 'Saving…' : 'Set goal'}
+                    label={saving ? 'Saving…' : submitLabel}
                     disabled={disabled || saving || !draft.trim()}
                     callback={save}
                   />
@@ -162,3 +192,25 @@ export const ChatGoalButton: React.FC<ChatGoalButtonProps> = ({
     </>
   )
 }
+
+export const ChatGoalButton: React.FC<{
+  triggerLabel?: string
+  disabled?: boolean
+  objective?: string | null
+  onSetGoal: (objective: string) => Promise<void>
+}> = ({ triggerLabel, disabled = false, objective, onSetGoal }) => (
+  <PromptDialogButton
+    title="Set goal"
+    icon={<Target aria-hidden="true" />}
+    triggerLabel={triggerLabel}
+    disabled={disabled}
+    initialDraft={objective ?? ''}
+    closeLabel="Close goal window"
+    inputLabel="Goal description"
+    placeholder="Describe the goal…"
+    submitLabel="Set goal"
+    errorTag="[caught:ChatGoalButton:save]"
+    errorMessage="Unable to set goal."
+    onSubmit={onSetGoal}
+  />
+)

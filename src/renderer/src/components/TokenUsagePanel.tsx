@@ -23,7 +23,7 @@ const categories = [
 const exactCount = (count: number): string => count.toLocaleString('en')
 
 /** One visual language for chat and period totals; categories never overlap. */
-export function TokenUsageCard({
+function TokenUsageCard({
   label,
   caption,
   scope,
@@ -144,8 +144,6 @@ function TokenUsagePanelContent({
   useEffect(() => {
     let cancelled = false
     let inFlight = false
-    setSummary(null)
-    setError(null)
     const load = async (): Promise<void> => {
       if (inFlight) return
       inFlight = true

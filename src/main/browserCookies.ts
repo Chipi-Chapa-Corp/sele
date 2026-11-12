@@ -27,7 +27,8 @@ import {
   deriveChromeV11Key,
   parseChromeLocalState,
   type ChromeCookieDecryptionKeys,
-  type ChromeCookieRow
+  type ChromeCookieRow,
+  type ChromeUserDataRoot
 } from './chromeCookieImport'
 import { chromeCookieReaderScript } from './chromeCookieReader'
 import { getContainerTargetKey, normalizeContainerTarget } from './containerTarget'
@@ -37,9 +38,8 @@ import {
   getBrowserCookieProfileStorageKey,
   getLinuxBrowserProfileRootRelativePaths,
   parseFirefoxProfilesIni,
-  type FirefoxCookieRow,
-  type FirefoxFamilyCookieImportBrowser,
-  type FirefoxProfileIniEntry
+  type BrowserCookieConversionResult,
+  type FirefoxCookieRow
 } from './firefoxCookieImport'
 import { firefoxCookieReaderScript } from './firefoxCookieReader'
 import { getHostCommand } from './hostProcess'
@@ -49,8 +49,7 @@ type BrowserProfileSource = {
   label: string
 }
 
-type BrowserProfileMetadataFile = {
-  contents: string
+type BrowserProfileMetadataLocation = {
   installation: string
   path: string
 }
@@ -69,17 +68,14 @@ type RegisteredBrowserProfile = DiscoveredBrowserProfile & {
   browser: BrowserCookieImportBrowser
 }
 
-type FirefoxCookieDatabase = {
-  cookies: FirefoxCookieRow[]
-  schemaVersion: number
+type CookieDatabase<TRow> = {
+  cookies: TRow[]
+  version: number
 }
 
-type ChromeCookieDatabase = {
-  cookies: ChromeCookieRow[]
-  databaseVersion: number
+type CookieRowFields<TRow> = {
+  [TKey in keyof TRow]: TRow[TKey] extends string ? 'string' : 'number'
 }
-
-type PathOperations = Pick<typeof posix, 'basename' | 'dirname' | 'isAbsolute' | 'join' | 'resolve'>
 
 const browserPartition = 'persist:sele-browser'
 const browserProfileRegistry = new Map<string, RegisteredBrowserProfile>()
@@ -87,119 +83,65 @@ const maximumRegisteredProfiles = 200
 const targetCommandTimeoutMs = 15_000
 const targetCommandMaxBuffer = 32 * 1024 * 1024
 
-const getBrowserProfileDiscoveryScript = (browser: FirefoxFamilyCookieImportBrowser): string =>
-  `
-if ! command -v base64 >/dev/null 2>&1; then
-  exit 127
-fi
-encode() {
-  base64 | tr -d '\\n'
-}
-for root in ${getLinuxBrowserProfileRootRelativePaths(browser)
-    .map((path) => `"$HOME/${path}"`)
-    .join(' ')}; do
-  ini="$root/profiles.ini"
-  if [ -r "$ini" ]; then
-    printf 'I\\t'
-    printf '%s' "$ini" | encode
-    printf '\\t'
-    encode < "$ini"
-    printf '\\n'
-  fi
-done
-`.trim()
+const profileMetadataFiles = {
+  chrome: {
+    fileName: 'Local State',
+    macDirectory: ['Google', 'Chrome'],
+    windowsDirectory: ['Google', 'Chrome', 'User Data'],
+    windowsRoot: 'LOCALAPPDATA'
+  },
+  firefox: {
+    fileName: 'profiles.ini',
+    macDirectory: ['Firefox'],
+    windowsDirectory: ['Mozilla', 'Firefox'],
+    windowsRoot: 'APPDATA'
+  },
+  zen: {
+    fileName: 'profiles.ini',
+    macDirectory: ['zen'],
+    windowsDirectory: ['zen'],
+    windowsRoot: 'APPDATA'
+  }
+} as const
 
 const getBrowserName = (browser: BrowserCookieImportBrowser): string =>
   browser === 'chrome' ? 'Chrome' : browser === 'zen' ? 'Zen' : 'Firefox'
 
-const getDirectProfilesIniFiles = (
-  browser: FirefoxFamilyCookieImportBrowser
-): BrowserProfileMetadataFile[] => {
-  const browserName = getBrowserName(browser)
+const getLinuxProfileRoots = (
+  browser: BrowserCookieImportBrowser
+): readonly ChromeUserDataRoot[] =>
+  browser === 'chrome'
+    ? chromeLinuxUserDataRoots
+    : getLinuxBrowserProfileRootRelativePaths(browser).map((relativePath) => ({
+        installation: `${getBrowserName(browser)}${relativePath.startsWith('.var/app/') ? ' Flatpak' : ''}`,
+        relativePath
+      }))
+
+const getDirectProfileMetadataLocations = (
+  browser: BrowserCookieImportBrowser
+): BrowserProfileMetadataLocation[] => {
+  const { fileName, macDirectory, windowsDirectory, windowsRoot } = profileMetadataFiles[browser]
+  const installation = getBrowserName(browser)
 
   if (process.platform === 'win32') {
-    const appData = process.env.APPDATA
-    return appData
-      ? [
-          {
-            contents: '',
-            installation: browserName,
-            path:
-              browser === 'zen'
-                ? win32.join(appData, 'zen', 'profiles.ini')
-                : win32.join(appData, 'Mozilla', 'Firefox', 'profiles.ini')
-          }
-        ]
-      : []
+    const root = process.env[windowsRoot]
+    return root ? [{ installation, path: win32.join(root, ...windowsDirectory, fileName) }] : []
   }
 
   if (process.platform === 'darwin') {
     return [
       {
-        contents: '',
-        installation: browserName,
-        path: join(
-          homedir(),
-          'Library',
-          'Application Support',
-          browser === 'zen' ? 'zen' : 'Firefox',
-          'profiles.ini'
-        )
+        installation,
+        path: join(homedir(), 'Library', 'Application Support', ...macDirectory, fileName)
       }
     ]
   }
 
-  return getLinuxBrowserProfileRootRelativePaths(browser).map((relativePath) => ({
-    contents: '',
-    installation: `${browserName}${relativePath.startsWith('.var/app/') ? ' Flatpak' : ''}`,
-    path: join(homedir(), relativePath, 'profiles.ini')
+  return getLinuxProfileRoots(browser).map((root) => ({
+    installation: root.installation,
+    path: join(homedir(), root.relativePath, fileName)
   }))
 }
-
-const getDirectChromeLocalStateFiles = (): BrowserProfileMetadataFile[] => {
-  if (process.platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA
-    return localAppData
-      ? [
-          {
-            contents: '',
-            installation: 'Chrome',
-            path: win32.join(localAppData, 'Google', 'Chrome', 'User Data', 'Local State')
-          }
-        ]
-      : []
-  }
-
-  if (process.platform === 'darwin') {
-    return [
-      {
-        contents: '',
-        installation: 'Chrome',
-        path: join(homedir(), 'Library', 'Application Support', 'Google', 'Chrome', 'Local State')
-      }
-    ]
-  }
-
-  return chromeLinuxUserDataRoots.map(({ installation, relativePath }) => ({
-    contents: '',
-    installation,
-    path: join(homedir(), relativePath, 'Local State')
-  }))
-}
-
-const getPathOperations = (direct: boolean): PathOperations => {
-  if (!direct || process.platform !== 'win32') return posix
-  return win32
-}
-
-const resolveProfileDirectory = (
-  iniPath: string,
-  profile: FirefoxProfileIniEntry,
-  pathOperations: PathOperations
-): string =>
-  profile.isRelative
-    ? pathOperations.resolve(pathOperations.dirname(iniPath), profile.path)
-    : profile.path
 
 const getDirectCookieStorageIdentity = async (path: string): Promise<string | null> => {
   try {
@@ -255,40 +197,6 @@ const shouldUseDirectAccess = async (container: AppContainerTarget | null): Prom
   )
 }
 
-const readDirectProfilesIniFiles = async (
-  browser: FirefoxFamilyCookieImportBrowser
-): Promise<BrowserProfileMetadataFile[]> => {
-  const files = await Promise.all(
-    getDirectProfilesIniFiles(browser).map(async (file) => {
-      try {
-        return { ...file, contents: await readFile(file.path, 'utf8') }
-      } catch (error) {
-        if (!isExpectedFileAbsenceError(error)) {
-          console.error('[caught:browserCookies:readDirectProfilesIniFiles]', error)
-        }
-        return null
-      }
-    })
-  )
-  return files.flatMap((file) => (file ? [file] : []))
-}
-
-const readDirectChromeLocalStateFiles = async (): Promise<BrowserProfileMetadataFile[]> => {
-  const files = await Promise.all(
-    getDirectChromeLocalStateFiles().map(async (file) => {
-      try {
-        return { ...file, contents: await readFile(file.path, 'utf8') }
-      } catch (error) {
-        if (!isExpectedFileAbsenceError(error)) {
-          console.error('[caught:browserCookies:readDirectChromeLocalStateFiles]', error)
-        }
-        return null
-      }
-    })
-  )
-  return files.flatMap((file) => (file ? [file] : []))
-}
-
 const decodeBase64 = (value: string): string | null => {
   if (!value || !/^[A-Za-z\d+/]*={0,2}$/.test(value)) return null
   try {
@@ -298,8 +206,6 @@ const decodeBase64 = (value: string): string | null => {
     return null
   }
 }
-
-const commandWasUnavailable = (error: unknown): boolean => isExpectedCommandAbsenceError(error)
 
 const getCookieDatabaseReadError = (browserName: string, detail: string): Error => {
   const normalizedDetail = detail.trim().replace(/\s+/g, ' ').slice(0, 240)
@@ -323,80 +229,71 @@ const getCookieDatabaseReadError = (browserName: string, detail: string): Error 
   )
 }
 
-const readTargetProfilesIniFiles = async (
-  container: AppContainerTarget | null,
-  browser: FirefoxFamilyCookieImportBrowser
-): Promise<BrowserProfileMetadataFile[]> => {
-  const output = await runTargetTextCommand(
-    'sh',
-    ['-lc', getBrowserProfileDiscoveryScript(browser)],
-    container
-  )
-  const browserName = getBrowserName(browser)
-
-  return output.split(/\r?\n/).flatMap((line) => {
-    const [kind, encodedPath, encodedContents] = line.split('\t')
-    if (kind !== 'I' || !encodedPath || !encodedContents) return []
-
-    const path = decodeBase64(encodedPath)
-    const contents = decodeBase64(encodedContents)
-    if (!path || contents == null) return []
-
-    return [
-      {
-        contents,
-        installation: `${browserName}${path.includes('/.var/app/') ? ' Flatpak' : ''}`,
-        path
-      } satisfies BrowserProfileMetadataFile
-    ]
-  })
-}
-
-const chromeProfileDiscoveryScript = `
+const getProfileMetadataDiscoveryScript = (browser: BrowserCookieImportBrowser): string =>
+  `
 if ! command -v base64 >/dev/null 2>&1; then
   exit 127
 fi
 encode() {
   base64 | tr -d '\\n'
 }
-for root in ${chromeLinuxUserDataRoots
-  .map(({ relativePath }) => `"$HOME/${relativePath}"`)
-  .join(' ')}; do
-  state="$root/Local State"
-  if [ -r "$state" ]; then
-    printf 'C\\t'
-    printf '%s' "$state" | encode
+for root in ${getLinuxProfileRoots(browser)
+    .map(({ relativePath }) => `"$HOME/${relativePath}"`)
+    .join(' ')}; do
+  file="$root/${profileMetadataFiles[browser].fileName}"
+  if [ -r "$file" ]; then
+    printf 'M\\t'
+    printf '%s' "$file" | encode
     printf '\\t'
-    encode < "$state"
+    encode < "$file"
     printf '\\n'
   fi
 done
 `.trim()
 
-const getChromeInstallationFromPath = (path: string): string =>
-  chromeLinuxUserDataRoots.find(({ relativePath }) => path.endsWith(`/${relativePath}/Local State`))
-    ?.installation ?? 'Chrome'
+const getTargetInstallation = (browser: BrowserCookieImportBrowser, path: string): string =>
+  browser === 'chrome'
+    ? (chromeLinuxUserDataRoots.find(({ relativePath }) =>
+        path.endsWith(`/${relativePath}/Local State`)
+      )?.installation ?? 'Chrome')
+    : `${getBrowserName(browser)}${path.includes('/.var/app/') ? ' Flatpak' : ''}`
 
-const readTargetChromeLocalStateFiles = async (
-  container: AppContainerTarget | null
-): Promise<BrowserProfileMetadataFile[]> => {
-  const output = await runTargetTextCommand('sh', ['-lc', chromeProfileDiscoveryScript], container)
+const readProfileMetadataFiles = async (
+  browser: BrowserCookieImportBrowser,
+  container: AppContainerTarget | null,
+  direct: boolean
+): Promise<Array<BrowserProfileMetadataLocation & { contents: string }>> => {
+  if (direct) {
+    const files = await Promise.all(
+      getDirectProfileMetadataLocations(browser).map(async (location) => {
+        try {
+          return { ...location, contents: await readFile(location.path, 'utf8') }
+        } catch (error) {
+          if (!isExpectedFileAbsenceError(error)) {
+            console.error('[caught:browserCookies:readProfileMetadataFiles]', error)
+          }
+          return null
+        }
+      })
+    )
+    return files.flatMap((file) => (file ? [file] : []))
+  }
+
+  const output = await runTargetTextCommand(
+    'sh',
+    ['-lc', getProfileMetadataDiscoveryScript(browser)],
+    container
+  )
 
   return output.split(/\r?\n/).flatMap((line) => {
     const [kind, encodedPath, encodedContents] = line.split('\t')
-    if (kind !== 'C' || !encodedPath || !encodedContents) return []
+    if (kind !== 'M' || !encodedPath || !encodedContents) return []
 
     const path = decodeBase64(encodedPath)
     const contents = decodeBase64(encodedContents)
     if (!path || contents == null) return []
 
-    return [
-      {
-        contents,
-        installation: getChromeInstallationFromPath(path),
-        path
-      } satisfies BrowserProfileMetadataFile
-    ]
+    return [{ contents, installation: getTargetInstallation(browser, path), path }]
   })
 }
 
@@ -450,91 +347,66 @@ const getReadableCookiePaths = async (
       )
     : getReadableTargetCookiePaths(cookiePaths, container)
 
-const discoverBrowserProfilesFromSource = async (
+const discoverProfilesFromSource = async (
   source: BrowserProfileSource,
-  browser: FirefoxFamilyCookieImportBrowser
+  browser: BrowserCookieImportBrowser
 ): Promise<DiscoveredBrowserProfile[]> => {
   const direct = await shouldUseDirectAccess(source.container)
-  const pathOperations = getPathOperations(direct)
-  const iniFiles = direct
-    ? await readDirectProfilesIniFiles(browser)
-    : await readTargetProfilesIniFiles(source.container, browser)
-  const candidates = iniFiles.flatMap((iniFile) =>
-    parseFirefoxProfilesIni(iniFile.contents).map((profile) => {
-      const profileDirectory = resolveProfileDirectory(iniFile.path, profile, pathOperations)
-      return {
-        cookiePath: pathOperations.join(profileDirectory, 'cookies.sqlite'),
-        default: profile.default,
-        description: `${source.label} · ${iniFile.installation} · ${pathOperations.basename(profileDirectory)}`,
-        name: profile.name
-      }
+  const pathOperations = direct && process.platform === 'win32' ? win32 : posix
+  const metadataFiles = await readProfileMetadataFiles(browser, source.container, direct)
+  const candidates = metadataFiles.flatMap((file) => {
+    const metadataDirectory = pathOperations.dirname(file.path)
+    const getCandidate = (
+      profile: { default: boolean; name: string },
+      profileDirectory: string,
+      cookieFiles: string[][],
+      localStatePath: string | null
+    ) => ({
+      cookiePaths: cookieFiles.map((segments) =>
+        pathOperations.join(profileDirectory, ...segments)
+      ),
+      default: profile.default,
+      description: `${source.label} · ${file.installation} · ${pathOperations.basename(profileDirectory)}`,
+      localStatePath,
+      name: profile.name
     })
-  )
-  const readablePaths = await getReadableCookiePaths(
-    candidates.map(({ cookiePath }) => cookiePath),
-    direct,
-    source.container
-  )
 
-  return candidates.flatMap((candidate) =>
-    readablePaths.has(candidate.cookiePath)
-      ? [
-          {
-            ...candidate,
-            container: source.container,
-            localStatePath: null,
-            storageIdentity: readablePaths.get(candidate.cookiePath) ?? 'path'
-          } satisfies DiscoveredBrowserProfile
-        ]
-      : []
-  )
-}
-
-const discoverChromeProfilesFromSource = async (
-  source: BrowserProfileSource
-): Promise<DiscoveredBrowserProfile[]> => {
-  const direct = await shouldUseDirectAccess(source.container)
-  const pathOperations = getPathOperations(direct)
-  const localStateFiles = direct
-    ? await readDirectChromeLocalStateFiles()
-    : await readTargetChromeLocalStateFiles(source.container)
-  const candidates = localStateFiles.flatMap((localStateFile) =>
-    parseChromeLocalState(localStateFile.contents).map((profile) => {
-      const profileDirectory = pathOperations.join(
-        pathOperations.dirname(localStateFile.path),
-        profile.path
-      )
-      return {
-        cookiePaths: [
-          pathOperations.join(profileDirectory, 'Network', 'Cookies'),
-          pathOperations.join(profileDirectory, 'Cookies')
-        ],
-        default: profile.default,
-        description: `${source.label} · ${localStateFile.installation} · ${pathOperations.basename(profileDirectory)}`,
-        localStatePath: localStateFile.path,
-        name: profile.name
-      }
-    })
-  )
+    return browser === 'chrome'
+      ? parseChromeLocalState(file.contents).map((profile) =>
+          getCandidate(
+            profile,
+            pathOperations.join(metadataDirectory, profile.path),
+            [['Network', 'Cookies'], ['Cookies']],
+            file.path
+          )
+        )
+      : parseFirefoxProfilesIni(file.contents).map((profile) =>
+          getCandidate(
+            profile,
+            profile.isRelative
+              ? pathOperations.resolve(metadataDirectory, profile.path)
+              : profile.path,
+            [['cookies.sqlite']],
+            null
+          )
+        )
+  })
   const readablePaths = await getReadableCookiePaths(
     candidates.flatMap(({ cookiePaths }) => cookiePaths),
     direct,
     source.container
   )
 
-  return candidates.flatMap((candidate) => {
-    const cookiePath = candidate.cookiePaths.find((path) => readablePaths.has(path))
+  return candidates.flatMap(({ cookiePaths, ...candidate }) => {
+    const cookiePath = cookiePaths.find((path) => readablePaths.has(path))
     if (!cookiePath) return []
     return [
       {
+        ...candidate,
         container: source.container,
         cookiePath,
-        default: candidate.default,
-        description: candidate.description,
-        localStatePath: candidate.localStatePath,
-        name: candidate.name,
         storageIdentity: readablePaths.get(cookiePath) ?? 'path'
-      } satisfies DiscoveredBrowserProfile
+      }
     ]
   })
 }
@@ -549,15 +421,7 @@ const getBrowserProfileSources = async (
       ? normalizedCurrentEnvironment
       : await getCurrentContainerTarget()
 
-  if (
-    detectedCurrentEnvironment?.kind === 'container' &&
-    !sources.some(
-      (source) =>
-        source.container &&
-        getContainerTargetKey(source.container) ===
-          getContainerTargetKey(detectedCurrentEnvironment)
-    )
-  ) {
+  if (detectedCurrentEnvironment?.kind === 'container') {
     sources.push({ container: detectedCurrentEnvironment, label: 'Current environment' })
   }
 
@@ -567,17 +431,10 @@ const getBrowserProfileSources = async (
 export const discoverBrowserCookieProfiles = async (
   options: BrowserCookieProfileDiscoveryOptions
 ): Promise<BrowserCookieProfile[]> => {
-  if (options.browser !== 'chrome' && options.browser !== 'firefox' && options.browser !== 'zen') {
-    throw new Error('Unsupported browser')
-  }
-
   const sources = await getBrowserProfileSources(options.currentEnvironment)
   const discoveredBySource = await Promise.all(
     sources.map((source) =>
-      (options.browser === 'chrome'
-        ? discoverChromeProfilesFromSource(source)
-        : discoverBrowserProfilesFromSource(source, options.browser)
-      ).catch((error) => {
+      discoverProfilesFromSource(source, options.browser).catch((error) => {
         if (!isExpectedCommandAbsenceError(error)) {
           console.error('[caught:browserCookies:discoverBrowserCookieProfiles]', error)
         }
@@ -622,12 +479,12 @@ const getDatabaseColumnExpression = (
   fallback: string
 ): string => (columns.has(name) ? `"${name}"` : `${fallback} AS "${name}"`)
 
-const readDirectFirefoxCookieDatabase = (cookiePath: string): FirefoxCookieDatabase => {
+const readDirectFirefoxCookieDatabase = (cookiePath: string): CookieDatabase<FirefoxCookieRow> => {
   const database = new Database(cookiePath, { fileMustExist: true, readonly: true })
 
   try {
     database.pragma('query_only = ON')
-    const schemaVersion = Number(database.pragma('user_version', { simple: true }))
+    const version = Number(database.pragma('user_version', { simple: true }))
     const columns = new Set(
       (database.prepare('PRAGMA table_info(moz_cookies)').all() as Array<{ name: string }>).map(
         ({ name }) => name
@@ -639,13 +496,7 @@ const readDirectFirefoxCookieDatabase = (cookiePath: string): FirefoxCookieDatab
     }
 
     const selectedColumns = [
-      getDatabaseColumnExpression(columns, 'name', "''"),
-      getDatabaseColumnExpression(columns, 'value', "''"),
-      getDatabaseColumnExpression(columns, 'host', "''"),
-      getDatabaseColumnExpression(columns, 'path', "'/'"),
-      getDatabaseColumnExpression(columns, 'expiry', '0'),
-      getDatabaseColumnExpression(columns, 'isSecure', '0'),
-      getDatabaseColumnExpression(columns, 'isHttpOnly', '0'),
+      ...requiredColumns.map((column) => `"${column}"`),
       getDatabaseColumnExpression(columns, 'sameSite', '256'),
       getDatabaseColumnExpression(columns, 'originAttributes', "''"),
       getDatabaseColumnExpression(columns, 'schemeMap', '0'),
@@ -655,7 +506,7 @@ const readDirectFirefoxCookieDatabase = (cookiePath: string): FirefoxCookieDatab
       .prepare(`SELECT ${selectedColumns.join(', ')} FROM moz_cookies`)
       .all() as FirefoxCookieRow[]
 
-    return { cookies, schemaVersion }
+    return { cookies, version }
   } finally {
     database.close()
   }
@@ -684,50 +535,47 @@ const readCookieDatabaseSnapshot = async <TResult>(
   }
 }
 
-const readDirectFirefoxCookies = (cookiePath: string): Promise<FirefoxCookieDatabase> =>
-  readCookieDatabaseSnapshot(cookiePath, readDirectFirefoxCookieDatabase)
-
-const normalizeChromeCookieRow = (value: unknown): ChromeCookieRow | null => {
+const normalizeCookieRow = <TRow>(fields: CookieRowFields<TRow>, value: unknown): TRow | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const row = value as Record<string, unknown>
-  if (
-    typeof row.encryptedValue !== 'string' ||
-    typeof row.expiresUtc !== 'string' ||
-    typeof row.host !== 'string' ||
-    typeof row.name !== 'string' ||
-    typeof row.path !== 'string' ||
-    typeof row.topFrameSiteKey !== 'string' ||
-    typeof row.value !== 'string'
-  ) {
-    return null
+  const row: Record<string, unknown> = {}
+  for (const [name, kind] of Object.entries(fields)) {
+    const field = (value as Record<string, unknown>)[name]
+    if (kind === 'string' ? typeof field !== 'string' : !Number.isFinite(Number(field))) return null
+    row[name] = kind === 'string' ? field : Number(field)
   }
-
-  const numbers = [
-    row.hasExpires,
-    row.isHttpOnly,
-    row.isSecure,
-    row.sameSite,
-    row.sourceScheme
-  ].map(Number)
-  if (numbers.some((number) => !Number.isFinite(number))) return null
-
-  return {
-    encryptedValue: row.encryptedValue,
-    expiresUtc: row.expiresUtc,
-    hasExpires: numbers[0],
-    host: row.host,
-    isHttpOnly: numbers[1],
-    isSecure: numbers[2],
-    name: row.name,
-    path: row.path,
-    sameSite: numbers[3],
-    sourceScheme: numbers[4],
-    topFrameSiteKey: row.topFrameSiteKey,
-    value: row.value
-  }
+  return row as TRow
 }
 
-const readDirectChromeCookieDatabase = (cookiePath: string): ChromeCookieDatabase => {
+const chromeCookieRowFields: CookieRowFields<ChromeCookieRow> = {
+  encryptedValue: 'string',
+  expiresUtc: 'string',
+  hasExpires: 'number',
+  host: 'string',
+  isHttpOnly: 'number',
+  isSecure: 'number',
+  name: 'string',
+  path: 'string',
+  sameSite: 'number',
+  sourceScheme: 'number',
+  topFrameSiteKey: 'string',
+  value: 'string'
+}
+
+const firefoxCookieRowFields: CookieRowFields<FirefoxCookieRow> = {
+  expiry: 'number',
+  host: 'string',
+  isHttpOnly: 'number',
+  isPartitionedAttributeSet: 'number',
+  isSecure: 'number',
+  name: 'string',
+  originAttributes: 'string',
+  path: 'string',
+  sameSite: 'number',
+  schemeMap: 'number',
+  value: 'string'
+}
+
+const readDirectChromeCookieDatabase = (cookiePath: string): CookieDatabase<ChromeCookieRow> => {
   const database = new Database(cookiePath, { fileMustExist: true, readonly: true })
 
   try {
@@ -766,10 +614,10 @@ const readDirectChromeCookieDatabase = (cookiePath: string): ChromeCookieDatabas
       | undefined
 
     return {
-      databaseVersion: Number(versionRow?.value ?? 0),
+      version: Number(versionRow?.value ?? 0),
       cookies: rows.flatMap((row) => {
         const encryptedValue = row.encrypted_value
-        const normalized = normalizeChromeCookieRow({
+        const normalized = normalizeCookieRow(chromeCookieRowFields, {
           ...row,
           encryptedValue: Buffer.isBuffer(encryptedValue) ? encryptedValue.toString('base64') : '',
           value: typeof row.value === 'string' ? row.value : ''
@@ -782,71 +630,32 @@ const readDirectChromeCookieDatabase = (cookiePath: string): ChromeCookieDatabas
   }
 }
 
-const readDirectChromeCookies = (cookiePath: string): Promise<ChromeCookieDatabase> =>
-  readCookieDatabaseSnapshot(cookiePath, readDirectChromeCookieDatabase)
-
-const normalizeFirefoxCookieRow = (value: unknown): FirefoxCookieRow | null => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const row = value as Record<string, unknown>
-  if (
-    typeof row.name !== 'string' ||
-    typeof row.value !== 'string' ||
-    typeof row.host !== 'string' ||
-    typeof row.path !== 'string' ||
-    typeof row.originAttributes !== 'string'
-  ) {
-    return null
-  }
-
-  const numbers = [
-    row.expiry,
-    row.isSecure,
-    row.isHttpOnly,
-    row.sameSite,
-    row.schemeMap,
-    row.isPartitionedAttributeSet
-  ].map(Number)
-  if (numbers.some((number) => !Number.isFinite(number))) return null
-
-  return {
-    name: row.name,
-    value: row.value,
-    host: row.host,
-    path: row.path,
-    originAttributes: row.originAttributes,
-    expiry: numbers[0],
-    isSecure: numbers[1],
-    isHttpOnly: numbers[2],
-    sameSite: numbers[3],
-    schemeMap: numbers[4],
-    isPartitionedAttributeSet: numbers[5]
-  }
-}
-
-const readTargetFirefoxCookies = async (
-  profile: RegisteredBrowserProfile
-): Promise<FirefoxCookieDatabase> => {
+const readTargetCookieDatabase = async <TRow>(
+  profile: RegisteredBrowserProfile,
+  readerScript: string,
+  versionKey: 'databaseVersion' | 'schemaVersion',
+  fields: CookieRowFields<TRow>
+): Promise<CookieDatabase<TRow>> => {
   let output: string | null = null
   const readerFailures: unknown[] = []
   for (const python of ['python3', 'python']) {
     try {
       output = await runTargetTextCommand(
         python,
-        ['-c', firefoxCookieReaderScript, profile.cookiePath],
+        ['-c', readerScript, profile.cookiePath],
         profile.container,
         30_000
       )
       break
     } catch (error) {
-      if (!commandWasUnavailable(error)) {
-        console.error('[caught:browserCookies:readTargetFirefoxCookies]', error)
+      if (!isExpectedCommandAbsenceError(error)) {
+        console.error('[caught:browserCookies:readTargetCookieDatabase]', error)
       }
       readerFailures.push(error)
-      // Try the other common Python executable name.
     }
   }
   if (output == null) {
-    if (readerFailures.length > 0 && readerFailures.every(commandWasUnavailable)) {
+    if (readerFailures.every((error) => isExpectedCommandAbsenceError(error))) {
       throw new Error('Python is required to import cookies from this environment.')
     }
     throw new Error('Unable to start the cookie reader in this environment.')
@@ -863,19 +672,19 @@ const readTargetFirefoxCookies = async (
     throw new Error(`${browserName} returned an unreadable cookie database.`)
   }
 
-  const result = parsed as { cookies?: unknown; error?: unknown; schemaVersion?: unknown }
+  const result = parsed as Record<string, unknown>
   if (typeof result.error === 'string') {
     throw getCookieDatabaseReadError(browserName, result.error)
   }
-  const schemaVersion = Number(result.schemaVersion)
-  if (!Number.isFinite(schemaVersion) || !Array.isArray(result.cookies)) {
+  const version = Number(result[versionKey])
+  if (!Number.isFinite(version) || !Array.isArray(result.cookies)) {
     throw new Error(`${browserName} returned an unreadable cookie database.`)
   }
 
   return {
-    schemaVersion,
+    version,
     cookies: result.cookies.flatMap((cookie) => {
-      const normalizedCookie = normalizeFirefoxCookieRow(cookie)
+      const normalizedCookie = normalizeCookieRow(fields, cookie)
       return normalizedCookie ? [normalizedCookie] : []
     })
   }
@@ -883,84 +692,22 @@ const readTargetFirefoxCookies = async (
 
 const readFirefoxCookies = async (
   profile: RegisteredBrowserProfile
-): Promise<FirefoxCookieDatabase> => {
-  if (await shouldUseDirectAccess(profile.container)) {
-    try {
-      return readDirectFirefoxCookies(profile.cookiePath)
-    } catch (error) {
-      const browserName = getBrowserName(profile.browser)
-      throw getCookieDatabaseReadError(
-        browserName,
-        error instanceof Error ? error.message : 'unknown database error'
+): Promise<CookieDatabase<FirefoxCookieRow>> =>
+  (await shouldUseDirectAccess(profile.container))
+    ? readCookieDatabaseSnapshot(profile.cookiePath, readDirectFirefoxCookieDatabase)
+    : readTargetCookieDatabase(
+        profile,
+        firefoxCookieReaderScript,
+        'schemaVersion',
+        firefoxCookieRowFields
       )
-    }
-  }
-
-  return readTargetFirefoxCookies(profile)
-}
-
-const readTargetChromeCookies = async (
-  profile: RegisteredBrowserProfile
-): Promise<ChromeCookieDatabase> => {
-  let output: string | null = null
-  const readerFailures: unknown[] = []
-  for (const python of ['python3', 'python']) {
-    try {
-      output = await runTargetTextCommand(
-        python,
-        ['-c', chromeCookieReaderScript, profile.cookiePath],
-        profile.container,
-        30_000
-      )
-      break
-    } catch (error) {
-      if (!commandWasUnavailable(error)) {
-        console.error('[browserCookies:readTargetChromeCookies] Cookie reader failed', error)
-      }
-      readerFailures.push(error)
-    }
-  }
-  if (output == null) {
-    if (readerFailures.length > 0 && readerFailures.every(commandWasUnavailable)) {
-      throw new Error('Python is required to import cookies from this environment.')
-    }
-    throw new Error('Unable to start the cookie reader in this environment.')
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(output)
-  } catch {
-    throw new Error('Chrome returned an unreadable cookie database.')
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Chrome returned an unreadable cookie database.')
-  }
-
-  const result = parsed as { cookies?: unknown; databaseVersion?: unknown; error?: unknown }
-  if (typeof result.error === 'string') {
-    throw getCookieDatabaseReadError('Chrome', result.error)
-  }
-  const databaseVersion = Number(result.databaseVersion)
-  if (!Number.isFinite(databaseVersion) || !Array.isArray(result.cookies)) {
-    throw new Error('Chrome returned an unreadable cookie database.')
-  }
-
-  return {
-    databaseVersion,
-    cookies: result.cookies.flatMap((cookie) => {
-      const normalizedCookie = normalizeChromeCookieRow(cookie)
-      return normalizedCookie ? [normalizedCookie] : []
-    })
-  }
-}
 
 const readChromeCookies = async (
   profile: RegisteredBrowserProfile
-): Promise<ChromeCookieDatabase> => {
+): Promise<CookieDatabase<ChromeCookieRow>> => {
   if (await shouldUseDirectAccess(profile.container)) {
     try {
-      return await readDirectChromeCookies(profile.cookiePath)
+      return await readCookieDatabaseSnapshot(profile.cookiePath, readDirectChromeCookieDatabase)
     } catch (error) {
       throw getCookieDatabaseReadError(
         'Chrome',
@@ -969,7 +716,12 @@ const readChromeCookies = async (
     }
   }
 
-  return readTargetChromeCookies(profile)
+  return readTargetCookieDatabase(
+    profile,
+    chromeCookieReaderScript,
+    'databaseVersion',
+    chromeCookieRowFields
+  )
 }
 
 const getChromeCookieProtectionTag = (cookie: ChromeCookieRow): string | null => {
@@ -1041,7 +793,7 @@ const getChromeWindowsV10Key = async (
       ).trim()
       break
     } catch (error) {
-      if (!commandWasUnavailable(error)) {
+      if (!isExpectedCommandAbsenceError(error)) {
         console.error('[caught:browserCookies:getChromeWindowsV10Key]', error)
       }
       // Try the other standard PowerShell executable name.
@@ -1059,7 +811,7 @@ const getChromeWindowsV10Key = async (
 }
 
 const getChromeCookieDecryptionKeys = async (
-  source: ChromeCookieDatabase,
+  source: CookieDatabase<ChromeCookieRow>,
   profile: RegisteredBrowserProfile
 ): Promise<ChromeCookieDecryptionKeys> => {
   const protectionTags = new Set(
@@ -1076,104 +828,68 @@ const getChromeCookieDecryptionKeys = async (
     throw new Error("Chrome's Secret Portal cookie encryption is not supported yet.")
   }
 
-  if (process.platform === 'darwin') {
-    const unsupportedTag = [...protectionTags].find((tag) => tag !== 'v10')
-    if (unsupportedTag)
-      throw new Error(`Chrome cookie encryption ${unsupportedTag} is unsupported.`)
-    return { v10: await getChromeMacV10Key(profile) }
+  const { platform } = process
+  if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') {
+    throw new Error(`Importing encrypted Chrome cookies is unsupported on ${platform}.`)
   }
+  const unsupportedTag = [...protectionTags].find(
+    (tag) => tag !== 'v10' && (tag !== 'v11' || platform !== 'linux')
+  )
+  if (unsupportedTag) throw new Error(`Chrome cookie encryption ${unsupportedTag} is unsupported.`)
+  if (platform === 'darwin') return { v10: await getChromeMacV10Key(profile) }
+  if (platform === 'win32') return { v10: await getChromeWindowsV10Key(profile) }
 
-  if (process.platform === 'win32') {
-    const unsupportedTag = [...protectionTags].find((tag) => tag !== 'v10')
-    if (unsupportedTag)
-      throw new Error(`Chrome cookie encryption ${unsupportedTag} is unsupported.`)
-    return { v10: await getChromeWindowsV10Key(profile) }
+  const keys: ChromeCookieDecryptionKeys = {
+    v10: { algorithm: 'aes-128-cbc', key: deriveChromeLinuxV10Key() }
   }
+  if (!protectionTags.has('v11')) return keys
 
-  if (process.platform === 'linux') {
-    const unsupportedTag = [...protectionTags].find((tag) => tag !== 'v10' && tag !== 'v11')
-    if (unsupportedTag) {
-      throw new Error(`Chrome cookie encryption ${unsupportedTag} is unsupported.`)
-    }
-
-    const keys: ChromeCookieDecryptionKeys = {
-      v10: { algorithm: 'aes-128-cbc', key: deriveChromeLinuxV10Key() }
-    }
-    if (!protectionTags.has('v11')) return keys
-
-    let secret: string
-    try {
-      secret = (
-        await runTargetTextCommand(
-          'secret-tool',
-          ['lookup', 'application', 'chrome'],
-          profile.container
-        )
-      ).trim()
-    } catch {
-      throw new Error(
-        "Chrome's system keyring secret is unavailable. Unlock the keyring and ensure secret-tool is installed."
+  let secret: string
+  try {
+    secret = (
+      await runTargetTextCommand(
+        'secret-tool',
+        ['lookup', 'application', 'chrome'],
+        profile.container
       )
-    }
-    if (!secret) {
-      throw new Error("Chrome's system keyring does not contain its cookie encryption key.")
-    }
-    keys.v11 = { algorithm: 'aes-128-cbc', key: deriveChromeV11Key(secret) }
-    return keys
+    ).trim()
+  } catch {
+    throw new Error(
+      "Chrome's system keyring secret is unavailable. Unlock the keyring and ensure secret-tool is installed."
+    )
   }
-
-  throw new Error(`Importing encrypted Chrome cookies is unsupported on ${process.platform}.`)
+  if (!secret) {
+    throw new Error("Chrome's system keyring does not contain its cookie encryption key.")
+  }
+  keys.v11 = { algorithm: 'aes-128-cbc', key: deriveChromeV11Key(secret) }
+  return keys
 }
-
-const createCookieImportSkipReasons = (): BrowserCookieImportResult['skipReasons'] => ({
-  contextual: 0,
-  expired: 0,
-  invalid: 0,
-  partitioned: 0,
-  protected: 0,
-  rejected: 0
-})
 
 export const importBrowserCookies = async (
   options: BrowserCookieImportOptions
 ): Promise<BrowserCookieImportResult> => {
-  if (options.browser !== 'chrome' && options.browser !== 'firefox' && options.browser !== 'zen') {
-    throw new Error('Unsupported browser')
-  }
-
   const profile = browserProfileRegistry.get(options.profileId)
   if (!profile || profile.browser !== options.browser) {
     throw new Error(`Reload ${getBrowserName(options.browser)} profiles and choose one to import.`)
   }
 
   const cookieStore = session.fromPartition(browserPartition).cookies
-  let imported = 0
-  const skipReasons = createCookieImportSkipReasons()
-
-  if (options.browser === 'chrome') {
-    const source = await readChromeCookies(profile)
-    const decryptionKeys = await getChromeCookieDecryptionKeys(source, profile)
-    const preparedCookies = source.cookies.map((chromeCookie) => ({
-      chromeCookie,
-      decryption: decryptChromeCookieValue(chromeCookie, source.databaseVersion, decryptionKeys)
-    }))
-    const encryptedCookieCount = preparedCookies.filter(({ chromeCookie }) =>
-      Boolean(getChromeCookieProtectionTag(chromeCookie))
-    ).length
-    const decryptedCookieCount = preparedCookies.filter(
-      ({ chromeCookie, decryption }) =>
-        Boolean(getChromeCookieProtectionTag(chromeCookie)) && decryption.value != null
-    ).length
-    if (encryptedCookieCount > 0 && decryptedCookieCount === 0) {
-      throw new Error("Unable to decrypt Chrome cookies with Chrome's key from the system keyring.")
+  const storeCookies = async <TCookie>(
+    cookies: TCookie[],
+    convert: (cookie: TCookie) => BrowserCookieConversionResult | { skipReason: 'protected' }
+  ): Promise<BrowserCookieImportResult> => {
+    let imported = 0
+    const skipReasons = {
+      contextual: 0,
+      expired: 0,
+      invalid: 0,
+      partitioned: 0,
+      protected: 0,
+      rejected: 0
     }
 
-    for (const { chromeCookie, decryption } of preparedCookies) {
-      if (decryption.value == null) {
-        skipReasons.protected += 1
-        continue
-      }
-      const conversion = convertChromeCookie(chromeCookie, decryption.value)
+    for (const cookie of cookies) {
+      const conversion = convert(cookie)
       if (conversion.skipReason) {
         skipReasons[conversion.skipReason] += 1
         continue
@@ -1189,28 +905,33 @@ export const importBrowserCookies = async (
 
     await cookieStore.flushStore()
     const skipped = Object.values(skipReasons).reduce((total, count) => total + count, 0)
-    return { imported, skipped, skipReasons, total: source.cookies.length }
+    return { imported, skipped, skipReasons, total: cookies.length }
+  }
+
+  if (options.browser === 'chrome') {
+    const source = await readChromeCookies(profile)
+    const decryptionKeys = await getChromeCookieDecryptionKeys(source, profile)
+    const preparedCookies = source.cookies.map((chromeCookie) => ({
+      chromeCookie,
+      decryption: decryptChromeCookieValue(chromeCookie, source.version, decryptionKeys)
+    }))
+    const encryptedCookies = preparedCookies.filter(({ chromeCookie }) =>
+      getChromeCookieProtectionTag(chromeCookie)
+    )
+    if (
+      encryptedCookies.length > 0 &&
+      encryptedCookies.every(({ decryption }) => decryption.value == null)
+    ) {
+      throw new Error("Unable to decrypt Chrome cookies with Chrome's key from the system keyring.")
+    }
+
+    return storeCookies(preparedCookies, ({ chromeCookie, decryption }) =>
+      decryption.value == null
+        ? { skipReason: 'protected' }
+        : convertChromeCookie(chromeCookie, decryption.value)
+    )
   }
 
   const source = await readFirefoxCookies(profile)
-
-  for (const firefoxCookie of source.cookies) {
-    const conversion = convertFirefoxCookie(firefoxCookie, source.schemaVersion)
-    if (conversion.skipReason) {
-      skipReasons[conversion.skipReason] += 1
-      continue
-    }
-
-    try {
-      await cookieStore.set(conversion.cookie)
-      imported += 1
-    } catch (error) {
-      console.error('[caught:browserCookies:importBrowserCookies]', error)
-      skipReasons.rejected += 1
-    }
-  }
-
-  await cookieStore.flushStore()
-  const skipped = Object.values(skipReasons).reduce((total, count) => total + count, 0)
-  return { imported, skipped, skipReasons, total: source.cookies.length }
+  return storeCookies(source.cookies, (cookie) => convertFirefoxCookie(cookie, source.version))
 }
