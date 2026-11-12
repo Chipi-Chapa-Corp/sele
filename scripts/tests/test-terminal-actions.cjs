@@ -636,6 +636,30 @@ if (!process.versions.electron) {
           'The first tab in an already opened terminal panel remains after completion'
         )
 
+        // Commands that complete inside one discovery interval must still produce
+        // a tab with their original output, without executing the command again.
+        const quick = sources.register('quick-before-discovery', {
+          ...sourceOptions,
+          chatId: 'quick-chat',
+          chatTitle: 'Quick shell',
+          cwd: otherDirectory,
+          command: 'printf QUICK_COMMAND_OUTPUT',
+          background: false
+        })
+        quick.append('QUICK_COMMAND_OUTPUT\r\n')
+        await quick.finish(0)
+        const quickTab = `document.querySelector('[aria-label="Quick shell 1"][aria-pressed]')`
+        await waitFor(`${quickTab} !== null`)
+        await run(`${quickTab}.click()`)
+        await waitFor(`window.terminals.some(t => window.text(t).includes('QUICK_COMMAND_OUTPUT'))`)
+        assert.equal(
+          await run(`${quickTab} !== null`),
+          true,
+          'Completed-before-discovery tabs stay inspectable'
+        )
+        await run(`document.querySelector('[aria-label="Close Quick shell 1"]').click()`)
+        await waitFor(`${quickTab} === null`)
+
         // Exercise Claude's real task-output-file reader through the same native tab.
         const logDirectory = path.join(directory, 'native logs', 'tasks')
         await fs.mkdir(logDirectory, { recursive: true })

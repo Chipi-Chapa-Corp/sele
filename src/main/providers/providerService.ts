@@ -22,7 +22,7 @@ import { prepareChatWorkspace } from './noProjectWorkspace'
 import { join } from 'node:path'
 import { AccountDisplayNameCache } from './AccountDisplayNameCache'
 import { importedConversationStore } from '../database/importedConversations'
-import { getDatabase } from '../database/sqlite'
+import { getDatabase, getReadDatabase } from '../database/sqlite'
 import { SqliteChatHistoryCache } from '../database/chatHistoryCache'
 import { PersistentChatHistory, type HistoryRead } from './PersistentChatHistory'
 import { prepareChatDetailForRenderer } from './chatDetailLazy'
@@ -131,7 +131,7 @@ const accountDisplayNameCache = new AccountDisplayNameCache(() =>
   join(app.getPath('userData'), 'account-display-names.json')
 )
 const persistentChatHistory = new PersistentChatHistory(new SqliteChatHistoryCache(getDatabase))
-const durableConversationViews = new SqliteConversationViews(getDatabase)
+const durableConversationViews = new SqliteConversationViews(getDatabase, getReadDatabase)
 const conversationViewSequences = new Map<string, number>()
 const conversationViewWrites = new Set<Promise<boolean>>()
 const knownConversationScopes = new Set<string>()

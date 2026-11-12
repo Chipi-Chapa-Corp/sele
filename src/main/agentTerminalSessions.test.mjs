@@ -41,7 +41,10 @@ test('marking a chat done stops short and dismissed processes without touching s
     stop: async () => stopped.push('other')
   })
   registry.dismiss(second.id)
-  assert.deepEqual(registry.list(), [])
+  assert.deepEqual(
+    registry.list().map((session) => session.id),
+    [first.id, sibling.id]
+  )
   await registry.stopChats(['chat'])
   assert.deepEqual(stopped, ['hidden', 'dismissed'])
   assert.equal(registry.status(first.id), 'exited')
@@ -95,22 +98,32 @@ test('expiration protects attached terminals and releases callbacks after detach
   assert.deepEqual(registry.completed(handle.id), { output: 'retained output', exitCode: 7 })
 })
 
-test('only long foreground commands and background jobs get tabs, with indexes per chat', async () => {
+test('every command gets a tab immediately, including commands that finish before discovery', async () => {
   let now = 0
   const registry = createAgentTerminalSessions(() => now)
   const quick = registry.register('quick', options)
+  assert.equal(registry.list()[0].id, quick.id)
+  quick.append('quick output')
   now = 100
   await quick.finish()
   const long = registry.register('long', options)
-  assert.deepEqual(registry.list(), [])
+  assert.deepEqual(
+    registry.list().map((session) => session.id),
+    [quick.id, long.id]
+  )
+  assert.equal(registry.list()[0].status, 'exited')
+  assert.deepEqual(
+    registry.list().map((session) => session.index),
+    [1, 2]
+  )
   now = 2100
-  assert.equal(registry.list()[0].id, long.id)
+  assert.equal(registry.list()[0].id, quick.id)
   assert.equal(registry.list()[0].index, 1)
   registry.register('background', { ...options, background: true })
   registry.register('other-chat', { ...options, chatId: 'other', background: true })
   assert.deepEqual(
     registry.list().map((task) => task.index),
-    [1, 2, 1]
+    [1, 2, 3, 1]
   )
   assert.doesNotThrow(() => structuredClone(registry.list()))
   registry.dismiss(long.id)

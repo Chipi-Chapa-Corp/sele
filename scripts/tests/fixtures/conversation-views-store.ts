@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { getDatabase, disposeDatabase } from '../../../src/main/database/sqlite'
+import { getDatabase, getReadDatabase, disposeDatabase } from '../../../src/main/database/sqlite'
+import { getChatMetadata, setChatPinned } from '../../../src/main/database/chat'
 import { SqliteConversationViews } from '../../../src/main/database/conversationViews'
 import { PersistentChatHistory } from '../../../src/main/providers/PersistentChatHistory'
 import { createConversationView } from '../../../src/shared/conversationView'
@@ -20,7 +21,7 @@ const run = async () => {
       identity.accountEpoch('codex')
     )
   account('first-account')
-  const store = new SqliteConversationViews(getDatabase)
+  const store = new SqliteConversationViews(getDatabase, getReadDatabase)
   const scopes = Array.from({ length: 150 }, (_, i) => identity.viewScope('codex', String(i))!)
   for (const [i, scope] of scopes.entries()) {
     const detail = {
@@ -42,9 +43,83 @@ const run = async () => {
     await store.write(scope, createConversationView(detail))
   }
   const db = await getDatabase()
+  const readers = Array.from({ length: 20 }, () => getReadDatabase())
+  assert.ok(
+    readers.every((reader) => reader === readers[0]),
+    'readers share one initialization'
+  )
+  const reader = await readers[0]
+  await assert.rejects(
+    reader.deleteFrom('conversation_view').execute(),
+    /readonly/i,
+    'the navigation connection cannot write'
+  )
+  let release!: () => void
+  let started!: () => void
+  const entered = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const writer = db.transaction().execute(async (trx) => {
+    await trx.updateTable('conversation_view').set({ updated_at: 123 }).execute()
+    await trx.insertInto('chat').values({ id: 'background', pinned: 1 }).execute()
+    started()
+    await held
+  })
+  await entered
+  const readStart = performance.now()
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      Promise.all([store.read([scopes[0]]), getChatMetadata('background')]),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Navigation queued behind the writer')), 500)
+      })
+    ])
+    assert.equal(result[0].get(scopes[0].key)!.items[0].content, 'Persisted 0')
+    assert.equal(result[1].pinned, false, 'uncommitted metadata is never exposed')
+    assert.equal(
+      (
+        await reader
+          .selectFrom('conversation_view')
+          .select('updated_at')
+          .where('scope_key', '=', scopes[0].key)
+          .executeTakeFirstOrThrow()
+      ).updated_at === 123,
+      false,
+      'WAL reader sees only committed state while a writer is active'
+    )
+    console.log(
+      'Saved view + metadata during held write transaction:',
+      (performance.now() - readStart).toFixed(2),
+      'ms'
+    )
+  } finally {
+    clearTimeout(timeout)
+    release()
+    await writer
+  }
+  assert.equal(
+    (await setChatPinned('background', true)).pinned,
+    true,
+    'committed writes invalidate metadata reads'
+  )
+  assert.equal(
+    (
+      await reader
+        .selectFrom('conversation_view')
+        .select('updated_at')
+        .where('scope_key', '=', scopes[0].key)
+        .executeTakeFirstOrThrow()
+    ).updated_at,
+    123,
+    'subsequent reads observe committed changes without reopening'
+  )
   await db.updateTable('conversation_view').set({ updated_at: 0 }).execute()
   await disposeDatabase()
-  const restarted = new SqliteConversationViews(getDatabase)
+  const restarted = new SqliteConversationViews(getDatabase, getReadDatabase)
   const known = await restarted.read(scopes)
   assert.equal(
     known.size,

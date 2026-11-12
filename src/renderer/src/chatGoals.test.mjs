@@ -32,7 +32,8 @@ const controller = ts.transpile(
 const setup = (overrides = {}) => {
   const calls = [],
     states = [],
-    drafts = []
+    drafts = [],
+    starting = []
   const detail = { id: 'chat', items: [], goal: { objective: 'Checks pass', status: 'active' } }
   const globals = {
     configProviderId: 'codex',
@@ -55,6 +56,7 @@ const setup = (overrides = {}) => {
     worktreeBranchGenerationRef: { current: null },
     setSendInFlightProjectKey() {},
     setSendState: (state) => states.push(state),
+    setStartingChat: (chat) => starting.push(chat),
     setChatAtConversationBottom() {},
     setWorktreeCreationState() {},
     getChatCwdGroupKey: (cwd) => cwd,
@@ -73,6 +75,7 @@ const setup = (overrides = {}) => {
     getChatKey: (chat) => `${chat.providerId}:${chat.id}`,
     messageBoxSelection: { model: 'chosen' },
     rememberStartedChatSelection() {},
+    bindMessageFlight: (scope, chatKey) => calls.push(['flight', scope, chatKey]),
     updateStoredComposerDrafts: (update) => update({}),
     getComposerDraftScopeKey: (chat, workspace) => chat ?? workspace,
     moveComposerDraftScope: (_state, from, to) => drafts.push([from, to]),
@@ -93,12 +96,40 @@ const setup = (overrides = {}) => {
     console: { error() {} },
     ...overrides
   }
-  const start = vm.runInNewContext(
-    `${controller}; handleStartGoalChat`,
+  const { start, send } = vm.runInNewContext(
+    `${controller}; ({start:handleStartGoalChat,send:handleSendMessage})`,
     workspaceTestGlobals(globals)
   )
-  return { start, globals, calls, states, drafts }
+  return { start, send, globals, calls, states, drafts, starting }
 }
+
+test('a first message is published locally before provider startup and cleared after success or failure', async () => {
+  for (const fails of [false, true]) {
+    const h = setup({
+      getOptimisticItems: (_items, content) => [{ type: 'message', role: 'user', content }],
+      hasProviderUserMessage: () => true,
+      handleSendFailure() {}
+    })
+    let settle
+    h.globals.providerApi.startChat = () =>
+      new Promise((resolve, reject) => {
+        settle = () =>
+          fails ? reject(new Error('Startup failed')) : resolve({ id: 'chat', items: [] })
+      })
+    const sending = h.send('First message')
+    assert.equal(h.starting.length, 1, 'show the message while the provider promise is unresolved')
+    assert.equal(h.starting[0].items[0].content, 'First message')
+    assert.equal(h.starting[0].scopeKey, 'host\0/repo')
+    assert.equal(
+      h.calls.some(([type]) => type === 'view'),
+      false,
+      'no fake provider chat is selected'
+    )
+    settle()
+    assert.equal(await sending, !fails)
+    assert.equal(h.starting.at(-1), null, 'release the local view after provider completion')
+  }
+})
 
 test('starting from a goal creates and selects a chat with current settings and migrates its composer draft', async () => {
   const h = setup()
@@ -112,6 +143,15 @@ test('starting from a goal creates and selects a chat with current settings and 
   assert.equal(options.sandboxMode, 'read-only')
   assert.equal(options.approvalPolicy, 'on-request')
   assert.equal(h.calls.find(([type]) => type === 'view')[1].goal.status, 'active')
+  assert.deepEqual(
+    h.calls.find(([type]) => type === 'flight'),
+    ['flight', 'host\0/repo', 'codex:chat']
+  )
+  assert.ok(
+    h.calls.findIndex(([type]) => type === 'flight') <
+      h.calls.findIndex(([type]) => type === 'view'),
+    'bind the new chat before its first message can mount'
+  )
   assert.equal(h.drafts[0][1], 'codex:chat')
   assert.equal(h.globals.sendInFlightRef.current, false)
   assert.equal(h.states.at(-1), 'idle')

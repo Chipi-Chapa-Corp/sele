@@ -767,10 +767,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               next.set(key, { ...workspace, tabs })
           }
           for (const source of pending) {
-            if (source.status === 'exited') {
-              void terminalApi.dismissAgentSession(source.id)
-              continue
-            }
             const key = source.chatId ? `${source.providerId}:${source.chatId}` : null
             const chat = key ? getAgentTerminalChat(key) : undefined
             const target =
@@ -791,7 +787,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               container: source.container,
               cwd: source.cwd,
               initialCommand: source.command,
-              closeOnCommandFinish: source.closeOnCommandFinish ?? true,
+              // A command may finish before the first discovery poll. Keep its
+              // completed tab available instead of silently losing the command.
+              closeOnCommandFinish: source.closeOnCommandFinish ?? source.status !== 'exited',
               focusOnShow: false
             }
             next.set(target, {
@@ -996,7 +994,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           if (completion?.exited && !completion.succeeded && !finished.continueAsShell)
             return currentWorkspaces
           if (finished.agentSessionId) {
-            if (viewedAgentTabsRef.current.has(tabId)) return currentWorkspaces
+            if (!finished.closeOnCommandFinish || viewedAgentTabsRef.current.has(tabId))
+              return currentWorkspaces
             void terminalApi.dismissAgentSession(finished.agentSessionId)
           }
 

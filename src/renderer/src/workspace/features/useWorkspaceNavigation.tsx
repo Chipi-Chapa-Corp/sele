@@ -1,6 +1,6 @@
 import { startTransition, useCallback, useRef } from 'react'
 import type { ProviderChat } from '../../../../shared/provider'
-import { prefetchChatOpening } from '../../chatOpening'
+import { prefetchChatOpening, readChatOpening } from '../../chatOpening'
 import { readChatScrollAnchor } from '../../chatLayout'
 import { scrollChatSearchMatchIntoView, setChatSearchHighlights } from '../../chatSearch'
 import { type ChatListGroupData } from '../../components/ChatListGroup'
@@ -50,70 +50,103 @@ export function useWorkspaceNavigation({
   session
 }: WorkspaceNavigationDependencies) {
   const { activeSubagentChatView } = session
+  const selectionRequest = useRef(0)
 
   const handleSelectChat = (chat: ProviderChat): void => {
+    const request = ++selectionRequest.current
+    const key = getChatKey(chat)
+    const previousKey = chatState.selectedChatKeyRef.current
+    const selectingCurrentChat =
+      chatState.selectedChatKeyRef.current === key &&
+      chatState.selectedChat?.providerId === chat.providerId &&
+      chatState.selectedChat.id === chat.id
     prefetchChatOpening(chat, false)
-    startTransition(() => {
-      onConversationRequested?.()
-      chatState.setManuallyUnreadChatKeys((current) => {
-        const key = getChatKey(chat)
-        if (!current.has(key)) return current
-        const next = new Set(current)
-        next.delete(key)
-        return next
-      })
-      const selectingCurrentChat =
-        chatState.selectedChatKeyRef.current === getChatKey(chat) &&
-        chatState.selectedChat?.providerId === chat.providerId &&
-        chatState.selectedChat.id === chat.id
-      if (selectingCurrentChat && activeSubagentChatView) {
-        handleReturnToRootChat()
+    let committed = false
+    const select = (): void => {
+      if (
+        committed ||
+        selectionRequest.current !== request ||
+        chatState.selectedChatKeyRef.current !== previousKey
+      )
         return
-      }
-      const seenUpdatedAt = chat.updatedAt
-      const cachedDetail = chatCache.getRecentCachedChatDetail(chat)
-      const seenChat = {
-        ...chat,
-        seenUpdatedAt:
-          chat.seenUpdatedAt == null ? seenUpdatedAt : Math.max(chat.seenUpdatedAt, seenUpdatedAt)
-      }
-      const nextCachedDetail = cachedDetail
-        ? {
-            ...cachedDetail,
-            seenUpdatedAt:
-              cachedDetail.seenUpdatedAt == null
-                ? seenUpdatedAt
-                : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
-          }
-        : null
+      committed = true
+      startTransition(() => {
+        onConversationRequested?.()
+        chatState.setManuallyUnreadChatKeys((current) => {
+          const key = getChatKey(chat)
+          if (!current.has(key)) return current
+          const next = new Set(current)
+          next.delete(key)
+          return next
+        })
+        if (selectingCurrentChat && activeSubagentChatView) {
+          handleReturnToRootChat()
+          return
+        }
+        const seenUpdatedAt = chat.updatedAt
+        const cachedDetail = chatCache.getRecentCachedChatDetail(chat)
+        const seenChat = {
+          ...chat,
+          seenUpdatedAt:
+            chat.seenUpdatedAt == null ? seenUpdatedAt : Math.max(chat.seenUpdatedAt, seenUpdatedAt)
+        }
+        const nextCachedDetail = cachedDetail
+          ? {
+              ...cachedDetail,
+              seenUpdatedAt:
+                cachedDetail.seenUpdatedAt == null
+                  ? seenUpdatedAt
+                  : Math.max(cachedDetail.seenUpdatedAt, seenUpdatedAt)
+            }
+          : null
 
-      searchState.resetChatSearch()
-      gitState.setCommitChatReturnTarget(null)
-      subagentState.subagentChatLoadRequestRef.current += 1
-      subagentState.setSubagentChatView(null)
-      chatState.setSendState(chatState.sendInFlightRef.current ? 'sending' : 'idle')
-      chatState.setEditingMessage(null)
-      sourceState.setNewChatOpen(false)
-      searchState.setSearchOpen(false)
-      searchState.setSearchQuery('')
+        searchState.resetChatSearch()
+        gitState.setCommitChatReturnTarget(null)
+        subagentState.subagentChatLoadRequestRef.current += 1
+        subagentState.setSubagentChatView(null)
+        chatState.setSendState(chatState.sendInFlightRef.current ? 'sending' : 'idle')
+        chatState.setEditingMessage(null)
+        sourceState.setNewChatOpen(false)
+        searchState.setSearchOpen(false)
+        searchState.setSearchQuery('')
 
-      // Even a click on the currently painted chat is a selection request: a
-      // different transition may still be pending behind that visible view.
-      // Publishing this request cancels the intermediate destination.
-      chatRead.markSelectedChatSeen()
-      chatState.selectedChatKeyRef.current = getChatKey(chat)
-      chatState.selectedChatUpdatedAtRef.current = chat.updatedAt
-      chatState.chatDetailRef.current = nextCachedDetail
-      chatState.selectChatView(seenChat, nextCachedDetail)
-      // Selection and already prepared messages commit together. Provider refreshes
-      // run independently; they never put a loader in front of readable history.
-      chatState.setChatLoadState(nextCachedDetail ? 'ready' : 'loading')
-      chatRead.markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
+        // Even a click on the currently painted chat is a selection request: a
+        // different transition may still be pending behind that visible view.
+        // Publishing this request cancels the intermediate destination.
+        chatRead.markSelectedChatSeen()
+        chatState.selectedChatKeyRef.current = getChatKey(chat)
+        chatState.selectedChatUpdatedAtRef.current = chat.updatedAt
+        chatState.chatDetailRef.current = nextCachedDetail
+        chatState.selectChatView(seenChat, nextCachedDetail)
+        // Selection and already prepared messages commit together. Provider refreshes
+        // run independently; they never put a loader in front of readable history.
+        chatState.setChatLoadState(nextCachedDetail ? 'ready' : 'loading')
+        chatRead.markChatSeenAt(chat.providerId, chat.id, seenUpdatedAt)
 
-      if (selectingCurrentChat && !cachedDetail) {
-        chatState.setChatLoadRequest((currentRequest) => currentRequest + 1)
+        if (selectingCurrentChat && !cachedDetail) {
+          chatState.setChatLoadRequest((currentRequest) => currentRequest + 1)
+        }
+      })
+    }
+    if (chatCache.getRecentCachedChatDetail(chat)) {
+      select()
+      return
+    }
+    // Give the local read a short preparation window so selection and saved
+    // messages paint together, instead of committing an empty workspace and
+    // rebuilding it again on the IPC reply. Missing/slow disk never gates the
+    // independent provider read beyond this window.
+    const timer = window.setTimeout(select, 50)
+    void readChatOpening(chat).then(
+      () => {
+        window.clearTimeout(timer)
+        select()
+      },
+      () => {
+        window.clearTimeout(timer)
+        select()
       }
-    })
+    )
   }
 
   const handleOpenLinkedChat = (reference: LinkedChatReference): void => {
@@ -149,6 +182,7 @@ export function useWorkspaceNavigation({
 
   const handleBack = (): void =>
     startTransition(() => {
+      selectionRequest.current++
       if (activeSubagentChatView) {
         handleReturnFromSubagentChat()
         return
@@ -171,6 +205,7 @@ export function useWorkspaceNavigation({
 
   const handleNewChat = (): void =>
     startTransition(() => {
+      selectionRequest.current++
       onConversationRequested?.()
       const currentChat = chatState.selectedChat
         ? chatState.chatDetail?.id === chatState.selectedChat.id
@@ -190,6 +225,7 @@ export function useWorkspaceNavigation({
 
   const handleNewChatNoProject = (): void =>
     startTransition(() => {
+      selectionRequest.current++
       onConversationRequested?.()
       chatRead.markSelectedChatSeen()
       chatState.selectedChatKeyRef.current = null
@@ -202,6 +238,7 @@ export function useWorkspaceNavigation({
 
   const handleNewChatInCwd = (group: ChatListGroupData): void =>
     startTransition(() => {
+      selectionRequest.current++
       onConversationRequested?.()
       if (group.kind !== 'cwd') return
 

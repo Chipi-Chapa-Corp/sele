@@ -2,7 +2,11 @@
 
 ## Storage and updates
 
-SQLite runs in a dedicated worker behind Kysely's single-connection transaction mutex.
+SQLite writes run in a dedicated worker behind Kysely's single-connection transaction mutex.
+Saved conversation reads, discovery summaries, and individual chat metadata reads use a
+separate read-only connection and worker on the same WAL database. They must not queue
+behind the writer's transactions. The reader starts after schema initialization and closes
+with the database; it sees committed changes without reopening and cannot write.
 Preferences use an independent worker and adjacent `sele.sqlite.preferences.sqlite` file
 so close/save barriers cannot deadlock behind chat transactions. Write revisions prevent
 delayed saves from replacing newer barriers. Legacy preferences migrate atomically;
@@ -29,6 +33,11 @@ take priority; acknowledgement and snapshot bookkeeping keep their existing orde
 Known chats open from durable views. Optional retained React Activity trees reuse up to sixteen
 root conversations, also limited by the configured detail cache and a 30,000-element budget; hidden effects pause. Invalidation/eviction
 releases them. Cached previews remain read-only until provider ownership refreshes.
+On a cold selection, allow the local saved-view read up to 50 ms to prepare before selecting
+the chat, so its header and messages commit together. Missing/slow local reads fall through
+to the ordinary provider load. Superseded reads and Back/New Chat cancel that preparation.
+Small histories (at most six turns, 24 items, and 12,000 message characters) mount together;
+larger histories retain progressive mounting. Do not add a paint delay to every tiny turn.
 
 Large turns mount items between paints. Markdown at 4,096 characters uses a shared worker,
 and large HTML structures mount progressively. Preserve committed prefixes, DOM identity,
@@ -303,6 +312,29 @@ These are software-rendered fixture measurements, not a live native-frame guaran
 claim of first-frame chat opening. Backend code and the schema upgrade require a fresh
 main process; renderer HMR alone cannot activate them. The remaining live native scheduling
 gaps described above still need separate measurement after that restart.
+
+### Saved reads during background writes, 2026-11-12
+
+The saved-view query was indexed and fast, but shared the writer's connection, worker,
+and Kysely transaction mutex. A disposable full-App regression held an unrelated real
+write transaction open for 1,200 ms with provider replies withheld. Before the correction,
+readable text appeared at 1,226.8 ms, only one of four turns was present in that frame,
+and the full small history arrived at 1,277.1 ms. Direct query timing did not expose this
+queueing delay.
+
+The independent WAL reader completes the saved view and metadata reads in about 0.9 ms
+while that transaction remains open. The isolated full-App checks measured roughly
+97–130 ms to the complete four-turn history on a cold first click and 10–14 ms for
+prepared selections. Selection paints with its messages, with zero intermediate empty
+selected frames. The regression also checks committed-only visibility, metadata cache
+invalidation, read-only enforcement, shared reader initialization, and database reopening.
+
+A final isolated Vite run used 2,400 chats, rich histories, streaming background updates,
+twelve rapid switches, forty filter changes, and a 500 ms delayed message module. Readable
+text appeared in 37–56 ms across the measured cold/warm navigation phases, with zero
+mixed-chat frames or JavaScript tasks over 50 ms. The delayed rich module did not delay
+the readable message fallback. These are software-rendered fixture results, not a live
+native-GPU guarantee. Restart the main process to activate the database-worker changes.
 
 ### Large image paste, 2026-11-05
 

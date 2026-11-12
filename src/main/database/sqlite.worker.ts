@@ -24,8 +24,11 @@ const serializeError = (value: unknown): SqliteWorkerError => {
 const start = (): void => {
   const options = workerData as SqliteWorkerOptions
   mkdirSync(dirname(options.path), { recursive: true })
-  const database = new Database(options.path)
-  database.pragma('journal_mode = WAL')
+  const database = new Database(options.path, {
+    readonly: options.readonly === true,
+    fileMustExist: options.readonly === true
+  })
+  if (!options.readonly) database.pragma('journal_mode = WAL')
   database.pragma('synchronous = FULL')
   const preferences = options.preferences ? openPreferences(database) : null
   const revisions = new Map<number, Map<string, number>>()

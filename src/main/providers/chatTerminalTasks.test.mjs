@@ -5,6 +5,8 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { createOpenCodeTerminalTasks } from './opencode/OpenCodeTerminalTasks.ts'
+import { createAgentTerminalSessions } from '../agentTerminalSessions.ts'
+import { createCodexTerminalSessions } from './codex/CodexTerminalSessions.ts'
 import {
   forEachOpenCodeEvent,
   reconcileOpenCodeMessageSnapshot
@@ -23,7 +25,7 @@ const harness = (provider, globals = {}, methods = ['getChatTerminalTasks']) => 
   const declaration = source.statements.find(
     (node) => ts.isClassDeclaration(node) && node.name?.text === `${name}ProviderAdapter`
   )
-  return vm.runInNewContext(
+  const adapter = vm.runInNewContext(
     ts.transpile(
       `new (class { ${declaration.members
         .filter((node) => methods.includes(node.name?.getText(source)))
@@ -41,7 +43,50 @@ const harness = (provider, globals = {}, methods = ['getChatTerminalTasks']) => 
       ...globals
     }
   )
+  if (provider === 'codex')
+    adapter.agentTerminals = {
+      get: () => ({ background: (_chatId, tasks) => tasks.map((task) => task.processId) })
+    }
+  return adapter
 }
+
+test('Codex badges only advertise registered terminals and ignore a completed command in a stale provider poll', async () => {
+  const registry = createAgentTerminalSessions()
+  const controller = createCodexTerminalSessions(
+    {
+      container: null,
+      metadata: () => ({ title: 'Chat', cwd: '/fixture' }),
+      stop: async () => {},
+      interrupt: async () => {}
+    },
+    registry
+  )
+  const tasks = [{ processId: '17', itemId: 'item', command: 'npm test', cwd: '/fixture' }]
+  const client = { connectionIdentity: {}, request: async () => ({ data: tasks }) }
+  const adapter = harness('codex')
+  adapter.clients = new Map([['host', client]])
+  adapter.agentTerminals = new WeakMap([[client, controller]])
+  assert.deepEqual(await adapter.getChatTerminalTasks('chat'), ['17'])
+  assert.equal(registry.list()[0].status, 'running')
+  controller.consume({
+    method: 'item/completed',
+    params: {
+      threadId: 'chat',
+      turnId: 'turn',
+      item: {
+        type: 'commandExecution',
+        id: 'item',
+        processId: '17',
+        exitCode: 0,
+        aggregatedOutput: 'done'
+      }
+    }
+  })
+  await new Promise(setImmediate)
+  assert.deepEqual(await adapter.getChatTerminalTasks('chat'), [])
+  assert.equal(registry.list()[0].status, 'exited')
+  controller.dispose()
+})
 
 test('Codex lists actual background terminals across pages without opening a chat', async () => {
   const adapter = harness('codex')

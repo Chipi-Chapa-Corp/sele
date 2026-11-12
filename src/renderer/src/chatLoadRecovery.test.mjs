@@ -408,11 +408,12 @@ test('a failed request from a closed chat is logged without changing the view', 
   assert.match(h.state.errors[0][0], /Unable to load messages/)
 })
 
-test('cached selection schedules its matching transcript as one view update', () => {
+const setupSelection = () => {
   const cached = detail()
   const state = { selected: null, detail: null, loadState: 'ready' }
   const transitions = []
   const context = createWorkspaceTestContext({
+    selectionRequest: { current: 0 },
     selectedChat: null,
     chatLoadState: 'ready',
     chatDetail: null,
@@ -452,6 +453,11 @@ test('cached selection schedules its matching transcript as one view update', ()
   ])
     context[name] = () => {}
   vm.runInContext(selectCode, context)
+  return { cached, state, transitions, context }
+}
+
+test('cached selection schedules its matching transcript as one view update', () => {
+  const { cached, state, transitions, context } = setupSelection()
   context.callback({ providerId: 'claude', id: 'chat', updatedAt: 1 })
   assert.equal(transitions.length, 1)
   assert.equal(state.selected, null)
@@ -485,6 +491,62 @@ test('cached selection schedules its matching transcript as one view update', ()
   context.callback({ providerId: 'claude', id: 'chat', updatedAt: 1 })
   transitions[2]()
   assert.equal(selectedAgain, true, 'committed refs cannot turn a selection request into a no-op')
+})
+
+test('cold selection prepares local messages without an intermediate empty view and only the last request commits', async () => {
+  const { state, transitions, context } = setupSelection()
+  const cache = new Map()
+  const reads = new Map()
+  const timers = new Map()
+  let sequence = 0
+  context.getRecentCachedChatDetail = (chat) => cache.get(chat.id) ?? null
+  context.window = {
+    setTimeout: (run, ms) => {
+      assert.equal(ms, 50, 'disk preparation never holds up a missing view indefinitely')
+      timers.set(++sequence, run)
+      return sequence
+    },
+    clearTimeout: (id) => timers.delete(id)
+  }
+  context.readChatOpening = (chat) => new Promise((resolve) => reads.set(chat.id, resolve))
+  const select = (id) => context.callback({ providerId: 'claude', id, updatedAt: 1 })
+  select('first')
+  select('second')
+  assert.equal(state.selected, null)
+  assert.equal(
+    context.selectedChatKeyRef.current,
+    null,
+    'the previous view remains selected while local data is prepared'
+  )
+  cache.set('first', { ...detail(), id: 'first' })
+  reads.get('first')()
+  await settle()
+  assert.equal(transitions.length, 0, 'superseded disk reply cannot select its chat')
+  cache.set('second', { ...detail(), id: 'second' })
+  reads.get('second')()
+  await settle()
+  assert.equal(transitions.length, 1)
+  transitions.shift()()
+  assert.equal(state.selected.id, 'second')
+  assert.equal(state.detail.id, 'second')
+  assert.equal(timers.size, 0)
+
+  select('slow')
+  const timeout = [...timers.values()][0]
+  timeout()
+  transitions.shift()()
+  assert.equal(state.selected.id, 'slow', 'a slow/missing local read still starts provider loading')
+  assert.equal(state.detail, null)
+  reads.get('slow')()
+  await settle()
+  assert.equal(transitions.length, 0, 'late read does not replay the selection')
+
+  select('cancelled')
+  context.selectionRequest.current++
+  context.selectedChatKeyRef.current = null
+  reads.get('cancelled')()
+  await settle()
+  assert.equal(transitions.length, 0, 'back/new-chat cancels local preparation')
 })
 
 for (const outcome of ['stale response', 'failed refresh']) {

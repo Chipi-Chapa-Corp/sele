@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import type { WorkspaceController } from '../../useWorkspaceController'
 import { ConversationMessagesContent } from './ConversationMessagesContent'
 import { RetainedChatViews } from '../../components/RetainedChatViews'
+import { StartingChatMessages } from './StartingChatMessages'
 
 type ConversationMessagesProps = WorkspaceController['conversationMessages']
 
@@ -24,12 +25,15 @@ export function ConversationMessages({
       ? `${props.selectedChatKey}:loading`
       : props.selectedChatKey
   return (
-    <RetainedChatViews
-      activeKey={activeKey}
-      cachedChatKeys={props.cachedChatKeys}
-      retain={!loading && !props.activeSubagentChatView && props.renderedChatTurns.length > 0}
-    >
-      {props.visible ? <ConversationMessagesContent {...props} /> : null}
-    </RetainedChatViews>
+    <>
+      <RetainedChatViews
+        activeKey={activeKey}
+        cachedChatKeys={props.cachedChatKeys}
+        retain={!loading && !props.activeSubagentChatView && props.renderedChatTurns.length > 0}
+      >
+        {props.visible ? <ConversationMessagesContent {...props} /> : null}
+      </RetainedChatViews>
+      {props.startingChat && <StartingChatMessages chat={props.startingChat} />}
+    </>
   )
 }

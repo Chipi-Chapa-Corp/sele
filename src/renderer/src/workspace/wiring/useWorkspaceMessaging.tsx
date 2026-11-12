@@ -53,6 +53,7 @@ export function useWorkspaceMessaging({
   gitState
 }: WorkspaceMessagingDependencies) {
   const {
+    startingChat,
     getGitTurnOptions,
     limitResetTarget,
     handleQueueLimitReset,
@@ -151,6 +152,7 @@ export function useWorkspaceMessaging({
     sendState: chatState.sendState
   })
   return {
+    startingChat,
     getGitTurnOptions,
     limitResetTarget,
     handleQueueLimitReset,

@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import type { ProviderActiveSendMode } from '../../../shared/provider'
-import { restoreFailedComposerMessage, updateComposerDraft } from '../composerDraft'
+import { restoreFailedComposerDraft } from '../composerDraft'
 import { buildQuotedPrompt } from '../composerQuotes'
 import { buildLinkedChatPrompt, getLinkedChatKey } from '../linkedChats'
 import { captureMessageFlight } from '../motion/messageFlight'
@@ -174,16 +174,6 @@ export function useComposerSubmission({
         ...chats
       ])
     }
-    const restoreQuotes = (): void => {
-      if (selectedQuotes.length === 0) return
-      setComposerDrafts((drafts) =>
-        updateComposerDraft(drafts, sendScope, 'quotes', (quotes = []) => [
-          ...selectedQuotes.filter((sent) => !quotes.some((quote) => quote.id === sent.id)),
-          ...quotes
-        ])
-      )
-    }
-
     if (editing) {
       const previousDraft = {
         message: editingState.messageBeforeEditRef.current ?? '',
@@ -225,6 +215,19 @@ export function useComposerSubmission({
     }
 
     const cancelFlight = captureMessageFlight(textareaRef.current, nextMessage, draftScopeKey)
+    const restoreFailedSend = (): void => {
+      cancelFlight()
+      restoreLinkedChats()
+      setComposerDrafts((drafts) =>
+        restoreFailedComposerDraft(drafts, sendScope, {
+          message: nextMessage,
+          attachments: selectedAttachments,
+          skills: selectedSkills,
+          apps: selectedApps,
+          quotes: selectedQuotes
+        })
+      )
+    }
     setMessage('')
     setSelectedAttachments([])
     setSelectedSkills([])
@@ -233,37 +236,24 @@ export function useComposerSubmission({
     updateLinkedChats(sendScope, () => noLinkedChats)
     onSelectedReviewChange?.(null)
     setAttachmentSelectionError(null)
-    void Promise.resolve(
-      onSend(
-        outgoingMessage,
-        active ? activeMode : undefined,
-        selectedAttachments,
-        submittingReview,
-        selectedSkillInputs,
-        selectedAppInputs
+    void Promise.resolve()
+      .then(() =>
+        onSend(
+          outgoingMessage,
+          active ? activeMode : undefined,
+          selectedAttachments,
+          submittingReview,
+          selectedSkillInputs,
+          selectedAppInputs
+        )
       )
-    )
       .then((sent) => {
         if (sent) return
-        cancelFlight()
-        restoreLinkedChats()
-        restoreQuotes()
-        if (!nextMessage) return
-
-        setComposerDrafts((drafts) =>
-          restoreFailedComposerMessage(drafts, draftScopeKey, nextMessage)
-        )
+        restoreFailedSend()
       })
       .catch((error: unknown) => {
-        cancelFlight()
         console.error('Unable to send the composer message.', error)
-        restoreLinkedChats()
-        restoreQuotes()
-        if (!nextMessage) return
-
-        setComposerDrafts((drafts) =>
-          restoreFailedComposerMessage(drafts, draftScopeKey, nextMessage)
-        )
+        restoreFailedSend()
       })
   }
   return { submitMessage }

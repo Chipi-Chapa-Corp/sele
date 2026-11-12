@@ -927,6 +927,53 @@ if (!process.versions.electron) {
       await settle()
       assert.equal(await run('document.querySelectorAll(".message-box__attachment-preview--image").length'), 1,
         'another chat keeps its unsent image')
+
+      for (const failure of ['false', 'reject', 'throw']) {
+        await run(`window.annotatedImage = {...fixtureImage,path:'/edited.png',name:'edited.png',previewOnly:true,annotationNumber:7};
+          window.fixtureFile = {kind:'file',name:'notes.txt',path:'/notes.txt'};
+          appApi.selectMessageAttachments = async () => [annotatedImage,fixtureFile];
+          renderFixture({draftScopeKey:'failed-attachments-${failure}',onSend: () => {
+            ${failure === 'false' ? 'return false' : failure === 'reject' ? "return Promise.reject(new Error('Fixture send failed'))" : "throw new Error('Fixture send failed')"}
+          }});`)
+        await settle()
+        await run(`document.querySelector('[aria-label="Attach files"]').click()`)
+        await settle()
+        // No text: attachment-only sends must also recover their full draft.
+        const errorsBeforeSend = errors.length
+        await run(`document.querySelector('[aria-label="Send message"]').click()`)
+        await settle()
+        if (failure !== 'false') {
+          const expectedErrors = errors.splice(errorsBeforeSend)
+          assert.equal(expectedErrors.length, 1)
+          assert.match(expectedErrors[0], /Unable to send the composer message/)
+        }
+        assert.equal(
+          await run('document.querySelectorAll(".message-box__attachment-preview--image").length'),
+          1,
+          `${failure} restores the annotated image`
+        )
+        assert.equal(
+          await run(`Boolean(document.querySelector('[aria-label="Remove notes.txt"]'))`),
+          true,
+          `${failure} restores file attachments`
+        )
+        await run(`renderFixture({onSend: (message, mode, attachments) => {
+          window.retriedAttachments = attachments;
+          return true;
+        }}); document.querySelector('[aria-label="Send message"]').click()`)
+        await settle()
+        assert.deepEqual(
+          await run('window.retriedAttachments'),
+          await run('[annotatedImage,fixtureFile]'),
+          `${failure} retry retains the edited image path, preview, and annotation counter`
+        )
+        assert.equal(
+          await run('document.querySelectorAll(".message-box__attachment-preview--image").length'),
+          0,
+          'successful retry clears attachments'
+        )
+      }
+
       // Quotes stay out of the textarea and become ordinary Markdown only on send.
       await run(
         `renderFixture({draftScopeKey:'quote-draft', quoteRequest:{id:1,scopeKey:'quote-draft',content:'Original quote\\nsecond line',comment:'  Please explain this part  '}})`

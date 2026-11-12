@@ -80,6 +80,32 @@ export const restoreFailedComposerMessage = (
   )
 }
 
+export const restoreFailedComposerDraft = (
+  drafts: ReadonlyMap<string, ComposerDraft>,
+  scopeKey: string,
+  sent: ComposerDraft
+): ReadonlyMap<string, ComposerDraft> => {
+  let restored = restoreFailedComposerMessage(drafts, scopeKey, sent.message)
+  // Keep resources added or edited while sending, and restore the original objects
+  // so image previews, saved annotations, and their counters survive a retry.
+  restored = updateComposerDraft(restored, scopeKey, 'attachments', (current) => [
+    ...sent.attachments.filter((item) => !current.some((next) => next.path === item.path)),
+    ...current
+  ])
+  restored = updateComposerDraft(restored, scopeKey, 'skills', (current) => [
+    ...sent.skills.filter((item) => !current.some((next) => next.path === item.path)),
+    ...current
+  ])
+  restored = updateComposerDraft(restored, scopeKey, 'apps', (current) => [
+    ...sent.apps.filter((item) => !current.some((next) => next.id === item.id)),
+    ...current
+  ])
+  return updateComposerDraft(restored, scopeKey, 'quotes', (current = []) => [
+    ...(sent.quotes ?? []).filter((item) => !current.some((next) => next.id === item.id)),
+    ...current
+  ])
+}
+
 export const getPromptDrafts = (
   drafts: ReadonlyMap<string, readonly PromptDraft[]>,
   scopeKey: string

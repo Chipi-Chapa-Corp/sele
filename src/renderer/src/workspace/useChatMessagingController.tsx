@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { startTransition, useCallback, useEffect, useMemo, useRef } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../../shared/noProject'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
@@ -25,6 +25,8 @@ import { appApi } from '../appApi'
 import { providerApi } from '../providerApi'
 import { clearUserInputDraft } from '../userInputDrafts'
 import { getComposerDraftScopeKey } from '../composerDraft'
+import { bindMessageFlight } from '../motion/messageFlight'
+import type { StartingChat } from '../startingChat'
 import { moveComposerDraftScope, updateStoredComposerDrafts } from '../composerDraftStorage'
 import { getContainerTargetKey } from '../containerSelection'
 import { getAppGitCommitModel } from '../gitCommitModels'
@@ -129,6 +131,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     sendState
   } = dependencies
 
+  const [startingChat, setStartingChat] = useState<StartingChat | null>(null)
   const editRequestRef = useRef(0)
   const editOpeningRef = useRef(false)
   type PendingEditSession = {
@@ -636,6 +639,21 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     if (!selectedChat || sendTarget === 'new') {
       setSendState('sending')
 
+      // Sending into an empty composer must paint before provider process
+      // startup, workspace preparation, or the first turn's acknowledgement.
+      if (!selectedChat && !initialGoal) {
+        const workspaceKey = `${getContainerTargetKey(changesContainer)}\0${newSessionCwd ?? ''}`
+        const scopeKey = getComposerDraftScopeKey(null, workspaceKey)
+        bindMessageFlight(scopeKey, scopeKey)
+        setStartingChat({
+          scopeKey,
+          providerId: newSessionProvider,
+          container: changesContainer,
+          cwd: newSessionCwd,
+          items: getOptimisticItems([], messageWithComposerMentions, attachments, review)
+        })
+      }
+
       try {
         const startingSelectedChat = sendTarget === 'new' ? selectedChat : null
         const startingProviderId = startingSelectedChat?.providerId ?? newSessionProvider
@@ -698,8 +716,14 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         })
         rememberStartedChatSelection(startingProviderId, detail.id, messageBoxSelection)
         const startedChatKey = getChatKey({ providerId: startingProviderId, id: detail.id })
+        const workspaceKey = `${getContainerTargetKey(changesContainer)}\0${newSessionCwd ?? ''}`
+        // The provider's opening message can have no timestamp, or inherit the
+        // thread's older creation time. Its returned chat ID is authoritative.
+        bindMessageFlight(
+          getComposerDraftScopeKey(selectedChat ? getChatKey(selectedChat) : null, workspaceKey),
+          startedChatKey
+        )
         if (!selectedChat) {
-          const workspaceKey = `${getContainerTargetKey(changesContainer)}\0${newSessionCwd ?? ''}`
           updateStoredComposerDrafts((state) =>
             moveComposerDraftScope(
               state,
@@ -755,6 +779,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
           return false
         }
       } finally {
+        setStartingChat(null)
         worktreeBranchGenerationRef.current = null
         worktreeCreationCanceledRef.current = false
         setWorktreeCreationState('idle')
@@ -1395,6 +1420,7 @@ export function useChatMessagingController(dependencies: ChatMessagingController
   )
 
   return {
+    startingChat,
     getGitTurnOptions,
     limitResetTarget,
     handleQueueLimitReset,

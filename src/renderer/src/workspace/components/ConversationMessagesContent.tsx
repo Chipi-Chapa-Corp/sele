@@ -21,6 +21,7 @@ import { ChatWorkingPlaceholder } from '../../components/ChatWorkingPlaceholder'
 import { getConversationTailWorkingStep } from '../../chatConversationModel'
 import { ChatMediaGallery } from '../../components/ChatMediaGallery'
 import { DeferredChatTurn } from '../../components/DeferredChatTurn'
+import { shouldDeferChatHistory } from '../../chatMountPolicy'
 import { LimitResetQueueMessages } from '../../components/LimitResetQueueMessages'
 
 type ConversationMessagesContentProps = WorkspaceController['conversationMessages']
@@ -294,6 +295,7 @@ export function ConversationMessagesContent(
     openedRoot.current === selectedChatKey &&
     initialWindow.current?.key !== mountKey
   const deferHistory =
+    shouldDeferChatHistory(displayedTurns) &&
     !returningToRoot &&
     (!initialWindow.current ||
       initialWindow.current.key !== mountKey ||

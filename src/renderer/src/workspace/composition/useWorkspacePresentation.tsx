@@ -16,6 +16,8 @@ import { useWorkspaceChangesModel } from './useWorkspaceChangesModel'
 import { useWorkspaceChatModel } from './useWorkspaceChatModel'
 import { useWorkspaceRuntime } from './useWorkspaceRuntime'
 import { useWorkspaceState } from './useWorkspaceState'
+import { getComposerDraftScopeKey } from '../../composerDraft'
+import { getContainerTargetKey } from '../../containerSelection'
 
 type WorkspacePresentationDependencies = {
   state: ReturnType<typeof useWorkspaceState>
@@ -33,6 +35,17 @@ export function useWorkspacePresentation({
   runtime
 }: WorkspacePresentationDependencies) {
   const chatPanelOpen = Boolean(state.chatState.selectedChat) || state.sourceState.newChatOpen
+  const startingChat =
+    !state.chatState.selectedChat &&
+    state.sourceState.newChatOpen &&
+    chatModel.messaging.startingChat?.providerId === state.sourceState.newSessionProvider &&
+    chatModel.messaging.startingChat.scopeKey ===
+      getComposerDraftScopeKey(
+        null,
+        `${getContainerTargetKey(session.changesContainer)}\0${state.sourceState.newSessionCwd ?? ''}`
+      )
+      ? chatModel.messaging.startingChat
+      : null
 
   const subagentPresentation = useWorkspaceSubagentPresentation({
     subagentState: state.subagentState,
@@ -144,6 +157,7 @@ export function useWorkspacePresentation({
       navigation: chatModel.navigation
     }),
     conversationMessages: getWorkspaceConversationMessages({
+      startingChat,
       chatState: state.chatState,
       chatCache: runtime.chatCache,
       viewportState: state.viewportState,
@@ -241,7 +255,9 @@ export function useWorkspacePresentation({
       handleQuoteSelectedMessageText: chatModel.interactions.handleQuoteSelectedMessageText
     },
     conversationEmptyState: {
-      visible: Boolean(!state.chatState.selectedChat && state.sourceState.newChatOpen)
+      visible: Boolean(
+        !state.chatState.selectedChat && state.sourceState.newChatOpen && !startingChat
+      )
     },
     conversationPlan: {
       visible: !session.activeSubagentChatView,

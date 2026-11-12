@@ -21,4 +21,9 @@ export type SqliteWorkerRequest = {
   operation: SqliteOperation
   barrier?: SharedArrayBuffer
 }
-export type SqliteWorkerOptions = { path: string; preferences?: boolean; legacyPath?: string }
+export type SqliteWorkerOptions = {
+  path: string
+  readonly?: boolean
+  preferences?: boolean
+  legacyPath?: string
+}

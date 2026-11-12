@@ -129,15 +129,18 @@ export const createCodexTerminalSessions = (
       tasks: { processId: string; itemId: string; command: string; cwd: string }[]
     ) => {
       const live = new Set(tasks.map((task) => task.processId))
+      const registered: string[] = []
       for (const task of tasks) {
         if (completed.has(commandKey(chatId, task.itemId))) continue
         const entry = ensure(chatId, task.itemId, task.command, task.cwd)
         entry.processId = task.processId
         entry.handle.setStopScope('process')
         entry.handle.background()
+        registered.push(task.processId)
       }
       for (const [itemId, entry] of commands.get(chatId) ?? [])
         if (entry.processId && !live.has(entry.processId)) finish(chatId, itemId, entry)
+      return registered
     },
     dispose: () => {
       registry.finishMatching(prefix)

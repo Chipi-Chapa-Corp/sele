@@ -15,7 +15,6 @@ type Options = Omit<
 type Listener = { data: (data: string, replay?: boolean) => void; exit: (code: number) => void }
 const maximumOutput = 512 * 1024
 const completedRetentionMs = 120_000
-export const longTerminalCommandMs = 2000
 
 /** Observes the provider's original process. Attaching never launches another command. */
 export const createAgentTerminalSessions = (now = Date.now) => {
@@ -201,8 +200,7 @@ export const createAgentTerminalSessions = (now = Date.now) => {
       expireCompleted()
       const result: AgentTerminalSession[] = []
       for (const entry of entries.values()) {
-        const elapsed = (entry.endedAt ?? now()) - entry.startedAt
-        if (!entry.dismissed && (entry.background || elapsed >= longTerminalCommandMs)) {
+        if (!entry.dismissed) {
           if (!entry.info.index) {
             const chatKey = `${entry.info.providerId}:${entry.info.chatId}`
             const index = (indexes.get(chatKey) ?? 0) + 1

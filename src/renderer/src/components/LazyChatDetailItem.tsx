@@ -1,4 +1,5 @@
-import { lazy, memo, Suspense } from 'react'
+import { lazy, memo, Suspense, useRef } from 'react'
+import { useMessageArrival } from '../motion/messageFlight'
 import { areChatDetailItemPropsEqual } from './chatDetailItemMemo'
 import type { ChatDetailItemProps } from './ChatDetailItem.types'
 
@@ -15,11 +16,24 @@ export const preloadChatDetailItem = (): void => {
   })
 }
 
-function MessagePreview({ item }: Pick<ChatDetailItemProps, 'item'>): React.JSX.Element | null {
+function MessagePreview({
+  item,
+  motionChatKey
+}: Pick<ChatDetailItemProps, 'item' | 'motionChatKey'>): React.JSX.Element | null {
+  const ref = useRef<HTMLDivElement>(null)
+  useMessageArrival(
+    ref,
+    item.type === 'pendingMessage' || (item.type === 'message' && item.role === 'user')
+      ? item
+      : null,
+    motionChatKey
+  )
   if (item.type !== 'message' && item.type !== 'pendingMessage') return null
   const role = item.type === 'message' ? item.role : 'user'
   return (
     <div
+      ref={ref}
+      data-motion-message-id={item.id}
       className={`chat-detail__message-block chat-detail__message-block--${role}`}
       data-chat-message-id={item.type === 'message' ? item.id : undefined}
     >
@@ -42,7 +56,7 @@ export const LazyChatDetailItem = memo(function LazyChatDetailItem(
   props: ChatDetailItemProps
 ): React.JSX.Element {
   return (
-    <Suspense fallback={<MessagePreview item={props.item} />}>
+    <Suspense fallback={<MessagePreview item={props.item} motionChatKey={props.motionChatKey} />}>
       <Content {...props} />
     </Suspense>
   )

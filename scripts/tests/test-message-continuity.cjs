@@ -20,7 +20,8 @@ if (!process.versions.electron) {
             import {renderRootChatTurn} from './src/renderer/src/workspace/chatTurnRendering'
             import {buildChatConversationModel} from './src/renderer/src/chatConversationModel'
             import {reuseChatSnapshotItems} from './src/renderer/src/chatSnapshotItems'
-            import {captureMessageFlight} from './src/renderer/src/motion/messageFlight'
+            import {bindMessageFlight,captureMessageFlight} from './src/renderer/src/motion/messageFlight'
+            import {StartingChatMessages} from './src/renderer/src/workspace/components/StartingChatMessages'
             import './src/renderer/src/App.css'
             import './src/renderer/src/assets/main.css'
             const root=createRoot(document.getElementById('root'))
@@ -61,6 +62,20 @@ if (!process.versions.electron) {
                 content:'Look at this',createdAt:Date.now(),attachments:[{
                   kind:'image',name:'Attached image',path:'/fixture/attached.png',dataUrl:window.pixel}]},
                 {type:'working',id:'optimistic:1:working',status:'working',items:[]}])
+            }
+            window.startCreation=()=>{
+              const content='First message before provider startup'
+              const scopeKey='new-chat:fixture'
+              captureMessageFlight(document.getElementById('composer'),content,scopeKey)
+              bindMessageFlight(scopeKey,scopeKey)
+              const chat={scopeKey,providerId:'codex',container:null,cwd:'/fixture',items:[
+                {type:'message',id:'optimistic:start:user',role:'user',content,createdAt:Date.now()},
+                {type:'working',id:'optimistic:start:working',status:'working',items:[]}]}
+              flushSync(()=>root.render(<React.StrictMode><StartingChatMessages chat={chat}/></React.StrictMode>))
+              window.finishCreation=()=>{
+                bindMessageFlight(scopeKey,'codex:chat')
+                window.showConversation([{...chat.items[0],id:'confirmed:start:user',createdAt:null},chat.items[1]])
+              }
             }
             window.showConversation()
           `
@@ -144,6 +159,31 @@ if (!process.versions.electron) {
       const run = (source) => win.webContents.executeJavaScript(source)
       const frames = () =>
         run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+      for (const delay of [100, 2200]) {
+        await run('startCreation()')
+        await frames()
+        assert.equal(
+          await run(`document.querySelectorAll('.message-flight').length`),
+          1,
+          'the opening message animates before the provider resolves, including the first lazy mount'
+        )
+        await run(`new Promise(resolve=>setTimeout(resolve,${delay}))`)
+        await run('finishCreation()')
+        await frames()
+        assert.equal(
+          await run(`document.querySelectorAll('[data-chat-message-id="confirmed:start:user"]').length`),
+          1,
+          'provider confirmation replaces the local message without duplicating it'
+        )
+        await run('new Promise(resolve=>setTimeout(resolve,450))')
+        assert.equal(await run(`document.querySelectorAll('.message-flight').length`), 0)
+        assert.equal(
+          await run(`getComputedStyle(document.querySelector('[data-chat-message-id="confirmed:start:user"]')).opacity`),
+          '1',
+          'the confirmed message stays visible through the handoff'
+        )
+      }
+      await run('showConversation([])')
       await run('send()')
       // First use loads the lazy transcript module; hold the file read pending
       // while waiting for that initial component commit.

@@ -181,6 +181,7 @@ export type LocalDatabase = {
 let database: Kysely<LocalDatabase> | null = null
 let connection: Database.Database | null = null
 let initialization: Promise<Kysely<LocalDatabase>> | null = null
+let readerInitialization: Promise<Kysely<LocalDatabase>> | null = null
 
 const ensureColumn = async (
   db: Kysely<LocalDatabase>,
@@ -608,6 +609,29 @@ export const getDatabase = (): Promise<Kysely<LocalDatabase>> => {
   return initialization
 }
 
+/** WAL reads must not queue behind Kysely's writer transaction mutex or worker. */
+export const getReadDatabase = (): Promise<Kysely<LocalDatabase>> => {
+  if (readerInitialization) return readerInitialization
+  readerInitialization = (async () => {
+    // Only the writer creates/migrates the file. A reader never observes a partial schema.
+    await getDatabase()
+    const reader = new Kysely<LocalDatabase>({
+      dialect: new WorkerSqliteDialect(getDatabasePath(), true)
+    })
+    try {
+      await sql`select 1`.execute(reader)
+      return reader
+    } catch (error) {
+      await reader.destroy()
+      throw error
+    }
+  })().catch((error: unknown) => {
+    readerInitialization = null
+    throw error
+  })
+  return readerInitialization
+}
+
 export const getSqliteConnection = (): Database.Database => {
   // Explicit diagnostics/fixtures only. Production queries and preferences use
   // workers; opening a native connection must never be part of UI navigation.
@@ -621,11 +645,13 @@ export const getSqliteConnection = (): Database.Database => {
 
 export const disposeDatabase = async (): Promise<void> => {
   const db = initialization ? await initialization : database
+  const reader = await readerInitialization
   const diagnosticConnection = connection
   initialization = null
+  readerInitialization = null
   database = null
   connection = null
 
   diagnosticConnection?.close()
-  await Promise.all([db?.destroy(), closePreferenceStorage()])
+  await Promise.all([reader?.destroy(), db?.destroy(), closePreferenceStorage()])
 }

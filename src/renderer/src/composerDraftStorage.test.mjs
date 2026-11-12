@@ -15,6 +15,7 @@ import {
   getComposerDraftScopeKey,
   getPromptDrafts,
   removePromptDraft,
+  restoreFailedComposerDraft,
   restoreFailedComposerMessage,
   updateComposerDraft
 } from './composerDraft.ts'
@@ -144,6 +145,59 @@ test('stashing, restoring, failed sends and deleting the final draft persist wit
     promptDraftsByScope: new Map()
   })
   assert.equal(disk[composerDraftsStorageKey], undefined)
+})
+
+test('failed attachment-only drafts retain annotated images and selected resources after restart', async () => {
+  const disk = {}
+  const client = await makeClient(disk)
+  const sent = {
+    message: '',
+    attachments: [{ ...image, path: '/edited.png', previewOnly: true, annotationNumber: 7 }],
+    skills: [skill],
+    apps: [app],
+    quotes: [{ id: 'quote', content: 'Quoted text', comment: 'Explain' }]
+  }
+  const composerDrafts = restoreFailedComposerDraft(new Map(), 'failed', sent)
+  assert.deepEqual(getComposerDraft(composerDrafts, 'failed'), sent)
+  writeStoredComposerDrafts({ composerDrafts, promptDraftsByScope: new Map() })
+  await client.flush()
+  await makeClient(disk)
+  assert.deepEqual(getComposerDraft(readStoredComposerDrafts().composerDrafts, 'failed'), sent)
+})
+
+test('failed sends merge into their original scope without replacing newer text or resource edits', () => {
+  const sent = {
+    message: 'Failed message',
+    attachments: [image, { kind: 'file', path: '/file.txt', name: 'file.txt' }],
+    skills: [skill],
+    apps: [app],
+    quotes: [{ id: 'quote', content: 'Quoted text', comment: 'Original' }]
+  }
+  const current = {
+    message: 'New message',
+    attachments: [
+      { ...image, dataUrl: 'data:image/png;base64,BB==', annotationNumber: 3 },
+      { kind: 'file', path: '/new.txt', name: 'new.txt' }
+    ],
+    skills: [{ ...skill, description: 'Updated' }],
+    apps: [{ ...app, name: 'Updated' }],
+    quotes: [{ ...sent.quotes[0], comment: 'Updated' }]
+  }
+  const other = { ...current, message: 'Other chat' }
+  const drafts = restoreFailedComposerDraft(
+    new Map([
+      ['failed', current],
+      ['other', other]
+    ]),
+    'failed',
+    sent
+  )
+  assert.deepEqual(getComposerDraft(drafts, 'failed'), {
+    ...current,
+    message: 'Failed message\n\nNew message',
+    attachments: [sent.attachments[1], ...current.attachments]
+  })
+  assert.equal(getComposerDraft(drafts, 'other'), other)
 })
 
 test('malformed stored entries cannot break valid project prompts', () => {

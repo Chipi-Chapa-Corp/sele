@@ -5,8 +5,20 @@ const fs = require('node:fs/promises')
 const path = require('node:path')
 
 const fixtureItems = (id, prefix) =>
-  Array.from({ length: id === 'first' ? 10 : 1 }, (_, index) => [
+  Array.from({ length: id === 'first' ? 10 : id === 'cold' ? 4 : 1 }, (_, index) => [
     { type: 'message', id: id + ':user-' + index, role: 'user', content: 'Question ' + index },
+    ...(id === 'cold'
+      ? [
+          {
+            type: 'working',
+            id: id + ':work-' + index,
+            status: 'worked',
+            items: [],
+            startedAt: 1,
+            completedAt: 2
+          }
+        ]
+      : []),
     {
       type: 'message',
       id: id + ':answer-' + index,
@@ -38,7 +50,8 @@ if (!process.versions.electron) {
           resolveDir: root,
           loader: 'ts',
           contents: `
-          export {getDatabase,disposeDatabase} from './src/main/database/sqlite'
+          export {getDatabase,getReadDatabase,disposeDatabase} from './src/main/database/sqlite'
+          export {getChatMetadata} from './src/main/database/chat'
           export {SqliteChatHistoryCache} from './src/main/database/chatHistoryCache'
           export {SqliteConversationViews} from './src/main/database/conversationViews'
           export {createConversationView} from './src/shared/conversationView'
@@ -66,7 +79,11 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'preload.cjs'),
-        `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('fixtureNative',{list:()=>ipcRenderer.invoke('fixture:list'),cached:()=>{throw new Error('Known opening must never read a disk preview after selection')}})`
+        `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('fixtureNative',{
+          list:()=>ipcRenderer.invoke('fixture:list'),
+          holdWriter:()=>ipcRenderer.invoke('fixture:hold-writer'),
+          cached:(_provider,id)=>{if(id!=='cold')throw new Error('Prepared opening must not reread disk');return ipcRenderer.invoke('fixture:cached',id)}
+        })`
       )
       await require('esbuild').build({
         entryPoints: [path.join(root, 'src/renderer/src/chatMarkdown.worker.ts')],
@@ -95,7 +112,7 @@ if (!process.versions.electron) {
           window.viewport=()=>{const element=document.getElementById('chat-search-content');
             return {top:element.scrollTop,gap:element.scrollHeight-element.clientHeight-element.scrollTop}};
           window.scrollPreferenceWrites=[];
-          const chats=['first','second','unknown','empty','fallback','no-default'].map(id=>({id,providerId:'codex',createdAt:1,updatedAt:999,
+          const chats=['first','second','unknown','empty','fallback','no-default','cold'].map(id=>({id,providerId:'codex',createdAt:1,updatedAt:999,
             title:'Cached '+id,preview:'Saved answer',cwd:'/fixture',cwdKind:'directory',projectCwd:null,
             branchName:null,worktreeBaseBranchName:null,container:null,status:null,pinned:false,sidebarOrder:null,
             done:false,seenUpdatedAt:2,purpose:null,lastTurnOutcome:null,pendingApproval:null}));
@@ -114,12 +131,30 @@ if (!process.versions.electron) {
               requestAnimationFrame(sample);
             });});
           window.openChat=window.openChatBeforePaint;
+          window.openColdChat=()=>new Promise((resolve,reject)=>{
+            const start=performance.now();let firstReadableMs=null;let firstReadableTurns=null;let firstSelectionMs=null;let blankSelectedFrames=0;
+            document.querySelector('[data-chat-id="cold"] .chat-list-item__main').click();
+            requestAnimationFrame(function sample(){
+              const content=document.getElementById('chat-search-content');
+              const turns=content?.querySelectorAll('[data-chat-turn-id]').length??0;
+              if(document.querySelector('.chat-list-item--selected')?.dataset.chatId==='cold'){
+                firstSelectionMs??=performance.now()-start;
+                if(!content?.textContent.includes('Saved answer cold'))blankSelectedFrames++;
+              }
+              if(content?.textContent.includes('Saved answer cold')){
+                firstReadableMs??=performance.now()-start;firstReadableTurns??=turns;
+                if(turns===4)return resolve({firstSelectionMs,blankSelectedFrames,firstReadableMs,firstReadableTurns,allTurnsMs:performance.now()-start});
+              }
+              if(performance.now()-start>8000)return reject(Error('Cold chat did not load'));
+              requestAnimationFrame(sample);
+            });
+          });
           window.setDraft=()=>{const textarea=document.querySelector('.chat-panel__composer textarea');
             Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(textarea,'Draft while refreshing');
             textarea.dispatchEvent(new Event('input',{bubbles:true}));};
           window.fresh=id=>({...chats.find(chat=>chat.id===id),revision:1,writeAccess:'writable',
             capabilities:{editMessages:true,activeMessages:true},pendingApproval:null,pendingUserInput:null,
-            contextUsage:null,subagents:[],turnCount:id==='first'?10:1,itemsStartTurnIndex:0,
+            contextUsage:null,subagents:[],turnCount:id==='first'?10:id==='cold'?4:1,itemsStartTurnIndex:0,
             items:fixtureItems(id,'Fresh authoritative')});
           const usage={updatedAt:2,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,rateLimits:[],rateLimitResetCredits:null,errors:[]};
           const defaults={
@@ -209,7 +244,7 @@ if (!process.versions.electron) {
     let code = 0
     const backend = require(path.join(directory, 'backend.cjs'))
     try {
-      const headers = ['first', 'second', 'empty', 'fallback', 'no-default'].map((id) => ({
+      const headers = ['first', 'second', 'empty', 'fallback', 'no-default', 'cold'].map((id) => ({
         providerId: 'codex',
         id,
         createdAt: 1,
@@ -235,13 +270,14 @@ if (!process.versions.electron) {
         new backend.SqliteChatHistoryCache(backend.getDatabase)
       )
       admit(identity)
-      let views = new backend.SqliteConversationViews(backend.getDatabase)
+      let views = new backend.SqliteConversationViews(backend.getDatabase, backend.getReadDatabase)
       for (const chat of headers) {
         const detail = backend.prepareChatDetailForRenderer({
           ...chat,
           revision: 1000,
           capabilities: { editMessages: true, activeMessages: true },
-          turnCount: chat.id === 'empty' ? 0 : chat.id === 'first' ? 10 : 1,
+          turnCount:
+            chat.id === 'empty' ? 0 : chat.id === 'first' ? 10 : chat.id === 'cold' ? 4 : 1,
           itemsStartTurnIndex: 0,
           items: chat.id === 'empty' ? [] : fixtureItems(chat.id, 'Saved answer')
         })
@@ -255,10 +291,31 @@ if (!process.versions.electron) {
         new backend.SqliteChatHistoryCache(backend.getDatabase)
       )
       admit(identity)
-      views = new backend.SqliteConversationViews(backend.getDatabase)
+      views = new backend.SqliteConversationViews(backend.getDatabase, backend.getReadDatabase)
       ipcMain.handle('fixture:list', async () => {
-        const scopes = headers.map((chat) => identity.viewScope('codex', chat.id))
+        const scopes = headers
+          .filter((chat) => chat.id !== 'cold')
+          .map((chat) => identity.viewScope('codex', chat.id))
         return [...(await views.read(scopes, { opening: true })).values()]
+      })
+      ipcMain.handle('fixture:cached', async (_, id) => {
+        await backend.getChatMetadata(id)
+        const scope = identity.viewScope('codex', id)
+        return (await views.read([scope])).get(scope.key)
+      })
+      let heldWrite
+      ipcMain.handle('fixture:hold-writer', async () => {
+        const db = await backend.getDatabase()
+        let started
+        const ready = new Promise((resolve) => {
+          started = resolve
+        })
+        heldWrite = db.transaction().execute(async (trx) => {
+          await trx.insertInto('chat').values({ id: 'unrelated-background-write' }).execute()
+          started()
+          await new Promise((resolve) => setTimeout(resolve, 1200))
+        })
+        await ready
       })
       const win = new BrowserWindow({
         show: true,
@@ -292,6 +349,35 @@ if (!process.versions.electron) {
         0,
         'publishing known views never opens a writable provider chat'
       )
+      await run('window.fixtureNative.holdWriter()')
+      const coldOpen = await run('openColdChat()')
+      console.log(
+        'Cold SQLite opening during unrelated writer transaction: ' + JSON.stringify(coldOpen)
+      )
+      if (process.env.SELE_CHAT_OPEN_RESULTS) {
+        await fs.mkdir(process.env.SELE_CHAT_OPEN_RESULTS, { recursive: true })
+        await fs.writeFile(
+          path.join(process.env.SELE_CHAT_OPEN_RESULTS, 'cold-opening.json'),
+          JSON.stringify(coldOpen, null, 2)
+        )
+        await fs.writeFile(
+          path.join(process.env.SELE_CHAT_OPEN_RESULTS, 'cold-opening.png'),
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
+      await heldWrite
+      assert.ok(coldOpen.firstReadableMs < 200, 'saved chat must not queue behind unrelated writes')
+      assert.equal(
+        coldOpen.firstReadableTurns,
+        4,
+        'small histories paint completely, without per-turn frame delays'
+      )
+      assert.equal(
+        coldOpen.blankSelectedFrames,
+        0,
+        'local selection and saved messages paint together'
+      )
+      await run(`pending.cold.resolve(fresh('cold'))`)
       const firstOpen = await run(`openChat('first')`)
 
       assert.match(

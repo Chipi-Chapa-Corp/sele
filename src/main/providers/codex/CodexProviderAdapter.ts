@@ -2283,7 +2283,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     // Terminals belong to this process. Polling must never start a stopped server,
     // especially when its pinned account is unavailable and startup cannot succeed.
     if (!client || !connection) return []
-    const ids: string[] = []
     const terminals: { processId: string; itemId: string; command: string; cwd: string }[] = []
     let cursor: string | null = null
     const seen = new Set<string>()
@@ -2305,15 +2304,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
         if (!cursor && isCodexThreadNotLoadedError(error)) return []
         throw error
       }
-      ids.push(...page.data.map((task) => task.processId))
       terminals.push(...page.data)
       cursor = page.nextCursor ?? null
       if (cursor && seen.has(cursor)) throw new Error('Repeated background terminal cursor')
       if (cursor) seen.add(cursor)
     } while (cursor)
     if (client.connectionIdentity !== connection) return []
-    this.agentTerminals?.get(client)?.background(chatId, terminals)
-    return ids
+    // Only report tasks that have a terminal source the panel can actually attach
+    // to. A delayed provider poll must not resurrect a completed command's badge.
+    return this.agentTerminals.get(client)?.background(chatId, terminals) ?? []
   }
 
   private getChatsInContext = async (

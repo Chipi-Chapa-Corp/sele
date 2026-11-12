@@ -4,6 +4,7 @@ import { useLayoutEffect, type RefObject } from 'react'
 
 type Flight = {
   text: string
+  scope: string
   chatKey: string | null
   source: DOMRect
   existingIds: Set<string>
@@ -46,6 +47,7 @@ export function captureMessageFlight(
     return () => {}
   const flight: Flight = {
     text: getChatMessagePresentation(text).content.trim(),
+    scope,
     chatKey: scope.startsWith('new-chat:') ? null : scope,
     source: textarea.getBoundingClientRect(),
     started: Date.now(),
@@ -70,6 +72,13 @@ export function captureMessageFlight(
   if (flights.size >= 4) finishFlight(flights.values().next().value!)
   flights.add(flight)
   return cancel
+}
+
+export function bindMessageFlight(scope: string, chatKey: string): void {
+  for (const flight of flights) {
+    if (flight.scope === scope && (flight.chatKey === null || flight.chatKey === scope))
+      flight.chatKey = chatKey
+  }
 }
 
 function revealLandingTarget(flight: Flight): void {

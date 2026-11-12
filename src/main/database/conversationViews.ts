@@ -7,7 +7,10 @@ import type { ConversationViewScope } from '../providers/PersistentChatHistory'
 
 /** A durable read model, not an expiring/LRU cache. The processed message list for each chat. */
 export class SqliteConversationViews {
-  constructor(private database: () => Promise<Kysely<LocalDatabase>>) {}
+  constructor(
+    private database: () => Promise<Kysely<LocalDatabase>>,
+    private readDatabase = database
+  ) {}
 
   async list(
     scope: ConversationViewScope,
@@ -15,7 +18,7 @@ export class SqliteConversationViews {
     limit: number
   ): Promise<{ summaries: Omit<ProviderChat, 'providerId'>[]; nextCursor: string | null }> {
     const namespace = JSON.stringify(JSON.parse(scope.key).slice(0, -1)).slice(0, -1) + ','
-    const db = await this.database()
+    const db = await this.readDatabase()
     const rows = await db
       .selectFrom('conversation_view')
       .select([
@@ -66,7 +69,7 @@ export class SqliteConversationViews {
   ): Promise<Map<string, ProviderChatDetail>> {
     const result = new Map<string, ProviderChatDetail>()
     if (!scopes.length) return result
-    const db = await this.database()
+    const db = await this.readDatabase()
     // Read the saved message list directly. Legacy truncated opening columns
     // are ignored so selection cannot show a different list before refresh.
     const rows = await db

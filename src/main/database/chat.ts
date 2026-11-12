@@ -3,7 +3,7 @@ import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderChat, ProviderChatMetadata, ProviderChatPurpose } from '../../shared/provider'
 import { isProviderChatPurpose } from '../../shared/provider'
 import { isContainerTool, normalizeContainerTarget } from '../containerTarget'
-import { getDatabase } from './sqlite'
+import { getDatabase, getReadDatabase } from './sqlite'
 import { DatabaseReadCache } from './readCache'
 import { publishChatMetadataChanged } from '../providers/chatMetadataEvents'
 
@@ -88,7 +88,7 @@ const uniqueChatIds = (chatIds: string[]): string[] =>
   Array.from(new Set(chatIds.map((chatId) => chatId.trim()).filter(Boolean)))
 
 export const getChatMetadata = async (chatId: string): Promise<ProviderChatMetadata> => {
-  const db = await getDatabase()
+  const db = await getReadDatabase()
   return metadataCache.read(db, chatId, async () => {
     const row = await db
       .selectFrom('chat')

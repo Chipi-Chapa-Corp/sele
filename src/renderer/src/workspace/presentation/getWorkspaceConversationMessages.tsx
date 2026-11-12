@@ -1,4 +1,5 @@
 import { conversationViews } from '../../conversationViews'
+import type { StartingChat } from '../../startingChat'
 import { useWorkspaceChatCache } from '../features/useWorkspaceChatCache'
 import { useWorkspaceScroll } from '../features/useWorkspaceScroll'
 import { useWorkspaceTurnRendering } from '../features/useWorkspaceTurnRendering'
@@ -14,6 +15,7 @@ import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
 import { useWorkspaceSubagents } from '../wiring/useWorkspaceSubagents'
 
 type WorkspaceConversationMessagesDependencies = {
+  startingChat: StartingChat | null
   chatState: ReturnType<typeof useWorkspaceChatState>
   chatCache: ReturnType<typeof useWorkspaceChatCache>
   viewportState: ReturnType<typeof useWorkspaceViewportState>
@@ -30,6 +32,7 @@ type WorkspaceConversationMessagesDependencies = {
 }
 
 export function getWorkspaceConversationMessages({
+  startingChat,
   chatState,
   chatCache,
   viewportState,
@@ -45,6 +48,7 @@ export function getWorkspaceConversationMessages({
   subagentState
 }: WorkspaceConversationMessagesDependencies) {
   return {
+    startingChat,
     visible: Boolean(chatState.selectedChat),
     chatKnown: Boolean(chatState.selectedChat && conversationViews.has(chatState.selectedChat)),
     cachedChatKeys: Array.from(chatCache.recentChatCacheRef.current.keys()),

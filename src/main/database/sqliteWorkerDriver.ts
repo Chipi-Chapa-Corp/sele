@@ -78,9 +78,12 @@ class WorkerConnection implements DatabaseConnection {
 class WorkerDriver implements Driver {
   private worker: SqliteWorkerClient | null = null
   private connection: WorkerConnection | null = null
-  constructor(private path: string) {}
+  constructor(
+    private path: string,
+    private readOnly = false
+  ) {}
   async init(): Promise<void> {
-    const worker = new SqliteWorkerClient({ path: this.path })
+    const worker = new SqliteWorkerClient({ path: this.path, readonly: this.readOnly })
     try {
       await worker.request({ kind: 'ready' })
       this.worker = worker
@@ -126,9 +129,12 @@ class WorkerDriver implements Driver {
 
 /** Kysely retains its SQLite compiler, semantics and single-connection transaction mutex. */
 export class WorkerSqliteDialect implements Dialect {
-  constructor(private path: string) {}
+  constructor(
+    private path: string,
+    private readOnly = false
+  ) {}
   createDriver(): Driver {
-    return new WorkerDriver(this.path)
+    return new WorkerDriver(this.path, this.readOnly)
   }
   createAdapter(): SqliteAdapter {
     return new SqliteAdapter()
