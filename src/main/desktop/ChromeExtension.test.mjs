@@ -287,6 +287,39 @@ function automaticSocket() {
   }
 }
 
+test('an immediate host request is handled even before the open promise resumes', async (t) => {
+  const transport = automaticSocket()
+  const replies = []
+  class EagerSocket {
+    static OPEN = 1
+    readyState = 1
+    constructor() {
+      queueMicrotask(() => {
+        this.onopen?.()
+        this.onmessage?.({ data: JSON.stringify({ id: 1, method: 'getTabs', params: {} }) })
+      })
+    }
+    send(value) {
+      replies.push(JSON.parse(value))
+    }
+    close() {
+      this.readyState = 3
+      this.onclose?.()
+    }
+  }
+  const h = await fixture({
+    ...transport,
+    WebSocket: EagerSocket,
+    local: { selePairingV1: 'ws://127.0.0.1:12345/extension?token=fixture' }
+  })
+  t.after(() => h.stopWorker())
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    replies.find((reply) => reply.id === 1),
+    { id: 1, result: [] }
+  )
+})
+
 test('worker restart restores pairing and owned tabs; Chrome restart restores only pairing', async () => {
   const transport = automaticSocket()
   const first = await fixture(transport)

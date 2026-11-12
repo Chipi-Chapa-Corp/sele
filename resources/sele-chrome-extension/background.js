@@ -226,19 +226,8 @@ async function connect(endpoint, reconnect = false) {
     await Promise.all([...attached].map((id) => detach(id)))
     retryConnection()
   }
-  await new Promise((resolve, reject) => {
-    connection.onopen = resolve
-    connection.onerror = () => {
-      connectionError = 'Unable to connect to Sele. Waiting to reconnect.'
-      reject(new Error('Sele is unavailable. The saved connection will retry automatically.'))
-    }
-  })
-  if (socket !== connection) return
-  connectionError = ''
-  heartbeat = setInterval(() => send({ method: 'ping' }), 20000)
-  connection.onerror = () => {
-    connectionError = 'Connection failed.'
-  }
+  // The host can send its first request in the same turn as the open event.
+  // Install the receiver before awaiting open so that request cannot be lost.
   connection.onmessage = async (event) => {
     if (socket !== connection) return
     let request
@@ -251,6 +240,19 @@ async function connect(endpoint, reconnect = false) {
       if (socket === connection)
         send({ id: request?.id, error: error instanceof Error ? error.message : String(error) })
     }
+  }
+  await new Promise((resolve, reject) => {
+    connection.onopen = resolve
+    connection.onerror = () => {
+      connectionError = 'Unable to connect to Sele. Waiting to reconnect.'
+      reject(new Error('Sele is unavailable. The saved connection will retry automatically.'))
+    }
+  })
+  if (socket !== connection) return
+  connectionError = ''
+  heartbeat = setInterval(() => send({ method: 'ping' }), 20000)
+  connection.onerror = () => {
+    connectionError = 'Connection failed.'
   }
 }
 let operations = Promise.resolve()
