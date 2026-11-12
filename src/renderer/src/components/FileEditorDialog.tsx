@@ -237,7 +237,7 @@ const getDiffTreeMaxWidth = (bodyWidth: number): number =>
 
 const readStoredDiffTreeWidth = (): number => {
   try {
-    const storedWidth = Number(preferenceStorage.getItem(diffTreeWidthStorageKey))
+    const storedWidth = Number.parseFloat(preferenceStorage.getItem(diffTreeWidthStorageKey) ?? '')
     return Number.isFinite(storedWidth)
       ? clamp(storedWidth, diffTreeMinWidth, diffTreeMaxWidth)
       : diffTreeDefaultWidth

@@ -51,6 +51,20 @@ if (!process.versions.electron) {
         define: { 'process.env.NODE_ENV': '"production"' },
         jsx: 'automatic',
         loader: { '.svg': 'dataurl', '.png': 'dataurl', '.woff2': 'dataurl' },
+        plugins: [
+          {
+            name: 'unused-workers',
+            setup(build) {
+              build.onResolve({ filter: /\?worker$/ }, (args) => ({
+                path: args.path,
+                namespace: 'worker'
+              }))
+              build.onLoad({ filter: /.*/, namespace: 'worker' }, () => ({
+                contents: 'export default class {}'
+              }))
+            }
+          }
+        ],
         logLevel: 'silent'
       })
       await fs.writeFile(
@@ -83,7 +97,7 @@ if (!process.versions.electron) {
     try {
       const win = new BrowserWindow({
         show: false,
-        width: 800,
+        width: 1000,
         height: 600,
         webPreferences: { offscreen: true, backgroundThrottling: false }
       })

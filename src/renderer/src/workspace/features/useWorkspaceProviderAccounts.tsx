@@ -90,18 +90,6 @@ export function useWorkspaceProviderAccounts({
     }
   }
 
-  const handleUseProviderAccount = async (accountId: string): Promise<void> => {
-    try {
-      await switchProviderAccount(
-        accountId,
-        sourceState.newSessionProvider,
-        sourceState.newSessionContainer
-      )
-    } catch (error) {
-      console.error('Unable to switch provider accounts.', error)
-    }
-  }
-
   const deleteProviderAccount = async (
     accountId: string,
     providerId: ProviderId,
@@ -233,7 +221,6 @@ export function useWorkspaceProviderAccounts({
   return {
     handleProviderConnectionsChanged,
     switchProviderAccount,
-    handleUseProviderAccount,
     deleteProviderAccount,
     handleCreateProviderAccount
   }

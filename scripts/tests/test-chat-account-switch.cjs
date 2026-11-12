@@ -24,7 +24,7 @@ if (!process.versions.electron) {
       )
       const switchHandler = controller.slice(
         controller.indexOf('  const switchProviderAccount = async'),
-        controller.indexOf('  const handleUseProviderAccount = async')
+        controller.indexOf('  const deleteProviderAccount = async')
       )
       await require('esbuild').build({
         stdin: {
@@ -49,10 +49,10 @@ if (!process.versions.electron) {
             const usageProviderAvailable=true,usageProviderAvailabilityReady=true
             const [providerAccountRevision,setProviderAccountRevision]=useState(0)
             const [providerAccountUpdatingId,setProviderAccountUpdatingId]=useState(null)
-            const setProviderAccountsError=()=>{},setChats=()=>{},setChatDetail=()=>{}
+            const setChats=()=>{},setChatDetail=()=>{}
             const setProviderModelsRevision=()=>{},setChatLoadRequest=()=>{}
             const applyProviderAccountConfiguration=()=>{}
-            const providerState={providerAccountUpdatingId,setProviderAccountUpdatingId,setProviderAccountsError,setProviderModelsRevision,setProviderAccountRevision}
+            const providerState={providerAccountUpdatingId,setProviderAccountUpdatingId,setProviderModelsRevision,setProviderAccountRevision}
             const chatState={setChats,setSelectedChat,setChatDetail,setChatLoadRequest}
             ${usageHooks}
             ${switchHandler}
