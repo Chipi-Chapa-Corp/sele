@@ -7,7 +7,7 @@ import { ProviderProcessStore } from '../ProviderProcessStore.ts'
 import { providerProcessContext } from '../providerProcessContext.ts'
 import { withChatProcessRuntimes } from './ChatProcessRuntimes.ts'
 
-const setup = async (t) => {
+const setup = async (t, { providerId = 'codex', container = null } = {}) => {
   const directory = await mkdtemp(join(tmpdir(), 'sele-chat-runtimes-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const store = new ProviderProcessStore(directory, async () => {
@@ -19,7 +19,7 @@ const setup = async (t) => {
   const make = () => {
     let listener
     const adapter = {
-      id: 'codex',
+      id: providerId,
       clearAuthenticationFailure: (container) =>
         calls.push(['clear-auth', container, providerProcessContext.getStore()?.record.id]),
       changeAccount: async (container, change) => {
@@ -31,6 +31,10 @@ const setup = async (t) => {
         return () => {}
       },
       getChats: async () => ({ chats: [], nextCursor: null }),
+      getModels: async (options) => {
+        calls.push(['models', options])
+        return []
+      },
       recoverRuntime: async () =>
         calls.push(['recover', providerProcessContext.getStore()?.record.id]),
       releaseChat: async (id) => calls.push(['release', id]),
@@ -71,9 +75,27 @@ const setup = async (t) => {
       store,
       create: make,
       accountId: 'account',
-      metadata: async () => ({ container: null })
+      metadata: async () => ({ container })
     })
   return { store, calls, adapters, wrap }
+}
+
+for (const providerId of ['codex', 'claude', 'copilot', 'opencode-v2']) {
+  test(`${providerId} model discovery uses the saved chat environment without claiming a process boundary`, async (t) => {
+    const dev = { kind: 'container', tool: 'distrobox', name: 'dev' }
+    const h = await setup(t, { providerId, container: dev })
+    const adapter = h.wrap()
+    for (const supplied of [undefined, { kind: 'host' }]) {
+      await adapter.getModels({ chatId: 'saved-chat', container: supplied, accountId: 'account' })
+      assert.equal(h.calls.at(-1)[1].container, dev)
+      assert.equal(h.calls.at(-1)[1].chatId, 'saved-chat')
+      assert.equal(h.calls.at(-1)[1].accountId, 'account')
+    }
+    const host = { kind: 'host' }
+    await adapter.getModels({ container: host })
+    assert.equal(h.calls.at(-1)[1].container, host)
+    assert.equal((await h.store.all(providerId, 'account')).length, 0)
+  })
 }
 
 test('concurrent chats get separate boundaries; subsequent calls and updates retain ownership', async (t) => {

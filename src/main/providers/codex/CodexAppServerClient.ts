@@ -87,10 +87,13 @@ const getAppServerCommand = async (
   // Account handoffs must release the writer as soon as we unsubscribe, rather
   // than retaining it for Codex's default inactive-thread grace period.
   const appServerArgs = ['app-server', '-c', 'thread_unload_delay_secs=0', '--listen', 'stdio://']
+  const scope = providerProcessContext.getStore()
+  const container = scope ? scope.record.container : options.container
+  const targetBinary = container?.kind === 'container' ? 'codex' : binary
   const executable = options.existingOnly
-    ? { file: binary, env: process.env }
-    : await resolveHostExecutable(binary, {
-        container: options.container,
+    ? { file: targetBinary, env: process.env }
+    : await resolveHostExecutable(targetBinary, {
+        container,
         env: process.env
       }).catch((error: unknown) => {
         throw getCodexExecutableError(error)
@@ -98,15 +101,16 @@ const getAppServerCommand = async (
   const accountViewCommand = await getCodexAccountViewCommand(
     executable.file,
     appServerArgs,
-    process.platform !== 'win32' || options.container?.kind === 'container',
+    process.platform !== 'win32' || container?.kind === 'container',
     options.accountId,
     executable.env
   )
   const canUseSystemd =
+    !scope &&
     !options.owned &&
     process.platform === 'linux' &&
     !isRunningInFlatpak() &&
-    options.container?.kind !== 'container' &&
+    container?.kind !== 'container' &&
     Boolean(process.env.DBUS_SESSION_BUS_ADDRESS) &&
     process.env.SELE_DISABLE_CODEX_RESOURCE_ISOLATION !== '1'
 

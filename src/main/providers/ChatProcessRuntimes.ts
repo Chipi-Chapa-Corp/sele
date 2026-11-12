@@ -181,6 +181,13 @@ export const withChatProcessRuntimes = <T extends ProviderAdapter>(
       await callback?.(id)
     }
   const overrides: Partial<ProviderAdapter> = {
+    getModels: async (options) => {
+      assertOpen()
+      if (!options?.chatId) return base.getModels(options)
+      const { container } = await dependencies.metadata(options.chatId)
+      assertOpen()
+      return base.getModels({ ...options, container: container ?? null })
+    },
     getChats: async (options) => {
       const page = await base.getChats(options)
       return {

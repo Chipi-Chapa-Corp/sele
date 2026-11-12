@@ -45,15 +45,21 @@ export const getProviderHostCommand = async (
 ): Promise<HostCommand> => {
   const scope = providerProcessContext.getStore()
   if (!scope) return getHostCommand(file, args, options)
-  const command = await scope.prepare(file, args, options)
-  return getHostCommand(command.file, command.args, options)
+  const targetOptions = { ...options, container: scope.record.container }
+  const command = await scope.prepare(file, args, targetOptions)
+  return getHostCommand(command.file, command.args, targetOptions)
 }
 export const getProviderHostExecutableCommand = async (
   file: string,
   args: string[],
   options: Options = {}
 ): Promise<HostCommand> => {
-  if (!providerProcessContext.getStore()) return getHostExecutableCommand(file, args, options)
-  const executable = await resolveHostExecutable(file, options)
-  return getProviderHostCommand(executable.file, args, { ...options, env: executable.env })
+  const scope = providerProcessContext.getStore()
+  if (!scope) return getHostExecutableCommand(file, args, options)
+  const targetOptions = { ...options, container: scope.record.container }
+  const executable = await resolveHostExecutable(file, targetOptions)
+  return getProviderHostCommand(executable.file, args, {
+    ...targetOptions,
+    env: executable.env
+  })
 }

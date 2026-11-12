@@ -29,11 +29,12 @@ const code = ts.transpile(`${declaration.getText(source)}; getAppServerCommand`,
   target: ts.ScriptTarget.ES2022
 })
 
-const fixture = ({ platform = 'linux', env = {}, flatpak = false, resolve } = {}) =>
+const fixture = ({ platform = 'linux', env = {}, flatpak = false, resolve, scope } = {}) =>
   vm.runInNewContext(code, {
     process: { platform, pid: 123, env: { DBUS_SESSION_BUS_ADDRESS: 'fixture', ...env } },
     Date: { now: () => 12345 },
     randomUUID,
+    providerProcessContext: { getStore: () => scope },
     isRunningInFlatpak: () => flatpak,
     resolveHostExecutable: resolve ?? (async (file, { env }) => ({ file, env })),
     getCodexExecutableError,
@@ -96,6 +97,23 @@ test('missing Codex fails before building a wrapper with an executable hint', as
     code: 'ENOENT',
     message: /Executable was not found: codex.*SELE_CODEX_PATH/
   })
+})
+
+test('a saved container is authoritative before Codex lookup and account wrapping', async () => {
+  const dev = { kind: 'container', tool: 'distrobox', name: 'dev' }
+  const calls = []
+  const command = await fixture({
+    scope: { record: { container: dev } },
+    resolve: async (file, options) => {
+      calls.push({ file, options })
+      return { file, env: options.env }
+    }
+  })('/host/bin/codex', { container: { kind: 'host' } })
+  assert.equal(calls[0].file, 'codex')
+  assert.equal(calls[0].options.container, dev)
+  assert.equal(command.command, 'sh')
+  assert.ok(command.args.includes('codex'))
+  assert.ok(!command.args.includes('/host/bin/codex'))
 })
 
 test('reattaching an existing worker does not require the CLI to remain installed', async () => {
