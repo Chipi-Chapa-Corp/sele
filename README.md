@@ -134,18 +134,22 @@ database from existing OpenCode data. The original database is untouched. Existi
 `OPENCODE_DB` overrides are respected. Custom v1 plugins need v2 implementations; expired
 credentials or unsupported remote MCP OAuth credentials may require sign-in again.
 
-## Parallel work in your signed-in Chrome
+## Parallel work in your signed-in Chrome and Opera
 
-Sele's optional shared-tab extension lets Codex and Claude use your existing Chrome
-profile while you keep working. Each chat creates its own background tabs; Sele rejects
+Sele's optional shared-tab extension lets agents use your existing Chrome and Opera
+profiles while you keep working. Both browsers can stay connected simultaneously. Each
+has its own pairing address, encrypted credential, connection, and tab ownership. Each chat
+creates its own background tabs; Sele rejects
 access to tabs owned by another conversation. Input is sent to the target tab rather
 than the system mouse, keyboard or clipboard.
 
-1. Open **Settings → Browser & desktop → Sele Chrome extension (optional)**.
-2. Select **Open Chrome extension folder**. In Chrome, open `chrome://extensions`, enable
+1. Open **Settings → Browser & desktop → Sele browser extension (Chrome and Opera)**.
+2. Select **Open browser extension folder**. In your browser's Extensions manager, enable
    Developer mode, choose **Load unpacked**, and select that folder.
-3. In Sele, choose **Generate pairing address**, then **Copy pairing address**. Paste it
-   into the extension and select **Connect**. Keep the address private.
+3. In Sele, choose **Generate Chrome pairing address** or **Generate Opera pairing address**,
+   then **Copy Chrome pairing address** or **Copy Opera pairing address**. Paste it
+   into that browser's extension and select **Connect**. Keep the address private. Adding
+   Opera does not require disconnecting Chrome or regenerating Chrome's existing address.
 4. Install the bundled `skills/parallel-chrome` folder from that same extension folder
    into `~/.codex/skills/parallel-chrome` for Codex and `~/.claude/skills/parallel-chrome`
    for Claude (on Windows, `~` means your user home). Copy the entire folder, then start
@@ -160,6 +164,18 @@ extension can take up to one minute to retry. Full Chrome restart or extension r
 clears previous tab grants; agents must revalidate ownership rather than reuse old IDs.
 **Disconnect** deliberately removes pairing. The skill guides agent behavior; the extension
 connection supplies and enforces access. It does not configure standalone agent CLIs.
+
+Chrome tools retain their `chrome` namespace (`chrome_*` for MCP providers); Opera uses
+`opera` (`opera_*`). Tab IDs are local to each browser and can overlap: always use the
+matching namespace. Disconnect and pairing reset affect only the named browser. An existing
+saved Chrome binding is restored from its original location without rotating its credential.
+When connecting a second extension to an already occupied browser address, Sele rejects
+it; copy the other browser's own address instead. Opera uses the same unpacked extension.
+
+Automated transport tests cover simultaneous browser connections, overlapping tab IDs,
+separate conversation owners, scoped events, independent restart/reconnect and disconnect.
+Live acceptance in a signed-in Opera profile remains to be verified after installing this
+version of Sele; these tests do not operate the user's browser.
 
 The transport is designed for **macOS, Windows and Linux**, using the same Chrome extension.
 Sele stores its credential with Electron's OS-backed `safeStorage`: Keychain on macOS,

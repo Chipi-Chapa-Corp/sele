@@ -19,8 +19,10 @@ import type { BrowserAutomationScope, BrowserAutomationTab } from '../../shared/
 /** User-paired extension transport. Only tabs explicitly shared in Chrome are visible. */
 export class ChromeAutomation implements BrowserAutomationService {
   private readonly pairingStore?: ChromePairingStore
-  constructor(pairingStore?: ChromePairingStore) {
+  private readonly browserName: 'Chrome' | 'Opera'
+  constructor(pairingStore?: ChromePairingStore, browserName: 'Chrome' | 'Opera' = 'Chrome') {
     this.pairingStore = pairingStore
+    this.browserName = browserName
   }
   private lifecycle: Promise<unknown> = Promise.resolve()
   private serialized<T>(action: () => Promise<T>): Promise<T> {
@@ -118,7 +120,8 @@ export class ChromeAutomation implements BrowserAutomationService {
         })
       })
       const address = server.address()
-      if (!address || typeof address === 'string') throw new Error('Unable to listen for Chrome.')
+      if (!address || typeof address === 'string')
+        throw new Error(`Unable to listen for ${this.browserName}.`)
       this.pairingUrl = `ws://127.0.0.1:${address.port}/extension?token=${this.token}`
       return address.port
     } catch (error) {
@@ -154,10 +157,12 @@ export class ChromeAutomation implements BrowserAutomationService {
           }
         }
       } catch (error) {
-        console.error('Invalid Chrome extension response.', error)
+        console.error(`Invalid ${this.browserName} extension response.`, error)
       }
     })
-    socket.on('error', (error) => console.error('Chrome extension connection failed.', error))
+    socket.on('error', (error) =>
+      console.error(`${this.browserName} extension connection failed.`, error)
+    )
     socket.on('close', () => {
       if (this.socket !== socket) return
       this.socket = null
@@ -166,7 +171,7 @@ export class ChromeAutomation implements BrowserAutomationService {
       // Explicit disconnect/pairing still revokes the ownership map below.
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timer)
-        pending.reject(new Error('Chrome was disconnected.'))
+        pending.reject(new Error(`${this.browserName} was disconnected.`))
       }
       this.pending.clear()
     })
@@ -176,13 +181,15 @@ export class ChromeAutomation implements BrowserAutomationService {
     const socket = this.socket
     if (!socket || socket.readyState !== WebSocket.OPEN)
       return Promise.reject(
-        new Error('Pair the Sele Chrome extension in Settings → Browser & desktop first.')
+        new Error(
+          `Pair the Sele ${this.browserName} extension in Settings → Browser & desktop first.`
+        )
       )
     const id = ++this.nextId
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error('Chrome did not respond.'))
+        reject(new Error(`${this.browserName} did not respond.`))
       }, 20_000)
       this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer })
       socket.send(JSON.stringify({ id, method, params }), (error) => {
@@ -204,9 +211,9 @@ export class ChromeAutomation implements BrowserAutomationService {
     const listener = {}
     let closed = false
     const request = async <T>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
-      if (closed) throw new Error('Chrome capability was revoked.')
+      if (closed) throw new Error(`${this.browserName} capability was revoked.`)
       const result = await this.request<T>(method, params)
-      if (closed) throw new Error('Chrome capability was revoked.')
+      if (closed) throw new Error(`${this.browserName} capability was revoked.`)
       return result
     }
     const downloads = new Map<number, BrowserDownload[]>()
@@ -218,7 +225,7 @@ export class ChromeAutomation implements BrowserAutomationService {
       }
     })
     const tabs = async (): Promise<BrowserAutomationTab[]> => {
-      if (closed) throw new Error('Chrome capability was revoked.')
+      if (closed) throw new Error(`${this.browserName} capability was revoked.`)
       const all = await request<Array<BrowserAutomationTab & { owner?: string }>>('getTabs')
       // Extension session storage is authoritative, including offline Unshare.
       // Claims use extension-side compare-and-set before any tab operation.
@@ -241,12 +248,14 @@ export class ChromeAutomation implements BrowserAutomationService {
     }
     const claim = async (id: number): Promise<void> => {
       if (!(await tabs()).some((tab) => tab.id === id))
-        throw new Error('This Chrome tab has not been shared or belongs to another conversation.')
+        throw new Error(
+          `This ${this.browserName} tab has not been shared or belongs to another conversation.`
+        )
       const existing = this.owners.get(id)
       if (closed || (existing && existing !== owner))
-        throw new Error('Chrome tab access was revoked.')
+        throw new Error(`${this.browserName} tab access was revoked.`)
       await request('claimTab', { tabId: id, owner })
-      if (closed) throw new Error('Chrome capability was revoked.')
+      if (closed) throw new Error(`${this.browserName} capability was revoked.`)
       this.owners.set(id, owner)
     }
     const detach = (id: number): void => {
@@ -254,22 +263,23 @@ export class ChromeAutomation implements BrowserAutomationService {
       // Detaching a debugger is not a transfer of the tab to another chat.
       this.detaching.add(id)
       void this.request('detach', { tabId: id })
-        .catch((error) => console.error('Unable to detach Chrome tab.', error))
+        .catch((error) => console.error(`Unable to detach ${this.browserName} tab.`, error))
         .finally(() => this.detaching.delete(id))
     }
     const client: BrowserAutomationClient = {
       scope: { ...scope },
       listTabs: tabs,
       createTab: async (options) => {
-        if (closed) throw new Error('Chrome capability was revoked.')
+        if (closed) throw new Error(`${this.browserName} capability was revoked.`)
         const { owner: allocationOwner, ...tab } = await request<
           BrowserAutomationTab & { owner: string }
         >('createTab', {
           foreground: options?.foreground ?? false,
           owner
         })
-        if (allocationOwner !== owner) throw new Error('Chrome tab allocation ownership mismatch.')
-        if (closed) throw new Error('Chrome capability was revoked.')
+        if (allocationOwner !== owner)
+          throw new Error(`${this.browserName} tab allocation ownership mismatch.`)
+        if (closed) throw new Error(`${this.browserName} capability was revoked.`)
         this.owners.set(tab.id, owner)
         return tab
       },
@@ -283,7 +293,8 @@ export class ChromeAutomation implements BrowserAutomationService {
         this.owners.delete(id)
       },
       visibility: async (visible) => {
-        if (visible === false) throw new Error('Chrome visibility is controlled by the user.')
+        if (visible === false)
+          throw new Error(`${this.browserName} visibility is controlled by the user.`)
         return { visible: true }
       },
       moveMouse: async (id, x, y) => {
@@ -306,7 +317,7 @@ export class ChromeAutomation implements BrowserAutomationService {
         await claim(id)
         if (targetId)
           throw new Error(
-            'Non-flattened Chrome target attachment is unsupported. Use flattened sessions.'
+            `Non-flattened ${this.browserName} target attachment is unsupported. Use flattened sessions.`
           )
         return request('executeCdp', { tabId: id, method, params, sessionId })
       },
@@ -335,7 +346,7 @@ export class ChromeAutomation implements BrowserAutomationService {
           if (complete) return complete
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
-        throw new Error('Chrome download did not complete.')
+        throw new Error(`${this.browserName} download did not complete.`)
       },
       close: () => {
         if (closed) return
@@ -359,7 +370,7 @@ export class ChromeAutomation implements BrowserAutomationService {
     this.socket = null
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer)
-      pending.reject(new Error('Chrome was disconnected.'))
+      pending.reject(new Error(`${this.browserName} was disconnected.`))
     }
     this.pending.clear()
     for (const [id, owner] of this.owners) this.emit(owner, { type: 'detach', tabId: id })
@@ -387,6 +398,20 @@ export const chromeAutomation = new ChromeAutomation(
     async () => (await import('electron')).safeStorage
   )
 )
+
+// Separate listeners, encrypted credentials and ownership maps keep browser-local
+// tab IDs isolated. Never rotate the existing Chrome binding when pairing Opera.
+export const operaAutomation = new ChromeAutomation(
+  new EncryptedChromePairingStore(
+    () => join(chromeUserData(), 'desktop-opera', 'pairing.enc.json'),
+    async () => (await import('electron')).safeStorage
+  ),
+  'Opera'
+)
+export const pairedBrowserAutomations = {
+  chrome: chromeAutomation,
+  opera: operaAutomation
+} as const
 function chromeUserData(): string {
   // Set during Electron startup, before restore or pairing is requested.
   if (!userDataPath) throw new Error('Chrome pairing storage has not been initialized.')

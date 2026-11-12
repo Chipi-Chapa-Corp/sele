@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import type { DesktopApi, DesktopState } from '../../../shared/desktop'
+import {
+  pairedBrowserNames,
+  type DesktopApi,
+  type DesktopState,
+  type PairedBrowserId
+} from '../../../shared/desktop'
 import { appApi } from '../appApi'
 import { Button } from './Button'
 
@@ -9,6 +14,7 @@ export function DesktopAutomationSettings(): React.ReactElement {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [directory, setDirectory] = useState<string | null>(null)
+  const [status, setStatus] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
     const refresh = (): void => {
@@ -33,6 +39,7 @@ export function DesktopAutomationSettings(): React.ReactElement {
   const run = async (operation: () => Promise<DesktopState>): Promise<void> => {
     setBusy(true)
     setError(null)
+    setStatus(null)
     try {
       setState(await operation())
     } catch (error) {
@@ -75,30 +82,66 @@ export function DesktopAutomationSettings(): React.ReactElement {
           theme="secondary"
         />
       </div>
-      <details open={Boolean(state?.chrome.connected || state?.chrome.pairingUrl)}>
-        <summary>Sele Chrome extension (optional)</summary>
+      <details open={Boolean(state?.chrome.pairingUrl || state?.opera.pairingUrl)}>
+        <summary>Sele browser extension (Chrome and Opera)</summary>
         <p>
           This is a separate shared-tab connection. Claude and Codex's official Chrome integrations
-          use their own setup above.
+          use their own setup above. Chrome and Opera can stay connected at the same time. Each
+          browser has its own pairing address and shared tabs.
         </p>
-        <div className="settings-dialog__field settings-dialog__field--stack">
-          <div className="settings-dialog__field-header">
-            <strong>Chrome attachment</strong>
-            <p>
-              {state?.chrome.connected
-                ? 'Connected. Use the extension to choose which tabs to share.'
-                : 'Connect your existing Chrome profile through the Sele extension. Only tabs you share are exposed.'}
-            </p>
-          </div>
-          <Button
-            disabled={busy}
-            callback={() =>
-              run(() => (state?.chrome.connected ? api().disconnectChrome() : api().pairChrome()))
-            }
-            label={state?.chrome.connected ? 'Disconnect Chrome' : 'Generate pairing address'}
-            theme="secondary"
-          />
-        </div>
+        {(['chrome', 'opera'] as const).map((id: PairedBrowserId) => {
+          const name = pairedBrowserNames[id]
+          const connection = state?.[id]
+          const pair = id === 'chrome' ? () => api().pairChrome() : () => api().pairOpera()
+          const disconnect =
+            id === 'chrome' ? () => api().disconnectChrome() : () => api().disconnectOpera()
+          return (
+            <div key={id} role="group" aria-label={`${name} connection`}>
+              <div className="settings-dialog__field settings-dialog__field--stack">
+                <div className="settings-dialog__field-header">
+                  <strong>{name} attachment</strong>
+                  <p>
+                    {connection?.connected
+                      ? 'Connected. Use the extension to choose which tabs to share.'
+                      : `Connect your existing ${name} profile through the Sele extension. Only tabs you share are exposed.`}
+                  </p>
+                </div>
+                <Button
+                  disabled={busy}
+                  callback={() => run(connection?.connected ? disconnect : pair)}
+                  label={
+                    connection?.connected
+                      ? `Disconnect ${name}`
+                      : `Generate ${name} pairing address`
+                  }
+                  theme="secondary"
+                />
+              </div>
+              {connection?.pairingUrl && (
+                <div className="chat-approval__actions">
+                  <Button
+                    disabled={busy}
+                    callback={async () => {
+                      try {
+                        await appApi.writeClipboardText(connection.pairingUrl!)
+                        setStatus(`${name} pairing address copied.`)
+                      } catch (error) {
+                        setError(String(error))
+                      }
+                    }}
+                    label={`Copy ${name} pairing address`}
+                    theme="secondary"
+                  />
+                </div>
+              )}
+              {connection?.error && (
+                <p role="alert">
+                  {name}: {connection.error}
+                </p>
+              )}
+            </div>
+          )
+        })}
         <div className="chat-approval__actions">
           <Button
             disabled={busy}
@@ -109,22 +152,17 @@ export function DesktopAutomationSettings(): React.ReactElement {
                 setError(String(error))
               }
             }}
-            label="Open Chrome extension folder"
+            label="Open browser extension folder"
             theme="secondary"
           />
-          {state?.chrome.pairingUrl && (
-            <Button
-              callback={() => appApi.writeClipboardText(state.chrome.pairingUrl!)}
-              label="Copy pairing address"
-              theme="secondary"
-            />
-          )}
         </div>
         <p>
-          In Chrome, open chrome://extensions, enable Developer mode, and Load unpacked from the
-          extension folder. Paste the pairing address in the extension, connect, then Share current
-          tab.
+          In Chrome or Opera, open Extensions, enable Developer mode, and Load unpacked from the
+          extension folder. Copy that browser's pairing address above, paste it in the extension,
+          connect, then Share current tab. Generating an Opera address does not change Chrome's
+          connection. Disconnect affects only the named browser.
         </p>
+        <p role="status">{status}</p>
         {directory && <p>{directory}</p>}
       </details>
       {(error || state?.computer.error) && <p role="alert">{error || state?.computer.error}</p>}

@@ -315,7 +315,8 @@ export const initializeLanBridge = async (): Promise<void> => {
   bridge.browserApi.resolvePageZoomScale = async () => 1
   bridge.desktopApi.getState = async () => ({
     computer: { connected: false, connecting: false, backend: null, error: null },
-    chrome: { connected: false, pairingUrl: null }
+    chrome: { connected: false, pairingUrl: null, error: null },
+    opera: { connected: false, pairingUrl: null, error: null }
   })
   const namespace = mobileConnection
     ? `sele-android-host:${encodeURIComponent(mobileConnection.hostId ?? mobileConnection.origin)}:`

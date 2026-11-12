@@ -112,10 +112,10 @@ must be absolute, have existing parents, and never overwrite files. Screenshots 
 The browser has a separate profile from personal Chrome. Remote forwarding, secure sign-in
 UI, preview-server management, and a complete cross-frame locator API are unavailable.
 
-## Explicit computer and Chrome connections
+## Explicit computer, Chrome and Opera connections
 
 **Settings → Browser & desktop** connects local writable conversations in all four providers to these
-capabilities. Chrome pairing is restored automatically after restart; the separate
+capabilities. Chrome and Opera have independent pairing restored automatically after restart; the separate
 Linux computer connection requires a new desktop-sharing session.
 
 **Connect computer** starts a Linux host helper. X11 requires `xdotool` and ImageMagick;
@@ -124,16 +124,25 @@ Wayland requires PyGObject, RemoteDesktop/ScreenCast portals, GStreamer Gst/GstA
 Missing support fails without falling back to unrestricted X11 control. Disconnect or portal
 revocation stops access.
 
-For Sele's optional shared-tab connection, expand **Sele Chrome extension (optional)**,
+For Sele's optional shared-tab connections, expand **Sele browser extension (Chrome and Opera)**,
 open the extension folder from Settings, load it unpacked in
-`chrome://extensions`, and connect once using Sele's pairing address. The folder includes
+the browser's Extensions manager, and connect once using that browser's own pairing address. The folder includes
 `skills/parallel-chrome`, a portable skill to copy into each agent's skill directory; see the
-[README setup](../README.md#parallel-work-in-your-signed-in-chrome). Create background tabs
+[README setup](../README.md#parallel-work-in-your-signed-in-chrome-and-opera). Create background tabs
 for concurrent work; use **Share current tab** only for an explicit user handoff.
 Treat the pairing address as a credential. Only shared/created tabs are exposed, each leased
 to one conversation. Unsharing or disconnecting revokes access; regenerating the address
 revokes the old credential. Chrome 125+ is required for flattened iframe sessions.
 This pairing is independent of Claude and Codex's official Chrome connections.
+
+Chrome keeps its existing `desktop-chrome/pairing.enc.json` binding. Opera uses a separate
+`desktop-opera/pairing.enc.json`, listener and ownership map, so both can be connected at
+once. Pairing, disconnecting or reconnecting one never rotates or revokes the other. Codex
+exposes `opera` tools alongside `chrome`; MCP providers expose `opera_*` alongside `chrome_*`.
+Always keep tab IDs with their browser namespace: two browsers can report the same number.
+Restoration errors appear under the affected browser in Settings without disabling the other.
+The same bundled extension can be loaded in both browsers; no reload of an already connected
+Chrome extension is required when adding Opera.
 
 Pairing persists across normal Sele and Chrome restarts. Sele restores the same loopback
 port and token from an encrypted file in its user-data directory; the extension stores the
