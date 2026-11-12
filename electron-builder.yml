@@ -38,6 +38,10 @@ nsis:
   createDesktopShortcut: always
 mac:
   icon: build/icon.icns
+  # Computer Use authenticates its client/helper using GitHub's signing identity.
+  # Re-signing these vendor binaries breaks authorization and their existing TCC grants.
+  signIgnore:
+    - 'node_modules/@github/copilot-sdk-darwin-[^/]+/'
   target:
     - dmg
     - zip
