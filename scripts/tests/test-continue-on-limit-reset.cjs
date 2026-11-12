@@ -137,9 +137,14 @@ if (!process.versions.electron) {
       const timedButton = `document.querySelector('[aria-label^="Continue in "]')`
       const continueButton = `document.querySelector('[aria-label="Continue failed turn"]')`
       const toggle = `document.querySelector('[aria-labelledby="settings-chat-continue-on-usage-reset"]')`
-      await settle()
+      for (let attempt = 0; attempt < 100 && !(await run(`Boolean(${continueButton})`)); attempt++)
+        await settle()
       assert.equal(await run(timedButton), null)
-      assert.equal(await run(`Boolean(${continueButton})`), true)
+      assert.equal(
+        await run(`Boolean(${continueButton})`),
+        true,
+        await run('document.body.innerText')
+      )
       assert.equal(await run(`${toggle}.checked`), true)
       assert.match(await run('document.body.textContent'), /Failure Retries/)
       assert.doesNotMatch(await run('document.body.textContent'), /Network Retries/)
@@ -166,6 +171,56 @@ if (!process.versions.electron) {
         /Keep working\./
       )
       assert.equal(await run(timedButton), null)
+
+      // Claude grants retain their type through the actual failed-turn renderer.
+      await run(`
+        window.confirms=[];window.claims=[];window.acceptReset=false;window.claimOutcome='noCredit';
+        window.confirm=message=>{window.confirms.push(message);return window.acceptReset};
+        window.renderFixture({motionChatKey:'claude-resets',availableRateLimitResets:4,
+          rateLimitResetOptions:[
+            {id:'full',label:'Full reset',description:'Refills five-hour and weekly limits.',availableCount:1,expiresAt:Date.now()+86400000,usable:true},
+            {id:'fable',label:'Fable reset',description:'Restores Fable weekly usage. Other weekly usage stays unchanged.',availableCount:2,expiresAt:Date.now()+86400000,usable:true},
+            {id:'paused',label:'Weekly reset',description:'Temporarily unavailable.',availableCount:1,expiresAt:null,usable:false}
+          ],onUsageReset:async id=>{window.claims.push(id);return window.claimOutcome},onUsageRefresh:async()=>{}},
+          {failureMessage:'Claude usage limit reached.'})
+      `)
+      await settle()
+      const resetButton = `document.querySelector('.rate-limit-reset-controls button')`
+      const resetSelect = `document.querySelector('select[aria-label="Reset type"]')`
+      assert.equal(await run(`${resetSelect}.options.length`), 3)
+      assert.equal(await run(`${resetSelect}.options[2].disabled`), true)
+      await run(
+        `${resetSelect}.value='fable';${resetSelect}.dispatchEvent(new Event('change',{bubbles:true}))`
+      )
+      await settle()
+      await run(`${resetButton}.click()`)
+      await settle()
+      assert.deepEqual(await run('window.claims'), [])
+      assert.match(await run('window.confirms.at(-1)'), /Fable weekly usage/)
+      assert.doesNotMatch(await run('window.confirms.at(-1)'), /Codex/)
+      await run('window.acceptReset=true')
+      await run(`${resetButton}.click()`)
+      await settle()
+      assert.deepEqual(await run('window.claims'), ['fable'])
+      assert.match(await run('document.body.textContent'), /No reset credits are available/)
+      assert.equal(await run('window.calls.length'), 1, 'an unsuccessful claim must not continue')
+      if (process.env.SELE_CLAUDE_RESETS_SCREENSHOT) {
+        win.showInactive()
+        await run('new Promise(resolve=>setTimeout(resolve,250))')
+        await fs.writeFile(
+          process.env.SELE_CLAUDE_RESETS_SCREENSHOT,
+          (await win.webContents.capturePage()).toPNG()
+        )
+      }
+      await run("window.claimOutcome='reset'")
+      await run(`${resetButton}.click()`)
+      await settle()
+      assert.deepEqual(await run('window.claims'), ['fable', 'fable'])
+      assert.equal(
+        await run('window.calls.length'),
+        2,
+        'a confirmed reset continues the failed turn'
+      )
 
       await run(
         'document.querySelector("#settings-chat-failure-retries").scrollIntoView({block:"center"})'

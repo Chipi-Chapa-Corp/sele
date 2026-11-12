@@ -59,6 +59,7 @@ export type RootChatTurnInputs = SharedTurnInputs & {
   motionChatKey: ItemProps['motionChatKey']
   authenticationRequired: ItemProps['authenticationRequired']
   availableRateLimitResets: number
+  rateLimitResetOptions?: ItemProps['rateLimitResetOptions']
   canEditOwnMessages: boolean
   continuePrompt: ItemProps['continuePrompt']
   stoppedTurnActionDisabled: boolean
@@ -166,6 +167,7 @@ export const renderRootChatTurn = (
                   : undefined
               }
               availableRateLimitResets={rateLimitFailure ? inputs.availableRateLimitResets : 0}
+              rateLimitResetOptions={rateLimitFailure ? inputs.rateLimitResetOptions : undefined}
               canEditOwnMessages={
                 item.type === 'message' && item.role === 'user' && inputs.canEditOwnMessages
               }

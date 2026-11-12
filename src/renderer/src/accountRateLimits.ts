@@ -58,8 +58,10 @@ export const getUsageBadgeRateLimit = (
 export const shouldDisableRateLimitReset = (
   rateLimits: readonly ProviderAccountRateLimit[],
   resetCredits: readonly ProviderAccountRateLimitResetCredit[] | null = null,
-  now = Date.now()
+  now = Date.now(),
+  allowEarlyUse = false
 ): boolean =>
+  !allowEarlyUse &&
   rateLimits.length > 0 &&
   rateLimits.every((limit) => clampPercent(limit.usedPercent) < minimumUsedPercentForReset) &&
   !resetCredits?.some((credit) => {

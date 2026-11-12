@@ -77,6 +77,8 @@ import {
   type ProviderStartChatOptions,
   type ProviderUpdateAvailability,
   type ProviderUsageOptions,
+  type ProviderRateLimitResetOptions,
+  type ProviderAccountRateLimitResetOutcome,
   type ProviderUserInputResponse
 } from '../../../shared/provider'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget'
@@ -154,6 +156,7 @@ import {
 import { collectClaudeSubagentSpawns, readLocalClaudeSubagentMetadata } from './ClaudeSubagents'
 import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import { mapClaudeRateLimits } from './ClaudeUsage'
+import { mapClaudeResetCredits } from './ClaudeResetCredits'
 import { getClaudeUserQuestions } from './ClaudeUserQuestions'
 import { parseClaudeVersion, supportsClaudeResumeDropsTurn } from './ClaudeVersion'
 
@@ -989,28 +992,29 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         const usage = await control.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
           skipBehaviors: true
         })
-        // Claude can report that subscription limits apply while silently returning
-        // null after its usage request. Read the same account's endpoint in that case;
-        // the SDK has already handled any credential refresh.
-        if (usage.rate_limits) await claudeAccounts.rememberUsage(options, usage.rate_limits)
+        // The SDK refreshes credentials, but omits banked reset grants. Read them
+        // with the same account's usage windows through the bounded fallback cache.
         // Missing credentials and an isolated config without the subscription
         // profile can both look like an API-key session to the usage API.
         const subscriptionLogin =
           !usage.rate_limits && !usage.rate_limits_available
             ? (await claudeAccounts.getAuthenticationMethod(options)) === 'claude.ai'
             : false
-        const limits =
-          usage.rate_limits ??
-          (usage.rate_limits_available || subscriptionLogin
-            ? await claudeAccounts.getUsageFallback(options)
-            : null)
+        const enrichedLimits =
+          (usage.rate_limits || usage.rate_limits_available || subscriptionLogin
+            ? await claudeAccounts.getUsageFallback(options).catch((error: unknown) => {
+                if (!usage.rate_limits || isClaudeAuthenticationError(error)) throw error
+                return usage.rate_limits
+              })
+            : null) ?? usage.rate_limits
+        const limits = enrichedLimits ? { ...usage.rate_limits, ...enrichedLimits } : null
         return {
           updatedAt: Date.now(),
           statisticsLoaded: false,
           summary: emptyUsageSummary,
           dailyUsageBuckets: null,
           rateLimits: mapClaudeRateLimits(limits),
-          rateLimitResetCredits: null,
+          rateLimitResetCredits: mapClaudeResetCredits(limits),
           errors: [],
           authenticationRequired: this.authenticationFailures.has(sourceKey)
         }
@@ -1041,13 +1045,16 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         summary: emptyUsageSummary,
         dailyUsageBuckets: null,
         rateLimits: mapClaudeRateLimits(lastLimits),
-        rateLimitResetCredits: null,
+        rateLimitResetCredits: mapClaudeResetCredits(lastLimits),
         errors: [error instanceof Error ? error.message : 'Claude usage is unavailable.']
       }
     }
   }
 
-  resetRateLimits = async (): Promise<'nothingToReset'> => 'nothingToReset'
+  resetRateLimits = async (
+    options: ProviderRateLimitResetOptions = {}
+  ): Promise<ProviderAccountRateLimitResetOutcome> =>
+    claudeAccounts.resetRateLimits({ ...options, accountId: this.accountId })
 
   getChatTerminalTasks = async (chatId: string): Promise<string[]> => [
     ...(this.states.get(chatId)?.terminalTaskIds ?? [])

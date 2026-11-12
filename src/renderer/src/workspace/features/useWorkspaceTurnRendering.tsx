@@ -169,7 +169,9 @@ export function useWorkspaceTurnRendering({
 
   const rateLimitResetDisabled = shouldDisableRateLimitReset(
     accountUsage?.rateLimits ?? [],
-    accountUsage?.rateLimitResetCredits?.credits ?? null
+    accountUsage?.rateLimitResetCredits?.credits ?? null,
+    Date.now(),
+    accountUsage?.rateLimitResetCredits?.options !== undefined
   )
 
   // Handlers call the current controller, but changing their closures must not
@@ -206,6 +208,7 @@ export function useWorkspaceTurnRendering({
     motionChatKey: selectedChatKey,
     authenticationRequired: chatErrors.authenticationRequired,
     availableRateLimitResets: accountUsage?.rateLimitResetCredits?.availableCount ?? 0,
+    rateLimitResetOptions: accountUsage?.rateLimitResetCredits?.options,
     canEditOwnMessages,
     continuePrompt: settings.effectiveAppSettings.chat.continuePrompt,
     stoppedTurnActionDisabled,

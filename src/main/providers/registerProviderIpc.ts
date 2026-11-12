@@ -43,6 +43,7 @@ import type {
   ProviderUpdateOptions,
   ProviderUserInputResponse,
   ProviderUsageOptions,
+  ProviderRateLimitResetOptions,
   ProviderWorkingItem,
   ProviderWorkingStep,
   ProviderWorkingStepPage,
@@ -816,6 +817,22 @@ const requireSourceOptions = (value: unknown): ProviderSourceOptions | undefined
     ...(options.chatId == null
       ? {}
       : { chatId: requireProviderResourceString(options.chatId, 'chat ID', 512) })
+  }
+}
+
+const requireRateLimitResetOptions = (
+  value: unknown
+): ProviderRateLimitResetOptions | undefined => {
+  const options = requireSourceOptions(value)
+  if (value == null) return options
+  const creditId = (value as { creditId?: unknown }).creditId
+  return {
+    ...options,
+    ...(creditId === undefined
+      ? {}
+      : {
+          creditId: requireProviderResourceString(creditId, 'reset credit ID', 128)
+        })
   }
 }
 
@@ -1699,7 +1716,10 @@ export const registerProviderIpc = (): void => {
   handleClientRequest(
     providerIpcChannels.resetRateLimits,
     (_, providerId: unknown, options: unknown) =>
-      providerApi.resetRateLimits(requireProviderId(providerId), requireSourceOptions(options))
+      providerApi.resetRateLimits(
+        requireProviderId(providerId),
+        requireRateLimitResetOptions(options)
+      )
   )
 
   handleClientRequest(providerIpcChannels.getChatContainers, () => providerApi.getChatContainers())

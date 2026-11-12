@@ -16,6 +16,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = (props) => {
   const {
     authenticationRequired,
     availableRateLimitResets = 0,
+    rateLimitResetOptions,
     container,
     continuePrompt = '',
     continueStoppedTurnDisabled = false,
@@ -69,6 +70,7 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = (props) => {
       authenticationRequired={authenticationRequired}
       activityContent={workingStepContent}
       availableRateLimitResets={availableRateLimitResets}
+      rateLimitResetOptions={rateLimitResetOptions}
       container={container}
       continueDisabled={continueStoppedTurnDisabled || !continuePrompt.trim()}
       continuedStoppedTurn={continuedStoppedTurn}

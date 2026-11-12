@@ -1,0 +1,27 @@
+.rate-limit-reset-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.rate-limit-reset-controls select {
+  max-width: 12rem;
+  min-height: var(--control-height-small, 1.75rem);
+  padding: 0.25rem;
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius-small);
+  background: var(--control-surface);
+  color: var(--lead);
+  font: inherit;
+}
+
+.rate-limit-reset-controls select:focus-visible {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.0625rem;
+}
+
+.rate-limit-reset-controls select:disabled {
+  opacity: 0.5;
+}

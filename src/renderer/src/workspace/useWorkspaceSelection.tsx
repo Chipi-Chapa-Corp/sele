@@ -961,14 +961,18 @@ export function useWorkspaceSelection(dependencies: WorkspaceSelectionDependenci
       selectedChatId
     ]
   )
-  const resetAccountRateLimits = useCallback(() => {
-    if (!usageProviderAvailable) return Promise.resolve('nothingToReset' as const)
+  const resetAccountRateLimits = useCallback(
+    (creditId?: string) => {
+      if (!usageProviderAvailable) return Promise.resolve('nothingToReset' as const)
 
-    return providerApi.resetRateLimits(usageProviderId, {
-      container: normalizeContainerTarget(changesContainer),
-      chatId: selectedChatId
-    })
-  }, [changesContainer, usageProviderAvailable, usageProviderId, selectedChatId])
+      return providerApi.resetRateLimits(usageProviderId, {
+        creditId,
+        container: normalizeContainerTarget(changesContainer),
+        chatId: selectedChatId
+      })
+    },
+    [changesContainer, usageProviderAvailable, usageProviderId, selectedChatId]
+  )
   useEffect(() => {
     let active = true
 

@@ -6,6 +6,7 @@ import 'react-diff-view/style/index.css'
 import type { AppContainerTarget } from '../../../shared/app'
 import type {
   ProviderAccountRateLimitResetOutcome,
+  ProviderAccountRateLimitResetOption,
   ProviderWorkingStep
 } from '../../../shared/provider'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
@@ -35,6 +36,7 @@ export const WorkingStep: React.FC<{
   authenticationRequired?: boolean
   activityContent?: ReactNode
   availableRateLimitResets?: number
+  rateLimitResetOptions?: ProviderAccountRateLimitResetOption[]
   container?: AppContainerTarget | null
   continueDisabled?: boolean
   continuedStoppedTurn?: boolean
@@ -53,7 +55,7 @@ export const WorkingStep: React.FC<{
   onManageAccounts?: () => void
   onReauthenticate?: () => void
   onUsageRefresh?: () => Promise<void> | void
-  onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
+  onUsageReset?: (creditId?: string) => Promise<ProviderAccountRateLimitResetOutcome>
   projectCwd?: string | null
   progressPolicy?: WorkingStepProgressPolicy
   progressDisclosureTarget?: WorkingStepDisclosureTarget
@@ -64,6 +66,7 @@ export const WorkingStep: React.FC<{
   authenticationRequired = true,
   activityContent,
   availableRateLimitResets = 0,
+  rateLimitResetOptions,
   container,
   continueDisabled = false,
   continuedStoppedTurn = false,
@@ -231,6 +234,7 @@ export const WorkingStep: React.FC<{
         setContinueClicked={setContinueClicked}
         rateLimitResetActions={rateLimitResetActions}
         availableRateLimitResets={availableRateLimitResets}
+        rateLimitResetOptions={rateLimitResetOptions}
         rateLimitResetDisabled={rateLimitResetDisabled}
         setRateLimitResetMessage={setRateLimitResetMessage}
         onUsageRefresh={onUsageRefresh}

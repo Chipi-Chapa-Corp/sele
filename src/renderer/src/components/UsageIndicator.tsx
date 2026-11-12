@@ -78,7 +78,7 @@ type UsageIndicatorProps = {
   onCompact?: () => Promise<void> | void
   onUsageRefresh?: (options?: ProviderUsageOptions) => Promise<void> | void
   onQueueLimitReset?: (prompt: string) => Promise<void>
-  onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
+  onUsageReset?: (creditId?: string) => Promise<ProviderAccountRateLimitResetOutcome>
 }
 
 const numberFormatter = new Intl.NumberFormat(undefined)
@@ -599,7 +599,9 @@ export function UsageIndicator({
   const availableRateLimitResets = accountUsage?.rateLimitResetCredits?.availableCount ?? 0
   const rateLimitResetDisabled = shouldDisableRateLimitReset(
     rateLimits,
-    accountUsage?.rateLimitResetCredits?.credits ?? null
+    accountUsage?.rateLimitResetCredits?.credits ?? null,
+    Date.now(),
+    accountUsage?.rateLimitResetCredits?.options !== undefined
   )
   const resetExpirationGroups = groupRateLimitResetCreditsByExpiration(
     accountUsage?.rateLimitResetCredits?.credits ?? null
@@ -621,9 +623,11 @@ export function UsageIndicator({
     }
   }
 
-  const handleRateLimitReset = (): Promise<ProviderAccountRateLimitResetOutcome> => {
+  const handleRateLimitReset = (
+    creditId?: string
+  ): Promise<ProviderAccountRateLimitResetOutcome> => {
     rateLimitResetBaselineRef.current = getRateLimitUsageFingerprint(accountUsage)
-    return onUsageReset?.() ?? Promise.resolve('nothingToReset')
+    return onUsageReset?.(creditId) ?? Promise.resolve('nothingToReset')
   }
 
   const handleRateLimitResetResult = async (
@@ -910,6 +914,7 @@ export function UsageIndicator({
                           </span>
                           <RateLimitResetButton
                             availableCount={availableRateLimitResets}
+                            options={accountUsage?.rateLimitResetCredits?.options}
                             disabled={rateLimitResetDisabled}
                             onReset={handleRateLimitReset}
                             onResetError={(message) => {

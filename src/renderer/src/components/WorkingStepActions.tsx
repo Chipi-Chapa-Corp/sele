@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from 'react'
 import { memo } from 'react'
 import type {
   ProviderAccountRateLimitResetOutcome,
+  ProviderAccountRateLimitResetOption,
   ProviderWorkingStep
 } from '../../../shared/provider'
 import { getRateLimitResetMessage } from '../rateLimitReset'
@@ -22,9 +23,10 @@ type WorkingStepActionsProps = {
   setContinueClicked: Dispatch<SetStateAction<boolean>>
   rateLimitResetActions: {
     onContinue: () => Promise<void> | void
-    onReset: () => Promise<ProviderAccountRateLimitResetOutcome>
+    onReset: (creditId?: string) => Promise<ProviderAccountRateLimitResetOutcome>
   } | null
   availableRateLimitResets: number
+  rateLimitResetOptions?: ProviderAccountRateLimitResetOption[]
   rateLimitResetDisabled: boolean
   setRateLimitResetMessage: Dispatch<SetStateAction<string | null>>
   onUsageRefresh: (() => Promise<void> | void) | undefined
@@ -44,6 +46,7 @@ export const WorkingStepActions = memo(function WorkingStepActions({
   setContinueClicked,
   rateLimitResetActions,
   availableRateLimitResets,
+  rateLimitResetOptions,
   rateLimitResetDisabled,
   setRateLimitResetMessage,
   onUsageRefresh,
@@ -97,6 +100,7 @@ export const WorkingStepActions = memo(function WorkingStepActions({
       {rateLimitResetActions && (
         <RateLimitResetButton
           availableCount={availableRateLimitResets}
+          options={rateLimitResetOptions}
           disabled={continueDisabled || rateLimitResetDisabled}
           onReset={rateLimitResetActions.onReset}
           onResetError={setRateLimitResetMessage}

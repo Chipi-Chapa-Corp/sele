@@ -17,6 +17,7 @@ import type {
   ProviderSkill,
   ProviderModel,
   ProviderAccountRateLimitResetOutcome,
+  ProviderRateLimitResetOptions,
   ProviderAccountUsage,
   ProviderResourceUpdateOptions,
   ProviderSourceOptions,
@@ -106,7 +107,7 @@ export type ProviderAdapter = {
   ) => Promise<ProviderApp[]>
   getUsage: (options?: ProviderUsageOptions) => Promise<ProviderAccountUsage>
   resetRateLimits: (
-    options?: ProviderSourceOptions
+    options?: ProviderRateLimitResetOptions
   ) => Promise<ProviderAccountRateLimitResetOutcome>
   getChats: (options?: ProviderChatListOptions) => Promise<ProviderChatPage>
   getChat: (

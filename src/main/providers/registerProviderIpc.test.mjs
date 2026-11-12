@@ -42,6 +42,7 @@ const bundled = await build({
                addLimitResetMessage: (...args) => globalThis.harness.limitReset('add', ...args),
                deleteLimitResetMessage: (...args) => globalThis.harness.limitReset('delete', ...args),
                getUsage: (...args) => globalThis.harness.getUsage(...args),
+               resetRateLimits: (...args) => globalThis.harness.resetRateLimits(...args),
                createAccount: (...args) => globalThis.harness.createAccount(...args),
                getConnections: (...args) => globalThis.harness.connection('list', ...args),
                connectProvider: (...args) => globalThis.harness.connection('connect', ...args),
@@ -139,6 +140,26 @@ const setup = () => {
   }
   return { harness, module, sent, timers, emit, publish, expire, contents, ipcMain }
 }
+
+test('reset IPC preserves the selected Claude grant and chat scope while rejecting malformed IDs', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.resetRateLimits = async (...args) => {
+    calls.push(JSON.parse(JSON.stringify(args)))
+    return 'reset'
+  }
+  const reset = h.harness.handlers.get(channels.resetRateLimits)
+  const options = {
+    chatId: 'work-chat',
+    creditId: 'fable-launch',
+    container: { kind: 'container', tool: 'toolbox', name: 'work' }
+  }
+  assert.equal(await reset({}, 'claude', options), 'reset')
+  assert.deepEqual(calls, [['claude', options]])
+  for (const creditId of [42, '', {}, 'x'.repeat(129)])
+    assert.throws(() => reset({}, 'claude', { ...options, creditId }), /Invalid/)
+  assert.equal(calls.length, 1)
+})
 
 test('desktop and LAN clients have independent viewed chats and acknowledgements', () => {
   const h = setup()

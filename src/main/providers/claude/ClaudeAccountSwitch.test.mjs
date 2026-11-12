@@ -5,6 +5,7 @@ import test from 'node:test'
 import ts from 'typescript'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerTarget.ts'
 import { mapClaudeRateLimits } from './ClaudeUsage.ts'
+import { mapClaudeResetCredits } from './ClaudeResetCredits.ts'
 import { ClaudeAuthenticationError, isClaudeAuthenticationError } from './ClaudeAuthentication.ts'
 
 const source = ts.createSourceFile(
@@ -16,7 +17,13 @@ const source = ts.createSourceFile(
 const adapter = source.statements.find(
   (node) => ts.isClassDeclaration(node) && node.name.text === 'ClaudeProviderAdapter'
 )
-const methods = new Set(['changeAccount', 'getQueryRuntime', 'getBaseQueryOptions', 'getUsage'])
+const methods = new Set([
+  'changeAccount',
+  'getQueryRuntime',
+  'getBaseQueryOptions',
+  'getUsage',
+  'resetRateLimits'
+])
 const code = ts.transpileModule(
   `class Harness { ${adapter.members
     .filter((member) => methods.has(member.name?.getText(source)))
@@ -204,6 +211,7 @@ const setup = () => {
     getContainerTargetKey,
     normalizeContainerTarget,
     mapClaudeRateLimits,
+    mapClaudeResetCredits,
     isClaudeAuthenticationError,
     emptyUsageSummary: {},
     console,
@@ -261,7 +269,25 @@ const setup = () => {
   return { h, calls, context, environment }
 }
 
-test('a null subscription SDK response falls back, while API-key and valid responses do not', async () => {
+test('reset adapter pins the selected grant to its bound account and environment', async () => {
+  const { h, context } = setup()
+  h.accountId = 'work-account'
+  let received
+  context.claudeAccounts.resetRateLimits = async (options) => {
+    received = options
+    return 'reset'
+  }
+  const container = { kind: 'container', tool: 'toolbox', name: 'work' }
+  assert.equal(
+    await h.resetRateLimits({ container, creditId: 'fable-launch', accountId: 'unrelated' }),
+    'reset'
+  )
+  assert.equal(received.accountId, 'work-account')
+  assert.equal(received.container, container)
+  assert.equal(received.creditId, 'fable-launch')
+})
+
+test('subscription usage includes grant discovery even when SDK windows are available', async () => {
   const { h, calls } = setup()
   let response = { rate_limits_available: true, rate_limits: null }
   h.withControlQuery = async (_options, profile, run) => {
@@ -277,8 +303,8 @@ test('a null subscription SDK response falls back, while API-key and valid respo
     rate_limits_available: true,
     rate_limits: { seven_day: { utilization: 7, resets_at: null } }
   }
-  assert.equal((await h.getUsage()).rateLimits[0].usedPercent, 7)
-  assert.equal(calls.length, 1)
+  assert.equal((await h.getUsage()).rateLimits[0].usedPercent, 19)
+  assert.equal(calls.length, 2)
 })
 
 test('empty SDK usage detects missing credentials and invalid subscription credentials before sending', async () => {

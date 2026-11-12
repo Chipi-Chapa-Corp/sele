@@ -88,9 +88,9 @@ test('usage fallback reads the authenticated endpoint and does not hide unavaila
     seven_day: { utilization: 19, resets_at: null }
   }
   const actual = await fetchClaudeRateLimits('fixture-token', '2.1.281', async (url, options) => {
-    assert.equal(url, 'https://api.anthropic.com/api/oauth/usage')
+    assert.equal(url, 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1')
     assert.equal(options.headers.Authorization, 'Bearer fixture-token')
-    assert.equal(options.headers['User-Agent'], 'claude-code/2.1.281')
+    assert.equal(options.headers['User-Agent'], 'claude-cli/2.1.281 (external, cli)')
     assert.equal(options.redirect, 'error')
     return Response.json(limits)
   })

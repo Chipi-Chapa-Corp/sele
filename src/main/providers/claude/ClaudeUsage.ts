@@ -1,6 +1,11 @@
 import type { SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderAccountRateLimit } from '../../../shared/provider'
 import { ClaudeAuthenticationError } from './ClaudeAuthentication.ts'
+import { claudeUsageHeaders } from './ClaudeResetCredits.ts'
+
+export type ClaudeUsageLimits = NonNullable<SDKControlGetUsageResponse['rate_limits']> & {
+  cedar_ember?: unknown
+}
 
 type ClaudeRateLimitValue = {
   utilization: number | null
@@ -14,19 +19,17 @@ export const fetchClaudeRateLimits = async (
   accessToken: string,
   cliVersion: string,
   fetchFn: typeof fetch = fetch
-): Promise<NonNullable<SDKControlGetUsageResponse['rate_limits']>> => {
+): Promise<ClaudeUsageLimits> => {
   let response: Response
   try {
-    response = await fetchFn('https://api.anthropic.com/api/oauth/usage', {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'anthropic-beta': 'oauth-2025-04-20',
-        'User-Agent': `claude-code/${cliVersion}`
-      },
-      redirect: 'error',
-      signal: AbortSignal.timeout(15_000)
-    })
+    response = await fetchFn(
+      'https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1',
+      {
+        headers: claudeUsageHeaders(accessToken, cliVersion),
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000)
+      }
+    )
   } catch {
     throw new Error('Unable to reach Claude usage. Please try again.')
   }
@@ -43,7 +46,7 @@ export const fetchClaudeRateLimits = async (
     if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1_000
     throw error
   }
-  let limits: SDKControlGetUsageResponse['rate_limits']
+  let limits: ClaudeUsageLimits | null
   try {
     limits = await response.json()
   } catch {
@@ -53,9 +56,14 @@ export const fetchClaudeRateLimits = async (
     !limits ||
     typeof limits !== 'object' ||
     Array.isArray(limits) ||
-    !['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'extra_usage'].some(
-      (key) => key in limits
-    )
+    ![
+      'five_hour',
+      'seven_day',
+      'seven_day_opus',
+      'seven_day_sonnet',
+      'extra_usage',
+      'cedar_ember'
+    ].some((key) => key in limits)
   )
     throw new Error('Claude did not return usage limits. Please try again.')
   return limits

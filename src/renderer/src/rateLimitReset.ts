@@ -45,7 +45,10 @@ export const formatRateLimitResetExpirationDate = (expiresAt: number | null): st
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',
     day: 'numeric',
-    year: 'numeric'
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short'
   }).format(new Date(toTimestampMilliseconds(expiresAt)))
 }
 

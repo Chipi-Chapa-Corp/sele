@@ -58,6 +58,9 @@ const setup = async () => {
     authMethod: 'claude.ai',
     usageCalls: [],
     profileCalls: [],
+    claimCalls: [],
+    claim: async () => ({ result: 'reset' }),
+    tokenSuffix: '',
     usage: async (token) => {
       fixture.usageCalls.push(token)
       return { seven_day: { utilization: token === 'fixture-default' ? 19 : 7, resets_at: null } }
@@ -88,7 +91,9 @@ const setup = async () => {
           },
           credentialDirectory: directory,
           readCredentials: async (id) =>
-            JSON.stringify({ claudeAiOauth: { accessToken: `fixture-${id}` } }),
+            JSON.stringify({
+              claudeAiOauth: { accessToken: `fixture-${id}${fixture.tokenSuffix}` }
+            }),
           usageEnvironment: async (id, env) => ({
             ...env,
             CLAUDE_CONFIG_DIR: join(root, key, 'usage', id),
@@ -119,12 +124,20 @@ const setup = async () => {
     Buffer,
     AbortSignal,
     fetch: async (url, options) => {
+      if (options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        fixture.claimCalls.push({ url, token: options.headers.Authorization, ...body })
+        const result = await fixture.claim(body)
+        return { ok: true, status: 200, json: async () => result }
+      }
       assert.equal(url, 'https://api.anthropic.com/api/oauth/profile')
       fixture.profileCalls.push(options.headers.Authorization)
       return {
         ok: true,
         json: async () => ({
+          organization: { uuid: 'organization-fixture' },
           account: {
+            uuid: options.headers.Authorization.replace(/-rotated$/, '').replace('Bearer ', ''),
             display_name:
               options.headers.Authorization === 'Bearer fixture-default'
                 ? 'Personal Name'
@@ -160,6 +173,102 @@ const setup = async () => {
     }
   }
 }
+
+const bankedUsage = () => ({
+  seven_day: { utilization: 100, resets_at: null },
+  cedar_ember: {
+    eligible: true,
+    next_grant_id: 'full-reset',
+    grants: [
+      {
+        id: 'full-reset',
+        resets_left: 2,
+        usable_now: true,
+        ends_at: '2099-12-10T22:00:00Z',
+        type: 'full'
+      },
+      {
+        id: 'fable-reset',
+        resets_left: 1,
+        usable_now: true,
+        ends_at: '2099-12-10T22:00:00Z',
+        gives_back_weekly: true
+      }
+    ]
+  }
+})
+
+test('banked reset claims pin credentials, serialize double clicks and invalidate usage', async () => {
+  const h = await setup()
+  try {
+    const a = await h.accounts.create()
+    await h.accounts.complete(a.accountId)
+    await h.accounts.select('default')
+    h.fixture.usage = async (token) => {
+      h.fixture.usageCalls.push(token)
+      return bankedUsage()
+    }
+    await h.accounts.getUsageFallback({ accountId: a.accountId })
+    const options = { accountId: a.accountId, creditId: 'fable-reset' }
+    let finish
+    h.fixture.claim = () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ result: 'reset' })
+      })
+    const claims = Promise.all([
+      h.accounts.resetRateLimits(options),
+      h.accounts.resetRateLimits(options)
+    ])
+    while (!finish) await new Promise(setImmediate)
+    await assert.rejects(
+      h.accounts.resetRateLimits({ ...options, creditId: 'full-reset' }),
+      /Wait for the current Claude reset/
+    )
+    finish()
+    assert.deepEqual(await claims, ['reset', 'reset'])
+    assert.equal(h.fixture.claimCalls.length, 1)
+    assert.equal(h.fixture.claimCalls[0].token, `Bearer fixture-${a.accountId}`)
+    assert.equal(h.fixture.claimCalls[0].grant_id, 'fable-reset')
+    assert.equal(await h.accounts.getLastUsage(options), null)
+    await h.accounts.getUsageFallback(options)
+    assert.equal(h.fixture.usageCalls.length, 2)
+    assert.equal(await h.accounts.resetRateLimits({ ...options, creditId: 'missing' }), 'noCredit')
+    assert.equal(h.fixture.claimCalls.length, 1)
+  } finally {
+    await h.cleanup()
+  }
+})
+
+test('an unanswered claim keeps its request ID through a restart and OAuth token rotation', async () => {
+  const h = await setup()
+  try {
+    const cache = join(h.root, 'usage-cache.json')
+    h.accounts.setUsageCacheFile(cache)
+    h.fixture.usage = async () => bankedUsage()
+    h.fixture.claim = async () => {
+      throw new Error('connection lost')
+    }
+    await assert.rejects(
+      h.accounts.resetRateLimits({ creditId: 'full-reset' }),
+      /Unable to confirm/
+    )
+    const requestId = h.fixture.claimCalls[0].request_id
+    await assert.rejects(
+      h.accounts.resetRateLimits({ creditId: 'fable-reset' }),
+      /Retry the previous/
+    )
+    const restored = h.restart()
+    restored.setUsageCacheFile(cache)
+    h.fixture.tokenSuffix = '-rotated'
+    h.fixture.claim = async () => ({ result: 'already_used' })
+    assert.equal(await restored.resetRateLimits({ creditId: 'full-reset' }), 'alreadyRedeemed')
+    assert.equal(h.fixture.claimCalls[1].request_id, requestId)
+    assert.equal(h.fixture.claimCalls[1].token, 'Bearer fixture-default-rotated')
+    assert.equal(await restored.getLastUsage(), null)
+  } finally {
+    await h.cleanup()
+  }
+})
 
 test('auth status uses the selected credentials and rejects an unsigned account before sending', async () => {
   const h = await setup()

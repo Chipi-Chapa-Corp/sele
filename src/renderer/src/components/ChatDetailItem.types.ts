@@ -4,6 +4,7 @@ import type { AppContainerTarget } from '../../../shared/app'
 import type { McpAppScope as McpAppScopeValue } from '../../../shared/mcpApps'
 import type {
   ProviderAccountRateLimitResetOutcome,
+  ProviderAccountRateLimitResetOption,
   ProviderChatItem,
   ProviderMessage,
   ProviderModelId,
@@ -22,6 +23,7 @@ export type ChatDetailItemProps = {
   authenticationRequired?: boolean
   motionChatKey?: string | null
   availableRateLimitResets?: number
+  rateLimitResetOptions?: ProviderAccountRateLimitResetOption[]
   canEditOwnMessages?: boolean
   markdownBaseUrl?: string
   messageBubble?: boolean
@@ -59,7 +61,7 @@ export type ChatDetailItemProps = {
   onManageAccounts?: () => void
   onReauthenticate?: () => void
   onUsageRefresh?: () => Promise<void> | void
-  onUsageReset?: () => Promise<ProviderAccountRateLimitResetOutcome>
+  onUsageReset?: (creditId?: string) => Promise<ProviderAccountRateLimitResetOutcome>
   previousItem?: ProviderChatItem | null
   cwd?: string | null
   projectCwd?: string | null

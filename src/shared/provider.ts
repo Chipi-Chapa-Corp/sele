@@ -479,6 +479,18 @@ export type ProviderAccountRateLimit = {
 export type ProviderAccountRateLimitResetCredits = {
   availableCount: number
   credits: ProviderAccountRateLimitResetCredit[] | null
+  /** Providers with different reset scopes let the user choose a grant explicitly. */
+  options?: ProviderAccountRateLimitResetOption[]
+  nextCreditId?: string
+}
+
+export type ProviderAccountRateLimitResetOption = {
+  id: string
+  label: string
+  description: string
+  availableCount: number
+  expiresAt: number | null
+  usable: boolean
 }
 
 export type ProviderAccountRateLimitResetCredit = {
@@ -550,6 +562,10 @@ export type ProviderResourceUpdateOptions = ProviderSourceOptions & {
 
 export type ProviderUsageOptions = ProviderSourceOptions & {
   includeStatistics?: boolean
+}
+
+export type ProviderRateLimitResetOptions = ProviderSourceOptions & {
+  creditId?: string
 }
 
 export type ProviderChatStatus = 'active' | 'error' | 'waitingOnApproval' | 'waitingOnUserInput'
@@ -1345,7 +1361,7 @@ export type ProviderApi = {
   ) => Promise<TokenUsageSummary>
   resetRateLimits: (
     providerId: ProviderId,
-    options?: ProviderSourceOptions
+    options?: ProviderRateLimitResetOptions
   ) => Promise<ProviderAccountRateLimitResetOutcome>
   getChatContainers: () => Promise<AppContainerTarget[]>
   getChats: (providerId: ProviderId, options?: ProviderChatListOptions) => Promise<ProviderChatPage>

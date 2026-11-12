@@ -69,6 +69,7 @@ export const areChatDetailItemPropsEqual = (
   first.markdownBaseUrl === second.markdownBaseUrl &&
   first.messageBubble === second.messageBubble &&
   first.availableRateLimitResets === second.availableRateLimitResets &&
+  first.rateLimitResetOptions === second.rateLimitResetOptions &&
   first.container === second.container &&
   first.continuePrompt === second.continuePrompt &&
   first.continueStoppedTurnDisabled === second.continueStoppedTurnDisabled &&

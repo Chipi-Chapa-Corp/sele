@@ -79,6 +79,15 @@ show a **Continue in …** button; queued prompts remain visible and removable i
 
 Run `npm test -- ProviderErrors ProviderNetworkRetry UsageResetContinuation` for cross-provider classification and retry regressions.
 
+Claude banked resets appear in the usage popover and on usage-limit failures. Choose the
+reset type and confirm to redeem it for that chat's account. The confirmation describes
+the scope and shows the expiry in local time: a Fable reset restores Fable's weekly usage,
+while a full reset restores the five-hour and weekly limits. Grants that Claude marks
+unusable remain visible but disabled. Sele requests grants with the account's OAuth usage
+response, filters expired grants, and refreshes usage after redemption. Unanswered claims
+retain their request ID across retries and restarts to avoid spending another reset.
+Claude's banked-reset endpoint is not part of the Agent SDK's public control API.
+
 ## Checks
 
 `npm test -- ProviderElicitation mcpApps/` covers validation and widget ownership/CSP.

@@ -73,6 +73,10 @@ test('disables rate-limit resets when every limit has more than 5% left', () => 
   assert.equal(shouldDisableRateLimitReset([rateLimit(1), rateLimit(94.99)]), true)
 })
 
+test('providers that permit early use do not inherit the Codex usage threshold', () => {
+  assert.equal(shouldDisableRateLimitReset([rateLimit(1)], null, Date.now(), true), false)
+})
+
 test('allows rate-limit resets at exactly 5% left', () => {
   assert.equal(shouldDisableRateLimitReset([rateLimit(95)]), false)
 })

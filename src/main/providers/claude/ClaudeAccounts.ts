@@ -5,6 +5,8 @@ import type { AppContainerTarget } from '../../../shared/app'
 import type {
   ProviderAccountConfiguration,
   ProviderLoginResult,
+  ProviderAccountRateLimitResetOutcome,
+  ProviderRateLimitResetOptions,
   ProviderSourceOptions
 } from '../../../shared/provider'
 import { getContainerTargetKey } from '../../containerTarget'
@@ -15,6 +17,11 @@ import { createClaudeAccountStorage, runClaudeAccountCommand } from './ClaudeAcc
 import { getClaudeExecutable } from './ClaudeExecutable'
 import { parseClaudeVersion } from './ClaudeVersion'
 import { fetchClaudeRateLimits } from './ClaudeUsage'
+import {
+  consumeClaudeResetCredit,
+  mapClaudeResetCredits,
+  readClaudeResetAccount
+} from './ClaudeResetCredits'
 import { claudeAccountDisplayName } from '../AccountDisplayName'
 import { ClaudeAuthenticationError, isClaudeAuthenticationError } from './ClaudeAuthentication'
 
@@ -50,9 +57,17 @@ type ClaudeUsageCacheEntry = {
   limits: Awaited<ReturnType<typeof fetchClaudeRateLimits>> | null
   /** Do not ask Claude again before this time (epoch ms). */
   retryAt: number
+  pendingReset?: { grantId: string; requestId: string; accountKey: string }
 }
 
 export class ClaudeAccounts {
+  private resetRequests = new Map<
+    string,
+    {
+      creditId?: string
+      request: Promise<ProviderAccountRateLimitResetOutcome>
+    }
+  >()
   private stores = new Map<string, Promise<ClaudeAccountStore>>()
   private versions = new Map<string, Promise<string>>()
   private logins = new Map<string, Login>()
@@ -97,7 +112,8 @@ export class ClaudeAccounts {
 
   private saveUsageCache = (
     key: string,
-    update: (entry: ClaudeUsageCacheEntry | undefined) => ClaudeUsageCacheEntry
+    update: (entry: ClaudeUsageCacheEntry | undefined) => ClaudeUsageCacheEntry,
+    required = false
   ): Promise<void> => {
     const write = this.usageCacheWrite.then(async () => {
       const entries = await this.loadUsageCache()
@@ -114,6 +130,7 @@ export class ClaudeAccounts {
         await rename(temporary, file)
       } catch (error) {
         console.error('Unable to save the Claude usage cache.', error)
+        if (required) throw new Error('Unable to save the Claude reset request. No reset was sent.')
       } finally {
         await rm(temporary, { force: true })
       }
@@ -135,7 +152,12 @@ export class ClaudeAccounts {
   ): Promise<void> => {
     if (!limits) return
     const key = await this.usageCacheKey(options)
-    await this.saveUsageCache(key, () => ({ at: Date.now(), limits, retryAt: 0 }))
+    await this.saveUsageCache(key, (current) => ({
+      ...current,
+      at: Date.now(),
+      limits,
+      retryAt: 0
+    }))
   }
 
   /** The last limits for the active account, if recent enough to show. */
@@ -322,7 +344,12 @@ export class ClaudeAccounts {
     }
     const request = fetchClaudeRateLimits(token, version).then(
       (limits) => {
-        void this.saveUsageCache(cacheKey, () => ({ at: Date.now(), limits, retryAt: 0 }))
+        void this.saveUsageCache(cacheKey, (current) => ({
+          ...current,
+          at: Date.now(),
+          limits,
+          retryAt: 0
+        }))
         return limits
       },
       (error: unknown) => {
@@ -334,6 +361,7 @@ export class ClaudeAccounts {
         const entry = this.usageFallbacks.get(key)
         if (entry?.request === request) entry.expiresAt = Date.now() + retryAfterMs
         void this.saveUsageCache(cacheKey, (current) => ({
+          ...current,
           at: current?.at ?? 0,
           limits: current?.limits ?? null,
           retryAt: Date.now() + retryAfterMs
@@ -353,6 +381,71 @@ export class ClaudeAccounts {
         this.usageFallbacks.delete(key)
       throw error
     }
+  }
+
+  resetRateLimits = async (
+    options: ProviderRateLimitResetOptions = {}
+  ): Promise<ProviderAccountRateLimitResetOutcome> => {
+    const cacheKey = await this.usageCacheKey(options)
+    const existing = this.resetRequests.get(cacheKey)
+    if (existing) {
+      if (options.creditId && existing.creditId !== options.creditId)
+        throw new Error('Wait for the current Claude reset before choosing another reset.')
+      return existing.request
+    }
+    const request = this.consumeReset(options, cacheKey).finally(() => {
+      if (this.resetRequests.get(cacheKey)?.request === request) this.resetRequests.delete(cacheKey)
+    })
+    this.resetRequests.set(cacheKey, { creditId: options.creditId, request })
+    return request
+  }
+
+  private consumeReset = async (
+    options: ProviderRateLimitResetOptions,
+    cacheKey: string
+  ): Promise<ProviderAccountRateLimitResetOutcome> => {
+    const version = await this.ensureSupported(options)
+    const token = await (await this.store(options)).getUsageAccessToken(
+      process.env,
+      options.accountId
+    )
+    const credentialKey = createHash('sha256').update(token).digest('hex')
+    const identity = await readClaudeResetAccount(token, version)
+    const accountKey = `${identity.organization}:${identity.account}`
+    const saved = (await this.loadUsageCache()).get(cacheKey)
+    let pending = saved?.pendingReset
+    if (pending && pending.accountKey !== accountKey) pending = undefined
+    if (pending && options.creditId && options.creditId !== pending.grantId)
+      throw new Error('Retry the previous Claude reset before choosing another reset.')
+    if (!pending) {
+      const credits = mapClaudeResetCredits(await this.getUsageFallback(options))
+      const id = options.creditId ?? credits?.nextCreditId
+      const grant = credits?.options?.find((option) => option.id === id && option.usable)
+      if (!grant) return 'noCredit'
+      pending = { grantId: grant.id, requestId: randomUUID(), accountKey }
+    }
+    // Save before every attempt, including a retry after an earlier persistence failure.
+    await this.saveUsageCache(
+      cacheKey,
+      (current) => ({
+        at: current?.at ?? 0,
+        limits: current?.limits ?? null,
+        retryAt: current?.retryAt ?? 0,
+        pendingReset: pending
+      }),
+      true
+    )
+    const outcome = await consumeClaudeResetCredit(
+      token,
+      version,
+      identity.organization,
+      pending.grantId,
+      pending.requestId
+    )
+    // Invalidate both caches: SDK snapshots can still describe usage before the reset.
+    this.usageFallbacks.delete(`${getContainerTargetKey(options.container)}:${credentialKey}`)
+    await this.saveUsageCache(cacheKey, () => ({ at: 0, limits: null, retryAt: 0 }))
+    return outcome
   }
 
   login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult | null> => {
