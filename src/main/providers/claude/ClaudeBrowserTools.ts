@@ -3,7 +3,7 @@ import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import type { BrowserAutomationScope } from '../../../shared/browser'
 import type { BrowserAutomationService } from '../../browser/BrowserAutomation'
 import { browserToolInstructions } from '../../browser/BrowserTools'
-import { chromeAutomation } from '../../desktop/ChromeAutomation'
+import { chromeAutomation, operaAutomation } from '../../desktop/ChromeAutomation'
 import {
   createProviderBrowserTools,
   providerBrowserToolInstructions
@@ -17,6 +17,7 @@ const alwaysLoadedBrowserTools = new Set(['navigate', 'read_page', 'computer'])
 
 const claudeBrowserInstructions = `${providerBrowserToolInstructions}
 For the user's existing Chrome session, prefer the provider's configured Chrome tools, discovering them with ToolSearch as needed. Existing native or MCP connections do not require Sele extension pairing. Only use chrome_* tools when the user chooses Sele's separate shared-tab connection.
+For the user's paired Opera session, use opera_* tools. Keep the same browser prefix for all operations on a tab; a Chrome tab ID must never be used with Opera tools or vice versa.
 You have browser access through the Claude_Browser MCP server. Use tabs_context to inspect Sele's browser workspace, navigate to open a page (including when there are no tabs), read_page to inspect it, and computer to interact with it. These embedded-browser tools work on macOS, Windows, and Linux without a Chrome extension or a native desktop connection.
 Additional browser actions may be deferred. Use ToolSearch to load them by their full name, for example select:mcp__Claude_Browser__tabs_create or select:mcp__Claude_Browser__form_input. Check the supplied tools before reporting that browser access is unavailable. If a tool fails, report its actual error and any setup it requests.`
 
@@ -32,12 +33,13 @@ export function createClaudeBrowserIntegration(
 } {
   const sharedChrome =
     chromeAutomation.status.connected || Boolean(chromeAutomation.status.pairingUrl)
+  const sharedOpera = operaAutomation.status.connected || Boolean(operaAutomation.status.pairingUrl)
   const browser = createProviderBrowserTools(service, scope)
   const server = createSdkMcpServer({
     name: claudeBrowserServerName,
     version: '1.0.0',
     instructions:
-      (sharedChrome
+      (sharedChrome || sharedOpera
         ? claudeBrowserInstructions
         : claudeBrowserInstructions.replace(
             providerBrowserToolInstructions,
@@ -48,7 +50,11 @@ export function createClaudeBrowserIntegration(
         : ''),
     tools: [
       ...browser.tools
-        .filter((definition) => !definition.name.startsWith('chrome_') || sharedChrome)
+        .filter((definition) =>
+          definition.name.startsWith('chrome_')
+            ? sharedChrome
+            : !definition.name.startsWith('opera_') || sharedOpera
+        )
         .map((definition) =>
           tool(
             definition.name,
@@ -64,7 +70,9 @@ export function createClaudeBrowserIntegration(
     server,
     isCurrent: () =>
       sharedChrome ===
-      (chromeAutomation.status.connected || Boolean(chromeAutomation.status.pairingUrl)),
+        (chromeAutomation.status.connected || Boolean(chromeAutomation.status.pairingUrl)) &&
+      sharedOpera ===
+        (operaAutomation.status.connected || Boolean(operaAutomation.status.pairingUrl)),
     close: () => {
       browser.close()
       void server.instance.close().catch((error: unknown) => {
