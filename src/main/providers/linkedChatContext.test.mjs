@@ -184,7 +184,7 @@ const summaryHarness = (provider, nativeOutcome) => {
   const declaration = sourceFile.statements.find(
     (node) => ts.isClassDeclaration(node) && node.name.text === `${name}ProviderAdapter`
   )
-  const methods = new Set(['summarizeChatInFork', 'summarizeChatNativelyInFork'])
+  const methods = new Set(['summarizeChatInFork', 'summarizeChatNativelyInFork', 'forkSession'])
   const code = ts.transpileModule(
     `class Harness { ${declaration.members
       .filter((member) => methods.has(member.name?.getText(sourceFile)))

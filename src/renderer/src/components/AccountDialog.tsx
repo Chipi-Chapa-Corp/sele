@@ -37,8 +37,8 @@ export const AccountDialog = ({
   const cancelingRef = useRef(false)
   const [phase, setPhase] = useState<'idle' | 'starting' | 'authorizing' | 'canceling'>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [userCode, setUserCode] = useState<string | null>(null)
   const [authorization, setAuthorization] = useState<AccountAuthorizationSession | null>(null)
+  const userCode = authorization?.userCode
   const [authorizationActionPending, setAuthorizationActionPending] = useState(false)
   const [copyPending, setCopyPending] = useState<CopyTarget | null>(null)
   // Only the most recently copied value is on the clipboard.
@@ -74,7 +74,6 @@ export const AccountDialog = ({
       }
       authorizationRef.current = session
       setAuthorization(session)
-      setUserCode(session.userCode)
       setPhase('authorizing')
       await session.completion
       authorizationRef.current = null
@@ -90,7 +89,6 @@ export const AccountDialog = ({
           : 'Unable to create the account.'
       )
       setAuthorization(null)
-      setUserCode(null)
       setPhase('idle')
     }
   }

@@ -81,6 +81,8 @@ export function ProviderSettingsContent({
   )
 }
 
+const isExperimental = (stage: string): boolean => stage === 'beta' || stage === 'underDevelopment'
+
 function ProviderConfigPanel({ providerId, container }: Omit<Props, 'children'>): ReactNode {
   const [config, setConfig] = useState<ProviderConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -111,11 +113,7 @@ function ProviderConfigPanel({ providerId, container }: Omit<Props, 'children'>)
     }
   }, [providerId, sourceKey, reload])
 
-  const save = async (
-    name: string,
-    value: ProviderConfigValue,
-    path: string[] = []
-  ): Promise<void> => {
+  const save = async (name: string, value: ProviderConfigValue, path: string[]): Promise<void> => {
     setSaving(name)
     setError(null)
     setSaved(false)
@@ -129,8 +127,6 @@ function ProviderConfigPanel({ providerId, container }: Omit<Props, 'children'>)
       setSaving(null)
     }
   }
-  const isExperimental = (stage: string): boolean =>
-    stage === 'beta' || stage === 'underDevelopment'
   const features =
     config?.features.filter(
       (feature) =>
@@ -210,7 +206,7 @@ function ConfigFeatureRow({
   const [open, setOpen] = useState(false)
   const nested = feature.schema?.type === 'object'
   const enabledField = feature.schema?.properties?.enabled?.type === 'boolean'
-  const experimental = feature.stage === 'beta' || feature.stage === 'underDevelopment'
+  const experimental = isExperimental(feature.stage)
   const disabled = saving || feature.locked || feature.stage === 'deprecated'
   const label = (
     <span className="settings-dialog__skill-title">

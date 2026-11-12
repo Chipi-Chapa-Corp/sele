@@ -26,18 +26,7 @@ export function useWorkspaceChatListActions({
   projectState,
   sidebarModel
 }: WorkspaceChatListActionsDependencies) {
-  const {
-    handleMarkChatDone,
-    handleMarkCwdChatsDone,
-    handleProjectDragStart,
-    handleProjectDrop,
-    handleProjectStackDragOver,
-    handleRenameChat,
-    handleReorderChats,
-    handleToggleChatPinned,
-    handleUnpinPinnedChats,
-    restoreExpandedProjectsAfterDrag
-  } = useChatListController({
+  return useChatListController({
     applyChatMetadata: chatRead.applyChatMetadata,
     removeRecentChatCacheEntry: chatCache.removeRecentChatCacheEntry,
     selectedChat: chatState.selectedChat,
@@ -63,16 +52,4 @@ export function useWorkspaceChatListActions({
     searchTerms: sidebarModel.searchTerms,
     collapsedCwdGroups: projectState.collapsedCwdGroups
   })
-  return {
-    handleMarkChatDone,
-    handleMarkCwdChatsDone,
-    handleProjectDragStart,
-    handleProjectDrop,
-    handleProjectStackDragOver,
-    handleRenameChat,
-    handleReorderChats,
-    handleToggleChatPinned,
-    handleUnpinPinnedChats,
-    restoreExpandedProjectsAfterDrag
-  }
 }

@@ -11,7 +11,7 @@ import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
 import { useWorkspaceEffectiveSelection } from './useWorkspaceEffectiveSelection'
 import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
 
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import type { useWorkspaceSelection } from '../useWorkspaceSelection'
 type WorkspaceChatErrorsDependencies = {
   chatState: ReturnType<typeof useWorkspaceChatState>
   sourceState: ReturnType<typeof useWorkspaceSourceState>
@@ -20,7 +20,7 @@ type WorkspaceChatErrorsDependencies = {
   preferences: ReturnType<typeof useWorkspacePreferenceState>
   provider: ReturnType<typeof useWorkspaceProviderContext>
   session: Pick<
-    ReturnType<typeof useWorkspaceSession>,
+    ReturnType<typeof useWorkspaceSelection>,
     'changesContainer' | 'selectedChatKey' | 'usageAuthenticationRequired'
   >
 }

@@ -7,9 +7,8 @@ import { promisify } from 'node:util'
 import test from 'node:test'
 import {
   createFileTreeListing,
-  parseTargetFileTree,
+  createFileTreeResult,
   parseTargetFileTreePaths,
-  readLocalFileTree,
   readLocalFileTreePaths,
   targetFileTreeScript
 } from './fileTree.ts'
@@ -27,11 +26,12 @@ const fixture = async (t) => {
   await writeFile(join(root, 'line\nbreak.txt'), 'newline')
   return root
 }
+const readLocalFileTree = async (cwd) => createFileTreeResult(await readLocalFileTreePaths(cwd))
 const targetTree = async (root) => {
   const { stdout } = await exec('sh', ['-c', targetFileTreeScript, 'sele-list-files', root], {
     encoding: 'buffer'
   })
-  return parseTargetFileTree(stdout)
+  return createFileTreeResult(parseTargetFileTreePaths(stdout))
 }
 
 test('ordinary folders list hidden and ignored files with no Git repository', async (t) => {

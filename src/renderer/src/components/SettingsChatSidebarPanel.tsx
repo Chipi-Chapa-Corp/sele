@@ -10,20 +10,7 @@ const chatUsageDisplayOptions = [
   { value: 'long', label: 'Long' }
 ] satisfies readonly { value: keyof AppChatUsageDisplay; label: string }[]
 
-type SettingsChatSidebarPanelProps = Pick<
-  SettingsPanelProps,
-  | 'getSettingsFieldClassName'
-  | 'handleChatUsageDisplayChange'
-  | 'isScopedSettingControlDisabled'
-  | 'renderProjectSettingAction'
-  | 'settingsPanelSettings'
-  | 'groupChatsByProject'
-  | 'handleGroupChatsByProjectChange'
-  | 'chatSidebarTabs'
-  | 'handleChatSidebarTabChange'
->
-
-export function SettingsChatSidebarPanel(props: SettingsChatSidebarPanelProps): React.ReactNode {
+export function SettingsChatSidebarPanel(props: SettingsPanelProps): React.ReactNode {
   const {
     getSettingsFieldClassName,
     handleChatUsageDisplayChange,

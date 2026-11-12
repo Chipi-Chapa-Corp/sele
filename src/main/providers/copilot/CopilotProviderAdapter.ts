@@ -35,6 +35,7 @@ import {
   CopilotClient,
   RuntimeConnection,
   type CopilotSession,
+  type MessageOptions,
   type ModelInfo,
   type PermissionRequest,
   type PermissionRequestResult,
@@ -99,6 +100,7 @@ import {
 } from '../providerResources'
 import { getCopilotExecutable } from './CopilotExecutable'
 import { getCopilotUpdateAvailability, updateCopilotProvider } from './CopilotProviderUpdate'
+import { emptyUsageSummary, getRuntimeEnvironment } from '../providerValues.ts'
 import {
   isCopilotSystemContextMessage,
   getCopilotTurnOutcome,
@@ -202,6 +204,11 @@ type CopilotSessionState = {
   goalMutationCanceled?: boolean
 }
 
+type ConnectedCopilotSessionState = CopilotSessionState & {
+  client: CopilotClient
+  session: CopilotSession
+}
+
 const copilotTurnActivityEventTypes: ReadonlySet<SessionEvent['type']> = new Set([
   'user.message',
   'assistant.turn_start',
@@ -219,9 +226,6 @@ const copilotTurnActivityEventTypes: ReadonlySet<SessionEvent['type']> = new Set
   'tool.execution_complete'
 ])
 
-const isCopilotTurnActivityEvent = (event: SessionEvent): boolean =>
-  copilotTurnActivityEventTypes.has(event.type)
-
 type CopilotOneShotGeneration = {
   session: CopilotSession | null
   state: CopilotSessionState | null
@@ -233,11 +237,6 @@ type CopilotAskUserArguments = {
   choices?: unknown
   allow_freeform?: unknown
   allowFreeform?: unknown
-}
-
-type CopilotUserInputPresentation = {
-  choices: ProviderPendingUserInput['choices']
-  allowFreeform: boolean
 }
 
 const asAskUserArguments = (value: unknown): CopilotAskUserArguments | null =>
@@ -269,10 +268,7 @@ const getAskUserArguments = (
   return null
 }
 
-const getUserInputPresentation = (
-  state: CopilotSessionState,
-  request: CopilotUserInputRequest
-): CopilotUserInputPresentation => {
+const getUserInputPresentation = (state: CopilotSessionState, request: CopilotUserInputRequest) => {
   const argumentsValue = getAskUserArguments(state, request.question) ?? asAskUserArguments(request)
   const choices = Array.isArray(argumentsValue?.choices)
     ? argumentsValue.choices.filter((choice): choice is string => typeof choice === 'string')
@@ -334,14 +330,6 @@ const copilotAgentModeByAutopilotChoice = {
 
 const formatAgentModeLabel = (mode: ProviderAgentMode): string =>
   mode.charAt(0).toLocaleUpperCase() + mode.slice(1)
-
-const emptyUsageSummary = {
-  lifetimeTokens: null,
-  peakDailyTokens: null,
-  longestRunningTurnSec: null,
-  currentStreakDays: null,
-  longestStreakDays: null
-}
 
 const allowedReasoningEfforts = new Set(['low', 'medium', 'high', 'xhigh'])
 
@@ -637,14 +625,8 @@ const getSkillScope = (source: string): ProviderSkill['scope'] => {
 const getMessageOptions = (
   message: string,
   options: ProviderTurnOptions | ProviderOneShotOptions | undefined,
-  mode?: 'enqueue' | 'immediate'
-): {
-  prompt: string
-  displayPrompt: string
-  mode?: 'enqueue' | 'immediate'
-  agentMode?: 'interactive' | 'autopilot'
-  attachments?: Array<{ type: 'file'; path: string; displayName: string }>
-} => {
+  mode?: MessageOptions['mode']
+): MessageOptions => {
   let prompt = message
   const firstSkill = options?.skills?.[0]
   if (firstSkill) {
@@ -670,13 +652,6 @@ const getMessageOptions = (
 const hasMessageAttachments = (
   options: ProviderTurnOptions | ProviderOneShotOptions | undefined
 ): boolean => Boolean(options?.files?.length || options?.images?.length)
-
-const getRuntimeEnvironment = (env: NodeJS.ProcessEnv | undefined): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(env ?? process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  )
 
 export class CopilotProviderAdapter implements ProviderAdapter {
   id = 'copilot' as const
@@ -754,7 +729,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     Map<string, CopilotSubagentFollowUp[]>
   >()
   private historyPages = new CopilotHistoryPages()
-  private sessionLoads = new WeakMap<CopilotSessionState, Promise<CopilotSessionState>>()
+  private sessionLoads = new WeakMap<CopilotSessionState, Promise<ConnectedCopilotSessionState>>()
   private metadataChecks = new WeakMap<CopilotSessionState, Promise<void>>()
   private chatUpdatedListeners = new Set<
     (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
@@ -1230,11 +1205,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
     if (window.startIndex != null && state.historyPagination) {
-      const events = await this.historyPages.complete(state.session!)
+      const events = await this.historyPages.complete(state.session)
       return this.createChatDetail({ ...state, events, historyPagination: undefined }, window)
     }
     if (state.historyPagination && window.limit !== 10) {
-      const page = await this.historyPages.read(state.session!, {
+      const page = await this.historyPages.read(state.session, {
         cursor: null,
         direction: 'older',
         limit: window.limit
@@ -1261,7 +1236,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       this.historyPages.isLatest(window.cursor, state.historyPagination)
     )
       return this.createChatDetail(state)
-    const page = await this.historyPages.read(state.session!, window)
+    const page = await this.historyPages.read(state.session, window)
     const historical = Boolean(page.pagination.newerCursor)
     return this.createChatDetail({
       ...state,
@@ -1289,7 +1264,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
     if (state.historyPagination) {
-      const savedCursor = this.historyPages.findItemCursor(state.session!, itemId)
+      const savedCursor = this.historyPages.findItemCursor(state.session, itemId)
       if (savedCursor)
         return this.getChatCursorWindow(
           chatId,
@@ -1334,15 +1309,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<ProviderSubagent[]> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
-    const tasks = await state
-      .session!.rpc.tasks.list()
+    const tasks = await state.session.rpc.tasks
+      .list()
       .then((result) => result.tasks.filter((task) => task.type === 'agent'))
       .catch((error) => {
         console.error('[caught:CopilotProviderAdapter:getSubagents]', error)
         return []
       })
     const metadata = state.historyPagination
-      ? await this.historyPages.subagents(state.session!)
+      ? await this.historyPages.subagents(state.session)
       : state.events
     return createCopilotSubagentSummaries(metadata, tasks)
   }
@@ -1354,15 +1329,15 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     window?: ProviderChatTurnWindow
   ): Promise<ProviderSubagentDetail> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
-    const tasks = await state
-      .session!.rpc.tasks.list()
+    const tasks = await state.session.rpc.tasks
+      .list()
       .then((result) => result.tasks.filter((task) => task.type === 'agent'))
       .catch((error) => {
         console.error('[caught:CopilotProviderAdapter:getSubagent]', error)
         return []
       })
     const metadata = state.historyPagination
-      ? await this.historyPages.subagents(state.session!)
+      ? await this.historyPages.subagents(state.session)
       : state.events
     const summary = createCopilotSubagentSummaries(metadata, tasks).find(
       (candidate) => candidate.id === subagentId
@@ -1370,7 +1345,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (!summary) throw new Error('Copilot subagent was not found.')
     if (state.historyPagination) {
       const page = await this.historyPages.read(
-        state.session!,
+        state.session,
         {
           cursor: window?.cursor ?? null,
           direction: window?.direction ?? 'older',
@@ -1421,7 +1396,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ) => {
     let detail = await this.getSubagent(chatId, subagentId, options)
     const state = await this.ensureSession(chatId, undefined, options.container)
-    const savedCursor = this.historyPages.findItemCursor(state.session!, itemId, subagentId)
+    const savedCursor = this.historyPages.findItemCursor(state.session, itemId, subagentId)
     if (savedCursor)
       return this.getSubagent(chatId, subagentId, options, {
         startIndex: null,
@@ -1448,11 +1423,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options: { container?: AppContainerTarget | null } = {}
   ): Promise<void> => {
     const state = await this.ensureSession(chatId, undefined, options.container)
-    const tasks = await state.session!.rpc.tasks.list()
+    const tasks = await state.session.rpc.tasks.list()
     if (!tasks.tasks.some((task) => task.type === 'agent' && task.id === subagentId)) {
       throw new Error('Copilot subagent was not found.')
     }
-    const result = await state.session!.rpc.tasks.cancel({ id: subagentId })
+    const result = await state.session.rpc.tasks.cancel({ id: subagentId })
     if (!result.cancelled) throw new Error('Copilot could not stop this subagent.')
     this.emitUpdate(state)
   }
@@ -1466,7 +1441,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     const content = message.trim()
     if (!content) throw new Error('Cannot send an empty Copilot message.')
     const state = await this.ensureSession(chatId, undefined, options.container)
-    const rpc = state.session!.rpc
+    const rpc = state.session.rpc
     const task = (await rpc.tasks.list()).tasks.find(
       (candidate) => candidate.type === 'agent' && candidate.id === subagentId
     )
@@ -1505,7 +1480,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
-    await state.session!.rpc.name.set({ name: title })
+    await state.session.rpc.name.set({ name: title })
     state.title = title
     if (state.metadata) {
       state.metadata = {
@@ -1632,7 +1607,9 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ) => {
     const id = chatId ?? randomUUID()
     await onChatCreated?.(id)
-    const state = chatId ? await this.ensureSession(id, options) : this.createState(id, options)
+    const state: CopilotSessionState = chatId
+      ? await this.ensureSession(id, options)
+      : this.createState(id, options)
     if (state.active) throw new Error('Copilot is still working in this conversation.')
     const session = state.session ?? (await this.createSession(state, options))
     const native = await session.getEvents()
@@ -1726,7 +1703,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     state.goalMutation = true
     state.goalMutationCanceled = false
     state.goalRefreshSequence += 1
-    const session = state.session!
+    const session = state.session
     try {
       this.completionCoordinator.cancel(state.id)
       if (
@@ -1777,14 +1754,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions,
     onForkCreated?: (chatId: string) => Promise<void>
   ): Promise<ProviderChatDetail> => {
-    const sourceState = await this.ensureSession(chatId, options)
-    const fork = await sourceState.client!.rpc.sessions.fork({ sessionId: chatId })
-    this.sessionContainers.set(fork.sessionId, sourceState.container)
-    await onForkCreated?.(fork.sessionId)
-    const state = await this.ensureSession(fork.sessionId, options, sourceState.container)
+    const source = await this.ensureSession(chatId, options)
+    const state = await this.forkSession(source, options, onForkCreated)
     await this.applyTurnOptions(state, options)
     state.active = true
-    await state.session!.send(getMessageOptions(message, options))
+    await state.session.send(getMessageOptions(message, options))
     return this.createChatDetail(state)
   }
 
@@ -1795,7 +1769,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderChatDetail> => {
     const source = await this.ensureSession(chatId)
     if (source.active) throw new Error('Cannot fork a chat with an active response.')
-    const sourceEvents = await this.historyPages.complete(source.session!)
+    const sourceEvents = await this.historyPages.complete(source.session)
 
     const targetIndex = sourceEvents.findIndex(
       (event) =>
@@ -1810,14 +1784,24 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         (event) =>
           event.type === 'user.message' && !event.agentId && !isCopilotSystemContextMessage(event)
       )
-    const fork = await source.client!.rpc.sessions.fork({
-      sessionId: chatId,
-      ...(nextUserMessage ? { toEventId: nextUserMessage.id } : {})
+    return this.createChatDetail(
+      await this.forkSession(source, source.options, onForkCreated, nextUserMessage?.id)
+    )
+  }
+
+  private forkSession = async (
+    source: ConnectedCopilotSessionState,
+    options: ProviderTurnOptions | undefined,
+    onForkCreated?: (chatId: string) => Promise<void>,
+    toEventId?: string
+  ): Promise<ConnectedCopilotSessionState> => {
+    const fork = await source.client.rpc.sessions.fork({
+      sessionId: source.id,
+      ...(toEventId ? { toEventId } : {})
     })
     this.sessionContainers.set(fork.sessionId, source.container)
     await onForkCreated?.(fork.sessionId)
-    const state = await this.ensureSession(fork.sessionId, source.options, source.container)
-    return this.createChatDetail(state)
+    return this.ensureSession(fork.sessionId, options, source.container)
   }
 
   sendActiveChatMessage = async (
@@ -2243,7 +2227,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
     const state = await this.ensureSession(chatId, options)
     this.completionCoordinator.cancel(chatId)
-    const editEvents = await this.historyPages.complete(state.session!)
+    const editEvents = await this.historyPages.complete(state.session)
 
     const target = editEvents.find(
       (event): event is Extract<SessionEvent, { type: 'user.message' }> =>
@@ -2255,13 +2239,13 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.cancelPendingUserInputs(state)
     if (state.active) {
       state.browser?.suspend()
-      await state.session!.abort()
+      await state.session.abort()
     }
-    await state.session!.rpc.queue.clear()
+    await state.session.rpc.queue.clear()
     state.pendingMessages = []
 
     await this.applyTurnOptions(state, options)
-    const result = await state.session!.rpc.history.truncate({ eventId: target.id })
+    const result = await state.session.rpc.history.truncate({ eventId: target.id })
     if (result.eventsRemoved < 1) throw new Error('Message cannot be edited')
 
     state.events = []
@@ -2282,7 +2266,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.emitUpdate(state)
 
     state.browser?.resume()
-    await state.session!.send(getMessageOptions(text, options))
+    await state.session.send(getMessageOptions(text, options))
     return this.createChatDetail(state)
   }
 
@@ -2346,7 +2330,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (state.active) {
       throw new Error('Wait for the current response before compacting context.')
     }
-    const result = await state.session!.rpc.history.compact()
+    const result = await state.session.rpc.history.compact()
     if (!result.success) throw new Error('Copilot could not compact the chat context.')
     this.emitUpdate(state)
     return this.createChatDetail(state)
@@ -2381,15 +2365,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (sourceState.active)
       throw new Error('Wait for the current response before linking this chat.')
     throwIfLinkedChatCancelled(signal)
-    const fork = await sourceState.client!.rpc.sessions.fork({ sessionId: chatId })
-    this.sessionContainers.set(fork.sessionId, sourceState.container)
-    await onForkCreated(fork.sessionId)
-    throwIfLinkedChatCancelled(signal)
-    const state = await this.ensureSession(
-      fork.sessionId,
-      sourceState.options,
-      sourceState.container
-    )
+    const state = await this.forkSession(sourceState, sourceState.options, async (forkId) => {
+      await onForkCreated(forkId)
+      throwIfLinkedChatCancelled(signal)
+    })
     const abort = (): void => {
       void state.session?.rpc.history.abortManualCompaction().catch((error: unknown) => {
         console.error('[caught:CopilotProviderAdapter:summarizeChatInFork:abort]', error)
@@ -2401,7 +2380,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       // Native compaction returns its readable summary directly.
       const result = await raceLinkedChatCancellation(
         signal,
-        state.session!.rpc.history.compact({ trigger: 'manual' })
+        state.session.rpc.history.compact({ trigger: 'manual' })
       )
       if (!result.success) throw new Error('Copilot could not summarize the linked chat.')
       return requireLinkedChatSummary(result.summaryContent)
@@ -2766,7 +2745,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     sessionId: string,
     options?: ProviderTurnOptions,
     container: AppContainerTarget | null = this.getSessionContainer(sessionId, options)
-  ): Promise<CopilotSessionState> => {
+  ): Promise<ConnectedCopilotSessionState> => {
     const state = this.createState(sessionId, options, container)
     const client = await this.ensureClient(state.container)
     if (options) state.options = options
@@ -2774,10 +2753,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     if (pending) return pending
     if (state.session && state.client === client && this.browserBindingMatches(state)) {
       if (!state.active) await this.checkSessionMetadata(state)
-      return state
+      return state as ConnectedCopilotSessionState
     }
 
-    const load = (async (): Promise<CopilotSessionState> => {
+    const load = (async (): Promise<ConnectedCopilotSessionState> => {
       const previous = state.session
       state.terminals?.dispose()
       state.terminals = undefined
@@ -2836,7 +2815,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       await this.refreshPendingMessages(state)
       await this.refreshPlan(state)
       await this.refreshGoal(state)
-      return state
+      return state as ConnectedCopilotSessionState
     })()
     this.sessionLoads.set(state, load)
     try {
@@ -3145,7 +3124,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
         }
       }
     }
-    if (isCopilotTurnActivityEvent(event)) {
+    if (copilotTurnActivityEventTypes.has(event.type)) {
       if (event.type === 'user.message' || event.type === 'assistant.turn_start') {
         state.turnGeneration += 1
         this.completionCoordinator.cancel(state.id)

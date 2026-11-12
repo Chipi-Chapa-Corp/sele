@@ -19,11 +19,6 @@
   flex-direction: column;
 }
 
-.changes-sidebar__content--centered {
-  align-items: center;
-  justify-content: center;
-}
-
 .changes-sidebar__controls--pull-requests {
   grid-template-columns: minmax(0, 1fr) auto;
 }

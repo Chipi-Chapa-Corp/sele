@@ -111,11 +111,7 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
   return (
     <div
       ref={panelRef}
-      className={`changes-sidebar__body${
-        changesPaneView === 'terminal' || changesPaneView === 'browser' || showingPullRequests
-          ? ' changes-sidebar__body--utility'
-          : ''
-      }`}
+      className={`changes-sidebar__body${showingFileContent ? '' : ' changes-sidebar__body--utility'}`}
     >
       {showingPullRequests && (
         <Suspense fallback={<ChangesSidebarGitState active label="Loading pull requests" />}>

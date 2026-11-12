@@ -1,8 +1,6 @@
 import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import { getOpenCodeFreeLimitSignal } from './OpenCodeFreeLimit.ts'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+import { isRecord } from '../providerValues.ts'
 
 /** OpenCode retries provider limits internally; these must end the turn in Sele. */
 export const getOpenCodeUsageLimitMessage = (

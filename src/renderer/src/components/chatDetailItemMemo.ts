@@ -113,6 +113,5 @@ export const areChatDetailItemPropsEqual = (
   first.retryStoppedTurnDisabled === second.retryStoppedTurnDisabled &&
   first.streaming === second.streaming &&
   first.turnIndex === second.turnIndex &&
-  first.workingStepContent === second.workingStepContent &&
   areProgressSettingsEqual(first.progressSettings, second.progressSettings) &&
   first.item === second.item

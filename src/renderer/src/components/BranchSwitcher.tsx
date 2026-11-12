@@ -1,15 +1,7 @@
 import { AnimatePresence } from 'motion/react'
 import { MotionSurface } from '../motion/MotionSurface'
 import { Check, ChevronDown, GitBranch, Plus, X } from 'lucide-react'
-import {
-  type CSSProperties,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState
-} from 'react'
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toCssRem } from '../cssUnits'
 import { Button, ButtonMenuRow } from './Button'
@@ -25,7 +17,7 @@ type BranchSwitcherProps = {
   disabled?: boolean
   error?: string | null
   errorActions?: ReactNode
-  id?: string
+  id: string
   loading?: boolean
   onClearError?: () => void
   onDelete: (branchName: string) => Promise<void>
@@ -96,15 +88,15 @@ const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
 
 export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   branches,
-  busy = false,
-  canForceDelete = false,
+  busy,
+  canForceDelete,
   currentBranch,
-  deleteWorktreePath = null,
-  disabled = false,
-  error = null,
-  errorActions = null,
+  deleteWorktreePath,
+  disabled,
+  error,
+  errorActions,
   id,
-  loading = false,
+  loading,
   onClearError,
   onDelete,
   onDeleteWorktree,
@@ -112,9 +104,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   onOpen,
   onSwitch
 }) => {
-  const reactId = useId().replace(/:/g, '')
-  const buttonId = id ?? `branch-switcher-${reactId}`
-  const listboxId = `${buttonId}-listbox`
+  const listboxId = `${id}-listbox`
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -171,7 +161,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
   }, [])
 
   const openMenu = (): void => {
-    if (disabled || typeof window === 'undefined') return
+    if (disabled) return
 
     const buttonRect = buttonRef.current?.getBoundingClientRect()
     if (!buttonRect) return
@@ -238,43 +228,17 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
     }
   }
 
-  const deleteBranch = async (branchName: string): Promise<void> => {
-    if (busy || deleteInFlightRef.current) return
+  const runDelete = async (
+    action: 'delete' | 'worktree',
+    run: (() => Promise<void>) | undefined
+  ): Promise<void> => {
+    if (busy || deleteInFlightRef.current || !run) return
 
     deleteInFlightRef.current = true
-    setBusyAction('delete')
-    onClearError?.()
+    setBusyAction(action)
 
     try {
-      await onDelete(branchName)
-    } finally {
-      deleteInFlightRef.current = false
-      setBusyAction(null)
-    }
-  }
-
-  const forceDeleteBranch = async (): Promise<void> => {
-    if (busy || deleteInFlightRef.current || !onForceDelete) return
-
-    deleteInFlightRef.current = true
-    setBusyAction('delete')
-
-    try {
-      await onForceDelete()
-    } finally {
-      deleteInFlightRef.current = false
-      setBusyAction(null)
-    }
-  }
-
-  const deleteWorktree = async (): Promise<void> => {
-    if (busy || deleteInFlightRef.current || !onDeleteWorktree) return
-
-    deleteInFlightRef.current = true
-    setBusyAction('worktree')
-
-    try {
-      await onDeleteWorktree()
+      await run()
     } finally {
       deleteInFlightRef.current = false
       setBusyAction(null)
@@ -375,7 +339,11 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
                       {
                         id: `delete-${item.name}`,
                         ariaLabel: `Delete ${item.name}`,
-                        callback: () => deleteBranch(item.name),
+                        callback: () =>
+                          runDelete('delete', () => {
+                            onClearError?.()
+                            return onDelete(item.name)
+                          }),
                         icon: <X aria-hidden="true" />,
                         title: `Delete ${item.name}`
                       }
@@ -437,7 +405,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
               theme="secondary"
               disabled={busy}
               label="Force Delete"
-              callback={forceDeleteBranch}
+              callback={() => runDelete('delete', onForceDelete)}
             />
           )}
           {deleteWorktreePath && onDeleteWorktree && (
@@ -446,7 +414,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
               disabled={busy}
               label="Delete Worktree"
               title={`Delete worktree at ${deleteWorktreePath}`}
-              callback={deleteWorktree}
+              callback={() => runDelete('worktree', onDeleteWorktree)}
             />
           )}
           {errorActions}
@@ -469,7 +437,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
       <button
         ref={buttonRef}
         className="branch-switcher__trigger"
-        id={buttonId}
+        id={id}
         type="button"
         aria-controls={open ? listboxId : undefined}
         aria-expanded={open}

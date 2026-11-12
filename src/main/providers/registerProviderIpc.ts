@@ -12,6 +12,7 @@ import type {
   ProviderApprovalDecision,
   ProviderActiveSendMode,
   ProviderAccountUsage,
+  ProviderApi,
   ProviderChatDetail,
   ProviderChatMetadata,
   ProviderChatDetailUpdate,
@@ -91,6 +92,7 @@ import {
   rendererWorkingItemWindowSize,
   unloadHistoricalWorkingSteps
 } from './workingStepLazy'
+import { getErrorMessage } from './providerValues'
 
 type QueuedWindowChatUpdate = Omit<ProviderWindowChatUpdatedEvent, 'detail' | 'sequence'> & {
   detail: ProviderChatDetail | null
@@ -136,9 +138,6 @@ export const beginProviderIpcShutdown = (): void => {
   chatUpdateDeliveryByClientId.clear()
   chatUpdateClients.clear()
 }
-
-const getErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
 
 const isExpectedProviderShutdownError = (error: unknown): boolean => {
   const message = getErrorMessage(error)
@@ -223,23 +222,35 @@ const getRendererChatDetail = async (
   read: () => Promise<ProviderChatDetail>
 ): Promise<ProviderChatDetail> => prepareChatDetailForRenderer(await read())
 
-const findWorkingStep = (
-  detail: Pick<ProviderChatDetail, 'items'>,
-  workingStepId: string
-): ProviderWorkingStep | undefined =>
-  detail.items.find(
-    (item): item is ProviderWorkingStep => item.type === 'working' && item.id === workingStepId
+const readWorkingStep = async (
+  providerId: unknown,
+  chatId: unknown,
+  workingStepId: unknown,
+  rootChatId: unknown
+): Promise<ProviderWorkingStep> => {
+  const requiredProviderId = requireProviderId(providerId)
+  const requiredChatId = requireChatId(chatId)
+  const requiredWorkingStepId = requireMessageId(workingStepId)
+  const detail: Pick<ProviderChatDetail, 'items'> =
+    rootChatId === undefined
+      ? await getProviderChatItemWindow(
+          requiredProviderId,
+          requiredChatId,
+          requiredWorkingStepId,
+          1
+        )
+      : await getProviderSubagentItemWindow(
+          requiredProviderId,
+          requireChatId(rootChatId),
+          requiredChatId,
+          requiredWorkingStepId
+        )
+  const workingStep = detail.items.find(
+    (item): item is ProviderWorkingStep =>
+      item.type === 'working' && item.id === requiredWorkingStepId
   )
-
-const getChatDetailContainingWorkingStep = async (
-  providerId: ProviderId,
-  chatId: string,
-  workingStepId: string,
-  rootChatId?: string
-): Promise<Pick<ProviderChatDetail, 'items'>> => {
-  if (rootChatId)
-    return getProviderSubagentItemWindow(providerId, rootChatId, chatId, workingStepId)
-  return getProviderChatItemWindow(providerId, chatId, workingStepId, 1)
+  if (!workingStep) throw new Error('Working section not found')
+  return workingStep
 }
 
 const getChatUpdateDeliveryState = (client: RendererClient): ChatUpdateDeliveryState => {
@@ -446,6 +457,9 @@ const requireChatId = (value: unknown): string => {
   return value
 }
 
+const requireOptionalChatId = (value: unknown): string | null =>
+  value == null ? null : requireChatId(value)
+
 const requireChatIds = (value: unknown): string[] => {
   if (!Array.isArray(value) || value.length > 1000) throw new Error('Invalid chat IDs')
 
@@ -580,6 +594,18 @@ const requireOptionalProviderResourceString = (
 ): string | null =>
   value == null ? null : requireProviderResourceString(value, label, maximumLength, true)
 
+const requireAccountId = (value: unknown): string =>
+  requireProviderResourceString(value, 'account ID', 128)
+
+const requireLoginId = (value: unknown): string =>
+  requireProviderResourceString(value, 'login ID', 128)
+
+const requireOptionalLoginId = (value: unknown): string | null =>
+  requireOptionalProviderResourceString(value, 'login ID', 128)
+
+const requireAuthorizationCode = (value: unknown): string =>
+  requireProviderResourceString(value, 'authorization code', 4096)
+
 const providerSkillScopes = new Set<ProviderSkillScope>(['user', 'repo', 'system', 'admin'])
 
 const requireProviderSkill = (value: unknown): ProviderSkill => {
@@ -658,6 +684,21 @@ const requireBoolean = (value: unknown): boolean => {
   if (typeof value !== 'boolean') throw new Error('Invalid boolean value')
   return value
 }
+
+const requireConfigName =
+  (message: string) =>
+  (value: unknown): string => {
+    if (typeof value !== 'string' || !/^[a-z][a-z0-9_]*$/.test(value)) throw new Error(message)
+    return value
+  }
+
+const requireConfigPath = (value: unknown): string[] => {
+  if (!Array.isArray(value) || value.length > 12 || value.some((key) => typeof key !== 'string'))
+    throw new Error('Invalid setting path')
+  return value
+}
+
+const requireDone = (value: unknown): boolean => value == null || requireBoolean(value)
 
 const requireTimestamp = (value: unknown): number => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
@@ -975,8 +1016,19 @@ const requireLimitResetTarget = (value: unknown): ProviderLimitResetTarget => {
   return { draftKey, ...(worktree === undefined ? {} : { worktree: requireBoolean(worktree) }) }
 }
 
+const requireQueuedMessage = (value: unknown): string => {
+  const prompt = requireMessage(value).trim()
+  if (!prompt) throw new Error('Cannot queue an empty message')
+  return prompt
+}
+
 const requireMessage = (value: unknown): string => {
   if (typeof value !== 'string') throw new Error('Invalid message')
+  return value
+}
+
+const requireGoalObjective = (value: unknown): string | null => {
+  if (value !== null && typeof value !== 'string') throw new Error('Invalid goal objective')
   return value
 }
 
@@ -1054,14 +1106,7 @@ const requireReview = (value: unknown): ProviderReview | undefined => {
       throw new Error('Invalid review comment')
     }
 
-    return {
-      id,
-      path,
-      comment: comment.trim(),
-      line,
-      endLine: typeof endLine === 'number' ? endLine : undefined,
-      side: side === 'old' ? 'old' : 'new'
-    }
+    return { id, path, comment: comment.trim(), line, endLine, side }
   })
 
   return { id: review.id, prompt: review.prompt, comments }
@@ -1298,19 +1343,93 @@ const requireStartChatOptions = (value: unknown): ProviderStartChatOptions | und
 }
 
 const requireOneShotOptions = (value: unknown): ProviderOneShotOptions | undefined => {
-  const turnOptions = requireTurnOptions(value)
-  if (value == null) return turnOptions
-  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid one-shot options')
-
+  const options = requireTurnOptions(value)
+  if (!options) return options
   const generationId = (value as { generationId?: unknown }).generationId
-  if (generationId != null) {
-    return {
-      ...turnOptions!,
-      generationId: requireGenerationId(generationId)
-    }
-  }
+  return generationId == null
+    ? options
+    : { ...options, generationId: requireGenerationId(generationId) }
+}
 
-  return turnOptions
+const requireQueuedTurnOptions = (value: unknown): ProviderStartChatOptions => {
+  const options = requireStartChatOptions(value)
+  if (!options) throw new Error('Message options are required')
+  return options
+}
+
+const requirePermissionOptions = (value: unknown): ProviderPermissionOptions => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid permission options')
+  }
+  const options = value as ProviderPermissionOptions
+  if (!isProviderApprovalPolicy(options.approvalPolicy)) throw new Error('Invalid approval policy')
+  if (!isProviderApprovalsReviewer(options.approvalsReviewer))
+    throw new Error('Invalid approvals reviewer')
+  if (!isProviderSandboxMode(options.sandboxMode)) throw new Error('Invalid sandbox mode')
+  const directories = options.additionalDirectories
+  if (
+    directories !== undefined &&
+    (!Array.isArray(directories) ||
+      directories.length > 32 ||
+      directories.some(
+        (directory) =>
+          typeof directory !== 'string' || !isAbsolute(directory) || directory.includes('\0')
+      ))
+  )
+    throw new Error('Invalid additional directories')
+  return {
+    approvalPolicy: options.approvalPolicy,
+    approvalsReviewer: options.approvalsReviewer,
+    sandboxMode: options.sandboxMode,
+    additionalDirectories: directories
+  }
+}
+
+type ProviderOperation = keyof ProviderApi & keyof typeof providerIpcChannels
+
+type ArgumentValidators<Arguments extends unknown[]> = {
+  [Index in keyof Arguments]-?: (value: unknown) => Arguments[Index]
+}
+
+const forwardOperations = <Operation extends ProviderOperation>(
+  operations: { [Name in Operation]: ArgumentValidators<Parameters<ProviderApi[Name]>> },
+  respond: (call: () => ReturnType<ProviderApi[Operation]>) => unknown,
+  channels: Record<Operation, string> = providerIpcChannels
+): void => {
+  for (const operation of Object.keys(operations) as Operation[]) {
+    const validators: ((value: unknown) => unknown)[] = operations[operation]
+    handleClientRequest(channels[operation], (_, ...values) =>
+      respond(() =>
+        (providerApi[operation] as (...args: unknown[]) => ReturnType<ProviderApi[Operation]>)(
+          ...validators.map((validate, index) => validate(values[index]))
+        )
+      )
+    )
+  }
+}
+
+const prepareLoadedTurnItems = (detail: ProviderChatDetail) =>
+  prepareChatItemsForRenderer(
+    unloadHistoricalWorkingSteps(detail).items.map((item) =>
+      item.type === 'message' || item.type === 'pendingMessage'
+        ? { ...item, contentLoaded: true }
+        : item
+    )
+  )
+
+const summarizedOperations = {
+  continueChat: [requireProviderId, requireChatId, requireMessage, requireTurnOptions],
+  sendActiveChatMessage: [
+    requireProviderId,
+    requireChatId,
+    requireMessage,
+    requireActiveSendMode,
+    requireTurnOptions
+  ]
+} satisfies {
+  [Name in 'continueChat' | 'sendActiveChatMessage']: ArgumentValidators<
+    Parameters<ProviderApi[Name]>
+  >
 }
 
 export const registerProviderIpc = (): void => {
@@ -1410,298 +1529,165 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleClientRequest(providerIpcChannels.login, (_, providerId: unknown, options: unknown) =>
-    providerApi.login(requireProviderId(providerId), requireSourceOptions(options))
+  forwardOperations(
+    {
+      login: [requireProviderId, requireSourceOptions],
+      getAccounts: [requireProviderId, requireSourceOptions],
+      cancelAccountCreation: [
+        requireProviderId,
+        requireAccountId,
+        requireOptionalLoginId,
+        requireSourceOptions
+      ],
+      submitAccountLoginCode: [
+        requireProviderId,
+        requireLoginId,
+        requireAuthorizationCode,
+        requireSourceOptions
+      ],
+      getUpdateAvailability: [requireProviderId, requireSourceOptions],
+      getProviderUpdateImpact: [requireProviderId, requireSourceOptions],
+      updateProvider: [requireProviderId, requireProviderUpdateOptions],
+      getApprovalModes: [requireProviderId],
+      getSandboxModes: [requireProviderId],
+      getAgentModes: [requireProviderId, requireSourceOptions],
+      getModels: [requireProviderId, requireSourceOptions],
+      getSkills: [requireProviderId, requireOptionalCwd, requireSourceOptions],
+      getConnections: [requireProviderId, requireSourceOptions],
+      connectProvider: [requireProviderId, requireConnectionInput, requireSourceOptions],
+      getConnectionAttempt: [requireProviderId, requireConnectionString, requireSourceOptions],
+      cancelConnection: [requireProviderId, requireConnectionString, requireSourceOptions],
+      getConfig: [requireProviderId, requireSourceOptions],
+      getApps: [requireProviderId, requireSourceOptions],
+      getTokenUsage: [requireProviderId, requireOptionalChatId, requireSourceOptions],
+      resetRateLimits: [requireProviderId, requireRateLimitResetOptions],
+      getChatContainers: [],
+      getChatTerminalTasks: [requireProviderId, requireChatId],
+      getSubagents: [requireProviderId, requireChatId],
+      cancelSubagent: [requireProviderId, requireChatId, requireChatId],
+      sendSubagentMessage: [requireProviderId, requireChatId, requireChatId, requireMessage],
+      setChatGoal: [requireProviderId, requireChatId, requireGoalObjective],
+      generateOneShot: [requireProviderId, requireMessage, requireOneShotOptions],
+      cancelOneShot: [requireProviderId, requireGenerationId],
+      getLimitResetMessages: [requireProviderId, requireLimitResetTarget],
+      deleteLimitResetMessage: [requireProviderId, requireLimitResetTarget, requireMessageId],
+      prepareLinkedChatContext: [requireProviderId, requireChatId, requireLinkedChatContextOptions],
+      cancelLinkedChatContext: [requireLinkedChatOperationId],
+      markChatDone: [requireProviderId, requireChatId, requireDone],
+      markChatsDone: [requireChatIds],
+      getCwdNotes: [requireProviderId, requireOptionalCwd],
+      markChatSeen: [requireProviderId, requireChatId, requireTimestamp],
+      setChatPinned: [requireProviderId, requireChatId, requireBoolean],
+      setChatOrder: [requireChatIds],
+      addLimitResetMessage: [
+        requireProviderId,
+        requireLimitResetTarget,
+        requireQueuedMessage,
+        requireQueuedTurnOptions
+      ],
+      updateChatPermissions: [requireProviderId, requireChatId, requirePermissionOptions]
+    },
+    (call) => call()
   )
 
-  handleClientRequest(
-    providerIpcChannels.reauthenticateAccount,
-    (_, providerId: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.reauthenticateAccount(
-          requireProviderId(providerId),
-          requireSourceOptions(options)
-        )
-      )
+  forwardOperations(
+    {
+      reauthenticateAccount: [requireProviderId, requireSourceOptions],
+      createAccount: [requireProviderId, requireSourceOptions],
+      completeAccountCreation: [
+        requireProviderId,
+        requireAccountId,
+        requireOptionalLoginId,
+        requireSourceOptions
+      ],
+      useAccount: [requireProviderId, requireAccountId, requireSourceOptions],
+      deleteAccount: [requireProviderId, requireAccountId, requireSourceOptions],
+      completeConnection: [
+        requireProviderId,
+        requireConnectionString,
+        requireConnectionString,
+        requireSourceOptions
+      ],
+      deleteConnection: [requireProviderId, requireConnectionString, requireSourceOptions],
+      setSkillEnabled: [
+        requireProviderId,
+        requireProviderSkillPath,
+        requireBoolean,
+        requireOptionalCwd,
+        requireProviderResourceUpdateOptions
+      ],
+      setSkillsEnabled: [
+        requireProviderId,
+        requireProviderSkillPaths,
+        requireBoolean,
+        requireOptionalCwd,
+        requireProviderResourceUpdateOptions
+      ],
+      setAppEnabled: [
+        requireProviderId,
+        requireProviderAppId,
+        requireBoolean,
+        requireProviderResourceUpdateOptions
+      ],
+      setCwdNotes: [requireProviderId, requireOptionalCwd, requireCwdNotes],
+      setConfigValue: [
+        requireProviderId,
+        requireConfigName('Invalid setting path'),
+        requireConfigPath,
+        // The adapter validates values against the schema before writing.
+        (value) => value as ProviderConfigValue,
+        requireSourceOptions
+      ],
+      setConfigFeature: [
+        requireProviderId,
+        requireConfigName('Invalid feature name'),
+        requireBoolean,
+        requireSourceOptions
+      ]
+    },
+    (call) => withWorkspaceUpdate<unknown>(call())
   )
 
-  handleClientRequest(providerIpcChannels.getAccounts, (_, providerId: unknown, options: unknown) =>
-    providerApi.getAccounts(requireProviderId(providerId), requireSourceOptions(options))
-  )
-
-  handleClientRequest(
-    providerIpcChannels.createAccount,
-    (_, providerId: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.createAccount(requireProviderId(providerId), requireSourceOptions(options))
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.completeAccountCreation,
-    (_, providerId: unknown, accountId: unknown, loginId: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.completeAccountCreation(
-          requireProviderId(providerId),
-          requireProviderResourceString(accountId, 'account ID', 128),
-          requireOptionalProviderResourceString(loginId, 'login ID', 128),
-          requireSourceOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.cancelAccountCreation,
-    (_, providerId: unknown, accountId: unknown, loginId: unknown, options: unknown) =>
-      providerApi.cancelAccountCreation(
-        requireProviderId(providerId),
-        requireProviderResourceString(accountId, 'account ID', 128),
-        requireOptionalProviderResourceString(loginId, 'login ID', 128),
-        requireSourceOptions(options)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.submitAccountLoginCode,
-    (_, providerId: unknown, loginId: unknown, code: unknown, options: unknown) =>
-      providerApi.submitAccountLoginCode(
-        requireProviderId(providerId),
-        requireProviderResourceString(loginId, 'login ID', 128),
-        requireProviderResourceString(code, 'authorization code', 4096),
-        requireSourceOptions(options)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.useAccount,
-    (_, providerId: unknown, accountId: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.useAccount(
-          requireProviderId(providerId),
-          requireProviderResourceString(accountId, 'account ID', 128),
-          requireSourceOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.deleteAccount,
-    (_, providerId: unknown, accountId: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.deleteAccount(
-          requireProviderId(providerId),
-          requireProviderResourceString(accountId, 'account ID', 128),
-          requireSourceOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.getUpdateAvailability,
-    (_, providerId: unknown, options: unknown) =>
-      providerApi.getUpdateAvailability(
-        requireProviderId(providerId),
-        requireSourceOptions(options)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.getProviderUpdateImpact,
-    (_, providerId: unknown, options: unknown) =>
-      providerApi.getProviderUpdateImpact(
-        requireProviderId(providerId),
-        requireSourceOptions(options)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.updateProvider,
-    (_, providerId: unknown, options: unknown) =>
-      providerApi.updateProvider(
-        requireProviderId(providerId),
-        requireProviderUpdateOptions(options)
-      )
-  )
-
-  handleClientRequest(providerIpcChannels.getApprovalModes, (_, providerId: unknown) =>
-    providerApi.getApprovalModes(requireProviderId(providerId))
-  )
-
-  handleClientRequest(providerIpcChannels.getSandboxModes, (_, providerId: unknown) =>
-    providerApi.getSandboxModes(requireProviderId(providerId))
-  )
-
-  handleClientRequest(
-    providerIpcChannels.getAgentModes,
-    (_, providerId: unknown, options: unknown) =>
-      providerApi.getAgentModes(requireProviderId(providerId), requireSourceOptions(options))
-  )
-
-  handleClientRequest(providerIpcChannels.getModels, (_, providerId: unknown, options: unknown) =>
-    providerApi.getModels(requireProviderId(providerId), requireSourceOptions(options))
-  )
-
-  handleClientRequest(
-    providerIpcChannels.getSkills,
-    (_, providerId: unknown, cwd: unknown, options: unknown) =>
-      providerApi.getSkills(
-        requireProviderId(providerId),
-        requireOptionalCwd(cwd),
-        requireSourceOptions(options)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.getConnections,
-    (_, providerId: unknown, options: unknown) =>
-      providerApi.getConnections(requireProviderId(providerId), requireSourceOptions(options))
-  )
-  handleClientRequest(
-    providerIpcChannels.connectProvider,
-    (_, providerId: unknown, input: unknown, options: unknown) =>
-      providerApi.connectProvider(
-        requireProviderId(providerId),
-        requireConnectionInput(input),
-        requireSourceOptions(options)
-      )
-  )
-  handleClientRequest(
-    providerIpcChannels.getConnectionAttempt,
-    (_, providerId: unknown, attemptId: unknown, options: unknown) =>
-      providerApi.getConnectionAttempt(
-        requireProviderId(providerId),
-        requireConnectionString(attemptId),
-        requireSourceOptions(options)
-      )
-  )
-  handleClientRequest(
-    providerIpcChannels.completeConnection,
-    (_, providerId: unknown, attemptId: unknown, code: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.completeConnection(
-          requireProviderId(providerId),
-          requireConnectionString(attemptId),
-          requireConnectionString(code),
-          requireSourceOptions(options)
-        )
-      )
-  )
-  handleClientRequest(
-    providerIpcChannels.cancelConnection,
-    (_, providerId: unknown, attemptId: unknown, options: unknown) =>
-      providerApi.cancelConnection(
-        requireProviderId(providerId),
-        requireConnectionString(attemptId),
-        requireSourceOptions(options)
-      )
-  )
-  handleClientRequest(
-    providerIpcChannels.deleteConnection,
-    (_, providerId: unknown, credentialId: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.deleteConnection(
-          requireProviderId(providerId),
-          requireConnectionString(credentialId),
-          requireSourceOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(providerIpcChannels.getConfig, (_, providerId: unknown, options: unknown) =>
-    providerApi.getConfig(requireProviderId(providerId), requireSourceOptions(options))
-  )
-  handleClientRequest(
-    providerIpcChannels.setConfigValue,
-    (_, providerId: unknown, name: unknown, path: unknown, value: unknown, options: unknown) => {
-      if (
-        typeof name !== 'string' ||
-        !/^[a-z][a-z0-9_]*$/.test(name) ||
-        !Array.isArray(path) ||
-        path.length > 12 ||
-        path.some((key) => typeof key !== 'string')
-      )
-        throw new Error('Invalid setting path')
-      // The adapter validates values against the schema before writing.
-      return withWorkspaceUpdate(
-        providerApi.setConfigValue(
-          requireProviderId(providerId),
-          name,
-          path,
-          value as ProviderConfigValue,
-          requireSourceOptions(options)
-        )
-      )
-    }
-  )
-  handleClientRequest(
-    providerIpcChannels.setConfigFeature,
-    (_, providerId: unknown, name: unknown, enabled: unknown, options: unknown) => {
-      if (typeof name !== 'string' || !/^[a-z][a-z0-9_]*$/.test(name))
-        throw new Error('Invalid feature name')
-      return withWorkspaceUpdate(
-        providerApi.setConfigFeature(
-          requireProviderId(providerId),
-          name,
-          requireBoolean(enabled),
-          requireSourceOptions(options)
-        )
-      )
-    }
-  )
-
-  handleClientRequest(providerIpcChannels.getApps, (_, providerId: unknown, options: unknown) =>
-    providerApi.getApps(requireProviderId(providerId), requireSourceOptions(options))
-  )
-
-  handleClientRequest(
-    providerIpcChannels.setSkillEnabled,
-    (_, providerId: unknown, path: unknown, enabled: unknown, cwd: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.setSkillEnabled(
-          requireProviderId(providerId),
-          requireProviderSkillPath(path),
-          requireBoolean(enabled),
-          requireOptionalCwd(cwd),
-          requireProviderResourceUpdateOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.setSkillsEnabled,
-    (_, providerId: unknown, paths: unknown, enabled: unknown, cwd: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.setSkillsEnabled(
-          requireProviderId(providerId),
-          requireProviderSkillPaths(paths),
-          requireBoolean(enabled),
-          requireOptionalCwd(cwd),
-          requireProviderResourceUpdateOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.setAppEnabled,
-    (_, providerId: unknown, appId: unknown, enabled: unknown, options: unknown) =>
-      withWorkspaceUpdate(
-        providerApi.setAppEnabled(
-          requireProviderId(providerId),
-          requireProviderAppId(appId),
-          requireBoolean(enabled),
-          requireProviderResourceUpdateOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.getTokenUsage,
-    (_, providerId: unknown, chatId: unknown, options: unknown) =>
-      providerApi.getTokenUsage(
-        requireProviderId(providerId),
-        chatId == null ? null : requireChatId(chatId),
-        requireSourceOptions(options)
-      )
+  forwardOperations(
+    {
+      setChatTitle: [requireProviderId, requireChatId, requireChatTitle],
+      startChat: [
+        requireProviderId,
+        requireMessage,
+        requireStartChatOptions,
+        requireOptionalChatPurpose
+      ],
+      ...summarizedOperations,
+      continueChatInFork: [
+        requireProviderId,
+        requireChatId,
+        requireMessage,
+        requireChatPurpose,
+        requireTurnOptions
+      ],
+      forkChat: [requireProviderId, requireChatId, requireMessageId],
+      deletePendingMessage: [requireProviderId, requireChatId, requireMessageId],
+      steerPendingMessage: [requireProviderId, requireChatId, requireMessageId],
+      interruptPendingMessage: [requireProviderId, requireChatId, requireMessageId],
+      editMessage: [
+        requireProviderId,
+        requireChatId,
+        requireMessageId,
+        requireMessage,
+        requireTurnOptions
+      ],
+      compactChat: [requireProviderId, requireChatId],
+      stopChat: [requireProviderId, requireChatId],
+      resolveApproval: [requireProviderId, requireChatId, requireApprovalDecision],
+      resolveUserInput: [
+        requireProviderId,
+        requireChatId,
+        requireMessageId,
+        requireUserInputResponse,
+        requireTurnOptions
+      ]
+    },
+    getRendererChatDetail
   )
 
   handleClientRequest(providerIpcChannels.getUsage, (_, providerId: unknown, options: unknown) => {
@@ -1712,22 +1698,6 @@ export const registerProviderIpc = (): void => {
       getEmptyProviderAccountUsage
     )
   })
-
-  handleClientRequest(
-    providerIpcChannels.resetRateLimits,
-    (_, providerId: unknown, options: unknown) =>
-      providerApi.resetRateLimits(
-        requireProviderId(providerId),
-        requireRateLimitResetOptions(options)
-      )
-  )
-
-  handleClientRequest(providerIpcChannels.getChatContainers, () => providerApi.getChatContainers())
-  handleClientRequest(
-    providerIpcChannels.getChatTerminalTasks,
-    (_, providerId: unknown, chatId: unknown) =>
-      providerApi.getChatTerminalTasks(requireProviderId(providerId), requireChatId(chatId))
-  )
 
   handleClientRequest(
     providerIpcChannels.getKnownChats,
@@ -1783,10 +1753,6 @@ export const registerProviderIpc = (): void => {
       await saveProviderConversationView(viewScope, detail)
       return detail
     }
-  )
-
-  handleClientRequest(providerIpcChannels.getSubagents, (_, providerId: unknown, chatId: unknown) =>
-    providerApi.getSubagents(requireProviderId(providerId), requireChatId(chatId))
   )
 
   handleClientRequest(
@@ -1857,27 +1823,6 @@ export const registerProviderIpc = (): void => {
   )
 
   handleClientRequest(
-    providerIpcChannels.cancelSubagent,
-    (_, providerId: unknown, chatId: unknown, subagentId: unknown) =>
-      providerApi.cancelSubagent(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireChatId(subagentId)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.sendSubagentMessage,
-    (_, providerId: unknown, chatId: unknown, subagentId: unknown, message: unknown) =>
-      providerApi.sendSubagentMessage(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireChatId(subagentId),
-        requireMessage(message)
-      )
-  )
-
-  handleClientRequest(
     providerIpcChannels.getChatWorkingStepPage,
     async (
       _,
@@ -1887,24 +1832,12 @@ export const registerProviderIpc = (): void => {
       startIndex: unknown,
       limit: unknown,
       rootChatId?: unknown
-    ): Promise<ProviderWorkingStepPage> => {
-      const requiredProviderId = requireProviderId(providerId)
-      const requiredChatId = requireChatId(chatId)
-      const requiredWorkingStepId = requireMessageId(workingStepId)
-      const detail = await getChatDetailContainingWorkingStep(
-        requiredProviderId,
-        requiredChatId,
-        requiredWorkingStepId,
-        rootChatId === undefined ? undefined : requireChatId(rootChatId)
-      )
-      const workingStep = findWorkingStep(detail, requiredWorkingStepId)
-      if (!workingStep) throw new Error('Working section not found')
-      return prepareWorkingStepPage(
-        workingStep,
+    ): Promise<ProviderWorkingStepPage> =>
+      prepareWorkingStepPage(
+        await readWorkingStep(providerId, chatId, workingStepId, rootChatId),
         requireChatTurnStartIndex(startIndex),
         requireWorkingItemLimit(limit)
       )
-    }
   )
 
   handleClientRequest(
@@ -1917,18 +1850,8 @@ export const registerProviderIpc = (): void => {
       workingItemId: unknown,
       rootChatId?: unknown
     ): Promise<ProviderWorkingItem> => {
-      const requiredProviderId = requireProviderId(providerId)
-      const requiredChatId = requireChatId(chatId)
-      const requiredWorkingStepId = requireMessageId(workingStepId)
       const requiredWorkingItemId = requireMessageId(workingItemId)
-      const detail = await getChatDetailContainingWorkingStep(
-        requiredProviderId,
-        requiredChatId,
-        requiredWorkingStepId,
-        rootChatId === undefined ? undefined : requireChatId(rootChatId)
-      )
-      const workingStep = findWorkingStep(detail, requiredWorkingStepId)
-      if (!workingStep) throw new Error('Working section not found')
+      const workingStep = await readWorkingStep(providerId, chatId, workingStepId, rootChatId)
       const workingItem =
         workingStep.items.find((item) => item.id === requiredWorkingItemId) ??
         workingStep.items
@@ -1950,25 +1873,13 @@ export const registerProviderIpc = (): void => {
       startIndex: unknown,
       limit: unknown,
       rootChatId?: unknown
-    ): Promise<ProviderWorkingToolPage> => {
-      const requiredProviderId = requireProviderId(providerId)
-      const requiredChatId = requireChatId(chatId)
-      const requiredWorkingStepId = requireMessageId(workingStepId)
-      const detail = await getChatDetailContainingWorkingStep(
-        requiredProviderId,
-        requiredChatId,
-        requiredWorkingStepId,
-        rootChatId === undefined ? undefined : requireChatId(rootChatId)
-      )
-      const workingStep = findWorkingStep(detail, requiredWorkingStepId)
-      if (!workingStep) throw new Error('Working section not found')
-      return prepareWorkingToolPage(
-        workingStep,
+    ): Promise<ProviderWorkingToolPage> =>
+      prepareWorkingToolPage(
+        await readWorkingStep(providerId, chatId, workingStepId, rootChatId),
         requireMessageId(workingItemId),
         requireChatTurnStartIndex(startIndex),
         requireWorkingItemLimit(limit)
       )
-    }
   )
 
   handleClientRequest(
@@ -1991,21 +1902,9 @@ export const registerProviderIpc = (): void => {
       const totalCount = detail.turnCount ?? getProviderChatTurnCount(detail.items)
       const requiredStartIndex =
         detail.itemsStartTurnIndex ?? Math.min(requestedStartIndex, totalCount)
-      const pageDetail = unloadHistoricalWorkingSteps({
-        ...detail,
-        items: detail.items
-      })
-
-      const items = prepareChatItemsForRenderer(
-        pageDetail.items.map((item) =>
-          item.type === 'message' || item.type === 'pendingMessage'
-            ? { ...item, contentLoaded: true }
-            : item
-        )
-      )
 
       return {
-        items,
+        items: prepareLoadedTurnItems(detail),
         subagents: detail.subagents,
         startIndex: requiredStartIndex,
         totalCount
@@ -2032,14 +1931,7 @@ export const registerProviderIpc = (): void => {
           limit: requireChatTurnLimit(limit)
         }
       )
-      const pageDetail = unloadHistoricalWorkingSteps(detail)
-      const items = prepareChatItemsForRenderer(
-        pageDetail.items.map((item) =>
-          item.type === 'message' || item.type === 'pendingMessage'
-            ? { ...item, contentLoaded: true }
-            : item
-        )
-      )
+      const items = prepareLoadedTurnItems(detail)
 
       return {
         items,
@@ -2078,197 +1970,13 @@ export const registerProviderIpc = (): void => {
     }
   )
 
-  handleClientRequest(
-    providerIpcChannels.setChatGoal,
-    (_, providerId: unknown, chatId: unknown, objective: unknown) => {
-      if (objective !== null && typeof objective !== 'string')
-        throw new Error('Invalid goal objective')
-      return providerApi.setChatGoal(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        objective
-      )
+  forwardOperations(
+    summarizedOperations,
+    async (call) => getChatUpdateSummary(await call(), Date.now()),
+    {
+      continueChat: providerIpcChannels.continueChatSummary,
+      sendActiveChatMessage: providerIpcChannels.sendActiveChatMessageSummary
     }
-  )
-
-  handleClientRequest(
-    providerIpcChannels.setChatTitle,
-    (_, providerId: unknown, chatId: unknown, title: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.setChatTitle(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireChatTitle(title)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.generateOneShot,
-    (_, providerId: unknown, message: unknown, options: unknown) =>
-      providerApi.generateOneShot(
-        requireProviderId(providerId),
-        requireMessage(message),
-        requireOneShotOptions(options)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.cancelOneShot,
-    (_, providerId: unknown, generationId: unknown) =>
-      providerApi.cancelOneShot(requireProviderId(providerId), requireGenerationId(generationId))
-  )
-
-  handleClientRequest(
-    providerIpcChannels.startChat,
-    (_, providerId: unknown, message: unknown, options: unknown, purpose: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.startChat(
-          requireProviderId(providerId),
-          requireMessage(message),
-          requireStartChatOptions(options),
-          requireOptionalChatPurpose(purpose)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.continueChat,
-    (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.continueChat(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessage(message),
-          requireTurnOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.continueChatSummary,
-    async (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) => {
-      const detail = await providerApi.continueChat(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessage(message),
-        requireTurnOptions(options)
-      )
-      return getChatUpdateSummary(detail, Date.now())
-    }
-  )
-
-  handleClientRequest(
-    providerIpcChannels.continueChatInFork,
-    (
-      _,
-      providerId: unknown,
-      chatId: unknown,
-      message: unknown,
-      purpose: unknown,
-      options: unknown
-    ) =>
-      getRendererChatDetail(() =>
-        providerApi.continueChatInFork(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessage(message),
-          requireChatPurpose(purpose),
-          requireTurnOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.forkChat,
-    (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.forkChat(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessageId(messageId)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.sendActiveChatMessage,
-    (_, providerId: unknown, chatId: unknown, message: unknown, mode: unknown, options: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.sendActiveChatMessage(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessage(message),
-          requireActiveSendMode(mode),
-          requireTurnOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.sendActiveChatMessageSummary,
-    async (
-      _,
-      providerId: unknown,
-      chatId: unknown,
-      message: unknown,
-      mode: unknown,
-      options: unknown
-    ) => {
-      const detail = await providerApi.sendActiveChatMessage(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireMessage(message),
-        requireActiveSendMode(mode),
-        requireTurnOptions(options)
-      )
-      return getChatUpdateSummary(detail, Date.now())
-    }
-  )
-
-  handleClientRequest(
-    providerIpcChannels.getLimitResetMessages,
-    (_, providerId: unknown, chatId: unknown) =>
-      providerApi.getLimitResetMessages(
-        requireProviderId(providerId),
-        requireLimitResetTarget(chatId)
-      )
-  )
-  handleClientRequest(
-    providerIpcChannels.addLimitResetMessage,
-    (_, providerId: unknown, chatId: unknown, message: unknown, options: unknown) => {
-      const turnOptions = requireStartChatOptions(options)
-      if (!turnOptions) throw new Error('Message options are required')
-      const prompt = requireMessage(message).trim()
-      if (!prompt) throw new Error('Cannot queue an empty message')
-      return providerApi.addLimitResetMessage(
-        requireProviderId(providerId),
-        requireLimitResetTarget(chatId),
-        prompt,
-        turnOptions
-      )
-    }
-  )
-  handleClientRequest(
-    providerIpcChannels.deleteLimitResetMessage,
-    (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
-      providerApi.deleteLimitResetMessage(
-        requireProviderId(providerId),
-        requireLimitResetTarget(chatId),
-        requireMessageId(messageId)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.deletePendingMessage,
-    (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.deletePendingMessage(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessageId(messageId)
-        )
-      )
   )
 
   // Renderer ownership makes abandoned edits resumable after a window closes or crashes.
@@ -2393,200 +2101,5 @@ export const registerProviderIpc = (): void => {
         return detail
       })
     }
-  )
-
-  handleClientRequest(
-    providerIpcChannels.steerPendingMessage,
-    (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.steerPendingMessage(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessageId(messageId)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.interruptPendingMessage,
-    (_, providerId: unknown, chatId: unknown, messageId: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.interruptPendingMessage(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessageId(messageId)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.editMessage,
-    (
-      _,
-      providerId: unknown,
-      chatId: unknown,
-      messageId: unknown,
-      message: unknown,
-      options: unknown
-    ) =>
-      getRendererChatDetail(() =>
-        providerApi.editMessage(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessageId(messageId),
-          requireMessage(message),
-          requireTurnOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(providerIpcChannels.compactChat, (_, providerId: unknown, chatId: unknown) =>
-    getRendererChatDetail(() =>
-      providerApi.compactChat(requireProviderId(providerId), requireChatId(chatId))
-    )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.prepareLinkedChatContext,
-    (_, providerId: unknown, chatId: unknown, options: unknown) =>
-      providerApi.prepareLinkedChatContext(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireLinkedChatContextOptions(options)
-      )
-  )
-
-  handleClientRequest(providerIpcChannels.cancelLinkedChatContext, (_, operationId: unknown) =>
-    providerApi.cancelLinkedChatContext(requireLinkedChatOperationId(operationId))
-  )
-
-  handleClientRequest(providerIpcChannels.stopChat, (_, providerId: unknown, chatId: unknown) =>
-    getRendererChatDetail(() =>
-      providerApi.stopChat(requireProviderId(providerId), requireChatId(chatId))
-    )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.updateChatPermissions,
-    (_, providerId: unknown, chatId: unknown, value: unknown) => {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        throw new Error('Invalid permission options')
-      }
-      const options = value as ProviderPermissionOptions
-      if (!isProviderApprovalPolicy(options.approvalPolicy))
-        throw new Error('Invalid approval policy')
-      if (!isProviderApprovalsReviewer(options.approvalsReviewer))
-        throw new Error('Invalid approvals reviewer')
-      if (!isProviderSandboxMode(options.sandboxMode)) throw new Error('Invalid sandbox mode')
-      const directories = options.additionalDirectories
-      if (
-        directories !== undefined &&
-        (!Array.isArray(directories) ||
-          directories.length > 32 ||
-          directories.some(
-            (directory) =>
-              typeof directory !== 'string' || !isAbsolute(directory) || directory.includes('\0')
-          ))
-      )
-        throw new Error('Invalid additional directories')
-      return providerApi.updateChatPermissions(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        {
-          approvalPolicy: options.approvalPolicy,
-          approvalsReviewer: options.approvalsReviewer,
-          sandboxMode: options.sandboxMode,
-          additionalDirectories: directories
-        }
-      )
-    }
-  )
-
-  handleClientRequest(
-    providerIpcChannels.resolveApproval,
-    (_, providerId: unknown, chatId: unknown, decision: unknown) =>
-      getRendererChatDetail(() =>
-        providerApi.resolveApproval(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireApprovalDecision(decision)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.resolveUserInput,
-    (
-      _,
-      providerId: unknown,
-      chatId: unknown,
-      requestId: unknown,
-      response: unknown,
-      options: unknown
-    ) =>
-      getRendererChatDetail(() =>
-        providerApi.resolveUserInput(
-          requireProviderId(providerId),
-          requireChatId(chatId),
-          requireMessageId(requestId),
-          requireUserInputResponse(response),
-          requireTurnOptions(options)
-        )
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.markChatDone,
-    (_, providerId: unknown, chatId: unknown, done: unknown) =>
-      providerApi.markChatDone(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        done == null ? true : requireBoolean(done)
-      )
-  )
-
-  handleClientRequest(providerIpcChannels.markChatsDone, (_, chatIds: unknown) =>
-    providerApi.markChatsDone(requireChatIds(chatIds))
-  )
-
-  handleClientRequest(providerIpcChannels.getCwdNotes, (_, providerId: unknown, cwd: unknown) =>
-    providerApi.getCwdNotes(requireProviderId(providerId), requireOptionalCwd(cwd))
-  )
-
-  handleClientRequest(
-    providerIpcChannels.setCwdNotes,
-    async (_, providerId: unknown, cwd: unknown, notes: unknown) => {
-      const result = await providerApi.setCwdNotes(
-        requireProviderId(providerId),
-        requireOptionalCwd(cwd),
-        requireCwdNotes(notes)
-      )
-      publishWorkspace()
-      return result
-    }
-  )
-
-  handleClientRequest(
-    providerIpcChannels.markChatSeen,
-    (_, providerId: unknown, chatId: unknown, seenUpdatedAt: unknown) =>
-      providerApi.markChatSeen(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireTimestamp(seenUpdatedAt)
-      )
-  )
-
-  handleClientRequest(
-    providerIpcChannels.setChatPinned,
-    (_, providerId: unknown, chatId: unknown, pinned: unknown) =>
-      providerApi.setChatPinned(
-        requireProviderId(providerId),
-        requireChatId(chatId),
-        requireBoolean(pinned)
-      )
-  )
-
-  handleClientRequest(providerIpcChannels.setChatOrder, (_, chatIds: unknown) =>
-    providerApi.setChatOrder(requireChatIds(chatIds))
   )
 }

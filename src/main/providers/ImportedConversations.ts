@@ -152,7 +152,7 @@ export class ImportedConversations {
     const adapter = this.native[providerId]
     const native = await (adapter.getChatWindow?.(id, fullWindow, { container }) ??
       adapter.getChat(id, { container }))
-    return record ? this.project(record, native, true) : native
+    return record ? this.project(record, native) : native
   }
   private view(record: ImportedConversation): ImportedHistoryView {
     let view = this.views.get(record)
@@ -194,16 +194,12 @@ export class ImportedConversations {
       ...native
     ]
   }
-  private project(
-    record: ImportedConversation,
-    detail: ProviderChatDetail,
-    replace = false
-  ): ProviderChatDetail {
+  private project(record: ImportedConversation, detail: ProviderChatDetail): ProviderChatDetail {
     const idKey = key(record.providerId, record.chatId)
     const cached = this.projections.get(idKey)
     if (cached && cached.revision > detail.revision) return cached.detail
     const baseline = new Set(record.baseline)
-    const next = detail.items
+    const tail = detail.items
       .filter((item) => !baseline.has(item.id))
       .map((item) =>
         item.type === 'message' &&
@@ -212,18 +208,6 @@ export class ImportedConversations {
           ? { ...item, content: item.content.slice(migrationNote.length + 1) }
           : item
       )
-    const old = cached?.detail.items.filter((item) => !item.id.startsWith('archive:')) ?? []
-    const first = next.length ? old.findIndex((item) => item.id === next[0]!.id) : -1
-    const tail = replace
-      ? next
-      : next.length
-        ? [
-            ...old
-              .slice(0, first < 0 ? old.length : first)
-              .filter((item) => item.type !== 'pendingMessage'),
-            ...next
-          ]
-        : old
     let prefix = this.prefixes.get(record)
     if (!prefix) {
       prefix = archivedItems(record.archive.chat.items, 'archive:')

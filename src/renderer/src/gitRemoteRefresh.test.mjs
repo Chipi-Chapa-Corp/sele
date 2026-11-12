@@ -60,7 +60,6 @@ const setup = () => {
     changesCwd: '/project',
     changesPaneView: 'git',
     changesContainerRef: { current: { kind: 'ssh', environmentId: 'server' } },
-    changeSourceRef: { current: 'uncommitted' },
     gitAvailabilityScopeKey: 'available',
     gitAvailableForCurrentSource: true,
     gitRemoteFetchInterval: 60_000,

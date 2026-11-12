@@ -42,7 +42,6 @@ export function SidebarProviderAccount({
   const openCodeControl = useSidebarOpenCodeProvider(
     isOpenCode ? openCode : undefined,
     container,
-    'opencode-v2',
     available
   )
   const [configurations, setConfigurations] = useState<

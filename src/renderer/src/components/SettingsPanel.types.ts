@@ -1,7 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppContainerTarget, AppSshEnvironment } from '../../../shared/app'
 import type {
-  ProviderAccountConfiguration,
   ProviderApprovalMode,
   ProviderId,
   ProviderSandboxMode
@@ -92,7 +91,6 @@ export type SettingsPanelProps = {
   handleContinuePromptChange: (continuePrompt: string) => void
   handleLinkedChatSummaryPromptChange: (linkedChatSummaryPrompt: string) => void
   handleProviderConnectionsChanged: (providerId: ProviderId, container: AppContainerTarget) => void
-  handleDeleteProviderAccount: (accountId: string) => Promise<void>
   handleGitCommitMessageGenerationChange: (
     key: keyof AppGitCommitMessageGenerationSettings,
     value: string
@@ -130,7 +128,6 @@ export type SettingsPanelProps = {
   handleRecentlyOpenedFilesLimitChange: (value: number) => void
   handleRecentsMessageLimitChange: (value: number) => void
   handleThemePreferenceChange: (theme: AppThemePreference) => void
-  handleUseProviderAccount: (accountId: string) => Promise<void>
   installedFontFamilies: string[]
   installedFontOptions: DropdownOption<string>[]
   installedFontsLoaded: boolean
@@ -142,8 +139,6 @@ export type SettingsPanelProps = {
   newSessionProviderValueContent: 'Checking' | 'No providers found' | undefined
   newSessionSourceAvailabilityReady: boolean
   providerAccountUpdatingId: string | null
-  providerAccountsError: string | null
-  providerAccountsLoadState: 'idle' | 'loading' | 'ready'
   providerResourceUpdatingKey: string | null
   providerResourcesError: string | null
   providerResourcesLoadState: ProviderResourcesLoadState
@@ -151,16 +146,13 @@ export type SettingsPanelProps = {
     path: AppProjectSettingPath,
     label: string
   ) => React.ReactElement | null
-  setAccountDialogOpen: Dispatch<SetStateAction<boolean>>
   setBrowserDefaultScaleInputDraft: Dispatch<SetStateAction<{ key: string; value: string } | null>>
   setEditingSshEnvironment: Dispatch<SetStateAction<AppSshEnvironment | null>>
   setNewSessionProvider: Dispatch<SetStateAction<ProviderId>>
-  setProviderAccountsRefresh: Dispatch<SetStateAction<number>>
   setProviderResourcesRefresh: Dispatch<SetStateAction<number>>
   setSshEnvironmentDialogOpen: Dispatch<SetStateAction<boolean>>
   setSshEnvironmentError: Dispatch<SetStateAction<string | null>>
   settingsPanelSettings: AppSettings
-  settingsProviderAccounts: ProviderAccountConfiguration | null
   settingsProviderApps: SettingsProviderApp[]
   settingsProviderSkills: SettingsProviderSkill[]
   settingsScopeKey: string

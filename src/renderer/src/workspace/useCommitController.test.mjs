@@ -60,10 +60,7 @@ function fixture(input = '  Fix the bug\n') {
   })
   const noop = () => {}
   const dependencies = {
-    changesCwd: '/project-a',
     changesCwdRef: { current: '/project-a' },
-    commitInputValue: input.trim(),
-    aiCommitInstructions: input.trim(),
     setCommitInput: (update) => {
       input = typeof update === 'function' ? update(input) : update
     },
@@ -72,38 +69,56 @@ function fixture(input = '  Fix the bug\n') {
     branchActionProjectKeysRef: { current: new Set() },
     syncProjectKeysRef: { current: new Set() },
     startingScopedCommitActivitiesRef: { current: {} },
-    sendInFlightRef: { current: false },
-    chatAutoScrollEnabledRef: { current: false },
-    hasAiCommitInProgressForProject: () => false,
-    getCommitActionDisabled: () => false,
-    getAiCommitActionDisabled: () => false,
-    getGitTurnOptions: () => ({}),
     setCommitErrorsByProjectKey: noop,
     setDirectCommitActivities: noop,
     setGitChangeLoadRequest: noop,
     setCommitMessageGenerationProjectKeys: noop,
-    setStartingScopedCommitActivities: noop,
-    applyChatDetail: noop,
-    pushAfterCommit: true,
-    runSyncChanges: (action, cwd) => {
-      pushes.push({ action, cwd })
-      pushStarted.resolve()
-      return push.promise
+    setStartingScopedCommitActivities: noop
+  }
+  const bundles = {
+    gitState: dependencies,
+    providerUpdates: {},
+    chatState: { sendInFlightRef: { current: false } },
+    session: { changesCwd: '/project-a' },
+    sourceState: {},
+    gitPresentation: {
+      commitInputValue: input.trim(),
+      aiCommitInstructions: input.trim(),
+      getCommitActionDisabled: () => false,
+      getAiCommitActionDisabled: () => false,
+      pushAfterCommit: true
     },
-    effectiveAppSettings: {
-      git: {
-        commitMessageGeneration: { prompt: '', largeChangePrompt: '', aiInstructionsPrefix: '' },
-        commitPrompt: {
-          instructions: '',
-          workflow: '',
-          commitStep: '',
-          extraInstructionsPrefix: ''
+    messaging: { getGitTurnOptions: () => ({}) },
+    viewportState: { chatAutoScrollEnabledRef: { current: false } },
+    chatProjection: { applyChatDetail: noop },
+    settings: {
+      effectiveAppSettings: {
+        git: {
+          commitMessageGeneration: { prompt: '', largeChangePrompt: '', aiInstructionsPrefix: '' },
+          commitPrompt: {
+            instructions: '',
+            workflow: '',
+            commitStep: '',
+            extraInstructionsPrefix: ''
+          }
         }
       }
-    }
+    },
+    gitSync: {
+      hasAiCommitInProgressForProject: () => false,
+      runSyncChanges: (action, cwd) => {
+        pushes.push({ action, cwd })
+        pushStarted.resolve()
+        return push.promise
+      }
+    },
+    chatRead: {},
+    searchState: {},
+    subagentState: {},
+    navigation: {}
   }
   // biome-ignore lint/correctness/useHookAtTopLevel: this controller creates handlers without calling React hooks.
-  const controller = module.exports.useCommitController(dependencies)
+  const controller = module.exports.useCommitController(bundles)
   return {
     controller,
     dependencies,

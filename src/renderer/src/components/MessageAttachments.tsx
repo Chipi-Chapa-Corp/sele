@@ -76,10 +76,12 @@ export const GeneratedImageThumbnail: React.FC<{
 
 export const MessageAttachments: React.FC<{
   attachments: ProviderMessageAttachment[]
-  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
-  projectCwd?: string | null
-  resources?: ChatMessageResource[]
-}> = ({ attachments, onOpenFileLink, projectCwd, resources = [] }) => {
+  onOpenFileLink:
+    | ((path: string, displayPath: string, line?: number, endLine?: number) => void)
+    | undefined
+  projectCwd: string | null | undefined
+  resources: ChatMessageResource[]
+}> = ({ attachments, onOpenFileLink, projectCwd, resources }) => {
   const { scope } = useChatMedia()
   const openLinkedChat = useLinkedChatOpener()
   const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image')

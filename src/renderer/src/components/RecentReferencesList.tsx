@@ -39,7 +39,6 @@ type RecentReferenceRowProps = {
   container?: AppContainerTarget | null
   cwd?: string | null
   pinned: boolean
-  pinnable: boolean
   recordAsOpened: boolean
   reference: RecentReferenceListItem
   onDragEnd?: () => void
@@ -57,7 +56,6 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
   container,
   cwd,
   pinned,
-  pinnable,
   recordAsOpened,
   reference,
   onDragEnd,
@@ -70,7 +68,7 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
   const [textExpanded, setTextExpanded] = useState(false)
   const itemClassName = [
     'changes-sidebar__recent-item',
-    pinnable ? 'changes-sidebar__recent-item--pinnable' : null,
+    'changes-sidebar__recent-item--pinnable',
     reference.kind === 'text' ? 'changes-sidebar__recent-item--text' : null,
     pinned ? 'changes-sidebar__recent-item--pinned' : null,
     dragging ? 'changes-sidebar__recent-item--dragging' : null,
@@ -222,18 +220,16 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
           {content}
         </a>
       )}
-      {pinnable && (
-        <span className="changes-sidebar__recent-actions">
-          <Button
-            theme="transparent"
-            size="small"
-            aria-label={pinned ? `Unpin ${reference.label}` : `Pin ${reference.label}`}
-            title={pinned ? 'Unpin' : 'Pin'}
-            callback={() => onTogglePinned(reference)}
-            icon={pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-          />
-        </span>
-      )}
+      <span className="changes-sidebar__recent-actions">
+        <Button
+          theme="transparent"
+          size="small"
+          aria-label={pinned ? `Unpin ${reference.label}` : `Pin ${reference.label}`}
+          title={pinned ? 'Unpin' : 'Pin'}
+          callback={() => onTogglePinned(reference)}
+          icon={pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+        />
+      </span>
     </li>
   )
 }
@@ -361,7 +357,6 @@ export const RecentReferencesList: React.FC<RecentReferencesListProps> = ({
                   dragging={referenceKey === draggedReferenceKey}
                   dropPosition={dropPosition}
                   pinned
-                  pinnable
                   recordAsOpened
                   reference={reference}
                   onDragEnd={resetDrag}
@@ -393,7 +388,6 @@ export const RecentReferencesList: React.FC<RecentReferencesListProps> = ({
                 dragging={false}
                 dropPosition={null}
                 pinned={false}
-                pinnable
                 recordAsOpened
                 reference={reference}
                 onOpenFile={onOpenFile}
@@ -419,7 +413,6 @@ export const RecentReferencesList: React.FC<RecentReferencesListProps> = ({
                 dragging={false}
                 dropPosition={null}
                 pinned={false}
-                pinnable
                 recordAsOpened={false}
                 reference={file}
                 onOpenFile={onOpenFile}

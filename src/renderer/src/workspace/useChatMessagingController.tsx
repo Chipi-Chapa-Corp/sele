@@ -1,7 +1,7 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { startTransition, useCallback, useEffect, useMemo, useRef } from 'react'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../../shared/noProject'
-import type { AppSelectedAttachment } from '../../../shared/app'
+import type { AppProject, AppSelectedAttachment } from '../../../shared/app'
 import type {
   ProviderChat,
   ProviderChatDetail,
@@ -28,7 +28,11 @@ import { getComposerDraftScopeKey } from '../composerDraft'
 import { moveComposerDraftScope, updateStoredComposerDrafts } from '../composerDraftStorage'
 import { getContainerTargetKey } from '../containerSelection'
 import { getAppGitCommitModel } from '../gitCommitModels'
-import { getApprovalAccessOptions } from '../messageBoxPreferences'
+import {
+  getApprovalAccessOptions,
+  type MessageBoxSelection,
+  writeStoredChatMessageBoxSelections
+} from '../messageBoxPreferences'
 import {
   hasProviderUserMessage,
   mergeWorkingStepPage,
@@ -52,82 +56,143 @@ import {
   getChatKey,
   getErrorMessage,
   getOptimisticItems,
+  getProviderChatKey,
   getWorktreeBranchGenerationPrompt,
+  isActiveChatStatus,
   modelSupportsReasoningEffort,
   modelSupportsServiceTier,
   normalizeGeneratedWorktreeName,
   serializeComposerMessage,
   serializeReviewMessage
 } from './chatControllerUtils'
-import type { ChatMessagingControllerDependencies } from './featureControllerDependencies'
+import type { useWorkspaceChatErrors } from './features/useWorkspaceChatErrors'
+import type { useWorkspaceChatProjection } from './features/useWorkspaceChatProjection'
+import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
+import type { useWorkspaceEffectiveSelection } from './features/useWorkspaceEffectiveSelection'
+import type { useWorkspaceProviderContext } from './features/useWorkspaceProviderContext'
+import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
+import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
+import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
+import type { useWorkspaceProviderState } from './state/useWorkspaceProviderState'
+import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
+import type { useWorkspaceSubagentState } from './state/useWorkspaceSubagentState'
+import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
+import type { useWorkspaceProviderUpdates } from './wiring/useWorkspaceProviderUpdates'
+import type { useWorkspaceSelection } from './useWorkspaceSelection'
 import type { SubagentChatView } from './controllerTypes'
 
 // Return shape is inferred from the controller declarations below.
-export function useChatMessagingController(dependencies: ChatMessagingControllerDependencies) {
+export function useChatMessagingController({
+  chatErrors,
+  providerState,
+  chatState,
+  session,
+  provider,
+  projectRecordsByCwd,
+  effectiveSelection,
+  settings,
+  sourceState,
+  providerUpdates,
+  subagentState,
+  viewportState,
+  chatRead,
+  chatProjection,
+  gitState
+}: {
+  chatErrors: ReturnType<typeof useWorkspaceChatErrors>
+  providerState: ReturnType<typeof useWorkspaceProviderState>
+  chatState: ReturnType<typeof useWorkspaceChatState>
+  session: ReturnType<typeof useWorkspaceSelection>
+  provider: ReturnType<typeof useWorkspaceProviderContext>
+  projectRecordsByCwd: Map<string, AppProject>
+  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+  sourceState: ReturnType<typeof useWorkspaceSourceState>
+  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
+  subagentState: ReturnType<typeof useWorkspaceSubagentState>
+  viewportState: ReturnType<typeof useWorkspaceViewportState>
+  chatRead: ReturnType<typeof useWorkspaceChatReadState>
+  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
+  gitState: ReturnType<typeof useWorkspaceGitState>
+}) {
+  const { authenticationRequired, handleSendFailure } = chatErrors
   const {
-    authenticationRequired,
-    messageBoxSelection,
-    rememberStartedChatSelection,
     chatDetail,
     sendInFlightRef,
     setSendState,
     setEditingMessage,
-    selectedChatId,
-    models,
-    changesProjectCwd,
-    projectRecordsByCwd,
-    agentMode,
-    effectiveApprovalMode,
-    effectiveSandboxMode,
-    changesContainer,
-    changesCwd,
-    effectiveModel,
-    selectedEffectiveModel,
-    effectiveReasoningEffort,
-    effectiveServiceTier,
-    effectiveAppSettings,
-    configProviderId,
-    configProviderContainerKey,
-    worktreeCreationCanceledRef,
-    setWorktreeCreationState,
-    worktreeBranchGenerationRef,
-    providerUpdateInProgress,
-    activeSubagentChatView,
-    setSubagentChatView,
     selectedChat,
-    newSessionCwd,
-    newSessionNoProject,
     sendInFlightProjectKeyRef,
     setSendInFlightProjectKey,
-    chatAutoScrollEnabledRef,
     setChatAtConversationBottom,
-    scrollToLatestTurnAfterRenderRef,
     editingMessage,
-    applyViewedChatDetail,
-    handleSendFailure,
-    newSessionProvider,
-    newSessionLocation,
-    chatHasActiveTurn,
-    applyChatSummary,
-    markChatSeenAt,
     selectedChatKeyRef,
-    setContinuedStoppedWorkingStepsByChat,
     runPromptActionRef,
     selectedChatRef,
     chatDetailRef,
     loadedWorkingStepIdsRef,
     setChatDetail,
-    selectedProviderId,
     approvalResolution,
     setApprovalResolution,
-    applyChatDetail,
+    setUserInputResolution,
+    sendState
+  } = chatState
+  const {
+    selectedChatId,
+    changesProjectCwd,
+    changesContainer,
+    changesCwd,
+    activeSubagentChatView,
+    selectedProviderId,
     pendingApproval,
     approvalDecisionInFlight,
     pendingUserInput,
-    userInputResolving,
-    setUserInputResolution,
-    sendState
-  } = dependencies
+    userInputResolving
+  } = session
+  const { models, configProviderId, configProviderContainerKey } = provider
+  const {
+    effectiveAgentMode: agentMode,
+    effectiveApprovalMode,
+    effectiveSandboxMode,
+    effectiveModel,
+    selectedEffectiveModel,
+    effectiveReasoningEffort,
+    effectiveServiceTier
+  } = effectiveSelection
+  const { effectiveAppSettings } = settings
+  const {
+    worktreeCreationCanceledRef,
+    setWorktreeCreationState,
+    worktreeBranchGenerationRef,
+    newSessionCwd,
+    newSessionNoProject,
+    newSessionProvider,
+    newSessionLocation
+  } = sourceState
+  const { providerUpdateInProgress } = providerUpdates
+  const { setSubagentChatView } = subagentState
+  const { chatAutoScrollEnabledRef, scrollToLatestTurnAfterRenderRef } = viewportState
+  const { applyViewedChatDetail, markChatSeenAt } = chatRead
+  const { applyChatSummary, applyChatDetail } = chatProjection
+  const { setContinuedStoppedWorkingStepsByChat } = gitState
+  const messageBoxSelection = {
+    agentMode: providerState.agentMode,
+    approvalMode: providerState.approvalMode,
+    sandboxMode: providerState.sandboxMode,
+    model: providerState.model,
+    reasoningEffort: providerState.reasoningEffort,
+    serviceTier: providerState.serviceTier
+  }
+  const rememberStartedChatSelection = (
+    providerId: ProviderId,
+    chatId: string,
+    selection: MessageBoxSelection
+  ): void => {
+    providerState.chatMessageBoxSelectionsRef.current[getProviderChatKey(providerId, chatId)] =
+      selection
+    writeStoredChatMessageBoxSelections(providerState.chatMessageBoxSelectionsRef.current)
+  }
+  const chatHasActiveTurn = isActiveChatStatus(chatState.chatDetail?.status)
 
   const editRequestRef = useRef(0)
   const editOpeningRef = useRef(false)

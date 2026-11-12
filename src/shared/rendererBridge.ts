@@ -119,13 +119,9 @@ export const createRendererBridge = (
     writeFileContents: (options) => transport.invoke(appIpcChannels.writeFileContents, options),
     getRecentGitCommitMessages: (options) =>
       transport.invoke(appIpcChannels.getRecentGitCommitMessages, options),
-    getUncommittedGitDiff: (options) =>
-      transport.invoke(appIpcChannels.getUncommittedGitDiff, options),
     getGitCommitMessageContext: (options) =>
       transport.invoke(appIpcChannels.getGitCommitMessageContext, options),
     getGitFileDiff: (options) => transport.invoke(appIpcChannels.getGitFileDiff, options),
-    getUncommittedGitPatchChanges: (options) =>
-      transport.invoke(appIpcChannels.getUncommittedGitPatchChanges, options),
     commitGitChanges: (options) => transport.invoke(appIpcChannels.commitGitChanges, options),
     pullGitChanges: (options) => transport.invoke(appIpcChannels.pullGitChanges, options),
     pushGitChanges: (options) => transport.invoke(appIpcChannels.pushGitChanges, options),

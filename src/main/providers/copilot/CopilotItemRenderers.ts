@@ -1,7 +1,11 @@
 import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { getTranscriptRecordChange } from '../transcriptProjection/recordChanges.ts'
-import { getProviderToolPresentation } from '../ToolPresentation.ts'
+import {
+  createPresentedTool,
+  createSubagentTool,
+  getProviderToolPresentation
+} from '../ToolPresentation.ts'
 import {
   findNativeItemTurnWindow,
   renderNativeTurnWindow,
@@ -22,8 +26,16 @@ import type {
 } from '../../../shared/provider'
 import {
   appendProviderConversationSegment,
+  updateConversationTool,
   type ProviderConversationEntry
 } from '../ProviderConversationEngine.ts'
+import {
+  getString,
+  getBoundedRawToolValue,
+  getToolArgument,
+  truncateEarlierToolOutput,
+  truncatedToolValueMarker
+} from '../providerValues.ts'
 
 type ToolStartEvent = Extract<SessionEvent, { type: 'tool.execution_start' }>
 type ToolCompleteEvent = Extract<SessionEvent, { type: 'tool.execution_complete' }>
@@ -60,11 +72,6 @@ type Segment = {
   stopped?: boolean
 }
 
-const maxToolOutputLength = 160_000
-const maxRawToolValueLength = 80_000
-const maxRawToolCollectionEntries = 200
-const maxRawToolDepth = 8
-const truncatedToolValueMarker = '… [truncated to keep the app responsive]'
 const truncatedEarlierToolOutputMarker = `${truncatedToolValueMarker}\n`
 const skillContextMessagePattern = /^<skill-context(?:\s[^>]*)?>[\s\S]*<\/skill-context>$/
 const imageFileExtensionPattern = /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i
@@ -78,11 +85,6 @@ export const isCopilotSystemContextMessage = (event: UserMessageEvent): boolean 
   )
 }
 
-export const truncateCopilotToolOutput = (value: string | null): string | null => {
-  if (value == null || value.length <= maxToolOutputLength) return value
-  return `${truncatedEarlierToolOutputMarker}${value.slice(-maxToolOutputLength)}`
-}
-
 export const appendCopilotToolOutput = (
   currentValue: string | null,
   appendedValue: string
@@ -90,72 +92,7 @@ export const appendCopilotToolOutput = (
   const current = currentValue?.startsWith(truncatedEarlierToolOutputMarker)
     ? currentValue.slice(truncatedEarlierToolOutputMarker.length)
     : (currentValue ?? '')
-  return truncateCopilotToolOutput(`${current}${appendedValue}`) ?? ''
-}
-
-type RawToolValueBudget = {
-  remaining: number
-  seen: WeakSet<object>
-}
-
-export const getBoundedCopilotRawToolValue = (
-  value: unknown,
-  budget: RawToolValueBudget = {
-    remaining: maxRawToolValueLength,
-    seen: new WeakSet<object>()
-  },
-  depth = 0
-): unknown => {
-  if (typeof value === 'string') {
-    if (value.length <= budget.remaining) {
-      budget.remaining -= value.length
-      return value
-    }
-
-    const visibleValue = value.slice(0, Math.max(0, budget.remaining))
-    budget.remaining = 0
-    return `${visibleValue}\n${truncatedToolValueMarker}`
-  }
-  if (
-    value == null ||
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    typeof value === 'undefined'
-  ) {
-    return value
-  }
-  if (typeof value === 'bigint' || typeof value === 'symbol' || typeof value === 'function') {
-    return String(value)
-  }
-  if (depth >= maxRawToolDepth || budget.remaining <= 0) return truncatedToolValueMarker
-  if (budget.seen.has(value)) return '[Circular]'
-  budget.seen.add(value)
-
-  if (Array.isArray(value)) {
-    const boundedValue: unknown[] = []
-    const entryLimit = Math.min(value.length, maxRawToolCollectionEntries)
-    for (let index = 0; index < entryLimit && budget.remaining > 0; index += 1) {
-      budget.remaining -= 1
-      boundedValue.push(getBoundedCopilotRawToolValue(value[index], budget, depth + 1))
-    }
-    if (entryLimit < value.length || budget.remaining <= 0) {
-      boundedValue.push(truncatedToolValueMarker)
-    }
-    return boundedValue
-  }
-
-  const boundedValue: Record<string, unknown> = {}
-  const entries = Object.entries(value as Record<string, unknown>)
-  const entryLimit = Math.min(entries.length, maxRawToolCollectionEntries)
-  for (let index = 0; index < entryLimit && budget.remaining > 0; index += 1) {
-    const [key, entryValue] = entries[index]
-    budget.remaining -= key.length + 1
-    boundedValue[key] = getBoundedCopilotRawToolValue(entryValue, budget, depth + 1)
-  }
-  if (entryLimit < entries.length || budget.remaining <= 0) {
-    boundedValue.__truncated__ = truncatedToolValueMarker
-  }
-  return boundedValue
+  return truncateEarlierToolOutput(`${current}${appendedValue}`) ?? ''
 }
 
 const toTimestamp = (value: string): number | null => {
@@ -163,90 +100,37 @@ const toTimestamp = (value: string): number | null => {
   return Number.isFinite(timestamp) ? timestamp : null
 }
 
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
-
-const getArgument = (args: unknown, ...keys: string[]): string | null => {
-  if (typeof args !== 'object' || args === null || Array.isArray(args)) return null
-
-  const values = args as Record<string, unknown>
-  for (const key of keys) {
-    const value = getString(values[key])
-    if (value) return value
-  }
-  return null
-}
-
-const getToolCwd = (event: ToolStartEvent): string | null =>
-  getArgument(event.data.arguments, 'cwd', 'workingDirectory', 'directory')
-
-/**
- * The delegation call is a compact row in the parent. The subagent's prompt and report belong to
- * its own chat, listed under the parent in the sidebar.
- */
-const createSubagentTool = (event: ToolStartEvent): ProviderWorkingTool => ({
-  type: 'tool',
-  id: event.id,
-  toolId: event.data.toolCallId,
-  status: 'running',
-  compact: true,
-  activity: 'other',
-  icon: 'subagent',
-  label: getArgument(event.data.arguments, 'description', 'agent_type', 'agentType') ?? 'Subagent',
-  command: null,
-  cwd: null,
-  stdout: null,
-  diffs: [],
-  backgroundSessionId: null,
-  finishedBackgroundSessionId: null,
-  rawInput: null,
-  rawOutput: null,
-  images: []
-})
-
-const createTool = (event: ToolStartEvent): ProviderWorkingTool => {
-  const presentation = getProviderToolPresentation(
-    'copilot',
-    event.data.toolName,
-    event.data.arguments,
+// The delegation call is a compact row in the parent. The subagent's prompt and report belong to
+// its own chat, listed under the parent in the sidebar.
+const createTool = (event: ToolStartEvent, subagent: boolean): ProviderWorkingTool => {
+  const { toolCallId, toolName, mcpServerName, mcpToolName } = event.data
+  if (subagent)
+    return createSubagentTool(
+      event.id,
+      toolCallId,
+      getToolArgument(event.data.arguments, 'description', 'agent_type', 'agentType') ?? 'Subagent'
+    )
+  return createPresentedTool(
+    getProviderToolPresentation('copilot', toolName, event.data.arguments, {
+      serverName: mcpServerName,
+      mcpToolName
+    }),
     {
-      serverName: event.data.mcpServerName,
-      mcpToolName: event.data.mcpToolName
-    }
-  )
-  const hidePayload = presentation?.hidePayload === true
-  return {
-    type: 'tool',
-    id: event.id,
-    ...(event.data.mcpServerName
-      ? {
-          mcpApp: {
-            callId: event.data.toolCallId,
-            serverName: event.data.mcpServerName,
+      id: event.id,
+      mcpApp: mcpServerName
+        ? {
+            callId: toolCallId,
+            serverName: mcpServerName,
             resourceUri: event.data.toolDescription?._meta?.ui?.resourceUri
           }
-        }
-      : {}),
-    toolId: event.data.toolCallId,
-    status: 'running',
-    activity: presentation?.activity ?? 'other',
-    icon: presentation?.icon ?? null,
-    label:
-      presentation?.label ??
-      `Used ${event.data.mcpServerName ? `${event.data.mcpServerName}/` : ''}${event.data.mcpToolName || event.data.toolName}`,
-    summaryLabel: presentation?.summaryLabel,
-    ...(presentation?.compact ? { compact: true } : {}),
-    ...(hidePayload ? { hidePayload: true } : {}),
-    command: presentation?.command ?? null,
-    cwd: getToolCwd(event),
-    stdout: null,
-    diffs: [],
-    backgroundSessionId: null,
-    finishedBackgroundSessionId: null,
-    rawInput: hidePayload ? null : getBoundedCopilotRawToolValue(event.data.arguments ?? null),
-    rawOutput: null,
-    images: []
-  }
+        : undefined,
+      toolId: toolCallId,
+      status: 'running',
+      cwd: getToolArgument(event.data.arguments, 'cwd', 'workingDirectory', 'directory'),
+      fallbackLabel: `Used ${mcpServerName ? `${mcpServerName}/` : ''}${mcpToolName || toolName}`,
+      rawInput: () => getBoundedRawToolValue(event.data.arguments ?? null)
+    }
+  )
 }
 
 const getToolOutput = (event: ToolCompleteEvent): string | null => {
@@ -331,29 +215,6 @@ const getToolImages = (
   })
 
   return images
-}
-
-const updateTool = (
-  entries: ProviderConversationEntry[],
-  toolCallId: string,
-  update: (tool: ProviderWorkingTool) => ProviderWorkingTool
-): void => {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index]
-    if (entry?.kind !== 'working') continue
-    const item = entry.item
-    if (item?.type === 'tool' && item.toolId === toolCallId) {
-      entries[index] = { kind: 'working', item: update(item) }
-      return
-    }
-    if (item?.type === 'toolGroup') {
-      const toolIndex = item.tools.findIndex((tool) => tool.toolId === toolCallId)
-      if (toolIndex >= 0 && item.tools[toolIndex]) {
-        item.tools[toolIndex] = update(item.tools[toolIndex])
-        return
-      }
-    }
-  }
 }
 
 const getAttachments = (
@@ -670,7 +531,7 @@ export const renderCopilotChatItems = (
     }
 
     if (event.type === 'tool.execution_start') {
-      const tool = isSubagentToolCall(event) ? createSubagentTool(event) : createTool(event)
+      const tool = createTool(event, isSubagentToolCall(event))
       if (tool.icon === 'question') askUserToolCallIds.add(event.data.toolCallId)
       if (tool.icon === 'subagent') subagentToolCallIds.add(event.data.toolCallId)
       if (tool.hidePayload || tool.icon === 'subagent')
@@ -685,7 +546,7 @@ export const renderCopilotChatItems = (
         hiddenOutputToolCallIds.has(event.data.toolCallId)
       )
         continue
-      updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
+      updateConversationTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         stdout: appendCopilotToolOutput(tool.stdout, event.data.partialOutput)
       }))
@@ -698,7 +559,7 @@ export const renderCopilotChatItems = (
         hiddenOutputToolCallIds.has(event.data.toolCallId)
       )
         continue
-      updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
+      updateConversationTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         label: event.data.progressMessage.trim() || tool.label
       }))
@@ -712,16 +573,16 @@ export const renderCopilotChatItems = (
         askedQuestion || subagentToolCallIds.has(event.data.toolCallId)
           ? []
           : getToolImages(event, binaryAssets)
-      updateTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
+      updateConversationTool(ensureSegment(event.id).entries, event.data.toolCallId, (tool) => ({
         ...tool,
         status: 'finished',
         label: askedQuestion ? 'Asked a question' : tool.label,
         icon: images.length > 0 ? 'image-generation' : tool.icon,
-        stdout: hide ? null : truncateCopilotToolOutput(getToolOutput(event)),
+        stdout: hide ? null : truncateEarlierToolOutput(getToolOutput(event)),
         diffs: hide ? [] : getToolDiffs(tool, event),
         rawOutput: hide
           ? null
-          : getBoundedCopilotRawToolValue(event.data.result ?? event.data.error ?? null),
+          : getBoundedRawToolValue(event.data.result ?? event.data.error ?? null),
         images,
         ...(tool.mcpApp
           ? {

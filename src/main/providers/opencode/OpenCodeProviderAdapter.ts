@@ -4,7 +4,6 @@ import { PendingMessageEdits } from '../PendingMessageEdits'
 import { createOpenCodeTerminalSessions } from './OpenCodeTerminalSessions'
 import { PersistentPendingMessages } from '../PersistentPendingMessages'
 import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
-import { readOpenCodeCredentialTypes } from './OpenCodeConnectionStorage'
 import { encodeOpenCodeHistory } from './OpenCodeHistoryImport'
 import { forEachOpenCodeHistoryMessage, loadOpenCodeMessages } from './OpenCodeHistory'
 import { OpenCodeHistoryPages } from './OpenCodeHistoryPages'
@@ -111,9 +110,7 @@ import {
 import {
   extractOpenCodeApiKeys,
   mapOpenCodeGoUsageToRateLimits,
-  isLocalOpenCodeTarget,
-  OpenCodeGoApiKeyMissingError,
-  OpenCodeGoNoSubscriptionError
+  isLocalOpenCodeTarget
 } from './OpenCodeUsage'
 import { OpenCodeFreeLimitTracker } from './OpenCodeFreeLimit'
 import { getOpenCodeUsageLimitMessage } from './OpenCodeUsageLimit'
@@ -156,6 +153,7 @@ import {
   isOpenCodeSubagentSession
 } from './OpenCodeSubagents'
 import type { BrowserMcpIntegration } from '../../browser/BrowserMcpServer'
+import { emptyUsageSummary, getString, isRecord } from '../providerValues.ts'
 
 type OpenCodeClientEntry = {
   lifetime: OpenCodeClientLifetime
@@ -249,14 +247,6 @@ const openCodeSandboxModes: ProviderSandboxModeOption[] = [
   }
 ]
 
-const emptyUsageSummary = {
-  lifetimeTokens: null,
-  peakDailyTokens: null,
-  longestRunningTurnSec: null,
-  currentStreakDays: null,
-  longestStreakDays: null
-}
-
 const updateDelayMs = 35
 const oneShotCancellationRetentionMs = 60_000
 const maxPreviewLength = 500
@@ -266,12 +256,6 @@ const requireData = <T>(result: { data: T }): T => result.data
 /** The summary is the newest assistant record; a bounded tail avoids rereading long histories. */
 const linkedChatSummaryTailLimit = 20
 const linkedChatSummaryPollMs = 1_000
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
 
 const normalizeStoredContainer = (
   container: AppContainerTarget | null | undefined
@@ -466,12 +450,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     this.withTransientClient(options.container, async (entry) => {
       const targetKey = getContainerTargetKey(options.container)
       const list = (): Promise<ProviderConnection[]> =>
-        listOpenCodeConnections(
-          client,
-          () => readOpenCodeCredentialTypes(options.container),
-          (providerId) => this.credentialHealth.get(targetKey, providerId)
+        listOpenCodeConnections(entry.client, (providerId) =>
+          this.credentialHealth.get(targetKey, providerId)
         )
-      const client = entry.client
       const providers = await list()
       if (!options.forceRefresh) return this.withAdminKeyConnections(providers, false)
       await Promise.all(
@@ -823,10 +804,9 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> =>
     this.withTransientClient(options.container, async (entry) => {
       const includeStatistics = Boolean(options.includeStatistics)
+      const native = getOpenCodeV2Client(entry.client)
+      if (!native) throw new Error('OpenCode 2 client is unavailable.')
       const authStore = (async () => {
-        const client = entry.client
-        const native = getOpenCodeV2Client(client)
-        if (!native) throw new Error('OpenCode 2 client is unavailable.')
         const [credentials, providers] = await Promise.all([
           native.credential.list(),
           native.provider.list()
@@ -846,12 +826,11 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
         )
       })()
       const [rateLimitsResult, statisticsResult, balancesResult] = await Promise.allSettled([
-        (async () => {
-          const native = getOpenCodeV2Client(entry.client)
-          if (!native) throw new Error('OpenCode 2 client is unavailable.')
-          const limits = await native.usage.limits()
-          return limits.data?.go ? mapOpenCodeGoUsageToRateLimits(limits.data.go) : []
-        })(),
+        native.usage
+          .limits()
+          .then((limits) =>
+            limits.data?.go ? mapOpenCodeGoUsageToRateLimits(limits.data.go) : []
+          ),
         includeStatistics
           ? (async (): Promise<{ lifetimeTokens: string }> => {
               const client = entry.client
@@ -896,12 +875,6 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
           '[OpenCodeProviderAdapter:getUsage] Unable to load rate limits',
           rateLimitsResult.reason
         )
-      }
-      if (
-        rateLimitsResult.status === 'rejected' &&
-        !(rateLimitsResult.reason instanceof OpenCodeGoNoSubscriptionError) &&
-        !(rateLimitsResult.reason instanceof OpenCodeGoApiKeyMissingError)
-      ) {
         errors.push(
           rateLimitsResult.reason instanceof Error
             ? rateLimitsResult.reason.message

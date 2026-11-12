@@ -19,23 +19,23 @@ import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
 import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
 import { useWorkspaceChatListActions } from '../wiring/useWorkspaceChatListActions'
-import { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import { useWorkspaceInteractions } from '../wiring/useWorkspaceInteractions'
-import { useWorkspaceMessaging } from '../wiring/useWorkspaceMessaging'
+import { useConversationViewModel } from '../useConversationViewModel'
+import { useChatInteractionController } from '../useChatInteractionController'
+import { useChatMessagingController } from '../useChatMessagingController'
 import { useWorkspaceProviderUpdates } from '../wiring/useWorkspaceProviderUpdates'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import { useWorkspaceSelection } from '../useWorkspaceSelection'
 
 type WorkspaceChatSidebarDependencies = {
-  session: ReturnType<typeof useWorkspaceSession>
+  session: ReturnType<typeof useWorkspaceSelection>
   sourceState: ReturnType<typeof useWorkspaceSourceState>
   chatState: ReturnType<typeof useWorkspaceChatState>
   provider: ReturnType<typeof useWorkspaceProviderContext>
   effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-  conversation: ReturnType<typeof useWorkspaceConversation>
+  conversation: ReturnType<typeof useConversationViewModel>
   settings: ReturnType<typeof useWorkspaceSettingsContext>
   providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
-  interactions: ReturnType<typeof useWorkspaceInteractions>
-  messaging: ReturnType<typeof useWorkspaceMessaging>
+  interactions: ReturnType<typeof useChatInteractionController>
+  messaging: ReturnType<typeof useChatMessagingController>
   chatErrors: ReturnType<typeof useWorkspaceChatErrors>
   providerState: ReturnType<typeof useWorkspaceProviderState>
   accountActions: ReturnType<typeof useWorkspaceProviderAccounts>
@@ -70,17 +70,17 @@ export function getWorkspaceChatSidebar({
   sidebarPresentation,
   searchState
 }: WorkspaceChatSidebarDependencies) {
+  const providerId = session.selectedProviderId ?? sourceState.newSessionProvider
+  const effectiveModel = provider.models.find(
+    (candidate) => candidate.id === effectiveSelection.effectiveModel
+  )
   return {
     usageIndicator: {
-      providerId: session.selectedProviderId ?? sourceState.newSessionProvider,
+      providerId,
       chatId: chatState.selectedChat?.id,
       container: session.changesContainer,
-      modelUsageScope: provider.models.find(
-        (candidate) => candidate.id === effectiveSelection.effectiveModel
-      )?.usageScope,
-      modelProviderId: provider.models.find(
-        (candidate) => candidate.id === effectiveSelection.effectiveModel
-      )?.modelProvider?.id,
+      modelUsageScope: effectiveModel?.usageScope,
+      modelProviderId: effectiveModel?.modelProvider?.id,
       accountUsage: session.accountUsage,
       accountUsageError: session.accountUsageError,
       accountUsageState: session.accountUsageState,
@@ -148,17 +148,13 @@ export function getWorkspaceChatSidebar({
       },
       onCreate: () =>
         accountActions.handleCreateProviderAccount(undefined, {
-          providerId: session.selectedProviderId ?? sourceState.newSessionProvider,
+          providerId,
           container: session.changesContainer
         }),
       onDelete: (accountId: string) =>
-        accountActions.deleteProviderAccount(
-          accountId,
-          session.selectedProviderId ?? sourceState.newSessionProvider,
-          session.changesContainer
-        ),
-      key: `${session.selectedProviderId ?? sourceState.newSessionProvider}:${session.changesContainerKey}:${providerState.providerAccountRevision}:${providerState.providerAccountsRefresh}`,
-      providerId: session.selectedProviderId ?? sourceState.newSessionProvider,
+        accountActions.deleteProviderAccount(accountId, providerId, session.changesContainer),
+      key: `${providerId}:${session.changesContainerKey}:${providerState.providerAccountRevision}:${providerState.providerAccountsRefresh}`,
+      providerId,
       chatId: chatState.selectedChat?.id,
       container: session.changesContainer,
       available: Boolean(chatState.selectedChat) || sourceState.newSessionProviderAvailable,
@@ -166,7 +162,7 @@ export function getWorkspaceChatSidebar({
       onSelect: (accountId: string) =>
         accountActions.switchProviderAccount(
           accountId,
-          session.selectedProviderId ?? sourceState.newSessionProvider,
+          providerId,
           session.changesContainer,
           chatState.selectedChat?.id
         )

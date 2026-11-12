@@ -64,6 +64,15 @@ const terminalChatId = (chatKey?: string | null): string | null => {
   return separator > 0 ? chatKey!.slice(separator + 1) : null
 }
 
+const throwFailures = (results: PromiseSettledResult<unknown>[], message: string): void => {
+  const failures = results.filter((result) => result.status === 'rejected')
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((result) => result.reason),
+      message
+    )
+}
+
 const stopTerminal = async (
   id: string,
   pty: IPty | PersistentTerminal,
@@ -72,18 +81,15 @@ const stopTerminal = async (
   // Discover descendants before stopping their parent. Container shells are owned
   // by conmon rather than by the local PTY launcher.
   const cleanup = await Promise.allSettled([killTerminalProcesses([id], container)])
-  const results = [
-    ...cleanup,
-    ...(await Promise.allSettled([
-      'stop' in pty ? pty.stop() : Promise.resolve().then(() => pty.kill())
-    ]))
-  ]
-  const failures = results.filter((result) => result.status === 'rejected')
-  if (failures.length)
-    throw new AggregateError(
-      failures.map((result) => result.reason),
-      'Unable to stop terminal.'
-    )
+  throwFailures(
+    [
+      ...cleanup,
+      ...(await Promise.allSettled([
+        'stop' in pty ? pty.stop() : Promise.resolve().then(() => pty.kill())
+      ]))
+    ],
+    'Unable to stop terminal.'
+  )
 }
 const agentAttachments = new Map<
   string,
@@ -99,7 +105,7 @@ const getDimension = (value: unknown, minimum: number, maximum: number, name: st
   return Math.min(maximum, Math.max(minimum, Math.floor(value)))
 }
 
-const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> => {
+const getCreateOptions = (value: unknown) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid terminal options')
   }
@@ -153,10 +159,10 @@ const getCreateOptions = async (value: unknown): Promise<TerminalCreateOptions> 
     chatKey: typeof input.chatKey === 'string' ? input.chatKey : null,
     label: typeof input.label === 'string' ? input.label : undefined,
     closeOnCommandFinish: Boolean(input.closeOnCommandFinish)
-  }
+  } satisfies TerminalCreateOptions
 }
 
-const getRunCommandOptions = async (value: unknown): Promise<TerminalRunCommandOptions> => {
+const getRunCommandOptions = (value: unknown) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid command options')
   }
@@ -169,7 +175,11 @@ const getRunCommandOptions = async (value: unknown): Promise<TerminalRunCommandO
   if (command.length > maximumCommandLength) throw new Error('Command is too long')
   if (typeof cwd !== 'string' || !isAbsolute(cwd)) throw new Error('Invalid command cwd')
 
-  return { command, container: requireContainerTarget(input.container, { optional: true }), cwd }
+  return {
+    command,
+    container: requireContainerTarget(input.container, { optional: true }),
+    cwd
+  } satisfies TerminalRunCommandOptions
 }
 
 const getShell = (): { file: string; args: string[] } => {
@@ -198,30 +208,6 @@ const getShell = (): { file: string; args: string[] } => {
   if (!file) throw new Error('Unable to determine terminal shell from user or environment.')
 
   return { file, args: [] }
-}
-
-const getCommandShell = (command: string): { file: string; args: string[] } => {
-  const shell = getShell()
-  const shellName = basename(shell.file).toLocaleLowerCase()
-
-  if (process.platform === 'win32') {
-    if (shellName.includes('powershell') || shellName === 'pwsh.exe') {
-      return {
-        file: shell.file,
-        args: [...shell.args, '-NoProfile', '-Command', command]
-      }
-    }
-
-    return {
-      file: shell.file,
-      args: ['/d', '/s', '/c', command]
-    }
-  }
-
-  return {
-    file: shell.file,
-    args: [...shell.args, '-c', command]
-  }
 }
 
 const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
@@ -402,24 +388,24 @@ const getOwnedSession = (event: ClientEvent, sessionId: unknown): ManagedTermina
 
 const startSession = async (event: ClientEvent, value: unknown): Promise<TerminalSession> => {
   if (shuttingDown) throw new Error('Sele is shutting down.')
-  const options = await getCreateOptions(value)
+  const options = getCreateOptions(value)
   const baseShell = getShell()
   if (basename(baseShell.file) === 'fish') baseShell.args.push('-C', fishTerminalIntegration)
   const id = options.sessionId
   if (sessions.has(id) || agentAttachments.has(id))
     throw new Error('Terminal session already exists')
-  const command = options.initialCommand?.trim() || null
+  const command = options.initialCommand || null
   const shell = command
-    ? getTerminalCommandShell(baseShell, command, Boolean(options.keepAliveOnCommandFinish))
+    ? getTerminalCommandShell(baseShell, command, options.keepAliveOnCommandFinish)
     : baseShell
-  const cwd = options.cwd ?? app.getPath('home')
+  const cwd = options.cwd
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'Sele'
+    TERM_PROGRAM: 'Sele',
+    SELE_TERMINAL_ID: id
   }
-  env.SELE_TERMINAL_ID = id
   const chatId = terminalChatId(options.chatKey)
   if (chatId) env.SELE_CHAT_ID = chatId
   else delete env.SELE_CHAT_ID
@@ -427,17 +413,14 @@ const startSession = async (event: ClientEvent, value: unknown): Promise<Termina
     env['PS0'] = `\u001b]133;C\u0007${process.env.PS0 ?? ''}`
     env['PROMPT_COMMAND'] = `${process.env.PROMPT_COMMAND ?? ''}\nprintf '\\033]133;D;0\\007'`
   }
-  const hostCommand =
-    options.container?.kind === 'container'
-      ? await getHostTerminalCommand({
-          command,
-          container: options.container,
-          cwd,
-          env,
-          keepAlive: Boolean(command && options.keepAliveOnCommandFinish),
-          shell
-        })
-      : await getHostCommand(shell.file, shell.args, { cwd, env })
+  const hostCommand = await getHostTerminalCommand({
+    command,
+    container: options.container,
+    cwd,
+    env,
+    keepAlive: Boolean(command && options.keepAliveOnCommandFinish),
+    shell
+  })
   const ptyOptions = {
     name: 'xterm-256color',
     cols: options.cols,
@@ -469,7 +452,7 @@ const startSession = async (event: ClientEvent, value: unknown): Promise<Termina
     paused: false,
     shell: basename(baseShell.file),
     chatId,
-    container: options.container ?? null,
+    container: options.container,
     dataListener: { dispose: () => {} },
     exitListener: { dispose: () => {} }
   }
@@ -526,9 +509,9 @@ const createSession = (event: ClientEvent, value: unknown): Promise<TerminalSess
 }
 
 const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => {
-  const options = await getRunCommandOptions(value)
-  const shell = getCommandShell(options.command)
-  const cwd = options.cwd ?? app.getPath('home')
+  const options = getRunCommandOptions(value)
+  const shell = getTerminalCommandShell(getShell(), options.command, false)
+  const cwd = options.cwd
   const env = {
     ...process.env,
     TERM_PROGRAM: 'Sele'
@@ -548,25 +531,16 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
     stdio: 'ignore',
     windowsHide: true
   })
-  let settled = false
 
   return new Promise((resolve, reject) => {
-    child.once('error', (error) => {
-      if (settled) return
-
-      settled = true
-      reject(error)
-    })
+    child.once('error', reject)
 
     setImmediate(() => {
-      if (settled) return
       if (typeof child.pid !== 'number') {
-        settled = true
         reject(new Error('Unable to start command'))
         return
       }
 
-      settled = true
       child.on('error', (error) => {
         console.error('[registerTerminalIpc:runDetachedCommand] Detached command error', error)
       })
@@ -729,9 +703,6 @@ export const disposeTerminalSessions = async (
   for (const attachment of agentAttachments.values()) attachment.detach()
   agentAttachments.clear()
   const stopped = await Promise.allSettled([
-    ...recovered.map((result) =>
-      result.status === 'rejected' ? Promise.reject(result.reason) : Promise.resolve()
-    ),
     ...pendingTerminalStops,
     ...[...sessions.values()].map((session) => disposeSession(session, true)),
     ...[...recoveredPersistentTerminals].map(([id, terminal]) =>
@@ -741,12 +712,7 @@ export const disposeTerminalSessions = async (
     )
   ])
   recoveredPersistentTerminals.clear()
-  const failures = stopped.filter((result) => result.status === 'rejected')
-  if (failures.length)
-    throw new AggregateError(
-      failures.map((result) => result.reason),
-      'Unable to stop terminals.'
-    )
+  throwFailures([...recovered, ...stopped], 'Unable to stop terminals.')
 }
 
 export const stopChatTerminalSessions = async (chatIds: string[]): Promise<void> => {
@@ -762,12 +728,7 @@ export const stopChatTerminalSessions = async (chatIds: string[]): Promise<void>
       }),
     agentTerminalSessions.stopChats(chatIds)
   ])
-  const failures = results.filter((result) => result.status === 'rejected')
-  if (failures.length)
-    throw new AggregateError(
-      failures.map((result) => result.reason),
-      'Unable to stop chat terminals.'
-    )
+  throwFailures(results, 'Unable to stop chat terminals.')
 }
 
 const knownPersistentTerminals = new Set<string>()
@@ -824,7 +785,7 @@ const recoverPersistentTerminals = (): Promise<void> => {
         const provider = metadata.chatKey?.slice(0, separator) as ProviderId
         const handle = agentTerminalSessions.register(`workspace:${id}`, {
           providerId: providerIds.includes(provider) ? provider : 'codex',
-          chatId: separator > 0 ? metadata.chatKey!.slice(separator + 1) : '',
+          chatId: terminalChatId(metadata.chatKey) ?? '',
           chatTitle: metadata.label ?? 'Terminal',
           command: metadata.initialCommand ?? '',
           cwd: metadata.cwd ?? null,

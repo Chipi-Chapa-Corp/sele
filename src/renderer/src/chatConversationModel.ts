@@ -94,101 +94,33 @@ export const markChatItemsChanged = (
   }
 }
 
-const buildFullChatConversationModel = (
-  items: readonly ProviderChatItem[]
-): ChatConversationModel => {
-  const turns: ProviderChatTurn[] = []
-  const itemIndexesById = new Map<string, number>()
-  const itemIds = new Set<string>()
-  const stoppedTurnRetryMessages = new Map<string, ProviderMessage>()
-  const workingStepIdsWithNextWorkingStep = new Set<string>()
-  const followingWorkingStepsById = new Map<string, FollowingWorkingStep>()
-  const turnIndexByItemId = new Map<string, number>()
-  const workingStepIndexById = new Map<string, number>()
-  const workingSteps: ProviderWorkingStep[] = []
-  let firstPendingItemId: string | null = null
-  let lastNonPendingItem: ProviderChatItem | null = null
-  let currentTurnItems: ProviderChatItem[] = []
-  let currentTurnUserMessage: ProviderMessage | null = null
-
-  const finishTurn = (): void => {
-    const firstItem = currentTurnItems[0]
-    if (!firstItem) return
-    turns.push({ id: firstItem.id, items: currentTurnItems })
-    currentTurnItems = []
-  }
-
-  items.forEach((item, itemIndex) => {
-    if (startsProviderChatTurn(item)) {
-      if (currentTurnItems.length > 0) finishTurn()
-      currentTurnUserMessage = item.type === 'message' && item.role === 'user' ? item : null
-    }
-    currentTurnItems.push(item)
-    itemIndexesById.set(item.id, itemIndex)
-    itemIds.add(item.id)
-    turnIndexByItemId.set(item.id, turns.length)
-
-    if (item.type === 'pendingMessage') {
-      firstPendingItemId ??= item.id
-    } else {
-      lastNonPendingItem = item
-    }
-
-    if (item.type !== 'working') return
-
-    const workingStepIndex = workingSteps.length
-    const previousWorkingStep = workingSteps[workingStepIndex - 1]
-    const previousPreviousWorkingStep = workingSteps[workingStepIndex - 2]
-    workingSteps.push(item)
-    workingStepIndexById.set(item.id, workingStepIndex)
-
-    if (previousWorkingStep) {
-      workingStepIdsWithNextWorkingStep.add(previousWorkingStep.id)
-      followingWorkingStepsById.set(previousWorkingStep.id, {
-        hasNextWorkingStep: false,
-        status: item.status
-      })
-    }
-    if (previousPreviousWorkingStep) {
-      followingWorkingStepsById.set(previousPreviousWorkingStep.id, {
-        hasNextWorkingStep: true,
-        status: previousWorkingStep.status
-      })
-    }
-
-    if ((item.status === 'stopped' || item.status === 'failed') && currentTurnUserMessage) {
-      stoppedTurnRetryMessages.set(item.id, currentTurnUserMessage)
-    }
-  })
-  finishTurn()
-
-  const model: ChatConversationModel = {
-    firstPendingItemId,
-    followingWorkingStepsById,
-    itemIndexesById,
-    itemIds,
-    lastNonPendingItem,
-    stoppedTurnRetryMessages,
-    turns,
-    workingStepIdsWithNextWorkingStep,
-    steeredWorkingStepDisclosureTargets: getSteeredWorkingStepDisclosureTargets(turns)
-  }
-  modelInternals.set(model, {
-    sourceItems: items,
-    turnIndexByItemId,
-    workingStepIndexById,
-    workingSteps
-  })
-  modelsByItems.set(items, model)
-  return model
+const emptyModel: ChatConversationModel = {
+  firstPendingItemId: null,
+  followingWorkingStepsById: new Map(),
+  itemIndexesById: new Map(),
+  itemIds: new Set(),
+  lastNonPendingItem: null,
+  stoppedTurnRetryMessages: new Map(),
+  turns: [],
+  workingStepIdsWithNextWorkingStep: new Set(),
+  steeredWorkingStepDisclosureTargets: new Map()
 }
+
+const emptyModelInternals: ChatConversationModelInternals = {
+  sourceItems: [],
+  turnIndexByItemId: new Map(),
+  workingStepIndexById: new Map(),
+  workingSteps: []
+}
+
+type RebuildStart = { itemIndex: number; turnIndex: number }
 
 const getIncrementalRebuildStart = (
   items: readonly ProviderChatItem[],
   previousModel: ChatConversationModel,
   internals: ChatConversationModelInternals,
   changedStartIndex: number
-): { itemIndex: number; turnIndex: number } | null => {
+): RebuildStart | null => {
   if (
     changedStartIndex < 0 ||
     changedStartIndex > items.length ||
@@ -203,9 +135,7 @@ const getIncrementalRebuildStart = (
     return null
   }
 
-  const previousChangedItem = internals.sourceItems[changedStartIndex]
-  if (previousChangedItem) {
-    const turnIndex = internals.turnIndexByItemId.get(previousChangedItem.id)
+  const getTurnStart = (turnIndex: number | undefined): RebuildStart | null => {
     const firstTurnItem = turnIndex === undefined ? null : previousModel.turns[turnIndex]?.items[0]
     const itemIndex = firstTurnItem
       ? previousModel.itemIndexesById.get(firstTurnItem.id)
@@ -213,33 +143,24 @@ const getIncrementalRebuildStart = (
     return turnIndex === undefined || itemIndex === undefined ? null : { itemIndex, turnIndex }
   }
 
+  const previousChangedItem = internals.sourceItems[changedStartIndex]
+  if (previousChangedItem)
+    return getTurnStart(internals.turnIndexByItemId.get(previousChangedItem.id))
+
   const firstNewItem = items[changedStartIndex]
   if (firstNewItem && !startsProviderChatTurn(firstNewItem) && previousModel.turns.length > 0) {
-    const turnIndex = previousModel.turns.length - 1
-    const firstTurnItem = previousModel.turns[turnIndex].items[0]
-    const itemIndex = firstTurnItem
-      ? previousModel.itemIndexesById.get(firstTurnItem.id)
-      : undefined
-    return itemIndex === undefined ? null : { itemIndex, turnIndex }
+    return getTurnStart(previousModel.turns.length - 1)
   }
 
   return { itemIndex: changedStartIndex, turnIndex: previousModel.turns.length }
 }
 
-const buildIncrementalChatConversationModel = (
+const rebuildChatConversationModel = (
   items: readonly ProviderChatItem[],
   previousModel: ChatConversationModel,
   internals: ChatConversationModelInternals,
-  changedStartIndex: number
-): ChatConversationModel | null => {
-  const rebuildStart = getIncrementalRebuildStart(
-    items,
-    previousModel,
-    internals,
-    changedStartIndex
-  )
-  if (!rebuildStart) return null
-
+  rebuildStart: RebuildStart
+): ChatConversationModel => {
   // React may abandon a concurrent render. Mutating the previous memoized model here used to
   // corrupt the still-visible conversation even though the new render never committed.
   const itemIndexesById = new Map(previousModel.itemIndexesById)
@@ -377,19 +298,23 @@ export const buildChatConversationModel = (
     previousModel ?? (previousItems ? modelsByItems.get(previousItems) : null)
   if (resolvedPreviousModel && change) {
     const internals = modelInternals.get(resolvedPreviousModel)
-    if (internals) {
-      const incrementalModel = buildIncrementalChatConversationModel(
+    const rebuildStart =
+      internals &&
+      getIncrementalRebuildStart(items, resolvedPreviousModel, internals, change.startIndex)
+    if (internals && rebuildStart) {
+      const model = rebuildChatConversationModel(
         items,
         resolvedPreviousModel,
         internals,
-        change.startIndex
+        rebuildStart
       )
-      if (incrementalModel) {
-        if (previousItems) modelsByItems.delete(previousItems)
-        return incrementalModel
-      }
+      if (previousItems) modelsByItems.delete(previousItems)
+      return model
     }
   }
 
-  return buildFullChatConversationModel(items)
+  return rebuildChatConversationModel(items, emptyModel, emptyModelInternals, {
+    itemIndex: 0,
+    turnIndex: 0
+  })
 }

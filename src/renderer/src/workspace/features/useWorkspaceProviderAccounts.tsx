@@ -1,21 +1,20 @@
 import type { AppContainerTarget } from '../../../../shared/app'
-import type { ProviderAccountConfiguration, ProviderId } from '../../../../shared/provider'
+import type { ProviderId } from '../../../../shared/provider'
 import { appApi } from '../../appApi'
 import type { AccountAuthorizationSession } from '../../components/AccountDialog'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerSelection'
 import { providerApi } from '../../providerApi'
-import { getErrorMessage } from '../chatControllerUtils'
 import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
 
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import type { useWorkspaceSelection } from '../useWorkspaceSelection'
 type WorkspaceProviderAccountsDependencies = {
   sourceState: ReturnType<typeof useWorkspaceSourceState>
   providerState: ReturnType<typeof useWorkspaceProviderState>
   chatState: ReturnType<typeof useWorkspaceChatState>
   session: Pick<
-    ReturnType<typeof useWorkspaceSession>,
+    ReturnType<typeof useWorkspaceSelection>,
     'setAccountUsage' | 'setAccountUsageState' | 'setAccountUsageError'
   >
 }
@@ -29,18 +28,9 @@ export function useWorkspaceProviderAccounts({
   const { setAccountUsage, setAccountUsageState, setAccountUsageError } = session
 
   const applyProviderAccountConfiguration = (
-    configuration: ProviderAccountConfiguration,
-    providerId: ProviderId = sourceState.newSessionProvider,
-    container: AppContainerTarget | null = sourceState.newSessionContainer
+    providerId: ProviderId,
+    container: AppContainerTarget | null
   ): void => {
-    if (
-      providerId === sourceState.newSessionProvider &&
-      getContainerTargetKey(container) === getContainerTargetKey(sourceState.newSessionContainer)
-    ) {
-      providerState.setSettingsProviderAccounts(configuration)
-      providerState.setProviderAccountsError(null)
-      providerState.setProviderAccountsLoadState('ready')
-    }
     providerState.providerModelCatalogCacheRef.current.delete(
       `${providerId}:${getContainerTargetKey(container)}`
     )
@@ -73,11 +63,9 @@ export function useWorkspaceProviderAccounts({
     if (providerState.providerAccountUpdatingId) return
     const container = normalizeContainerTarget(sourceContainer)
     providerState.setProviderAccountUpdatingId(accountId)
-    providerState.setProviderAccountsError(null)
     try {
-      const configuration =
-        // biome-ignore lint/correctness/useHookAtTopLevel: Provider IPC method, not a React hook.
-        await providerApi.useAccount(providerId, accountId, { container, chatId })
+      // biome-ignore lint/correctness/useHookAtTopLevel: Provider IPC method, not a React hook.
+      await providerApi.useAccount(providerId, accountId, { container, chatId })
       setAccountUsage(null)
       setAccountUsageState('loading')
       setAccountUsageError(null)
@@ -95,7 +83,7 @@ export function useWorkspaceProviderAccounts({
         )
         providerState.setProviderModelsRevision((revision) => revision + 1)
         chatState.setChatLoadRequest((request) => request + 1)
-      } else applyProviderAccountConfiguration(configuration, providerId, container)
+      } else applyProviderAccountConfiguration(providerId, container)
       providerState.setProviderAccountRevision((revision) => revision + 1)
     } finally {
       providerState.setProviderAccountUpdatingId(null)
@@ -111,7 +99,6 @@ export function useWorkspaceProviderAccounts({
       )
     } catch (error) {
       console.error('Unable to switch provider accounts.', error)
-      providerState.setProviderAccountsError(getErrorMessage(error, 'Unable to switch accounts.'))
     }
   }
 
@@ -124,40 +111,9 @@ export function useWorkspaceProviderAccounts({
     const container = normalizeContainerTarget(sourceContainer)
     providerState.setProviderAccountUpdatingId(accountId)
     try {
-      applyProviderAccountConfiguration(
-        await providerApi.deleteAccount(providerId, accountId, { container }),
-        providerId,
-        container
-      )
+      await providerApi.deleteAccount(providerId, accountId, { container })
+      applyProviderAccountConfiguration(providerId, container)
       providerState.setProviderAccountRevision((revision) => revision + 1)
-    } finally {
-      providerState.setProviderAccountUpdatingId(null)
-    }
-  }
-
-  const handleDeleteProviderAccount = async (accountId: string): Promise<void> => {
-    if (providerState.providerAccountUpdatingId) return
-    const account = providerState.settingsProviderAccounts?.accounts.find(
-      (candidate) => candidate.id === accountId
-    )
-    if (
-      !account ||
-      !window.confirm(`Delete the account “${account.displayName ?? account.login ?? 'account'}”?`)
-    )
-      return
-
-    providerState.setProviderAccountsError(null)
-    try {
-      await deleteProviderAccount(
-        accountId,
-        sourceState.newSessionProvider,
-        sourceState.newSessionContainer
-      )
-    } catch (error) {
-      console.error('Unable to delete the provider account.', error)
-      providerState.setProviderAccountsError(
-        getErrorMessage(error, 'Unable to delete the account.')
-      )
     } finally {
       providerState.setProviderAccountUpdatingId(null)
     }
@@ -199,13 +155,11 @@ export function useWorkspaceProviderAccounts({
       }
     } catch (error) {
       try {
-        const restoredConfiguration = await providerApi.cancelAccountCreation(
-          providerId,
-          creation.accountId,
-          loginId,
-          { container, chatId }
-        )
-        applyProviderAccountConfiguration(restoredConfiguration, providerId, container)
+        await providerApi.cancelAccountCreation(providerId, creation.accountId, loginId, {
+          container,
+          chatId
+        })
+        applyProviderAccountConfiguration(providerId, container)
         if (!reauthentication) providerState.setProviderAccountRevision((revision) => revision + 1)
       } catch (cleanupError) {
         console.error('Unable to clean up an incomplete provider account.', cleanupError)
@@ -222,7 +176,7 @@ export function useWorkspaceProviderAccounts({
           loginId,
           { container, chatId }
         )
-        applyProviderAccountConfiguration(result.configuration, providerId, container)
+        applyProviderAccountConfiguration(providerId, container)
         if (!result.success) {
           throw new Error(result.error || 'Account authorization was not completed.')
         }
@@ -241,8 +195,7 @@ export function useWorkspaceProviderAccounts({
             )
             return null
           })
-        if (restoredConfiguration)
-          applyProviderAccountConfiguration(restoredConfiguration, providerId, container)
+        if (restoredConfiguration) applyProviderAccountConfiguration(providerId, container)
         throw error
       }
     })()
@@ -268,13 +221,11 @@ export function useWorkspaceProviderAccounts({
         await appApi.handleExternalLink({ url: pendingUrl, action: 'open' })
       },
       cancel: async () => {
-        const configuration = await providerApi.cancelAccountCreation(
-          providerId,
-          creation.accountId,
-          loginId,
-          { container, chatId }
-        )
-        applyProviderAccountConfiguration(configuration, providerId, container)
+        await providerApi.cancelAccountCreation(providerId, creation.accountId, loginId, {
+          container,
+          chatId
+        })
+        applyProviderAccountConfiguration(providerId, container)
         if (!reauthentication) providerState.setProviderAccountRevision((revision) => revision + 1)
       }
     }
@@ -284,7 +235,6 @@ export function useWorkspaceProviderAccounts({
     switchProviderAccount,
     handleUseProviderAccount,
     deleteProviderAccount,
-    handleDeleteProviderAccount,
     handleCreateProviderAccount
   }
 }

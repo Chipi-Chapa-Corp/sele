@@ -1,7 +1,11 @@
 import { includeConversationTime, type ConversationTiming } from '../conversationTiming.ts'
 import { isProviderUsageLimitError } from '../../../shared/providerErrors.ts'
 import { isClaudeAuthenticationFailure } from './ClaudeAuthentication.ts'
-import { getProviderToolPresentation } from '../ToolPresentation.ts'
+import {
+  createPresentedTool,
+  createSubagentTool,
+  getProviderToolPresentation
+} from '../ToolPresentation.ts'
 import {
   createClaudePlanState,
   finishClaudePlanCall,
@@ -38,8 +42,16 @@ import type {
 import {
   appendProviderConversationSegment,
   getTrailingAssistantEntryIndex,
+  updateConversationTool,
   type ProviderConversationEntry
 } from '../ProviderConversationEngine.ts'
+import {
+  getString,
+  isRecord,
+  boundSerializedToolValue,
+  getToolArgument,
+  truncateEarlierToolOutput
+} from '../providerValues.ts'
 
 export type ClaudeTranscriptMessage = {
   type: 'user' | 'assistant' | 'system'
@@ -90,16 +102,6 @@ type Segment = {
   stopped?: boolean
 }
 
-const maxToolOutputLength = 160_000
-const maxRawToolValueLength = 80_000
-const truncatedToolValueMarker = '… [truncated to keep the app responsive]'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
-
 const includeClaudeMessageTime = (
   timing: ConversationTiming | undefined,
   message: ClaudeTranscriptMessage
@@ -137,36 +139,11 @@ const toTimestamp = (value: string | undefined): number | null => {
   return Number.isFinite(timestamp) ? timestamp : null
 }
 
-const truncateToolOutput = (value: string | null): string | null => {
-  if (value == null || value.length <= maxToolOutputLength) return value
-  return `${truncatedToolValueMarker}\n${value.slice(-maxToolOutputLength)}`
-}
-
-const getBoundedRawValue = (value: unknown): unknown => {
-  try {
-    const serialized = JSON.stringify(value)
-    if (!serialized || serialized.length <= maxRawToolValueLength) return value
-    return `${serialized.slice(0, maxRawToolValueLength)}\n${truncatedToolValueMarker}`
-  } catch (error) {
-    console.error('Unable to serialize a Claude tool value.', error)
-    return String(value)
-  }
-}
-
-const getArgument = (input: unknown, ...keys: string[]): string | null => {
-  if (!isRecord(input)) return null
-  for (const key of keys) {
-    const value = getString(input[key])
-    if (value) return value
-  }
-  return null
-}
-
 const getToolCwd = (input: unknown): string | null =>
-  getArgument(input, 'cwd', 'working_directory', 'workingDirectory', 'directory')
+  getToolArgument(input, 'cwd', 'working_directory', 'workingDirectory', 'directory')
 
 const getToolPath = (input: unknown): string | null =>
-  getArgument(input, 'file_path', 'path', 'filePath', 'file', 'notebook_path', 'directory')
+  getToolArgument(input, 'file_path', 'path', 'filePath', 'file', 'notebook_path', 'directory')
 
 const skillToolName = 'Skill'
 
@@ -210,68 +187,30 @@ const subagentToolNames = new Set(['Agent', 'Task'])
 const isSubagentToolBlock = (block: ClaudeContentBlock): boolean =>
   subagentToolNames.has(getString(block.name) ?? '')
 
-/**
- * The delegation call is a compact row in the parent. The subagent's prompt and report belong to
- * its own chat, listed under the parent in the sidebar.
- */
-const createSubagentTool = (
-  messageId: string,
-  toolId: string,
-  block: ClaudeContentBlock
-): ProviderWorkingTool => ({
-  type: 'tool',
-  id: `${messageId}:${toolId}`,
-  toolId,
-  status: 'running',
-  compact: true,
-  activity: 'other',
-  icon: 'subagent',
-  label:
-    getArgument(block.input, 'description') ??
-    getArgument(block.input, 'subagent_type') ??
-    'Subagent',
-  command: null,
-  cwd: null,
-  stdout: null,
-  diffs: [],
-  backgroundSessionId: null,
-  finishedBackgroundSessionId: null,
-  rawInput: null,
-  rawOutput: null,
-  images: []
-})
-
 // Questions show their answer elsewhere; a subagent's report is in its own chat.
 const hidesToolResult = (tool: ProviderWorkingTool): boolean =>
   tool.hidePayload === true || tool.icon === 'question' || tool.icon === 'subagent'
 
+// The delegation call is a compact row in the parent. The subagent's prompt and report belong to
+// its own chat, listed under the parent in the sidebar.
 const createTool = (messageId: string, block: ClaudeContentBlock): ProviderWorkingTool => {
   const toolId = getString(block.id) ?? `${messageId}:tool`
-  if (isSubagentToolBlock(block)) return createSubagentTool(messageId, toolId, block)
+  const id = `${messageId}:${toolId}`
+  if (isSubagentToolBlock(block))
+    return createSubagentTool(
+      id,
+      toolId,
+      getToolArgument(block.input, 'description', 'subagent_type') ?? 'Subagent'
+    )
   const name = getString(block.name) ?? 'Tool'
-  const presentation = getProviderToolPresentation('claude', name, block.input)
-  const hidePayload = presentation?.hidePayload === true
-  return {
-    type: 'tool',
-    id: `${messageId}:${toolId}`,
+  return createPresentedTool(getProviderToolPresentation('claude', name, block.input), {
+    id,
     toolId,
     status: 'running',
-    activity: presentation?.activity ?? 'other',
-    icon: presentation?.icon ?? null,
-    label: presentation?.label ?? `Used ${name}`,
-    summaryLabel: presentation?.summaryLabel,
-    ...(presentation?.compact ? { compact: true } : {}),
-    ...(hidePayload ? { hidePayload: true } : {}),
-    command: presentation?.command ?? null,
     cwd: getToolCwd(block.input),
-    stdout: null,
-    diffs: [],
-    backgroundSessionId: null,
-    finishedBackgroundSessionId: null,
-    rawInput: hidePayload ? null : getBoundedRawValue(block.input ?? null),
-    rawOutput: null,
-    images: []
-  }
+    fallbackLabel: `Used ${name}`,
+    rawInput: () => boundSerializedToolValue(block.input ?? null)
+  })
 }
 
 const getTextContent = (value: unknown): string | null => {
@@ -316,27 +255,70 @@ const getToolDiffs = (tool: ProviderWorkingTool, output: string | null): Provide
   return [{ path, kind, diff: output }]
 }
 
-const updateTool = (
-  entries: ProviderConversationEntry[],
-  toolId: string,
-  update: (tool: ProviderWorkingTool) => ProviderWorkingTool
-): void => {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index]
-    if (entry?.kind !== 'working') continue
-    const item = entry.item
-    if (item?.type === 'tool' && item.toolId === toolId) {
-      entries[index] = { kind: 'working', item: update(item) }
-      return
-    }
-    if (item?.type === 'toolGroup') {
-      const toolIndex = item.tools.findIndex((tool) => tool.toolId === toolId)
-      const tool = item.tools[toolIndex]
-      if (toolIndex >= 0 && tool) {
-        item.tools[toolIndex] = update(tool)
-        return
-      }
-    }
+const finishTool = (
+  tool: ProviderWorkingTool,
+  hide: boolean,
+  plan: ProviderWorkingTool['plan'],
+  output: string | null,
+  images: ProviderToolImage[],
+  result: unknown
+): ProviderWorkingTool => ({
+  ...tool,
+  ...(plan ? { plan } : {}),
+  status: 'finished',
+  label: tool.icon === 'question' ? 'Asked a question' : tool.label,
+  icon: images.length > 0 ? 'image-generation' : tool.icon,
+  stdout: hide ? null : output,
+  diffs: hide ? [] : getToolDiffs(tool, output),
+  rawOutput: hide ? null : boundSerializedToolValue(result),
+  images
+})
+
+const createUserMessage = (
+  message: ClaudeTranscriptMessage,
+  content: string,
+  attachments: ProviderMessageAttachment[] | undefined
+): ProviderMessage => ({
+  type: 'message',
+  id: message.uuid,
+  role: 'user',
+  content,
+  attachments,
+  createdAt: toTimestamp(message.timestamp),
+  kind: message.kind,
+  label: message.label ?? null
+})
+
+const createAssistantText = (
+  id: string,
+  text: string,
+  block: ClaudeContentBlock,
+  message: ClaudeTranscriptMessage
+): ProviderMessage => ({
+  type: 'message',
+  id,
+  role: 'assistant',
+  content: text.trim(),
+  createdAt:
+    typeof block.startedAtMs === 'number' ? block.startedAtMs : toTimestamp(message.timestamp),
+  model: getModel(message.message)
+})
+
+const getSegmentOutcome = (
+  segment: Pick<Segment, 'failed' | 'stopped' | 'failureMessage' | 'failureReason'>,
+  last: boolean,
+  options: RenderOptions
+) => {
+  const failed = segment.failed || (last && options.failed === true)
+  return {
+    lifecycle: {
+      active: last && options.active,
+      completed: !last || (!options.active && !failed && !(last && options.stopped)),
+      failed,
+      stopped: segment.stopped === true || (last && options.stopped)
+    },
+    ...(failed && segment.failureMessage ? { failureMessage: segment.failureMessage } : {}),
+    ...(failed && segment.failureReason ? { failureReason: segment.failureReason } : {})
   }
 }
 
@@ -568,18 +550,7 @@ export const renderClaudeChatItems = (
       const { content, attachments } = getUserMessagePresentation(message, blocks)
       if (!content && !attachments?.length) continue
       backgroundTurnEnded = false
-      parts.push({
-        item: {
-          type: 'message',
-          id: message.uuid,
-          role: 'user',
-          content,
-          attachments,
-          createdAt: toTimestamp(message.timestamp),
-          kind: message.kind,
-          label: message.label ?? null
-        }
-      })
+      parts.push({ item: createUserMessage(message, content, attachments) })
       startSegment({
         id: `${message.uuid}:working`,
         entries: [],
@@ -638,17 +609,7 @@ export const renderClaudeChatItems = (
         } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
           current.entries.push({
             kind: 'assistant',
-            message: {
-              type: 'message',
-              id: nextBlockId(message, 'text'),
-              role: 'assistant',
-              content: block.text.trim(),
-              createdAt:
-                typeof block.startedAtMs === 'number'
-                  ? block.startedAtMs
-                  : toTimestamp(message.timestamp),
-              model: getModel(message.message)
-            }
+            message: createAssistantText(nextBlockId(message, 'text'), block.text, block, message)
           })
         }
       })
@@ -661,7 +622,7 @@ export const renderClaudeChatItems = (
         if (block.type !== 'tool_result') return
         const toolId = getString(block.tool_use_id)
         if (!toolId) return
-        const output = truncateToolOutput(getTextContent(block.content))
+        const output = truncateEarlierToolOutput(getTextContent(block.content))
         const images = getToolImages(block.content)
         const hidePayload = skillToolIds.has(toolId)
         const planResult = finishClaudePlanCall(
@@ -672,20 +633,16 @@ export const renderClaudeChatItems = (
           block.is_error === true
         )
         planState = planResult.state
-        updateTool(current.entries, toolId, (tool) => ({
-          ...tool,
-          ...(planResult.plan ? { plan: planResult.plan } : {}),
-          status: 'finished',
-          label: tool.icon === 'question' ? 'Asked a question' : tool.label,
-          icon: images.length > 0 ? 'image-generation' : tool.icon,
-          stdout: hidesToolResult(tool) || hidePayload ? null : output,
-          diffs: hidesToolResult(tool) || hidePayload ? [] : getToolDiffs(tool, output),
-          rawOutput:
-            hidesToolResult(tool) || hidePayload
-              ? null
-              : getBoundedRawValue(message.tool_use_result ?? block.content),
-          images
-        }))
+        updateConversationTool(current.entries, toolId, (tool) =>
+          finishTool(
+            tool,
+            hidesToolResult(tool) || hidePayload,
+            planResult.plan,
+            output,
+            images,
+            message.tool_use_result ?? block.content
+          )
+        )
       })
       continue
     }
@@ -729,23 +686,13 @@ export const renderClaudeChatItems = (
       continue
     }
     const current = part.segment
-    const isLast = current === lastSegment
-    const failed = current.failed || (isLast && options.failed === true)
-    const stopped = current.stopped === true || (isLast && options.stopped)
     appendProviderConversationSegment(items, {
       preserveRawWorkingItems: true,
       id: current.id,
       timing: current.timing,
       entries: current.entries,
       finalMessageIndex: getTrailingAssistantEntryIndex(current.entries),
-      lifecycle: {
-        active: isLast && options.active,
-        completed: !isLast || (!options.active && !failed && !(isLast && options.stopped)),
-        failed,
-        stopped
-      },
-      ...(failed && current.failureMessage ? { failureMessage: current.failureMessage } : {}),
-      ...(failed && current.failureReason ? { failureReason: current.failureReason } : {})
+      ...getSegmentOutcome(current, current === lastSegment, options)
     })
   }
   items.push(...(options.pendingItems ?? []))
@@ -918,16 +865,7 @@ export class ClaudeTranscriptProjection {
       if (!content && !attachments?.length) return
       this.clearCurrentSegment()
       this.journal.push(this.turnStarts, this.nodes.length)
-      this.journal.push(this.nodes, {
-        type: 'message',
-        id: message.uuid,
-        role: 'user',
-        content,
-        attachments,
-        createdAt: toTimestamp(message.timestamp),
-        kind: message.kind,
-        label: message.label ?? null
-      })
+      this.journal.push(this.nodes, createUserMessage(message, content, attachments))
       const segment = this.ensureSegment(message.uuid)
       this.journal.set(
         segment,
@@ -997,17 +935,11 @@ export class ClaudeTranscriptProjection {
           })
         } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
           this.demoteFinal(segment)
-          this.journal.set(segment, 'finalMessage', {
-            type: 'message',
-            id: this.blockId(message, 'text'),
-            role: 'assistant',
-            content: block.text.trim(),
-            createdAt:
-              typeof block.startedAtMs === 'number'
-                ? block.startedAtMs
-                : toTimestamp(message.timestamp),
-            model: getModel(message.message)
-          })
+          this.journal.set(
+            segment,
+            'finalMessage',
+            createAssistantText(this.blockId(message, 'text'), block.text, block, message)
+          )
         }
       }
       return
@@ -1021,7 +953,7 @@ export class ClaudeTranscriptProjection {
         const location = toolId ? this.state.tools.get(toolId) : undefined
         // The full converter matches results only within the current segment.
         if (!location || location.segment !== segment) continue
-        const output = truncateToolOutput(getTextContent(block.content))
+        const output = truncateEarlierToolOutput(getTextContent(block.content))
         const images = getToolImages(block.content)
         const old = location.tool
         const hide = hidesToolResult(old) || location.skill
@@ -1033,17 +965,14 @@ export class ClaudeTranscriptProjection {
           block.is_error === true
         )
         this.journal.set(this.state, 'plan', planResult.state)
-        const tool: ProviderWorkingTool = {
-          ...old,
-          ...(planResult.plan ? { plan: planResult.plan } : {}),
-          status: 'finished',
-          label: old.icon === 'question' ? 'Asked a question' : old.label,
-          icon: images.length > 0 ? 'image-generation' : old.icon,
-          stdout: hide ? null : output,
-          diffs: hide ? [] : getToolDiffs(old, output),
-          rawOutput: hide ? null : getBoundedRawValue(message.tool_use_result ?? block.content),
-          images
-        }
+        const tool = finishTool(
+          old,
+          hide,
+          planResult.plan,
+          output,
+          images,
+          message.tool_use_result ?? block.content
+        )
         const payloadCount = getWorkingItemPayloadCharacterCount(tool)
         this.journal.mapSet(
           segment.payloadCounts,
@@ -1126,9 +1055,6 @@ export class ClaudeTranscriptProjection {
             items.push(node)
             continue
           }
-          const last = node === this.state.current
-          const failed = node.failed || (last && options.failed === true)
-          const stopped = node.stopped === true || (last && options.stopped)
           appendProviderConversationSegment(items, {
             id: node.id,
             timing: node.timing,
@@ -1145,14 +1071,7 @@ export class ClaudeTranscriptProjection {
                 ? [{ kind: 'assistant' as const, message: node.finalMessage }]
                 : [])
             ],
-            lifecycle: {
-              active: last && options.active,
-              completed: !last || (!options.active && !failed && !(last && options.stopped)),
-              failed,
-              stopped
-            },
-            ...(failed && node.failureMessage ? { failureMessage: node.failureMessage } : {}),
-            ...(failed && node.failureReason ? { failureReason: node.failureReason } : {}),
+            ...getSegmentOutcome(node, node === this.state.current, options),
             workingItemWindow: {
               itemCount: node.groupCount,
               itemsStartIndex: node.groupCount - node.groups.length

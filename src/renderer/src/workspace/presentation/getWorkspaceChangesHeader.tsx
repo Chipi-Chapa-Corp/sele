@@ -3,22 +3,22 @@ import { useWorkspacePanes } from '../features/useWorkspacePanes'
 import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
 import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
 import { useGitHubPullRequests } from '../useGitHubPullRequests'
-import { useWorkspaceChanges } from '../wiring/useWorkspaceChanges'
-import { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import { useWorkspaceGitPresentation } from '../wiring/useWorkspaceGitPresentation'
-import { useWorkspaceGitSync } from '../wiring/useWorkspaceGitSync'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import { useChangesData } from '../useChangesData'
+import { useFileNavigationController } from '../useFileNavigationController'
+import { useGitViewModel } from '../useGitViewModel'
+import { useGitSyncController } from '../useGitSyncController'
+import { useWorkspaceSelection } from '../useWorkspaceSelection'
 
 type WorkspaceChangesHeaderDependencies = {
   gitHubPullRequests: ReturnType<typeof useGitHubPullRequests>
   panes: ReturnType<typeof useWorkspacePanes>
   settings: ReturnType<typeof useWorkspaceSettingsContext>
-  gitPresentation: ReturnType<typeof useWorkspaceGitPresentation>
-  changes: ReturnType<typeof useWorkspaceChanges>
-  session: ReturnType<typeof useWorkspaceSession>
+  gitPresentation: ReturnType<typeof useGitViewModel>
+  changes: ReturnType<typeof useChangesData>
+  session: ReturnType<typeof useWorkspaceSelection>
   gitState: ReturnType<typeof useWorkspaceGitState>
-  files: ReturnType<typeof useWorkspaceFiles>
-  gitSync: ReturnType<typeof useWorkspaceGitSync>
+  files: ReturnType<typeof useFileNavigationController>
+  gitSync: ReturnType<typeof useGitSyncController>
   chrome: ReturnType<typeof useWorkspaceChrome>
 }
 

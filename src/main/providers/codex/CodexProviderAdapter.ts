@@ -377,19 +377,7 @@ type AccountRateLimitResetResponse = {
   outcome: unknown
 }
 
-type ThreadReadResponse = {
-  thread: CodexThread
-}
-
-type ThreadStartResponse = {
-  thread: CodexThread
-}
-
-type ThreadResumeResponse = {
-  thread: CodexThread
-}
-
-type ThreadForkResponse = {
+type ThreadResponse = {
   thread: CodexThread
 }
 
@@ -403,10 +391,6 @@ type TurnSteerResponse = {
 
 type ThreadNameGenerationResult = {
   title: string
-}
-
-type ThreadHistoryMutationResponse = {
-  thread: CodexThread
 }
 
 type CodexThreadAccessOptions = {
@@ -441,60 +425,12 @@ type CodexTurnModelOptions = {
   serviceTier: ProviderTurnOptions['serviceTier']
 }
 
-type ThreadNotificationParams = {
-  threadId?: unknown
-  status?: unknown
-  threadName?: unknown
-  thread_name?: unknown
-  name?: unknown
-}
-
-type TurnNotificationParams = {
-  threadId?: unknown
-  turn?: unknown
-}
-
-type ItemNotificationParams = {
-  threadId?: unknown
-  turnId?: unknown
-  item?: unknown
-}
-
-type AgentMessageDeltaParams = {
-  threadId?: unknown
-  turnId?: unknown
-  itemId?: unknown
-  delta?: unknown
-}
-
-type ReasoningSummaryDeltaParams = AgentMessageDeltaParams & {
-  summaryIndex?: unknown
-}
-
-type FileChangePatchParams = {
-  threadId?: unknown
-  turnId?: unknown
-  itemId?: unknown
-  changes?: unknown
-}
-
-type RawResponseItemParams = {
-  threadId?: unknown
-  turnId?: unknown
-  item?: unknown
-}
-
-type ServerRequestResolvedParams = {
-  threadId?: unknown
-  requestId?: unknown
-}
-
-type CodexPendingApprovalProtocol = 'commandExecution' | 'fileChange' | 'browserUse' | 'permissions'
+type NotificationParams = Record<string, unknown>
 
 type CodexPendingApproval = {
   requestId: number
   container: AppContainerTarget | null
-  protocol: CodexPendingApprovalProtocol
+  protocol: 'commandExecution' | 'fileChange' | 'browserUse' | 'permissions'
   type: ProviderPendingApproval['type']
   threadId: string
   turnId: string | null
@@ -830,7 +766,7 @@ const getThreadTitle = (thread: CodexThread): string => {
   return getThreadName(thread) ?? (truncateTitle(previewTitle, 80) || 'Untitled chat')
 }
 
-const getThreadNotificationName = (params: ThreadNotificationParams): string | null =>
+const getThreadNotificationName = (params: NotificationParams): string | null =>
   getStringValue(params.threadName) ??
   getStringValue(params.thread_name) ??
   getStringValue(params.name)
@@ -874,16 +810,16 @@ const getThreadTurns = (thread: CodexThread): CodexTurn[] =>
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1_000)
 
-const getThreadId = (params: { threadId?: unknown }): string | null =>
+const getThreadId = (params: NotificationParams): string | null =>
   typeof params.threadId === 'string' ? params.threadId : null
 
-const getTurnId = (params: { turnId?: unknown }): string | null =>
+const getTurnId = (params: NotificationParams): string | null =>
   typeof params.turnId === 'string' ? params.turnId : null
 
-const getItemId = (params: { itemId?: unknown }): string | null =>
+const getItemId = (params: NotificationParams): string | null =>
   typeof params.itemId === 'string' ? params.itemId : null
 
-const getDelta = (params: { delta?: unknown }): string | null =>
+const getDelta = (params: NotificationParams): string | null =>
   typeof params.delta === 'string' ? params.delta : null
 
 const getRawResponseMessage = (
@@ -1454,10 +1390,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return this.getClient(this.clientContainerContext.getStore() ?? null)
   }
 
-  private readThread = (threadId: string, includeTurns: boolean): Promise<ThreadReadResponse> =>
+  private readThread = (threadId: string, includeTurns: boolean): Promise<ThreadResponse> =>
     retryCodexEmptyRolloutRead(
       () =>
-        this.client.request<ThreadReadResponse>('thread/read', {
+        this.client.request<ThreadResponse>('thread/read', {
           threadId,
           includeTurns
         }),
@@ -2537,7 +2473,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     try {
-      await this.client.request<ThreadResumeResponse>('thread/resume', {
+      await this.client.request<ThreadResponse>('thread/resume', {
         threadId: detail.id,
         excludeTurns: true
       })
@@ -3459,7 +3395,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     try {
       await throwIfCanceled()
 
-      const startedThread = await client.request<ThreadStartResponse>('thread/start', {
+      const startedThread = await client.request<ThreadResponse>('thread/start', {
         cwd: options?.cwd,
         historyMode: 'paginated',
         ...(getRuntimeWorkspaceRoots(options).length > 0
@@ -3595,7 +3531,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.runWithContainer(this.getThreadContainer(chatId ?? '', options), async () => {
       let id = chatId
       if (!id) {
-        const response = await this.client.request<ThreadStartResponse>(
+        const response = await this.client.request<ThreadResponse>(
           'thread/start',
           {
             cwd: options.cwd,
@@ -3648,7 +3584,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot start a chat with an empty message')
     }
 
-    const startedThread = await this.client.request<ThreadStartResponse>(
+    const startedThread = await this.client.request<ThreadResponse>(
       'thread/start',
       {
         cwd: options?.cwd,
@@ -3832,7 +3768,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       throw new Error('Cannot fork a chat with an active turn')
     }
 
-    const fork = await this.client.request<ThreadForkResponse>(
+    const fork = await this.client.request<ThreadResponse>(
       'thread/fork',
       {
         threadId: chatId,
@@ -3911,7 +3847,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const targetTurnId = loadedTargetTurn?.id ?? messageId.split(':', 1)[0]
     if (!targetTurnId) throw new Error('Message cannot be forked')
 
-    const fork = await this.client.request<ThreadForkResponse>('thread/fork', {
+    const fork = await this.client.request<ThreadResponse>('thread/fork', {
       threadId: chatId,
       lastTurnId: targetTurnId,
       excludeTurns: true
@@ -4033,7 +3969,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.pendingMessageEdits.assert(chatId, messageId)
 
     const removedSteering = this.removeSteeringMessage(chatId, messageId)
-    const removedQueued = this.removeQueuedTurn(chatId, messageId)
+    const removedQueued =
+      this.takeQueuedTurn(chatId, messageId) !== null || this.removeSyntheticTurn(chatId, messageId)
     const hidPendingMessage =
       removedSteering || removedQueued ? false : this.hidePendingMessage(chatId, messageId)
 
@@ -4313,10 +4250,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
           editPlan.retainedCatalog.length
         )
 
-    const historyMutationResponse = await this.client.request<ThreadHistoryMutationResponse>(
-      'thread/revert',
-      { threadId: chatId, beforeTurnId: targetTurnId }
-    )
+    const historyMutationResponse = await this.client.request<ThreadResponse>('thread/revert', {
+      threadId: chatId,
+      beforeTurnId: targetTurnId
+    })
     const historyMode = historyMutationResponse.thread.historyMode ?? thread.historyMode
     assertSupportedCodexHistory({ historyMode })
 
@@ -5002,7 +4939,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     )
 
     if (!turnId) {
-      this.removeSteeringMessageForThread(chatId)
+      this.steeringMessagesByThread.delete(chatId)
       this.setThreadStatus(chatId, { type: 'idle' })
       this.emitChatUpdated(chatId)
       if (options.startQueuedTurn) this.scheduleQueueDrain(chatId)
@@ -5477,7 +5414,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         return null
       })
     const modelOptions = selection ? { model: selection.model } : {}
-    const startedThread = await this.client.request<ThreadStartResponse>('thread/start', {
+    const startedThread = await this.client.request<ThreadResponse>('thread/start', {
       cwd,
       historyMode: 'paginated',
       ...modelOptions,
@@ -5644,9 +5581,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
     let existingThread = this.threads.get(threadId) ?? null
     if (existingThread) assertSupportedCodexHistory(existingThread)
-    let resume: ThreadResumeResponse
+    let resume: ThreadResponse
     try {
-      resume = await this.client.request<ThreadResumeResponse>(
+      resume = await this.client.request<ThreadResponse>(
         'thread/resume',
         {
           threadId,
@@ -6348,11 +6285,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return true
   }
 
-  private removeQueuedTurn = (threadId: string, turnId: string): boolean => {
-    const queuedTurn = this.takeQueuedTurn(threadId, turnId)
-    return Boolean(queuedTurn) || this.removeSyntheticTurn(threadId, turnId)
-  }
-
   private editQueuedTurn = (
     threadId: string,
     turnId: string,
@@ -6463,8 +6395,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private takeSteeringMessage = (threadId: string, messageId: string): SteeringMessage | null => {
-    const steeringMessages = this.steeringMessagesByThread.get(threadId) ?? []
-    const steeringMessage = steeringMessages.find((message) => message.id === messageId) ?? null
+    const steeringMessage = this.getSteeringMessage(threadId, messageId)
     if (!steeringMessage) return null
 
     this.updateSteeringMessages(threadId, (messages) =>
@@ -6473,12 +6404,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return steeringMessage
   }
 
-  private removeSteeringMessage = (threadId: string, messageId: string): boolean => {
-    const steeringMessage = this.takeSteeringMessage(threadId, messageId)
-    if (!steeringMessage) return false
-
-    return true
-  }
+  private removeSteeringMessage = (threadId: string, messageId: string): boolean =>
+    this.takeSteeringMessage(threadId, messageId) !== null
 
   private markSteeringMessagesSentForTurn = (threadId: string, turnId: string): void => {
     this.updateSteeringMessages(threadId, (messages) =>
@@ -6499,11 +6426,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     text: string,
     options?: ProviderTurnOptions
   ): boolean => {
-    const steeringMessage =
-      this.steeringMessagesByThread
-        .get(threadId)
-        ?.find((message) => message.id === messageId && message.status === 'waiting') ?? null
-    if (!steeringMessage) return false
+    if (this.getSteeringMessage(threadId, messageId)?.status !== 'waiting') return false
 
     this.updateSteeringMessages(threadId, (messages) =>
       messages.map((message) =>
@@ -6531,42 +6454,19 @@ export class CodexProviderAdapter implements ProviderAdapter {
     messageId: string,
     turnId: string
   ): string | null => {
-    const steeringMessage =
-      this.steeringMessagesByThread.get(threadId)?.find((message) => message.id === messageId) ??
-      null
-    if (!steeringMessage) return null
+    if (!this.getSteeringMessage(threadId, messageId)) return null
 
     this.updateSteeringMessages(threadId, (messages) =>
-      messages.map((message) =>
-        message.id === messageId
-          ? {
-              ...message,
-              turnId
-            }
-          : message
-      )
+      messages.map((message) => (message.id === messageId ? { ...message, turnId } : message))
     )
 
     return messageId
   }
 
-  private removeSteeringMessageForThread = (threadId: string): boolean =>
-    this.steeringMessagesByThread.delete(threadId)
-
-  private removeSteeringMessageForTurn = (threadId: string, turnId: string): boolean => {
-    const steeringMessages = this.steeringMessagesByThread.get(threadId)
-    if (
-      !steeringMessages?.some(
-        (message) => message.turnId === turnId && message.status !== 'waiting'
-      )
-    ) {
-      return false
-    }
-
+  private removeSteeringMessageForTurn = (threadId: string, turnId: string): void => {
     this.updateSteeringMessages(threadId, (messages) =>
       messages.filter((message) => message.turnId !== turnId || message.status === 'waiting')
     )
-    return true
   }
 
   private removeSteeringMessagesForTurnIds = (threadId: string, turnIds: Set<string>): void => {
@@ -7354,7 +7254,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private handleTurnNotification = (
     notification: RpcNotification,
-    params: TurnNotificationParams
+    params: NotificationParams
   ): void => {
     const threadId = getThreadId(params)
     if (!threadId || !params.turn || typeof params.turn !== 'object') return
@@ -7483,7 +7383,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private handleItemNotification = (
     notification: RpcNotification,
-    params: ItemNotificationParams
+    params: NotificationParams
   ): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
@@ -7531,7 +7431,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.scheduleChatUpdated(threadId)
   }
 
-  private handleAgentMessageDelta = (params: AgentMessageDeltaParams): void => {
+  private handleAgentMessageDelta = (params: NotificationParams): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
     const itemId = getItemId(params)
@@ -7548,7 +7448,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.scheduleChatUpdated(threadId)
   }
 
-  private handlePlanDelta = (params: AgentMessageDeltaParams): void => {
+  private handlePlanDelta = (params: NotificationParams): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
     const itemId = getItemId(params)
@@ -7562,7 +7462,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.scheduleChatUpdated(threadId)
   }
 
-  private handleReasoningSummaryDelta = (params: ReasoningSummaryDeltaParams): void => {
+  private handleReasoningSummaryDelta = (params: NotificationParams): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
     const itemId = getItemId(params)
@@ -7585,7 +7485,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.scheduleChatUpdated(threadId)
   }
 
-  private handleCommandOutputDelta = (params: AgentMessageDeltaParams): void => {
+  private handleCommandOutputDelta = (params: NotificationParams): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
     const itemId = getItemId(params)
@@ -7620,7 +7520,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.scheduleChatUpdated(threadId)
   }
 
-  private handleFileChangePatchUpdated = (params: FileChangePatchParams): void => {
+  private handleFileChangePatchUpdated = (params: NotificationParams): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
     const itemId = getItemId(params)
@@ -7635,7 +7535,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.scheduleChatUpdated(threadId)
   }
 
-  private handleRawResponseItemCompleted = (params: RawResponseItemParams): void => {
+  private handleRawResponseItemCompleted = (params: NotificationParams): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
     if (!threadId || !turnId) return
@@ -7663,7 +7563,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   private handleThreadNotification = (
     notification: RpcNotification,
-    params: ThreadNotificationParams
+    params: NotificationParams
   ): void => {
     const threadId = getThreadId(params)
     if (!threadId) return
@@ -7686,7 +7586,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.scheduleChatUpdated(threadId)
   }
 
-  private handleThreadTokenUsage = (params: Record<string, unknown>): void => {
+  private handleThreadTokenUsage = (params: NotificationParams): void => {
     const threadId = getThreadId(params)
     if (!threadId) return
     this.rememberThreadContainer(threadId)
@@ -7884,7 +7784,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private handleNotification = (notification: RpcNotification): void => {
-    const params = notification.params
+    const params = notification.params as NotificationParams | undefined
     if (!params || typeof params !== 'object') return
     const notificationThreadId = getThreadId(params)
     if (
@@ -7963,60 +7863,57 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'account/login/completed') {
-      const loginId = getStringValue((params as Record<string, unknown>).loginId)
+      const loginId = getStringValue(params.loginId)
       if (!loginId) return
-      const success = (params as Record<string, unknown>).success === true
-      const error = getStringValue((params as Record<string, unknown>).error)
+      const success = params.success === true
+      const error = getStringValue(params.error)
       if (!success) console.error(`Codex login ${loginId} failed`, error)
-      this.resolveLogin(loginId, {
-        success,
-        error
-      })
+      this.resolveLogin(loginId, { success, error })
       return
     }
 
     if (notification.method === 'turn/started' || notification.method === 'turn/completed') {
-      this.handleTurnNotification(notification, params as TurnNotificationParams)
+      this.handleTurnNotification(notification, params)
       return
     }
 
     if (notification.method === 'item/started' || notification.method === 'item/completed') {
-      this.handleItemNotification(notification, params as ItemNotificationParams)
+      this.handleItemNotification(notification, params)
       return
     }
 
     if (notification.method === 'item/agentMessage/delta') {
-      this.handleAgentMessageDelta(params as AgentMessageDeltaParams)
+      this.handleAgentMessageDelta(params)
       return
     }
 
     if (notification.method === 'item/plan/delta') {
-      this.handlePlanDelta(params as AgentMessageDeltaParams)
+      this.handlePlanDelta(params)
       return
     }
 
     if (notification.method === 'item/reasoning/summaryTextDelta') {
-      this.handleReasoningSummaryDelta(params as ReasoningSummaryDeltaParams)
+      this.handleReasoningSummaryDelta(params)
       return
     }
 
     if (notification.method === 'item/commandExecution/outputDelta') {
-      this.handleCommandOutputDelta(params as AgentMessageDeltaParams)
+      this.handleCommandOutputDelta(params)
       return
     }
 
     if (notification.method === 'item/fileChange/patchUpdated') {
-      this.handleFileChangePatchUpdated(params as FileChangePatchParams)
+      this.handleFileChangePatchUpdated(params)
       return
     }
 
     if (notification.method === 'rawResponseItem/completed') {
-      this.handleRawResponseItemCompleted(params as RawResponseItemParams)
+      this.handleRawResponseItemCompleted(params)
       return
     }
 
     if (notification.method === 'serverRequest/resolved') {
-      const requestId = (params as ServerRequestResolvedParams).requestId
+      const { requestId } = params
       if (typeof requestId === 'number') {
         this.removePendingApprovalByRequestId(requestId)
         const containerKey = getContainerTargetKey(this.getCurrentContainer())
@@ -8040,12 +7937,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       notification.method === 'thread/status/changed' ||
       notification.method === 'thread/name/updated'
     ) {
-      this.handleThreadNotification(notification, params as ThreadNotificationParams)
+      this.handleThreadNotification(notification, params)
       return
     }
 
     if (notification.method === 'thread/tokenUsage/updated') {
-      this.handleThreadTokenUsage(params as Record<string, unknown>)
+      this.handleThreadTokenUsage(params)
     }
   }
 }

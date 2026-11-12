@@ -14,37 +14,17 @@ export { MarkdownMessage } from './MarkdownMessage'
 
 const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = (props) => {
   const {
-    authenticationRequired,
-    availableRateLimitResets = 0,
-    rateLimitResetOptions,
-    container,
     continuePrompt = '',
     continueStoppedTurnDisabled = false,
-    continuedStoppedTurn = false,
-    followingWorkingStepHasNext = false,
-    followingWorkingStepStatus,
-    hasNextWorkingStep = false,
     item,
     onLoadWorkingStep,
     onLoadWorkingItem,
     onLoadWorkingToolPage,
-    onDisclosureToggle,
-    onOpenFileLink,
     onContinueStoppedTurn,
     onRetryStoppedTurn,
-    onManageAccounts,
-    onReauthenticate,
-    onUsageRefresh,
-    onUsageReset,
-    cwd,
-    projectCwd,
-    progressPolicy = 'regular',
-    progressDisclosureTarget,
     progressSettings,
-    rateLimitResetDisabled = false,
     retryMessage,
-    retryStoppedTurnDisabled = false,
-    workingStepContent
+    retryStoppedTurnDisabled = false
   } = props
 
   const resolvedProgressSettings = getProgressSettings(progressSettings)
@@ -67,18 +47,9 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = (props) => {
 
   return (
     <WorkingStep
-      authenticationRequired={authenticationRequired}
-      activityContent={workingStepContent}
-      availableRateLimitResets={availableRateLimitResets}
-      rateLimitResetOptions={rateLimitResetOptions}
-      container={container}
+      {...props}
       continueDisabled={continueStoppedTurnDisabled || !continuePrompt.trim()}
-      continuedStoppedTurn={continuedStoppedTurn}
-      followingWorkingStepHasNext={followingWorkingStepHasNext}
-      followingWorkingStepStatus={followingWorkingStepStatus}
-      hasNextWorkingStep={hasNextWorkingStep}
       item={item}
-      cwd={cwd}
       onLoad={
         onLoadWorkingStep ? (startIndex) => onLoadWorkingStep(item.id, startIndex) : undefined
       }
@@ -90,25 +61,15 @@ const ChatDetailItemComponent: React.FC<ChatDetailItemProps> = (props) => {
           ? (workingItemId, startIndex) => onLoadWorkingToolPage(item.id, workingItemId, startIndex)
           : undefined
       }
-      onDisclosureToggle={onDisclosureToggle}
       onContinue={
         onContinueStoppedTurn
           ? () => onContinueStoppedTurn(item.id, continuePrompt.trim())
           : undefined
       }
-      onOpenFileLink={onOpenFileLink}
       onRetry={
         retryMessage && onRetryStoppedTurn ? () => onRetryStoppedTurn(retryMessage) : undefined
       }
-      onManageAccounts={onManageAccounts}
-      onReauthenticate={onReauthenticate}
-      onUsageRefresh={onUsageRefresh}
-      onUsageReset={onUsageReset}
-      projectCwd={projectCwd}
-      progressPolicy={progressPolicy}
-      progressDisclosureTarget={progressDisclosureTarget}
       progressSettings={resolvedProgressSettings}
-      rateLimitResetDisabled={rateLimitResetDisabled}
       retryDisabled={retryStoppedTurnDisabled}
     />
   )

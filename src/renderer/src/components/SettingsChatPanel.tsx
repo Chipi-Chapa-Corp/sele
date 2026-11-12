@@ -12,31 +12,13 @@ import {
   type ChatBooleanSettingField
 } from '../appProjectSettings'
 import { type AppChatDropdownSelectionAction, type AppChatDropdownSettings } from '../settings'
-import { Dropdown } from './Dropdown'
+import { Dropdown, type DropdownOption } from './Dropdown'
 import { Input } from './Input'
 import { SegmentedControl } from './SegmentedControl'
 import { SettingsChatBooleanField } from './SettingsChatBooleanField'
 import type { SettingsPanelProps } from './SettingsPanel.types'
 
-type SettingsChatPanelProps = Pick<
-  SettingsPanelProps,
-  | 'forceAccessOptions'
-  | 'forceModelOptions'
-  | 'forceReasoningOptions'
-  | 'forceReviewOptions'
-  | 'forceSpeedOptions'
-  | 'getSettingsFieldClassName'
-  | 'handleChatDropdownPreferenceChange'
-  | 'handleChatDropdownSettingChange'
-  | 'handleNetworkRetrySettingChange'
-  | 'handleContinuePromptChange'
-  | 'handleLinkedChatSummaryPromptChange'
-  | 'isScopedSettingControlDisabled'
-  | 'renderProjectSettingAction'
-  | 'settingsPanelSettings'
->
-
-export function SettingsChatPanel(props: SettingsChatPanelProps): React.ReactNode {
+export function SettingsChatPanel(props: SettingsPanelProps): React.ReactNode {
   const {
     forceAccessOptions,
     forceModelOptions,
@@ -44,7 +26,6 @@ export function SettingsChatPanel(props: SettingsChatPanelProps): React.ReactNod
     forceReviewOptions,
     forceSpeedOptions,
     getSettingsFieldClassName,
-    handleChatDropdownPreferenceChange,
     handleChatDropdownSettingChange,
     handleNetworkRetrySettingChange,
     handleContinuePromptChange,
@@ -54,16 +35,41 @@ export function SettingsChatPanel(props: SettingsChatPanelProps): React.ReactNod
     settingsPanelSettings
   } = props
   const renderChatBooleanSettingField = (field: ChatBooleanSettingField): React.ReactElement => (
-    <SettingsChatBooleanField
-      key={field.key}
-      field={field}
-      getSettingsFieldClassName={getSettingsFieldClassName}
-      renderProjectSettingAction={renderProjectSettingAction}
-      settingsPanelSettings={settingsPanelSettings}
-      isScopedSettingControlDisabled={isScopedSettingControlDisabled}
-      handleChatDropdownPreferenceChange={handleChatDropdownPreferenceChange}
-    />
+    <SettingsChatBooleanField key={field.key} field={field} {...props} />
   )
+  const forceField = <
+    Key extends 'forceAccess' | 'forceReview' | 'forceModel' | 'forceReasoning' | 'forceSpeed'
+  >(
+    key: Key,
+    name: string,
+    target: string,
+    options: DropdownOption<AppChatDropdownSettings[Key]>[],
+    disabledWithoutChoice = false
+  ): React.ReactElement => {
+    const path: AppProjectSettingPath = { section: 'chat', key }
+    const label = `Force ${name}`
+    return (
+      <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
+        <div className="settings-dialog__field-header">
+          <h3>{label}</h3>
+          <p>{`Hide the chat dropdown and always use this ${target}.`}</p>
+        </div>
+        {renderProjectSettingAction(path, label)}
+        <Dropdown
+          id={`settings-chat-force-${name}`}
+          aria-label={label}
+          disabled={isScopedSettingControlDisabled(
+            path,
+            disabledWithoutChoice && options.length <= 1
+          )}
+          menuAlign="end"
+          options={options}
+          value={settingsPanelSettings.chat[key]}
+          onChange={(value) => handleChatDropdownSettingChange(key, value)}
+        />
+      </div>
+    )
+  }
   const chatSelectionActionPath = {
     section: 'chat',
     key: 'selectionAction'
@@ -71,26 +77,6 @@ export function SettingsChatPanel(props: SettingsChatPanelProps): React.ReactNod
   const chatDefaultActiveActionPath = {
     section: 'chat',
     key: 'defaultActiveAction'
-  } satisfies AppProjectSettingPath
-  const chatForceAccessPath = {
-    section: 'chat',
-    key: 'forceAccess'
-  } satisfies AppProjectSettingPath
-  const chatForceReviewPath = {
-    section: 'chat',
-    key: 'forceReview'
-  } satisfies AppProjectSettingPath
-  const chatForceModelPath = {
-    section: 'chat',
-    key: 'forceModel'
-  } satisfies AppProjectSettingPath
-  const chatForceReasoningPath = {
-    section: 'chat',
-    key: 'forceReasoning'
-  } satisfies AppProjectSettingPath
-  const chatForceSpeedPath = {
-    section: 'chat',
-    key: 'forceSpeed'
   } satisfies AppProjectSettingPath
   const chatContinuePromptPath = {
     section: 'chat',
@@ -161,95 +147,17 @@ export function SettingsChatPanel(props: SettingsChatPanelProps): React.ReactNod
               onChange={(value) => handleChatDropdownSettingChange('selectionAction', value)}
             />
           </div>
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <div className="settings-dialog__field-header">
-              <h3>Force access</h3>
-              <p>Hide the chat dropdown and always use this access mode.</p>
-            </div>
-            {renderProjectSettingAction(chatForceAccessPath, 'Force access')}
-            <Dropdown
-              id="settings-chat-force-access"
-              aria-label="Force access"
-              disabled={isScopedSettingControlDisabled(chatForceAccessPath)}
-              menuAlign="end"
-              options={forceAccessOptions}
-              value={settingsPanelSettings.chat.forceAccess}
-              onChange={(value) => handleChatDropdownSettingChange('forceAccess', value)}
-            />
-          </div>
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <div className="settings-dialog__field-header">
-              <h3>Force review</h3>
-              <p>Hide the chat dropdown and always use this review mode.</p>
-            </div>
-            {renderProjectSettingAction(chatForceReviewPath, 'Force review')}
-            <Dropdown
-              id="settings-chat-force-review"
-              aria-label="Force review"
-              disabled={isScopedSettingControlDisabled(chatForceReviewPath)}
-              menuAlign="end"
-              options={forceReviewOptions}
-              value={settingsPanelSettings.chat.forceReview}
-              onChange={(value) => handleChatDropdownSettingChange('forceReview', value)}
-            />
-          </div>
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <div className="settings-dialog__field-header">
-              <h3>Force model</h3>
-              <p>Hide the chat dropdown and always use this model.</p>
-            </div>
-            {renderProjectSettingAction(chatForceModelPath, 'Force model')}
-            <Dropdown
-              id="settings-chat-force-model"
-              aria-label="Force model"
-              disabled={isScopedSettingControlDisabled(
-                chatForceModelPath,
-                forceModelOptions.length <= 1
-              )}
-              menuAlign="end"
-              options={forceModelOptions}
-              value={settingsPanelSettings.chat.forceModel}
-              onChange={(value) => handleChatDropdownSettingChange('forceModel', value)}
-            />
-          </div>
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <div className="settings-dialog__field-header">
-              <h3>Force reasoning</h3>
-              <p>Hide the chat dropdown and always use this reasoning effort.</p>
-            </div>
-            {renderProjectSettingAction(chatForceReasoningPath, 'Force reasoning')}
-            <Dropdown
-              id="settings-chat-force-reasoning"
-              aria-label="Force reasoning"
-              disabled={isScopedSettingControlDisabled(
-                chatForceReasoningPath,
-                forceReasoningOptions.length <= 1
-              )}
-              menuAlign="end"
-              options={forceReasoningOptions}
-              value={settingsPanelSettings.chat.forceReasoning}
-              onChange={(value) => handleChatDropdownSettingChange('forceReasoning', value)}
-            />
-          </div>
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <div className="settings-dialog__field-header">
-              <h3>Force speed</h3>
-              <p>Hide the chat dropdown and always use this speed.</p>
-            </div>
-            {renderProjectSettingAction(chatForceSpeedPath, 'Force speed')}
-            <Dropdown
-              id="settings-chat-force-speed"
-              aria-label="Force speed"
-              disabled={isScopedSettingControlDisabled(
-                chatForceSpeedPath,
-                forceSpeedOptions.length <= 1
-              )}
-              menuAlign="end"
-              options={forceSpeedOptions}
-              value={settingsPanelSettings.chat.forceSpeed}
-              onChange={(value) => handleChatDropdownSettingChange('forceSpeed', value)}
-            />
-          </div>
+          {forceField('forceAccess', 'access', 'access mode', forceAccessOptions)}
+          {forceField('forceReview', 'review', 'review mode', forceReviewOptions)}
+          {forceField('forceModel', 'model', 'model', forceModelOptions, true)}
+          {forceField(
+            'forceReasoning',
+            'reasoning',
+            'reasoning effort',
+            forceReasoningOptions,
+            true
+          )}
+          {forceField('forceSpeed', 'speed', 'speed', forceSpeedOptions, true)}
           {chatDropdownSettingFields
             .filter((field) => field.key !== 'presets')
             .map(renderChatBooleanSettingField)}

@@ -18,23 +18,7 @@ const browserViewOptions = [
   { value: 'global', label: 'Global' }
 ] satisfies readonly DropdownOption<AppBrowserView>[]
 
-type SettingsBrowserPanelProps = Pick<
-  SettingsPanelProps,
-  | 'browserDefaultScaleInput'
-  | 'changesContainer'
-  | 'changesContainerKey'
-  | 'getSettingsFieldClassName'
-  | 'handleBrowserDefaultScaleChange'
-  | 'handleBrowserEnabledChange'
-  | 'handleBrowserViewChange'
-  | 'handleNativeChromeChange'
-  | 'isScopedSettingControlDisabled'
-  | 'renderProjectSettingAction'
-  | 'setBrowserDefaultScaleInputDraft'
-  | 'settingsPanelSettings'
->
-
-export function SettingsBrowserPanel(props: SettingsBrowserPanelProps): React.ReactNode {
+export function SettingsBrowserPanel(props: SettingsPanelProps): React.ReactNode {
   const {
     browserDefaultScaleInput,
     changesContainer,

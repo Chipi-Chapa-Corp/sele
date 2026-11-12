@@ -152,25 +152,23 @@ export function GitHubPullRequestDetail({
           />
         </div>
         {detail && (
-          <>
-            <div
-              className="chat-detail__message-date changes-sidebar__pull-request-refs"
-              aria-label="Pull request changes"
-            >
-              <span className="changes-sidebar__recent-label" title={detail.headRefName}>
-                {detail.headRefName}
-              </span>
-              <ArrowRight aria-label="into" />
-              <span className="changes-sidebar__recent-label" title={detail.baseRefName}>
-                {detail.baseRefName}
-              </span>
-              <span>
-                · {detail.changedFiles} {detail.changedFiles === 1 ? 'change' : 'changes'} ·{' '}
-                <span className="changes-sidebar__pull-request-additions">+{detail.additions}</span>{' '}
-                <span className="changes-sidebar__pull-request-deletions">−{detail.deletions}</span>
-              </span>
-            </div>
-          </>
+          <div
+            className="chat-detail__message-date changes-sidebar__pull-request-refs"
+            aria-label="Pull request changes"
+          >
+            <span className="changes-sidebar__recent-label" title={detail.headRefName}>
+              {detail.headRefName}
+            </span>
+            <ArrowRight aria-label="into" />
+            <span className="changes-sidebar__recent-label" title={detail.baseRefName}>
+              {detail.baseRefName}
+            </span>
+            <span>
+              · {detail.changedFiles} {detail.changedFiles === 1 ? 'change' : 'changes'} ·{' '}
+              <span className="changes-sidebar__pull-request-additions">+{detail.additions}</span>{' '}
+              <span className="changes-sidebar__pull-request-deletions">−{detail.deletions}</span>
+            </span>
+          </div>
         )}
       </header>
       {state.error && (

@@ -354,9 +354,7 @@ test('v2 connections use native integration and credential identities without le
       })
     return new Response(null, { status: 204 })
   })
-  const connections = await listOpenCodeConnections(f.client, async () => {
-    throw Error('v1 auth.json must not be used')
-  })
+  const connections = await listOpenCodeConnections(f.client)
   assert.equal(connections[0].connections[0].id, 'credential_uuid')
   await connectOpenCode(f.client, {
     integrationId: 'fixture',

@@ -42,8 +42,7 @@
   color: var(--lead);
 }
 
-.project-dialog__label-row,
-.project-dialog__section-heading {
+.project-dialog__label-row {
   display: flex;
   min-width: 0;
   align-items: center;

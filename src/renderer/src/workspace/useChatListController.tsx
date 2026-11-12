@@ -17,10 +17,41 @@ import {
 import { getComposerDraftScopeKey } from '../composerDraft'
 import { getContainerTargetKey } from '../containerSelection'
 import { getChatKey, getChatProjectCwd, mergeProjects } from './chatControllerUtils'
-import type { ChatListControllerDependencies } from './featureControllerDependencies'
+import type { useWorkspaceChatCache } from './features/useWorkspaceChatCache'
+import type { useWorkspaceChatProjection } from './features/useWorkspaceChatProjection'
+import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
+import type { useWorkspaceSidebarModel } from './features/useWorkspaceSidebarModel'
+import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
+import type { useWorkspaceProjectState } from './state/useWorkspaceProjectState'
+import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
 
 // Return shape is inferred from the controller declarations below.
-export function useChatListController(dependencies: ChatListControllerDependencies) {
+export function useChatListController(
+  dependencies: Pick<ReturnType<typeof useWorkspaceChatReadState>, 'applyChatMetadata'> &
+    Pick<ReturnType<typeof useWorkspaceChatCache>, 'removeRecentChatCacheEntry'> &
+    Pick<
+      ReturnType<typeof useWorkspaceChatState>,
+      'selectedChat' | 'selectedChatKeyRef' | 'chatDetail' | 'chatOrderMutationsRef' | 'setChats'
+    > &
+    Pick<ReturnType<typeof useWorkspaceChatProjection>, 'showNewChatView' | 'applyChatDetail'> &
+    Pick<ReturnType<typeof useWorkspaceSourceState>, 'newSessionContainer'> &
+    Pick<
+      ReturnType<typeof useWorkspaceProjectState>,
+      | 'projectCollapseFrameRef'
+      | 'expandedProjectGroupsBeforeDragRef'
+      | 'draggedProjectGroupKeyRef'
+      | 'projectDropInsertionIndexRef'
+      | 'setDraggedProjectGroupKey'
+      | 'setProjectDropInsertionIndex'
+      | 'setCollapsedCwdGroups'
+      | 'projectOrderMutationRef'
+      | 'projects'
+      | 'setProjects'
+      | 'chatGroupingPreference'
+      | 'collapsedCwdGroups'
+    > &
+    Pick<ReturnType<typeof useWorkspaceSidebarModel>, 'activeChatGroups' | 'searchTerms'>
+) {
   const {
     applyChatMetadata,
     removeRecentChatCacheEntry,

@@ -27,7 +27,7 @@ import {
 } from '../settings'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { Input } from './Input'
-import { SegmentedControl } from './SegmentedControl'
+import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
 import type { SettingsPanelProps } from './SettingsPanel.types'
 
 const themeOptions = [
@@ -46,11 +46,7 @@ const themeOptions = [
     label: 'System',
     icon: <Monitor aria-hidden="true" />
   }
-] satisfies readonly {
-  value: AppThemePreference
-  label: string
-  icon: React.ReactNode
-}[]
+] satisfies readonly SegmentedControlOption<AppThemePreference>[]
 
 const appearancePositionOptions = [
   {
@@ -73,11 +69,7 @@ const appearancePositionOptions = [
     label: 'System',
     icon: <Monitor aria-hidden="true" />
   }
-] satisfies readonly {
-  value: AppAppearancePositionPreference
-  label: string
-  icon: React.ReactNode
-}[]
+] satisfies readonly SegmentedControlOption<AppAppearancePositionPreference>[]
 
 const appearanceStyleOptions = [
   {
@@ -95,11 +87,7 @@ const appearanceStyleOptions = [
     label: 'System',
     icon: <Monitor aria-hidden="true" />
   }
-] satisfies readonly {
-  value: AppAppearanceStylePreference
-  label: string
-  icon: React.ReactNode
-}[]
+] satisfies readonly SegmentedControlOption<AppAppearanceStylePreference>[]
 
 const appearanceControlStyleOptions = [
   {
@@ -112,37 +100,9 @@ const appearanceControlStyleOptions = [
     label: 'Transparent',
     icon: <Sparkles aria-hidden="true" />
   }
-] satisfies readonly {
-  value: AppAppearanceControlStylePreference
-  label: string
-  icon: React.ReactNode
-}[]
+] satisfies readonly SegmentedControlOption<AppAppearanceControlStylePreference>[]
 
-type SettingsAppearancePanelProps = Pick<
-  SettingsPanelProps,
-  | 'appearanceFontSizeInputDraft'
-  | 'appearanceZoomLevelInput'
-  | 'getSettingsFieldClassName'
-  | 'handleAppearanceControlStyleChange'
-  | 'handleAppearanceFontFamilyChange'
-  | 'handleAppearanceFontSizeInputBlur'
-  | 'handleAppearanceFontSizeInputChange'
-  | 'handleAppearancePositionChange'
-  | 'handleAppearanceStyleChange'
-  | 'handleAppearanceZoomLevelInputBlur'
-  | 'handleAppearanceZoomLevelInputChange'
-  | 'handleThemePreferenceChange'
-  | 'installedFontFamilies'
-  | 'installedFontOptions'
-  | 'installedFontsLoaded'
-  | 'isScopedSettingControlDisabled'
-  | 'renderProjectSettingAction'
-  | 'settingsPanelSettings'
-  | 'settingsScopeKey'
-  | 'windowControlsHidden'
->
-
-export function SettingsAppearancePanel(props: SettingsAppearancePanelProps): React.ReactNode {
+export function SettingsAppearancePanel(props: SettingsPanelProps): React.ReactNode {
   const {
     appearanceFontSizeInputDraft,
     appearanceZoomLevelInput,
@@ -165,25 +125,33 @@ export function SettingsAppearancePanel(props: SettingsAppearancePanelProps): Re
     settingsScopeKey,
     windowControlsHidden
   } = props
-  const appearanceThemePath = {
-    section: 'appearance',
-    key: 'theme'
-  } satisfies AppProjectSettingPath
+  const toggleField = <Value extends string>(
+    path: AppProjectSettingPath,
+    heading: string,
+    label: string,
+    options: readonly SegmentedControlOption<Value>[],
+    value: Value,
+    onChange: (value: Value) => void,
+    disabled?: boolean
+  ): React.ReactElement => (
+    <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
+      <div className="settings-dialog__field-header">
+        <h3>{heading}</h3>
+      </div>
+      {renderProjectSettingAction(path, label)}
+      <SegmentedControl
+        aria-label={label}
+        className="settings-dialog__appearance-toggle"
+        disabled={isScopedSettingControlDisabled(path, disabled)}
+        options={options}
+        value={value}
+        onChange={onChange}
+      />
+    </div>
+  )
   const appearanceZoomPath = {
     section: 'appearance',
     key: 'zoomLevel'
-  } satisfies AppProjectSettingPath
-  const appearancePositionPath = {
-    section: 'appearance',
-    key: 'position'
-  } satisfies AppProjectSettingPath
-  const appearanceStylePath = {
-    section: 'appearance',
-    key: 'style'
-  } satisfies AppProjectSettingPath
-  const appearanceControlStylePath = {
-    section: 'appearance',
-    key: 'controlStyle'
   } satisfies AppProjectSettingPath
   const appearanceFontFields = [
     {
@@ -221,20 +189,14 @@ export function SettingsAppearancePanel(props: SettingsAppearancePanelProps): Re
           {isRemoteClient() ? 'Display' : 'Window'}
         </h2>
         <div className="settings-dialog__section-cards">
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <div className="settings-dialog__field-header">
-              <h3>Theme</h3>
-            </div>
-            {renderProjectSettingAction(appearanceThemePath, 'Theme')}
-            <SegmentedControl
-              aria-label="Theme"
-              className="settings-dialog__appearance-toggle"
-              disabled={isScopedSettingControlDisabled(appearanceThemePath)}
-              options={themeOptions}
-              value={settingsPanelSettings.appearance.theme}
-              onChange={handleThemePreferenceChange}
-            />
-          </div>
+          {toggleField(
+            { section: 'appearance', key: 'theme' },
+            'Theme',
+            'Theme',
+            themeOptions,
+            settingsPanelSettings.appearance.theme,
+            handleThemePreferenceChange
+          )}
           {!isRemoteClient() && (
             <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
               <label
@@ -277,34 +239,23 @@ export function SettingsAppearancePanel(props: SettingsAppearancePanelProps): Re
             Window Controls
           </h2>
           <div className="settings-dialog__section-cards">
-            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-              <div className="settings-dialog__field-header">
-                <h3>Position</h3>
-              </div>
-              {renderProjectSettingAction(appearancePositionPath, 'Position')}
-              <SegmentedControl
-                aria-label="Position"
-                className="settings-dialog__appearance-toggle"
-                disabled={isScopedSettingControlDisabled(appearancePositionPath)}
-                options={appearancePositionOptions}
-                value={settingsPanelSettings.appearance.position}
-                onChange={handleAppearancePositionChange}
-              />
-            </div>
-            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-              <div className="settings-dialog__field-header">
-                <h3>Style</h3>
-              </div>
-              {renderProjectSettingAction(appearanceStylePath, 'Window control style')}
-              <SegmentedControl
-                aria-label="Window control style"
-                className="settings-dialog__appearance-toggle"
-                disabled={isScopedSettingControlDisabled(appearanceStylePath, windowControlsHidden)}
-                options={appearanceStyleOptions}
-                value={settingsPanelSettings.appearance.style}
-                onChange={handleAppearanceStyleChange}
-              />
-            </div>
+            {toggleField(
+              { section: 'appearance', key: 'position' },
+              'Position',
+              'Position',
+              appearancePositionOptions,
+              settingsPanelSettings.appearance.position,
+              handleAppearancePositionChange
+            )}
+            {toggleField(
+              { section: 'appearance', key: 'style' },
+              'Style',
+              'Window control style',
+              appearanceStyleOptions,
+              settingsPanelSettings.appearance.style,
+              handleAppearanceStyleChange,
+              windowControlsHidden
+            )}
           </div>
         </section>
       )}
@@ -313,20 +264,14 @@ export function SettingsAppearancePanel(props: SettingsAppearancePanelProps): Re
           Buttons
         </h2>
         <div className="settings-dialog__section-cards">
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <div className="settings-dialog__field-header">
-              <h3>Style</h3>
-            </div>
-            {renderProjectSettingAction(appearanceControlStylePath, 'Button style')}
-            <SegmentedControl
-              aria-label="Button style"
-              className="settings-dialog__appearance-toggle"
-              disabled={isScopedSettingControlDisabled(appearanceControlStylePath)}
-              options={appearanceControlStyleOptions}
-              value={settingsPanelSettings.appearance.controlStyle}
-              onChange={handleAppearanceControlStyleChange}
-            />
-          </div>
+          {toggleField(
+            { section: 'appearance', key: 'controlStyle' },
+            'Style',
+            'Button style',
+            appearanceControlStyleOptions,
+            settingsPanelSettings.appearance.controlStyle,
+            handleAppearanceControlStyleChange
+          )}
         </div>
       </section>
       <section className="settings-dialog__section" aria-labelledby="settings-appearance-fonts">

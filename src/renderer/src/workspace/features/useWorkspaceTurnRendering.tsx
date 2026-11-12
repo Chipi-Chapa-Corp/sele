@@ -17,12 +17,12 @@ import { useWorkspaceScroll } from './useWorkspaceScroll'
 import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
 import { useWorkspaceSubagentPresentation } from './useWorkspaceSubagentPresentation'
 
-import type { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import type { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import type { useWorkspaceInteractions } from '../wiring/useWorkspaceInteractions'
-import type { useWorkspaceMessaging } from '../wiring/useWorkspaceMessaging'
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import type { useWorkspaceSubagents } from '../wiring/useWorkspaceSubagents'
+import type { useConversationViewModel } from '../useConversationViewModel'
+import type { useFileNavigationController } from '../useFileNavigationController'
+import type { useChatInteractionController } from '../useChatInteractionController'
+import type { useChatMessagingController } from '../useChatMessagingController'
+import type { useWorkspaceSelection } from '../useWorkspaceSelection'
+import type { useSubagentController } from '../useSubagentController'
 type WorkspaceTurnRenderingDependencies = {
   subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
   effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
@@ -32,7 +32,7 @@ type WorkspaceTurnRenderingDependencies = {
   chatState: ReturnType<typeof useWorkspaceChatState>
   chatErrors: ReturnType<typeof useWorkspaceChatErrors>
   session: Pick<
-    ReturnType<typeof useWorkspaceSession>,
+    ReturnType<typeof useWorkspaceSelection>,
     | 'accountUsage'
     | 'changesContainer'
     | 'changesCwd'
@@ -43,7 +43,7 @@ type WorkspaceTurnRenderingDependencies = {
     | 'activeSubagentChatView'
   >
   messaging: Pick<
-    ReturnType<typeof useWorkspaceMessaging>,
+    ReturnType<typeof useChatMessagingController>,
     | 'handleLoadWorkingStep'
     | 'handleLoadWorkingItem'
     | 'handleLoadWorkingToolPage'
@@ -57,11 +57,11 @@ type WorkspaceTurnRenderingDependencies = {
     | 'handleStartGoalChat'
   >
   interactions: Pick<
-    ReturnType<typeof useWorkspaceInteractions>,
+    ReturnType<typeof useChatInteractionController>,
     'chatHasActiveTurn' | 'chatHasPendingSteeringMessage' | 'handleForkMessage'
   >
   conversation: Pick<
-    ReturnType<typeof useWorkspaceConversation>,
+    ReturnType<typeof useConversationViewModel>,
     | 'chatItemIndexesById'
     | 'visibleChatItems'
     | 'followingWorkingStepsById'
@@ -85,11 +85,11 @@ type WorkspaceTurnRenderingDependencies = {
     | 'subagentChatConversationModel'
   >
   files: Pick<
-    ReturnType<typeof useWorkspaceFiles>,
+    ReturnType<typeof useFileNavigationController>,
     'handleOpenFileLink' | 'handleToggleChatMessagePinned'
   >
   subagents: Pick<
-    ReturnType<typeof useWorkspaceSubagents>,
+    ReturnType<typeof useSubagentController>,
     | 'renderChatCommitMarker'
     | 'handleLoadSubagentWorkingStep'
     | 'handleLoadSubagentWorkingItem'

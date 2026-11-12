@@ -143,13 +143,6 @@
   border-top: 0.0625rem solid var(--menu-border);
 }
 
-.message-box__usage-section-title {
-  color: var(--lead);
-  font-weight: 760;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
 .message-box__usage-row {
   display: flex;
   min-width: 0;

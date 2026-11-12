@@ -164,25 +164,12 @@ export const UnifiedDiff = ({
     files.forEach(({ file }) => {
       file.hunks.forEach((hunk) => {
         hunk.changes.forEach((change) => {
-          if (change.type === 'delete') {
-            locations.set(getChangeKey(change), {
-              line: change.lineNumber,
-              endLine: change.lineNumber,
-              side: 'old'
-            })
-          } else if (change.type === 'insert') {
-            locations.set(getChangeKey(change), {
-              line: change.lineNumber,
-              endLine: change.lineNumber,
-              side: 'new'
-            })
-          } else {
-            locations.set(getChangeKey(change), {
-              line: change.newLineNumber,
-              endLine: change.newLineNumber,
-              side: 'new'
-            })
-          }
+          const line = change.type === 'normal' ? change.newLineNumber : change.lineNumber
+          locations.set(getChangeKey(change), {
+            line,
+            endLine: line,
+            side: change.type === 'delete' ? 'old' : 'new'
+          })
         })
       })
     })
@@ -452,16 +439,11 @@ export const UnifiedDiff = ({
       <pre className="unified-diff__fallback">{fileDiff.diff}</pre>
     ) : (
       files.map(({ file, tokens }, index) => {
-        const targetChangeKeys = lineTarget?.fileIndex === index ? lineTarget.changeKeys : undefined
-        const targetAnchorChangeKey =
-          lineTarget?.fileIndex === index ? lineTarget.anchorChangeKey : undefined
+        const target = lineTarget?.fileIndex === index ? lineTarget : undefined
+        const targetAnchorChangeKey = target?.anchorChangeKey
         const hoveredChangeKeys = highlightedChangeKeys[index] ?? []
         const selectedChanges =
-          hoveredChangeKeys.length > 0
-            ? hoveredChangeKeys
-            : targetChangeKeys
-              ? targetChangeKeys
-              : []
+          hoveredChangeKeys.length > 0 ? hoveredChangeKeys : (target?.changeKeys ?? [])
 
         return (
           <Diff

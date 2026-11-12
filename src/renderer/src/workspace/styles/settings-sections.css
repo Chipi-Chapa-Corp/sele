@@ -67,13 +67,6 @@
   flex-direction: column;
 }
 
-.settings-dialog__account-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 0.4rem;
-}
-
 .settings-dialog__field {
   display: grid;
   width: 100%;
@@ -121,16 +114,6 @@
 .settings-dialog__field--stack.settings-dialog__field--with-project-action
   > :is(.settings-dialog__prompt-textarea, .ui-input) {
   grid-column: 1 / -1;
-}
-
-.settings-dialog__field--prompt-groups {
-  gap: 0.9rem;
-}
-
-.settings-dialog__prompt-group {
-  display: grid;
-  min-width: 0;
-  gap: 0.5rem;
 }
 
 .settings-dialog__field-header {

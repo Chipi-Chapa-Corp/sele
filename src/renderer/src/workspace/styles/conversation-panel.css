@@ -50,37 +50,6 @@
   pointer-events: none;
 }
 
-.chat-panel__new-chat-art {
-  --new-chat-puppy-opacity: 0.1;
-
-  display: block;
-  width: min(21rem, 62%);
-  height: min(23rem, 78%);
-  color: var(--quiet);
-  opacity: var(--new-chat-puppy-opacity);
-  animation: new-chat-puppy-fade-in 1s ease-out 5s both;
-}
-
-:root[data-color-scheme='dark'] .chat-panel__new-chat-art {
-  --new-chat-puppy-opacity: 0.05;
-}
-
-@keyframes new-chat-puppy-fade-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: var(--new-chat-puppy-opacity);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chat-panel__new-chat-art {
-    animation: none;
-  }
-}
-
 .chat-panel__new-chat-vegvisir {
   --new-chat-vegvisir-color: color-mix(in srgb, var(--quiet) 18%, var(--bg));
 

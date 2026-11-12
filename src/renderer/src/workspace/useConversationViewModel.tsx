@@ -44,62 +44,107 @@ import {
   getEstimatedContextTokens,
   getProviderChatKey
 } from './chatControllerUtils'
-import type { ConversationViewModelDependencies } from './viewModelDependencies'
+import type { useWorkspaceChatErrors } from './features/useWorkspaceChatErrors'
+import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
+import type { useWorkspaceEffectiveSelection } from './features/useWorkspaceEffectiveSelection'
+import type { useWorkspacePanes } from './features/useWorkspacePanes'
+import type { useWorkspaceProviderContext } from './features/useWorkspaceProviderContext'
+import type { useWorkspaceScroll } from './features/useWorkspaceScroll'
+import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
+import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
+import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
+import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
+import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
+import type { useChatInteractionController } from './useChatInteractionController'
+import type { useWorkspaceProviderUpdates } from './wiring/useWorkspaceProviderUpdates'
+import type { useWorkspaceSelection } from './useWorkspaceSelection'
 
 // Return shape is inferred from the view-model declarations below.
-export function useConversationViewModel(dependencies: ConversationViewModelDependencies) {
+export function useConversationViewModel({
+  provider,
+  effectiveSelection,
+  chatErrors,
+  chatState,
+  sourceState,
+  providerUpdates,
+  session,
+  interactions,
+  settings,
+  panes,
+  viewportState,
+  scroll,
+  chatRead,
+  gitState
+}: {
+  provider: ReturnType<typeof useWorkspaceProviderContext>
+  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
+  chatErrors: ReturnType<typeof useWorkspaceChatErrors>
+  chatState: ReturnType<typeof useWorkspaceChatState>
+  sourceState: ReturnType<typeof useWorkspaceSourceState>
+  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
+  session: ReturnType<typeof useWorkspaceSelection>
+  interactions: ReturnType<typeof useChatInteractionController>
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+  panes: ReturnType<typeof useWorkspacePanes>
+  viewportState: ReturnType<typeof useWorkspaceViewportState>
+  scroll: ReturnType<typeof useWorkspaceScroll>
+  chatRead: ReturnType<typeof useWorkspaceChatReadState>
+  gitState: ReturnType<typeof useWorkspaceGitState>
+}) {
+  const { authenticationRequired } = chatErrors
   const {
-    modelUnavailable,
-    authenticationRequired,
     selectedChat,
-    newSessionProviderAvailable,
-    providerUpdateInProgress,
     chatLoadState,
-    activeSubagentChatView,
-    chatHasActiveTurn,
     chatDetail,
     sendState,
     editingMessage,
-    effectiveAppSettings,
-    selectedChatId,
-    selectedChatKey,
     recentChatReferencePage,
     recentChatReferencesCache,
     pinnedRecentChatReferences,
     recentlyOpenedFilesByWorkspace,
-    recentlyOpenedFilesWorkspaceKey,
-    changesPaneView,
-    selectedProviderId,
     setRecentChatReferencePage,
     setRecentChatReferencesCache,
     chatTurnWindow,
     chatAtConversationBottom,
-    pendingPinnedMessageNavigationRef,
-    scrollPinnedChatMessageIntoView,
-    chatTurnPageLoadRequestRef,
-    chatTurnPageLoadInFlightRef,
-    chatTurnScrollDirectionRef,
     setChatTurnPageLoadDirection,
     chatTurnWindowRef,
     setChatTurnWindow,
+    selectedChatRef,
+    selectedChatKeyRef,
+    setChatDetail,
+    chatDetailRef
+  } = chatState
+  const { newSessionProviderAvailable } = sourceState
+  const { providerUpdateInProgress } = providerUpdates
+  const {
+    activeSubagentChatView,
+    selectedChatId,
+    selectedChatKey,
+    recentlyOpenedFilesWorkspaceKey,
+    selectedProviderId,
+    selectedChatCommitMarkers
+  } = session
+  const { chatHasActiveTurn, handleChatContentScroll, handleChatContentWheel } = interactions
+  const { effectiveAppSettings } = settings
+  const { changesPaneView } = panes
+  const {
+    pendingPinnedMessageNavigationRef,
+    chatTurnPageLoadRequestRef,
+    chatTurnPageLoadInFlightRef,
+    chatTurnScrollDirectionRef,
     chatAutoScrollEnabledRef,
     scrollToLatestTurnAfterRenderRef,
     pendingChatScrollAnchorRef,
     contentRef,
     chatScrollAdjustmentTargetRef,
     chatViewportAnchorRef,
-    scrollChatContentToBottom,
-    selectedChatRef,
-    selectedChatKeyRef,
-    applyViewedChatDetail,
-    chatAutoScrollTargetRef,
-    setChatDetail,
-    chatDetailRef,
-    handleChatContentScroll,
-    handleChatContentWheel,
-    continuedStoppedWorkingStepsByChat,
-    selectedChatCommitMarkers
-  } = dependencies
+    chatAutoScrollTargetRef
+  } = viewportState
+  const { scrollPinnedChatMessageIntoView, scrollChatContentToBottom } = scroll
+  const { applyViewedChatDetail } = chatRead
+  const { continuedStoppedWorkingStepsByChat } = gitState
+  const modelUnavailable =
+    provider.configProviderId === 'opencode-v2' && !effectiveSelection.effectiveModel
 
   const cursorWindowRef = useRef<ChatCursorWindow | null>(null)
   const failedPageReadRef = useRef<{ key: string; at: number } | null>(null)

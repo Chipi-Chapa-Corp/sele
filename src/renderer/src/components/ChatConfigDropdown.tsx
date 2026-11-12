@@ -15,7 +15,7 @@ import { MenuPageTransition } from '../motion/MenuPageTransition'
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { toCssRem } from '../cssUnits'
 import { useCompactLayout } from '../useCompactLayout'
-import type { DropdownOption } from './Dropdown'
+import { dropdownOptionMatches, type DropdownOption } from './Dropdown'
 import { ChatConfigSectionHeader } from './ChatConfigSectionHeader'
 import { Input } from './Input'
 import { Button } from './Button'
@@ -51,15 +51,15 @@ export type ChatConfigSection = {
 
 type ChatConfigDropdownProps = {
   id: string
-  modelsError?: string | null
+  modelsError: string | null
   modelLabel: string
   providerIcon: ReactNode
-  reasoningLabel?: string | null
+  reasoningLabel: string | null
   sections: readonly ChatConfigSection[]
   statusIcons: readonly SelectorIconItem[]
   title: string
   presetsEnabled: boolean
-  selectionAction?: AppChatDropdownSelectionAction
+  selectionAction: AppChatDropdownSelectionAction
   providerId: ProviderId
   selection: MessageBoxSelection
   getPresetDetails: (selection: MessageBoxSelection) => ChatConfigPresetDetails
@@ -120,7 +120,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   statusIcons,
   title,
   presetsEnabled,
-  selectionAction = 'back',
+  selectionAction,
   providerId,
   selection,
   getPresetDetails,
@@ -190,11 +190,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           .map((group) => ({
             ...group,
             options: group.options.filter((option) =>
-              [option.label, option.menuLabel, option.value, option.description]
-                .filter((searchableValue): searchableValue is string => Boolean(searchableValue))
-                .some((searchableValue) =>
-                  searchableValue.toLocaleLowerCase().includes(normalizedModelSearchQuery)
-                )
+              dropdownOptionMatches(option, normalizedModelSearchQuery)
             )
           }))
           .filter((group) => group.options.length > 0)
@@ -291,21 +287,30 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   }, [closeMenu, open, sections.length])
 
   const handleTriggerClick = (): void => {
-    if (menuOpen) {
-      closeMenu()
-      return
-    }
-
-    openMenu()
+    if (menuOpen) closeMenu()
+    else openMenu()
   }
 
   const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
-    if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowUp') {
-      if (event.key !== 'ArrowDown') return
-    }
+    if (!['Enter', ' ', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
 
     event.preventDefault()
     openMenu(true)
+  }
+
+  const goBack = (): void => {
+    if (compact) {
+      closeMenu()
+      return
+    }
+    setActiveSectionId(null)
+    setModelSearchQuery('')
+    if (!activeSection) {
+      setConfiguring(false)
+      setEditingPreset(null)
+      setSaveError(null)
+    }
+    focusFirstMenuButton()
   }
 
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -354,18 +359,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       event.target !== modelSearchInputRef.current
     ) {
       event.preventDefault()
-      if (compact) {
-        closeMenu()
-        return
-      }
-      setActiveSectionId(null)
-      setModelSearchQuery('')
-      if (!activeSection) {
-        setConfiguring(false)
-        setEditingPreset(null)
-        setSaveError(null)
-      }
-      focusFirstMenuButton()
+      goBack()
     }
   }
 
@@ -718,15 +712,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           ) : (
             <ChatConfigSectionHeader
               modelError={section.id === 'model' ? modelsError : null}
-              onBack={() => {
-                if (compact) {
-                  closeMenu()
-                  return
-                }
-                setActiveSectionId(null)
-                setModelSearchQuery('')
-                focusFirstMenuButton()
-              }}
+              onBack={goBack}
             />
           )}
         </div>

@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import 'react-diff-view/style/index.css'
 import type { AppContainerTarget } from '../../../shared/app'
 import type { McpAppScope as McpAppScopeValue } from '../../../shared/mcpApps'
 import type {
@@ -16,8 +15,6 @@ import {
   type WorkingStepDisclosureTarget,
   type WorkingStepProgressPolicy
 } from '../workingStepDisclosure'
-import './ChatDetailItem.css'
-import './UnifiedDiff.css'
 export type ChatDetailItemProps = {
   mcpAppScope?: McpAppScopeValue
   authenticationRequired?: boolean
@@ -74,5 +71,4 @@ export type ChatDetailItemProps = {
   selectedModelId?: ProviderModelId
   streaming?: boolean
   turnIndex?: number
-  workingStepContent?: ReactNode
 }

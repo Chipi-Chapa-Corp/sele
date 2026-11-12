@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { Kysely, sql, type ColumnType } from 'kysely'
+import { Kysely, sql, type AlterTableBuilder, type ColumnType } from 'kysely'
 import { WorkerSqliteDialect } from './sqliteWorkerDriver'
 import { getDatabasePath } from './storagePaths'
 import { closePreferenceStorage } from './preferenceStorage'
@@ -182,16 +182,26 @@ let database: Kysely<LocalDatabase> | null = null
 let connection: Database.Database | null = null
 let initialization: Promise<Kysely<LocalDatabase>> | null = null
 
+const hasColumn = async (
+  db: Kysely<LocalDatabase>,
+  table: string,
+  columnName: string
+): Promise<boolean> => {
+  const columns = await sql<{ name: string }>`pragma table_info(${sql.raw(table)})`.execute(db)
+  return columns.rows.some((column) => column.name === columnName)
+}
+
 const ensureColumn = async (
   db: Kysely<LocalDatabase>,
   table: string,
-  columnName: string,
-  addColumn: () => Promise<void>
+  ...column: Parameters<AlterTableBuilder['addColumn']>
 ): Promise<void> => {
-  const columns = await sql<{ name: string }>`pragma table_info(${sql.raw(table)})`.execute(db)
-  if (columns.rows.some((column) => column.name === columnName)) return
-
-  await addColumn()
+  if (!(await hasColumn(db, table, column[0]))) {
+    await db.schema
+      .alterTable(table)
+      .addColumn(...column)
+      .execute()
+  }
 }
 
 const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
@@ -205,12 +215,8 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('opening', 'text')
     .addColumn('updated_at', 'integer', (c) => c.notNull())
     .execute()
-  await ensureColumn(db, 'conversation_view', 'summary', () =>
-    db.schema.alterTable('conversation_view').addColumn('summary', 'text').execute()
-  )
-  await ensureColumn(db, 'conversation_view', 'opening', () =>
-    db.schema.alterTable('conversation_view').addColumn('opening', 'text').execute()
-  )
+  await ensureColumn(db, 'conversation_view', 'summary', 'text')
+  await ensureColumn(db, 'conversation_view', 'opening', 'text')
   await db.schema
     .createTable('chat_history_page')
     .ifNotExists()
@@ -398,16 +404,10 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .columns(['chat_id', 'created_at'])
     .execute()
 
-  await ensureColumn(db, 'cwd_metadata', 'project_cwd', () =>
-    db.schema.alterTable('cwd_metadata').addColumn('project_cwd', 'text').execute()
-  )
-  await ensureColumn(db, 'cwd_metadata', 'branch_name', () =>
-    db.schema.alterTable('cwd_metadata').addColumn('branch_name', 'text').execute()
-  )
-  await ensureColumn(db, 'cwd_metadata', 'worktree_base_branch_name', () =>
-    db.schema.alterTable('cwd_metadata').addColumn('worktree_base_branch_name', 'text').execute()
-  )
-  await ensureColumn(db, 'chat', 'account_id', async () => {
+  await ensureColumn(db, 'cwd_metadata', 'project_cwd', 'text')
+  await ensureColumn(db, 'cwd_metadata', 'branch_name', 'text')
+  await ensureColumn(db, 'cwd_metadata', 'worktree_base_branch_name', 'text')
+  if (!(await hasColumn(db, 'chat', 'account_id'))) {
     await db.transaction().execute(async (transaction) => {
       await transaction.schema.alterTable('chat').addColumn('account_id', 'text').execute()
       // Codex and Claude share native history across credentials. Preserve the newest
@@ -428,60 +428,24 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
           or json_extract(scope_key, '$[0]') like '["claude",%')
           and json_extract(scope_key, '$[1]') != ${scope}`.execute(transaction)
     })
-  })
-  await ensureColumn(db, 'chat', 'no_project', () =>
-    db.schema
-      .alterTable('chat')
-      .addColumn('no_project', 'integer', (column) => column.notNull().defaultTo(0))
-      .execute()
+  }
+  await ensureColumn(db, 'chat', 'no_project', 'integer', (column) => column.notNull().defaultTo(0))
+  await ensureColumn(db, 'chat', 'done_at', 'integer')
+  await ensureColumn(db, 'chat', 'seen_updated_at', 'integer')
+  await ensureColumn(db, 'chat', 'purpose', 'text')
+  await ensureColumn(db, 'chat', 'container_tool', 'text')
+  await ensureColumn(db, 'chat', 'container_name', 'text')
+  await ensureColumn(db, 'chat', 'container_runtime_tool', 'text')
+  await ensureColumn(db, 'chat', 'container_runtime_name', 'text')
+  await ensureColumn(db, 'chat', 'pinned_order', 'integer')
+  await ensureColumn(db, 'projects', 'name', 'text', (column) => column.notNull().defaultTo(''))
+  await ensureColumn(db, 'projects', 'icon', 'text')
+  await ensureColumn(db, 'projects', 'additional_cwds_json', 'text', (column) =>
+    column.notNull().defaultTo('[]')
   )
-  await ensureColumn(db, 'chat', 'done_at', () =>
-    db.schema.alterTable('chat').addColumn('done_at', 'integer').execute()
-  )
-  await ensureColumn(db, 'chat', 'seen_updated_at', () =>
-    db.schema.alterTable('chat').addColumn('seen_updated_at', 'integer').execute()
-  )
-  await ensureColumn(db, 'chat', 'purpose', () =>
-    db.schema.alterTable('chat').addColumn('purpose', 'text').execute()
-  )
-  await ensureColumn(db, 'chat', 'container_tool', () =>
-    db.schema.alterTable('chat').addColumn('container_tool', 'text').execute()
-  )
-  await ensureColumn(db, 'chat', 'container_name', () =>
-    db.schema.alterTable('chat').addColumn('container_name', 'text').execute()
-  )
-  await ensureColumn(db, 'chat', 'container_runtime_tool', () =>
-    db.schema.alterTable('chat').addColumn('container_runtime_tool', 'text').execute()
-  )
-  await ensureColumn(db, 'chat', 'container_runtime_name', () =>
-    db.schema.alterTable('chat').addColumn('container_runtime_name', 'text').execute()
-  )
-  await ensureColumn(db, 'chat', 'pinned_order', () =>
-    db.schema.alterTable('chat').addColumn('pinned_order', 'integer').execute()
-  )
-  await ensureColumn(db, 'projects', 'name', () =>
-    db.schema
-      .alterTable('projects')
-      .addColumn('name', 'text', (column) => column.notNull().defaultTo(''))
-      .execute()
-  )
-  await ensureColumn(db, 'projects', 'icon', () =>
-    db.schema.alterTable('projects').addColumn('icon', 'text').execute()
-  )
-  await ensureColumn(db, 'projects', 'additional_cwds_json', () =>
-    db.schema
-      .alterTable('projects')
-      .addColumn('additional_cwds_json', 'text', (column) => column.notNull().defaultTo('[]'))
-      .execute()
-  )
-  await ensureColumn(db, 'projects', 'sidebar_order', () =>
-    db.schema.alterTable('projects').addColumn('sidebar_order', 'integer').execute()
-  )
-  await ensureColumn(db, 'projects', 'order_only', () =>
-    db.schema
-      .alterTable('projects')
-      .addColumn('order_only', 'integer', (column) => column.notNull().defaultTo(0))
-      .execute()
+  await ensureColumn(db, 'projects', 'sidebar_order', 'integer')
+  await ensureColumn(db, 'projects', 'order_only', 'integer', (column) =>
+    column.notNull().defaultTo(0)
   )
 
   await db.schema
@@ -535,9 +499,7 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .on('token_usage')
     .columns(['provider_id', 'source_key', 'chat_id', 'turn_id'])
     .execute()
-  await ensureColumn(db, 'token_usage', 'provisional_group', () =>
-    db.schema.alterTable('token_usage').addColumn('provisional_group', 'text').execute()
-  )
+  await ensureColumn(db, 'token_usage', 'provisional_group', 'text')
   for (const name of [
     'input_usd',
     'cached_input_usd',
@@ -545,17 +507,10 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     'total_usd',
     'priced_at'
   ] as const) {
-    await ensureColumn(db, 'token_usage', name, () =>
-      db.schema
-        .alterTable('token_usage')
-        .addColumn(name, name === 'priced_at' ? 'integer' : 'real')
-        .execute()
-    )
+    await ensureColumn(db, 'token_usage', name, name === 'priced_at' ? 'integer' : 'real')
   }
   for (const table of ['token_usage', 'token_usage_checkpoint'] as const) {
-    await ensureColumn(db, table, 'models_json', () =>
-      db.schema.alterTable(table).addColumn('models_json', 'text').execute()
-    )
+    await ensureColumn(db, table, 'models_json', 'text')
   }
   await db.schema
     .createIndex('token_usage_recorded_at')

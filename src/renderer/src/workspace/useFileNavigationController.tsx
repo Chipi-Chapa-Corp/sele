@@ -29,20 +29,44 @@ import { getContainerTargetKey } from '../containerSelection'
 import { getChatDetailTurnCount, mergeChatDetailTurnPage } from '../chatDetailWindow'
 import { chatTurnWindowSize } from './controllerTypes'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
-import type { FileNavigationDependencies } from './controllerDependencies'
+import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
+import type { useWorkspaceSelection } from './useWorkspaceSelection'
+import type { useChangesData } from './useChangesData'
+import type { useGitViewModel } from './useGitViewModel'
+import type { useWorkspacePanes } from './features/useWorkspacePanes'
+import type { useWorkspaceDialogState } from './state/useWorkspaceDialogState'
+import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
+import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
+import type { useWorkspaceScroll } from './features/useWorkspaceScroll'
 import { useLatestHandler } from './stableProps'
 
 // Return shape is inferred from the controller declarations below.
-export function useFileNavigationController(dependencies: FileNavigationDependencies) {
+export function useFileNavigationController({
+  gitState,
+  session,
+  changes,
+  gitPresentation,
+  panes,
+  dialogState,
+  chatState,
+  viewportState,
+  scroll
+}: {
+  gitState: ReturnType<typeof useWorkspaceGitState>
+  session: ReturnType<typeof useWorkspaceSelection>
+  changes: ReturnType<typeof useChangesData>
+  gitPresentation: ReturnType<typeof useGitViewModel>
+  panes: ReturnType<typeof useWorkspacePanes>
+  dialogState: ReturnType<typeof useWorkspaceDialogState>
+  chatState: ReturnType<typeof useWorkspaceChatState>
+  viewportState: ReturnType<typeof useWorkspaceViewportState>
+  scroll: ReturnType<typeof useWorkspaceScroll>
+}) {
   const {
     setCollapsedChangeTreeFolders,
     collapsedFileTreeFolders,
     setCollapsedFileTreeFolders,
-    changesCwd,
     collapsedFileTreeFoldersByCwdRef,
-    repositoryFileIndex,
-    branchSwitchDisabled,
-    currentProjectKey,
     branchActionProjectKeysRef,
     setBranchActionProjectKeys,
     gitBranchRequestIdRef,
@@ -50,45 +74,55 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
     setGitBranchError,
     setGitBranchDeleteRetry,
     setGitBranchWorktreeDeleteRetry,
-    changesContainer,
     setGitBranches,
     setGitBranchesScope,
-    gitAvailabilityScopeKey,
     setGitBranchLoadState,
     setGitChangeLoadRequest,
     setFileTreeLoadRequest,
     gitBranchDeleteRetry,
     gitBranchWorktreeDeleteRetry,
     gitBranchActionState,
-    activeTreeFolderPaths,
-    hasCollapsedActiveTreeFolders,
-    changesPaneView,
-    setFileEditorTarget,
-    setRecentlyOpenedFilesByWorkspace,
+    collapsedChangeTreeFolders
+  } = gitState
+  const {
+    changesCwd,
+    changesContainer,
+    gitAvailabilityScopeKey,
     selectedChatKey,
+    handleChangesPaneViewChange
+  } = session
+  const { repositoryFileIndex } = changes
+  const {
+    branchSwitchDisabled,
+    currentProjectKey,
+    activeTreeFolderPaths,
+    hasCollapsedActiveTreeFolders
+  } = gitPresentation
+  const { changesPaneView } = panes
+  const { setFileEditorTarget, setReviewCommentsDraft, setSelectedReview } = dialogState
+  const {
+    setRecentlyOpenedFilesByWorkspace,
     setPinnedRecentChatReferences,
     selectedChatRef,
-    handleChangesPaneViewChange,
     selectedChatKeyRef,
-    pendingPinnedMessageNavigationRef,
-    scrollPinnedChatMessageIntoView,
     chatDetailRef,
+    chatTurnWindowRef,
+    setChatTurnPageLoadDirection,
+    setChatAtConversationBottom,
+    setChatDetail,
+    setChatTurnWindow
+  } = chatState
+  const {
+    pendingPinnedMessageNavigationRef,
     chatTurnPageLoadRequestRef,
     chatTurnPageLoadInFlightRef,
     chatTurnScrollDirectionRef,
     pendingChatScrollAnchorRef,
     chatViewportAnchorRef,
     chatAutoScrollEnabledRef,
-    chatAutoScrollTargetRef,
-    chatTurnWindowRef,
-    setChatTurnPageLoadDirection,
-    setChatAtConversationBottom,
-    setChatDetail,
-    setChatTurnWindow,
-    setReviewCommentsDraft,
-    setSelectedReview,
-    collapsedChangeTreeFolders
-  } = dependencies
+    chatAutoScrollTargetRef
+  } = viewportState
+  const { scrollPinnedChatMessageIntoView } = scroll
 
   const handleToggleChangeTreeFolder = (folderPath: string): void => {
     setCollapsedChangeTreeFolders((currentFolders) => ({

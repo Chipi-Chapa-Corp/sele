@@ -85,14 +85,14 @@ type TerminalSessionProps = {
   onStateChange: (
     tabId: string,
     state: TerminalState,
-    sessionId: string | null,
+    sessionId: string,
     agentAttached: boolean
   ) => void
 }
 
 type TerminalTabRuntime = {
   agentAttached: boolean
-  sessionId: string | null
+  sessionId: string
   state: TerminalState
 }
 
@@ -201,6 +201,17 @@ const getCommandTabLabel = (command: string): string => {
 const getCommandHeading = (command: string | null): string =>
   command?.trim() ? `$ ${command.trim().replace(/\r?\n/g, '\r\n')}\r\n` : ''
 
+const withoutTab = (workspace: TerminalWorkspace, closingIndex: number): TerminalWorkspace => {
+  const tabId = workspace.tabs[closingIndex].id
+  return {
+    activeTabId:
+      workspace.activeTabId === tabId
+        ? (workspace.tabs[closingIndex + 1]?.id ?? workspace.tabs[closingIndex - 1]?.id ?? null)
+        : workspace.activeTabId,
+    tabs: workspace.tabs.filter((tab) => tab.id !== tabId)
+  }
+}
+
 const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): TerminalTab => ({
   outputCache: { value: '' },
   chatKey: request.chatKey,
@@ -214,7 +225,7 @@ const createCommandTerminalTab = (request: TerminalCommandLaunchRequest): Termin
 
 export const TerminalSession: React.FC<TerminalSessionProps> = ({
   workspaceKey,
-  agentSessionId,
+  agentSessionId: nativeSessionId,
   agentInteractive,
   outputCache,
   initialOutput,
@@ -244,7 +255,6 @@ export const TerminalSession: React.FC<TerminalSessionProps> = ({
   const touchFocus = useRef<{ x: number; y: number } | null>(null)
   const interruptRef = useRef(onInterrupt)
   interruptRef.current = onInterrupt
-  const nativeSessionId = agentSessionId
   focusOnShowRef.current = focusOnShow
 
   useEffect(() => {
@@ -822,12 +832,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   }, [])
 
   const handleTabStateChange = useCallback(
-    (
-      tabId: string,
-      state: TerminalState,
-      sessionId: string | null,
-      agentAttached: boolean
-    ): void => {
+    (tabId: string, state: TerminalState, sessionId: string, agentAttached: boolean): void => {
       tabRuntimesRef.current.set(tabId, { sessionId, state, agentAttached })
     },
     []
@@ -862,25 +867,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     handledCommandLaunchRequestIdsRef.current.add(commandLaunchRequest.id)
     const tab = createCommandTerminalTab(commandLaunchRequest)
     setWorkspaces((currentWorkspaces) => {
-      const currentWorkspace = currentWorkspaces.get(commandLaunchRequest.workspaceKey)
-      const initialLocalTab = currentWorkspace
-        ? null
-        : createTerminalTab(
-            1,
-            commandLaunchRequest.projectCwd ?? commandLaunchRequest.cwd,
-            commandLaunchRequest.container
-          )
-      const targetWorkspace =
-        currentWorkspace ??
-        ({
-          activeTabId: initialLocalTab?.id ?? null,
-          tabs: initialLocalTab ? [initialLocalTab] : []
-        } satisfies TerminalWorkspace)
-      const nextWorkspaces = new Map(currentWorkspaces)
-
-      if (!currentWorkspace) {
+      let targetWorkspace = currentWorkspaces.get(commandLaunchRequest.workspaceKey)
+      if (!targetWorkspace) {
+        const initialLocalTab = createTerminalTab(
+          1,
+          commandLaunchRequest.projectCwd ?? commandLaunchRequest.cwd,
+          commandLaunchRequest.container
+        )
+        targetWorkspace = { activeTabId: initialLocalTab.id, tabs: [initialLocalTab] }
         nextTabNumberByWorkspaceRef.current.set(commandLaunchRequest.workspaceKey, 2)
       }
+      const nextWorkspaces = new Map(currentWorkspaces)
       const isEmptyTab = (candidate: TerminalTab): boolean =>
         !candidate.agentSessionId &&
         !candidate.initialCommand &&
@@ -1003,15 +1000,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           usedTabIdsRef.current.delete(tabId)
           tabRuntimesRef.current.delete(tabId)
           const nextWorkspaces = new Map(currentWorkspaces)
-          nextWorkspaces.set(currentWorkspaceKey, {
-            activeTabId:
-              currentWorkspace.activeTabId === tabId
-                ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
-                  currentWorkspace.tabs[closingIndex - 1]?.id ??
-                  null)
-                : currentWorkspace.activeTabId,
-            tabs: currentWorkspace.tabs.filter((currentTab) => currentTab.id !== tabId)
-          })
+          nextWorkspaces.set(currentWorkspaceKey, withoutTab(currentWorkspace, closingIndex))
           return nextWorkspaces
         }
 
@@ -1031,10 +1020,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         tab.agentSessionId &&
         runtime?.agentAttached !== false &&
         (!runtime || runtime.state === 'starting')
-      if ((runtime?.state === 'running' && runtime.sessionId) || nativeStarting) {
+      if (runtime?.state === 'running' || nativeStarting) {
         const processStatus = nativeStarting
           ? { hasActiveProcess: true, processName: null }
-          : await terminalApi.getProcessStatus(runtime!.sessionId!).catch((error) => {
+          : await terminalApi.getProcessStatus(runtime!.sessionId).catch((error) => {
               console.error('[caught:TerminalPanel:handleCloseTab]', error)
               return null
             })
@@ -1068,15 +1057,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         if (closingIndex < 0) return currentWorkspaces
 
         const nextWorkspaces = new Map(currentWorkspaces)
-        nextWorkspaces.set(closingWorkspaceKey, {
-          activeTabId:
-            currentWorkspace.activeTabId === tab.id
-              ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
-                currentWorkspace.tabs[closingIndex - 1]?.id ??
-                null)
-              : currentWorkspace.activeTabId,
-          tabs: currentWorkspace.tabs.filter((currentTab) => currentTab.id !== tab.id)
-        })
+        nextWorkspaces.set(closingWorkspaceKey, withoutTab(currentWorkspace, closingIndex))
         return nextWorkspaces
       })
     } catch (error) {

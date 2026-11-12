@@ -1,25 +1,18 @@
 import { Spinner } from './Spinner'
 import { ChevronRight } from 'lucide-react'
-import type { ReactNode } from 'react'
 import { useMemo, useRef, useState } from 'react'
 import 'react-diff-view/style/index.css'
-import type { AppContainerTarget } from '../../../shared/app'
-import type {
-  ProviderAccountRateLimitResetOutcome,
-  ProviderAccountRateLimitResetOption,
-  ProviderWorkingStep
-} from '../../../shared/provider'
+import type { ProviderWorkingStep } from '../../../shared/provider'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
 import { useWorkingToolMotion } from '../motion/useWorkingToolMotion'
 import { type AppChatProgressSettings } from '../settings'
 import {
   getWorkingStepDefaultOpen,
   getWorkingStepDisclosureKey,
-  resolveWorkingStepOpen,
-  type WorkingStepDisclosureTarget,
-  type WorkingStepProgressPolicy
+  resolveWorkingStepOpen
 } from '../workingStepDisclosure'
 import './ChatDetailItem.css'
+import type { ChatDetailItemProps } from './ChatDetailItem.types'
 import { ToolItem, isWorkingItemPayloadLoaded } from './ChatToolActivity'
 import './UnifiedDiff.css'
 import { WorkingElapsedTime } from './WorkingElapsedTime'
@@ -32,43 +25,24 @@ import {
   workingItemPageSize
 } from './workingStepPresentation'
 
-export const WorkingStep: React.FC<{
-  authenticationRequired?: boolean
-  activityContent?: ReactNode
-  availableRateLimitResets?: number
-  rateLimitResetOptions?: ProviderAccountRateLimitResetOption[]
-  container?: AppContainerTarget | null
-  continueDisabled?: boolean
-  continuedStoppedTurn?: boolean
-  followingWorkingStepHasNext?: boolean
-  followingWorkingStepStatus?: ProviderWorkingStep['status']
-  hasNextWorkingStep?: boolean
-  item: ProviderWorkingStep
-  cwd?: string | null
-  onContinue?: () => Promise<void> | void
-  onLoad?: (startIndex?: number) => Promise<void> | void
-  onLoadItem?: (itemId: string) => Promise<void> | void
-  onLoadToolPage?: (workingItemId: string, startIndex: number) => Promise<void> | void
-  onDisclosureToggle?: () => void
-  onOpenFileLink?: (path: string, displayPath: string, line?: number, endLine?: number) => void
-  onRetry?: () => Promise<void> | void
-  onManageAccounts?: () => void
-  onReauthenticate?: () => void
-  onUsageRefresh?: () => Promise<void> | void
-  onUsageReset?: (creditId?: string) => Promise<ProviderAccountRateLimitResetOutcome>
-  projectCwd?: string | null
-  progressPolicy?: WorkingStepProgressPolicy
-  progressDisclosureTarget?: WorkingStepDisclosureTarget
-  progressSettings: AppChatProgressSettings
-  rateLimitResetDisabled?: boolean
-  retryDisabled?: boolean
-}> = ({
+export const WorkingStep: React.FC<
+  Omit<ChatDetailItemProps, 'item' | 'progressSettings'> & {
+    continueDisabled: boolean
+    item: ProviderWorkingStep
+    onContinue?: () => Promise<void> | void
+    onLoad?: (startIndex?: number) => Promise<void> | void
+    onLoadItem?: (itemId: string) => Promise<void> | void
+    onLoadToolPage?: (workingItemId: string, startIndex: number) => Promise<void> | void
+    onRetry?: () => Promise<void> | void
+    progressSettings: AppChatProgressSettings
+    retryDisabled: boolean
+  }
+> = ({
   authenticationRequired = true,
-  activityContent,
   availableRateLimitResets = 0,
   rateLimitResetOptions,
   container,
-  continueDisabled = false,
+  continueDisabled,
   continuedStoppedTurn = false,
   followingWorkingStepHasNext = false,
   followingWorkingStepStatus,
@@ -91,7 +65,7 @@ export const WorkingStep: React.FC<{
   progressDisclosureTarget,
   progressSettings,
   rateLimitResetDisabled = false,
-  retryDisabled = false
+  retryDisabled
 }) => {
   const [continueClicked, setContinueClicked] = useState(false)
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -314,7 +288,7 @@ export const WorkingStep: React.FC<{
     )
   }
 
-  if (!active && blockCount === 0 && !hasHiddenItems && activityContent == null) {
+  if (!active && blockCount === 0 && !hasHiddenItems) {
     if (item.status !== 'stopped' && renderedGeneratedImages.length > 0) {
       return (
         <>
@@ -374,7 +348,6 @@ export const WorkingStep: React.FC<{
             cwd={cwd}
             onOpenFileLink={onOpenFileLink}
             itemCount={itemCount}
-            activityContent={activityContent}
           />
         )}
       </details>

@@ -6,12 +6,12 @@ import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceDialogState } from '../state/useWorkspaceDialogState'
 import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
 import { useGitHubPullRequests } from '../useGitHubPullRequests'
-import { useWorkspaceChanges } from '../wiring/useWorkspaceChanges'
-import { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import { useWorkspaceGitPresentation } from '../wiring/useWorkspaceGitPresentation'
-import { useWorkspaceGitSync } from '../wiring/useWorkspaceGitSync'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
+import { useChangesData } from '../useChangesData'
+import { useConversationViewModel } from '../useConversationViewModel'
+import { useFileNavigationController } from '../useFileNavigationController'
+import { useGitViewModel } from '../useGitViewModel'
+import { useGitSyncController } from '../useGitSyncController'
+import { useWorkspaceSelection } from '../useWorkspaceSelection'
 
 type WorkspaceChangesContentDependencies = {
   gitHubPullRequests: ReturnType<typeof useGitHubPullRequests>
@@ -19,14 +19,14 @@ type WorkspaceChangesContentDependencies = {
   browser: ReturnType<typeof useWorkspaceBrowser>
   chatState: ReturnType<typeof useWorkspaceChatState>
   dialogState: ReturnType<typeof useWorkspaceDialogState>
-  session: ReturnType<typeof useWorkspaceSession>
-  gitPresentation: ReturnType<typeof useWorkspaceGitPresentation>
-  changes: ReturnType<typeof useWorkspaceChanges>
-  conversation: ReturnType<typeof useWorkspaceConversation>
+  session: ReturnType<typeof useWorkspaceSelection>
+  gitPresentation: ReturnType<typeof useGitViewModel>
+  changes: ReturnType<typeof useChangesData>
+  conversation: ReturnType<typeof useConversationViewModel>
   settings: ReturnType<typeof useWorkspaceSettingsContext>
   gitState: ReturnType<typeof useWorkspaceGitState>
-  gitSync: ReturnType<typeof useWorkspaceGitSync>
-  files: ReturnType<typeof useWorkspaceFiles>
+  gitSync: ReturnType<typeof useGitSyncController>
+  files: ReturnType<typeof useFileNavigationController>
 }
 
 export function getWorkspaceChangesContent({

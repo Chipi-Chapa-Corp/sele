@@ -16,17 +16,17 @@ import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceStat
 import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
 import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import { useWorkspaceSettingsActions } from '../wiring/useWorkspaceSettingsActions'
+import { useWorkspaceSelection } from '../useWorkspaceSelection'
+import { useSettingsController } from '../useSettingsController'
 
 type WorkspaceSettingsPanelDependencies = {
   settings: ReturnType<typeof useWorkspaceSettingsContext>
   preferences: ReturnType<typeof useWorkspacePreferenceState>
   accountActions: ReturnType<typeof useWorkspaceProviderAccounts>
-  session: ReturnType<typeof useWorkspaceSession>
+  session: ReturnType<typeof useWorkspaceSelection>
   sourceControls: ReturnType<typeof useWorkspaceSourceControls>
   settingsOptions: ReturnType<typeof useWorkspaceSettingsOptions>
-  settingsActions: ReturnType<typeof useWorkspaceSettingsActions>
+  settingsActions: ReturnType<typeof useSettingsController>
   gitModels: ReturnType<typeof useWorkspaceGitModels>
   provider: ReturnType<typeof useWorkspaceProviderContext>
   projectState: ReturnType<typeof useWorkspaceProjectState>
@@ -117,7 +117,6 @@ export function getWorkspaceSettingsPanel({
     handleNativeChromeChange: settingsActions.handleNativeChromeChange,
     handleContinuePromptChange: settingsActions.handleContinuePromptChange,
     handleLinkedChatSummaryPromptChange: settingsActions.handleLinkedChatSummaryPromptChange,
-    handleDeleteProviderAccount: accountActions.handleDeleteProviderAccount,
     handleGitCommitMessageGenerationChange: settingsActions.handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange: settingsActions.handleGitCommitModelChange,
     handleGitCommitPromptChange: settingsActions.handleGitCommitPromptChange,
@@ -137,7 +136,6 @@ export function getWorkspaceSettingsPanel({
     handleRecentlyOpenedFilesLimitChange: settingsActions.handleRecentlyOpenedFilesLimitChange,
     handleRecentsMessageLimitChange: settingsActions.handleRecentsMessageLimitChange,
     handleThemePreferenceChange: settingsActions.handleThemePreferenceChange,
-    handleUseProviderAccount: accountActions.handleUseProviderAccount,
     installedFontFamilies: preferences.installedFontFamilies,
     installedFontOptions: settings.installedFontOptions,
     installedFontsLoaded: preferences.installedFontsLoaded,
@@ -149,22 +147,17 @@ export function getWorkspaceSettingsPanel({
     newSessionProviderValueContent: sourceControls.newSessionProviderValueContent,
     newSessionSourceAvailabilityReady: sourceState.newSessionSourceAvailabilityReady,
     providerAccountUpdatingId: providerState.providerAccountUpdatingId,
-    providerAccountsError: providerState.providerAccountsError,
-    providerAccountsLoadState: providerState.providerAccountsLoadState,
     providerResourceUpdatingKey: providerState.providerResourceUpdatingKey,
     providerResourcesError: providerState.providerResourcesError,
     providerResourcesLoadState: providerState.providerResourcesLoadState,
     renderProjectSettingAction: settingsActions.renderProjectSettingAction,
-    setAccountDialogOpen: providerState.setAccountDialogOpen,
     setBrowserDefaultScaleInputDraft: preferences.setBrowserDefaultScaleInputDraft,
     setEditingSshEnvironment: sourceState.setEditingSshEnvironment,
     setNewSessionProvider: sourceState.setNewSessionProvider,
-    setProviderAccountsRefresh: providerState.setProviderAccountsRefresh,
     setProviderResourcesRefresh: providerState.setProviderResourcesRefresh,
     setSshEnvironmentDialogOpen: sourceState.setSshEnvironmentDialogOpen,
     setSshEnvironmentError: sourceState.setSshEnvironmentError,
     settingsPanelSettings: settings.settingsPanelSettings,
-    settingsProviderAccounts: providerState.settingsProviderAccounts,
     settingsProviderApps: providerState.settingsProviderApps,
     settingsProviderSkills: providerState.settingsProviderSkills,
     settingsScopeKey: settings.settingsScopeKey,

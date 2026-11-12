@@ -15,7 +15,6 @@ import { ClaudeAccountLogin } from './ClaudeAccountLogin'
 import { ClaudeAccountStore, getClaudeAccountEnvironment } from './ClaudeAccountStore'
 import { createClaudeAccountStorage, runClaudeAccountCommand } from './ClaudeAccountStorage'
 import { getClaudeExecutable } from './ClaudeExecutable'
-import { parseClaudeVersion } from './ClaudeVersion'
 import { fetchClaudeRateLimits } from './ClaudeUsage'
 import {
   consumeClaudeResetCredit,
@@ -23,6 +22,7 @@ import {
   readClaudeResetAccount
 } from './ClaudeResetCredits'
 import { claudeAccountDisplayName } from '../AccountDisplayName'
+import { parseProviderVersion } from '../providerUpdate'
 import { ClaudeAuthenticationError, isClaudeAuthenticationError } from './ClaudeAuthentication'
 
 const usageFallbackCacheMs = 60_000
@@ -205,7 +205,7 @@ export class ClaudeAccounts {
     if (!check) {
       check = (async () => {
         const output = await runClaudeAccountCommand(await this.command(['--version'], options))
-        const version = parseClaudeVersion(output)
+        const version = parseProviderVersion(output)
         if (!version || !supportsClaudeAccounts(version)) {
           throw new Error(
             `Claude account switching requires Claude Code ${minimumVersion} or newer. Update Claude to continue.`

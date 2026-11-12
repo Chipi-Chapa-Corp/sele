@@ -23,14 +23,14 @@ const describeStatus = (status: ProviderConnectionStatus): string =>
       : `Couldn't verify: ${status.message}`
 
 type Props = {
-  providerId?: 'opencode-v2'
+  providerId: 'opencode-v2'
   container: AppContainerTarget
   onChanged?: (providerId?: string) => void
   renderHeader?: (refreshButton: ReactNode) => ReactNode
 }
 
 export function ProviderConnectionsPanel({
-  providerId = 'opencode-v2',
+  providerId,
   container,
   onChanged,
   renderHeader
@@ -202,11 +202,23 @@ export function ProviderConnectionsPanel({
     }
   }, [attempt, sourceKey, finish, fail])
 
-  const connect = async (): Promise<void> => {
-    if (!provider || !method || busy) return
+  const runBusy = async (action: () => Promise<void>): Promise<void> => {
     setBusy(true)
     setError(null)
+    try {
+      await action()
+    } catch (error) {
+      fail(error)
+    } finally {
+      if (alive.current) setBusy(false)
+    }
+  }
+  const connect = async (): Promise<void> => {
+    if (!provider || !method || busy) return
     setNotice('')
+    const promptInputs = Object.fromEntries(
+      prompts.map((prompt) => [prompt.key, inputs[prompt.key] ?? ''])
+    )
     const input: ProviderConnectInput =
       method.type === 'key'
         ? {
@@ -214,19 +226,10 @@ export function ProviderConnectionsPanel({
             method: 'key',
             ...(method.id ? { methodId: method.id } : {}),
             key: key.trim(),
-            inputs: Object.fromEntries(
-              prompts.map((prompt) => [prompt.key, inputs[prompt.key] ?? ''])
-            )
+            inputs: promptInputs
           }
-        : {
-            integrationId: provider.id,
-            method: 'oauth',
-            methodId: method.id,
-            inputs: Object.fromEntries(
-              prompts.map((prompt) => [prompt.key, inputs[prompt.key] ?? ''])
-            )
-          }
-    try {
+        : { integrationId: provider.id, method: 'oauth', methodId: method.id, inputs: promptInputs }
+    await runBusy(async () => {
       const result = await providerApi.connectProvider(providerId, input, options)
       if (!alive.current) {
         if (result) await providerApi.cancelConnection(providerId, result.attemptId, options)
@@ -239,59 +242,37 @@ export function ProviderConnectionsPanel({
         attemptProvider.current = provider.id
         setAttempt(result)
       } else await finish(provider.id)
-    } catch (error) {
-      fail(error)
-    } finally {
-      if (alive.current) setBusy(false)
-    }
+    })
   }
   const cancel = async (): Promise<void> => {
     if (!attempt) return
-    setBusy(true)
-    setError(null)
-    try {
+    await runBusy(async () => {
       await providerApi.cancelConnection(providerId, attempt.attemptId, options)
       if (alive.current) {
         pendingAttempt.current = null
         setAttempt(null)
         setCode('')
       }
-    } catch (error) {
-      fail(error)
-    } finally {
-      if (alive.current) setBusy(false)
-    }
+    })
   }
   const submitCode = async (): Promise<void> => {
     if (!attempt || !code.trim()) return
-    setBusy(true)
-    setError(null)
-    try {
+    await runBusy(async () => {
       await providerApi.completeConnection(providerId, attempt.attemptId, code.trim(), options)
       if (alive.current && pendingAttempt.current?.attemptId === attempt.attemptId)
         await finish(attemptProvider.current)
-    } catch (error) {
-      fail(error)
-    } finally {
-      if (alive.current) setBusy(false)
-    }
+    })
   }
   const remove = async (credentialId: string): Promise<void> => {
-    setBusy(true)
-    setError(null)
     setNotice('')
-    try {
+    await runBusy(async () => {
       await providerApi.deleteConnection(providerId, credentialId, options)
       if (alive.current) {
         setNotice('Connection removed.')
         changed.current?.()
         await reload()
       }
-    } catch (error) {
-      fail(error)
-    } finally {
-      if (alive.current) setBusy(false)
-    }
+    })
   }
   const connected = providers.filter((entry) => entry.connections.length > 0)
   const refreshButton = (

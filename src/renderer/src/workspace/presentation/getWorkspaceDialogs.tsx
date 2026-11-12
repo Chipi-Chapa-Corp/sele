@@ -6,9 +6,9 @@ import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceStat
 import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
 import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceChanges } from '../wiring/useWorkspaceChanges'
-import { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import { useWorkspaceSettingsActions } from '../wiring/useWorkspaceSettingsActions'
+import { useChangesData } from '../useChangesData'
+import { useFileNavigationController } from '../useFileNavigationController'
+import { useSettingsController } from '../useSettingsController'
 import { getWorkspaceSettingsPanel } from './getWorkspaceSettingsPanel'
 
 type WorkspaceDialogsDependencies = {
@@ -19,11 +19,11 @@ type WorkspaceDialogsDependencies = {
   accountActions: ReturnType<typeof useWorkspaceProviderAccounts>
   projectState: ReturnType<typeof useWorkspaceProjectState>
   sourceState: ReturnType<typeof useWorkspaceSourceState>
-  settingsActions: ReturnType<typeof useWorkspaceSettingsActions>
+  settingsActions: ReturnType<typeof useSettingsController>
   sourceControls: ReturnType<typeof useWorkspaceSourceControls>
   dialogState: ReturnType<typeof useWorkspaceDialogState>
-  changes: ReturnType<typeof useWorkspaceChanges>
-  files: ReturnType<typeof useWorkspaceFiles>
+  changes: ReturnType<typeof useChangesData>
+  files: ReturnType<typeof useFileNavigationController>
 }
 
 export function getWorkspaceDialogs({

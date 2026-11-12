@@ -14,37 +14,7 @@ import type { SettingsPanelProps } from './SettingsPanel.types'
 import { SettingsSkillPathAction } from './SettingsSkillPathAction'
 import { Switch } from './Switch'
 
-type SettingsProvidersPanelProps = Pick<
-  SettingsPanelProps,
-  | 'containerOptions'
-  | 'handleCodexRecommendedPluginsChange'
-  | 'handleProviderConnectionsChanged'
-  | 'handleNewSessionContainerChange'
-  | 'handleProviderAppEnabledChange'
-  | 'handleProviderSkillEnabledChange'
-  | 'handleProviderSkillsEnabledChange'
-  | 'newSessionContainerValue'
-  | 'newSessionProvider'
-  | 'newSessionProviderOptions'
-  | 'newSessionProviderValueContent'
-  | 'newSessionSourceAvailabilityReady'
-  | 'providerAccountUpdatingId'
-  | 'providerResourceUpdatingKey'
-  | 'providerResourcesError'
-  | 'providerResourcesLoadState'
-  | 'setEditingSshEnvironment'
-  | 'setNewSessionProvider'
-  | 'setProviderResourcesRefresh'
-  | 'setSshEnvironmentDialogOpen'
-  | 'setSshEnvironmentError'
-  | 'settingsPanelSettings'
-  | 'settingsProviderApps'
-  | 'settingsProviderSkills'
-  | 'sshEnvironmentError'
-  | 'newSessionContainer'
->
-
-export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): React.ReactNode {
+export function SettingsProvidersPanel(props: SettingsPanelProps): React.ReactNode {
   const {
     containerOptions,
     handleCodexRecommendedPluginsChange,

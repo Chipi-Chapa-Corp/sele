@@ -65,46 +65,63 @@ export function useComposerAttachments({
 
   const attachmentDragDepthRef = useRef(0)
 
-  const handleSelectAttachments = async (): Promise<void> => {
-    if (attachmentSelectionPending) return
-    if (selectedAttachments.length >= maxSelectedAttachmentCount) {
-      setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
-      return
-    }
+  const attachmentLimitError = `Attach up to ${maxSelectedAttachmentCount} files per message.`
 
+  const attachmentLimitReached = (): boolean => {
+    if (selectedAttachments.length < maxSelectedAttachmentCount) return false
+    setAttachmentSelectionError(attachmentLimitError)
+    return true
+  }
+
+  const appendAttachments = (attachments: AppSelectedAttachment[]): void => {
+    setSelectedAttachments((currentAttachments) => {
+      const existingPaths = new Set(currentAttachments.map((attachment) => attachment.path))
+      const nextAttachments = [
+        ...currentAttachments,
+        ...attachments.filter((attachment) => !existingPaths.has(attachment.path))
+      ]
+
+      if (nextAttachments.length > maxSelectedAttachmentCount) {
+        setAttachmentSelectionError(attachmentLimitError)
+      }
+
+      return nextAttachments.slice(0, maxSelectedAttachmentCount)
+    })
+    textareaRef.current?.focus({ preventScroll: true })
+  }
+
+  const loadAttachments = async <Loaded>(
+    load: () => Promise<Loaded>,
+    apply: (loaded: Loaded) => void,
+    logMessage: string,
+    fallbackError: string
+  ): Promise<void> => {
     setAttachmentSelectionPending(true)
     setAttachmentSelectionError(null)
 
     try {
       const selectionEditId = editSessionIdRef.current
-      const attachments = await appApi.selectMessageAttachments()
-      if (selectionEditId !== editSessionIdRef.current) return
-      if (attachments.length === 0) return
-
-      setSelectedAttachments((currentAttachments) => {
-        const existingPaths = new Set(currentAttachments.map((attachment) => attachment.path))
-        const nextAttachments = [
-          ...currentAttachments,
-          ...attachments.filter((attachment) => !existingPaths.has(attachment.path))
-        ]
-
-        if (nextAttachments.length > maxSelectedAttachmentCount) {
-          setAttachmentSelectionError(
-            `Attach up to ${maxSelectedAttachmentCount} files per message.`
-          )
-        }
-
-        return nextAttachments.slice(0, maxSelectedAttachmentCount)
-      })
-      textareaRef.current?.focus({ preventScroll: true })
-    } catch (selectionError) {
-      console.error('Unable to attach selected files.', selectionError)
-      setAttachmentSelectionError(
-        selectionError instanceof Error ? selectionError.message : 'Unable to attach files.'
-      )
+      const loaded = await load()
+      if (selectionEditId === editSessionIdRef.current) apply(loaded)
+    } catch (error) {
+      console.error(logMessage, error)
+      setAttachmentSelectionError(error instanceof Error ? error.message : fallbackError)
     } finally {
       setAttachmentSelectionPending(false)
     }
+  }
+
+  const handleSelectAttachments = async (): Promise<void> => {
+    if (attachmentSelectionPending || attachmentLimitReached()) return
+
+    await loadAttachments(
+      () => appApi.selectMessageAttachments(),
+      (attachments) => {
+        if (attachments.length > 0) appendAttachments(attachments)
+      },
+      'Unable to attach selected files.',
+      'Unable to attach files.'
+    )
   }
 
   const handleAttachmentDragEnter = (event: React.DragEvent<HTMLDivElement>): void => {
@@ -152,47 +169,18 @@ export function useComposerAttachments({
     if (attachmentSelectionPending) return
 
     const files = Array.from(event.dataTransfer.files)
-    if (files.length === 0) return
-    if (selectedAttachments.length >= maxSelectedAttachmentCount) {
-      setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
-      return
-    }
+    if (files.length === 0 || attachmentLimitReached()) return
     if (files.length > maxSelectedAttachmentCount) {
       setAttachmentSelectionError(`Drop up to ${maxSelectedAttachmentCount} files at a time.`)
       return
     }
 
-    setAttachmentSelectionPending(true)
-    setAttachmentSelectionError(null)
-
-    try {
-      const selectionEditId = editSessionIdRef.current
-      const attachments = await appApi.getDroppedMessageAttachments(files)
-      if (selectionEditId !== editSessionIdRef.current) return
-      setSelectedAttachments((currentAttachments) => {
-        const existingPaths = new Set(currentAttachments.map((attachment) => attachment.path))
-        const nextAttachments = [
-          ...currentAttachments,
-          ...attachments.filter((attachment) => !existingPaths.has(attachment.path))
-        ]
-
-        if (nextAttachments.length > maxSelectedAttachmentCount) {
-          setAttachmentSelectionError(
-            `Attach up to ${maxSelectedAttachmentCount} files per message.`
-          )
-        }
-
-        return nextAttachments.slice(0, maxSelectedAttachmentCount)
-      })
-      textareaRef.current?.focus({ preventScroll: true })
-    } catch (dropError) {
-      console.error('Unable to attach dropped files.', dropError)
-      setAttachmentSelectionError(
-        dropError instanceof Error ? dropError.message : 'Unable to attach dropped files.'
-      )
-    } finally {
-      setAttachmentSelectionPending(false)
-    }
+    await loadAttachments(
+      () => appApi.getDroppedMessageAttachments(files),
+      appendAttachments,
+      'Unable to attach dropped files.',
+      'Unable to attach dropped files.'
+    )
   }
 
   const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
@@ -204,38 +192,24 @@ export function useComposerAttachments({
     const file = imageItem.getAsFile()
 
     event.preventDefault()
-    if (attachmentSelectionPending) return
-    if (selectedAttachments.length >= maxSelectedAttachmentCount) {
-      setAttachmentSelectionError(`Attach up to ${maxSelectedAttachmentCount} files per message.`)
-      return
-    }
+    if (attachmentSelectionPending || attachmentLimitReached()) return
 
-    setAttachmentSelectionPending(true)
-    setAttachmentSelectionError(null)
+    await loadAttachments(
+      () => (file ? readPastedImage(file) : appApi.getClipboardImage()),
+      (image) => {
+        if (!image) throw new Error('Unable to read the pasted image.')
 
-    try {
-      const selectionEditId = editSessionIdRef.current
-      const image = await (file ? readPastedImage(file) : appApi.getClipboardImage())
-      if (selectionEditId !== editSessionIdRef.current) return
-      if (!image) throw new Error('Unable to read the pasted image.')
-
-      setSelectedAttachments((currentAttachments) => {
-        if (currentAttachments.length >= maxSelectedAttachmentCount) {
-          setAttachmentSelectionError(
-            `Attach up to ${maxSelectedAttachmentCount} files per message.`
-          )
-          return currentAttachments
-        }
-        return [...currentAttachments, image]
-      })
-    } catch (pasteError) {
-      console.error('Unable to paste an image attachment.', pasteError)
-      setAttachmentSelectionError(
-        pasteError instanceof Error ? pasteError.message : 'Unable to paste this image.'
-      )
-    } finally {
-      setAttachmentSelectionPending(false)
-    }
+        setSelectedAttachments((currentAttachments) => {
+          if (currentAttachments.length >= maxSelectedAttachmentCount) {
+            setAttachmentSelectionError(attachmentLimitError)
+            return currentAttachments
+          }
+          return [...currentAttachments, image]
+        })
+      },
+      'Unable to paste an image attachment.',
+      'Unable to paste this image.'
+    )
   }
 
   const handleRemoveAttachment = (path: string): void => {
