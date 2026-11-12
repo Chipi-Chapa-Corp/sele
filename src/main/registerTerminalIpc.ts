@@ -578,7 +578,12 @@ const runCommand = async (value: unknown): Promise<TerminalRunCommandResult> => 
 
 export const registerTerminalIpc = (): void => {
   handleClientRequest(terminalIpcChannels.listAgentSessions, async () => {
-    await recoverPersistentTerminals()
+    try {
+      await recoverPersistentTerminals()
+    } catch {
+      // Recovery logs failures once and schedules retries. One unavailable broker
+      // must not hide healthy terminals or turn the renderer poll into a log loop.
+    }
     return agentTerminalSessions.list()
   })
   handleClientRequest(
@@ -767,6 +772,20 @@ export const stopChatTerminalSessions = async (chatIds: string[]): Promise<void>
 
 const knownPersistentTerminals = new Set<string>()
 const recoveredPersistentTerminals = new Map<string, PersistentTerminal>()
+type RecoveryFailure = { error: unknown; attempts: number; retryAt: number }
+const failedTerminalRecoveries = new Map<string, RecoveryFailure>()
+let terminalDiscoveryFailure: RecoveryFailure | undefined
+const recoveryFailure = (
+  previous: RecoveryFailure | undefined,
+  error: unknown
+): RecoveryFailure => {
+  const attempts = (previous?.attempts ?? 0) + 1
+  return {
+    error,
+    attempts,
+    retryAt: Date.now() + Math.min(1000 * 2 ** Math.min(attempts - 1, 6), 60000)
+  }
+}
 let recovery: Promise<void> | undefined
 let recoveryNeeded = true
 const recoverPersistentTerminals = (): Promise<void> => {
@@ -774,12 +793,28 @@ const recoverPersistentTerminals = (): Promise<void> => {
   if (!recoveryNeeded) return Promise.resolve()
   recoveryNeeded = false
   recovery = (async () => {
-    const failures: unknown[] = []
-    for (const id of await listPersistentTerminalIds(app.getPath('userData'))) {
+    let ids: string[]
+    if (terminalDiscoveryFailure && terminalDiscoveryFailure.retryAt > Date.now())
+      throw terminalDiscoveryFailure.error
+    try {
+      ids = await listPersistentTerminalIds(app.getPath('userData'))
+      terminalDiscoveryFailure = undefined
+    } catch (error) {
+      if (!terminalDiscoveryFailure) console.error('Unable to discover terminal sessions.', error)
+      terminalDiscoveryFailure = recoveryFailure(terminalDiscoveryFailure, error)
+      throw error
+    }
+    const available = new Set(ids)
+    for (const id of failedTerminalRecoveries.keys())
+      if (!available.has(id)) failedTerminalRecoveries.delete(id)
+    for (const id of ids) {
       if (knownPersistentTerminals.has(id)) continue
+      const previousFailure = failedTerminalRecoveries.get(id)
+      if (previousFailure && previousFailure.retryAt > Date.now()) continue
       knownPersistentTerminals.add(id)
       try {
         const terminal = await connectPersistentTerminal(app.getPath('userData'), id)
+        failedTerminalRecoveries.delete(id)
         const metadata = terminal.metadata
         if (!metadata.workspaceKey) {
           terminal.detach()
@@ -814,14 +849,20 @@ const recoverPersistentTerminals = (): Promise<void> => {
         await terminal.attach()
       } catch (error) {
         // Expired helpers are normal; discovery must never relaunch their commands.
-        if (!['ECONNREFUSED', 'ENOENT'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        if (
+          !['ECONNREFUSED', 'ENOENT', 'ESTALE'].includes(
+            (error as NodeJS.ErrnoException).code ?? ''
+          )
+        ) {
           knownPersistentTerminals.delete(id)
-          recoveryNeeded = true
-          console.error('Unable to recover terminal session.', error)
-          failures.push(error)
+          if (!previousFailure) console.error('Unable to recover terminal session.', id, error)
+          failedTerminalRecoveries.set(id, recoveryFailure(previousFailure, error))
+        } else {
+          failedTerminalRecoveries.delete(id)
         }
       }
     }
+    const failures = [...failedTerminalRecoveries.values()].map((failure) => failure.error)
     if (failures.length) throw new AggregateError(failures, 'Unable to recover terminal sessions.')
   })()
     .catch((error) => {

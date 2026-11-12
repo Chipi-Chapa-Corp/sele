@@ -69,15 +69,35 @@ const attach = (directory: string, port: number, token: string): Promise<Runtime
       transport.exitCode = 0
       stdout.end()
       stderr.end()
-      if (!authenticated) reject(new Error('Process runtime rejected the connection.'))
+      if (!authenticated)
+        reject(
+          Object.assign(new Error('Process runtime rejected the connection.'), {
+            code: 'ERR_PROCESS_RUNTIME_REJECTED'
+          })
+        )
       else transport.emit('close', 0)
     })
     const reader = createInterface({ input: socket })
     reader.on('error', () => {}) // The socket's error handler owns connection failures.
     reader.on('line', (line) => {
       try {
-        const message = JSON.parse(line) as { runtimeReady?: boolean; runtimeStderr?: string }
-        if (message.runtimeReady) {
+        const message = JSON.parse(line) as {
+          runtimeReady?: boolean
+          runtimeStderr?: string
+          runtimeRejected?: 'authentication' | 'busy'
+        }
+        if (!authenticated && message.runtimeRejected) {
+          const error = Object.assign(
+            new Error(
+              message.runtimeRejected === 'authentication'
+                ? 'Process runtime endpoint is stale: authentication was rejected.'
+                : 'Process runtime rejected the connection: another client is attached.'
+            ),
+            { code: message.runtimeRejected === 'authentication' ? 'ESTALE' : 'EBUSY' }
+          )
+          reject(error)
+          socket.destroy()
+        } else if (message.runtimeReady) {
           authenticated = true
           clearTimeout(timeout)
           resolve(transport)
@@ -94,7 +114,7 @@ const missingListener = (error: unknown): boolean =>
   // loopback listener finishes closing. Treat that the same as a missing
   // listener so the caller can acquire the launch lock and start a fresh
   // owner instead of surfacing the transport race as the startup error.
-  ['ENOENT', 'ECONNREFUSED', 'ECONNRESET'].includes(
+  ['ENOENT', 'ECONNREFUSED', 'ECONNRESET', 'ESTALE'].includes(
     (error as NodeJS.ErrnoException)?.code ?? ''
   )
 

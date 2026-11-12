@@ -148,7 +148,11 @@ function startRuntime(config) {
       if (!authenticated) {
         clearTimeout(authTimeout)
         if (message.token !== config.token || (client && client !== socket)) {
-          socket.destroy()
+          socket.end(
+            JSON.stringify({
+              runtimeRejected: message.token !== config.token ? 'authentication' : 'busy'
+            }) + '\n'
+          )
           return
         }
         authenticated = true

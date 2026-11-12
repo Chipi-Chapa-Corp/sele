@@ -405,7 +405,11 @@ export class CodexAppServerClient {
       })
       .catch((error: unknown) => {
         if (this.lifecycle !== lifecycle) return
-        if (!['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException)?.code ?? ''))
+        if (
+          !['ENOENT', 'ECONNREFUSED', 'ESTALE'].includes(
+            (error as NodeJS.ErrnoException)?.code ?? ''
+          )
+        )
           throw error
       })
       .finally(() => {

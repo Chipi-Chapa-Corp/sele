@@ -15,6 +15,7 @@ import { getSshEnvironment } from './database/sshEnvironments'
 import { getSshCommandArgs } from './sshCommand'
 import {
   getRequiredWorkingDirectoryShellLine,
+  getStdinSafeLoginShellArgs,
   getTargetTerminalScript,
   quotePosixShellArg
 } from './targetShell'
@@ -894,7 +895,10 @@ const buildHostBridgeCommand = (
   options: HostCommandOptions = {}
 ): HostCommand => ({
   file: bridge.file,
-  args: [...bridge.argsPrefix, 'sh', '-lc', getBridgeCommandScript(file, args, options)],
+  args: [
+    ...bridge.argsPrefix,
+    ...getStdinSafeLoginShellArgs(getBridgeCommandScript(file, args, options))
+  ],
   env: process.env
 })
 
@@ -928,14 +932,15 @@ const getContainerScriptArgs = (
   script: string,
   interactive: boolean
 ): string[] => {
+  const shellArgs = interactive ? ['sh', '-lc', script] : getStdinSafeLoginShellArgs(script)
   if (container.tool === 'distrobox') {
-    return ['enter', container.name, '--', 'sh', '-lc', script]
+    return ['enter', container.name, '--', ...shellArgs]
   }
   if (container.tool === 'toolbox') {
-    return ['run', '--container', container.name, 'sh', '-lc', script]
+    return ['run', '--container', container.name, ...shellArgs]
   }
 
-  return ['exec', interactive ? '-it' : '-i', container.name, 'sh', '-lc', script]
+  return ['exec', interactive ? '-it' : '-i', container.name, ...shellArgs]
 }
 
 const getContainerExecutableArgs = (
@@ -999,7 +1004,12 @@ const getHostBridgeExecutablePath = async (
   ].join('\n')
   const wrapperScript = [
     '#!/bin/sh',
-    `exec ${[bridge.file, ...bridge.argsPrefix, 'sh', '-lc', commandScript, 'sele-host-bridge']
+    `exec ${[
+      bridge.file,
+      ...bridge.argsPrefix,
+      ...getStdinSafeLoginShellArgs(commandScript),
+      'sele-host-bridge'
+    ]
       .map(quotePosixShellArg)
       .join(' ')} "$@"`,
     ''

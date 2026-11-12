@@ -336,8 +336,27 @@ test('a second live client cannot replace the worker or take over its stream', a
   const profile = join(directory, 'exclusive')
   const first = rpc(await connectRuntime(profile))
   const original = await first.initialize()
-  await assert.rejects(connectRuntime(profile), /rejected the connection/)
+  await assert.rejects(connectRuntime(profile), { code: 'EBUSY' })
   assert.equal((await first.request('fixture/state')).pid, original.pid)
+})
+
+test('a stale endpoint whose port belongs to another runtime cannot block recovery or replace that runtime', async () => {
+  const profile = join(directory, 'reused-port')
+  const old = await connectRuntime(profile)
+  const closed = once(old, 'close')
+  old.kill()
+  await closed
+  connections.delete(old)
+  const otherProfile = join(directory, 'other-port-owner')
+  const other = rpc(await connectRuntime(otherProfile))
+  const original = await other.initialize()
+  const endpoint = (profile) =>
+    join(profile, 'codex-runtime-v1', codexRuntimeKey(profile, 'account-a'), 'endpoint.json')
+  await writeFile(endpoint(profile), await readFile(endpoint(otherProfile)))
+  await assert.rejects(connectCodexRuntime(profile, 'account-a', null), { code: 'ESTALE' })
+  const replacement = rpc(await connectRuntime(profile))
+  assert.notEqual((await replacement.initialize()).pid, original.pid)
+  assert.equal((await other.request('fixture/state')).pid, original.pid)
 })
 
 test('account runtime can restart immediately after disposal', async () => {

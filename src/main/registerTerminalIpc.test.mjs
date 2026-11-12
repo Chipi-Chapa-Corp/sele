@@ -18,7 +18,7 @@ const compile = (file) =>
 const terminalSource = compile('./registerTerminalIpc.ts')
 const hostSource = compile('./hostProcess.ts')
 
-const load = (source, mocks) => {
+const load = (source, mocks, globals = {}) => {
   const context = {
     exports: {},
     require: (name) => {
@@ -30,7 +30,8 @@ const load = (source, mocks) => {
     console,
     setTimeout,
     clearTimeout,
-    setImmediate
+    setImmediate,
+    ...globals
   }
   vm.runInNewContext(source, context)
   return context.exports
@@ -41,6 +42,9 @@ const harness = (now = Date.now, { persistent = new Map(), cleanup, discoveryErr
   const events = new Map()
   const agentSessions = createAgentTerminalSessions(now)
   const launches = []
+  const connections = []
+  const logs = []
+  let discoveries = 0
   const killed = []
   const ownerEvents = new Map()
   const makePty = () => ({
@@ -64,55 +68,69 @@ const harness = (now = Date.now, { persistent = new Map(), cleanup, discoveryErr
     './optionalProbe': {},
     '../shared/expectedAbsence.ts': {}
   })
-  const terminal = load(terminalSource, {
-    electron: {
-      app: { getPath: () => '/tmp' },
-      ipcMain: { on: (channel, handler) => events.set(channel, handler) }
-    },
-    './clientIpc': { onClientMessage: (channel, handler) => events.set(channel, handler) },
-    './agentTerminalSessions': { agentTerminalSessions: agentSessions },
-    './persistentTerminal': {
-      listPersistentTerminalIds: async () => {
-        if (discoveryError) throw discoveryError
-        return [...persistent.keys()]
+  const terminal = load(
+    terminalSource,
+    {
+      electron: {
+        app: { getPath: () => '/tmp' },
+        ipcMain: { on: (channel, handler) => events.set(channel, handler) }
       },
-      connectPersistentTerminal: async (_profile, id, launch) => {
-        if (persistent.has(id)) return persistent.get(id)
-        const pty = {
-          ...makePty(),
-          metadata: launch.metadata,
-          attach: async () => {},
-          stop: async () => {
-            pty.killed = true
-          },
-          detach: () => {
-            pty.detached = true
+      './clientIpc': { onClientMessage: (channel, handler) => events.set(channel, handler) },
+      './agentTerminalSessions': { agentTerminalSessions: agentSessions },
+      './persistentTerminal': {
+        listPersistentTerminalIds: async () => {
+          discoveries++
+          if (discoveryError) throw discoveryError
+          return [...persistent.keys()]
+        },
+        connectPersistentTerminal: async (_profile, id, launch) => {
+          connections.push(id)
+          if (persistent.get(id) instanceof Error) throw persistent.get(id)
+          if (persistent.has(id)) return persistent.get(id)
+          const pty = {
+            ...makePty(),
+            metadata: launch.metadata,
+            attach: async () => {},
+            stop: async () => {
+              pty.killed = true
+            },
+            detach: () => {
+              pty.detached = true
+            }
           }
+          persistent.set(id, pty)
+          return pty
         }
-        persistent.set(id, pty)
-        return pty
-      }
+      },
+      './chatProcesses': {
+        killTerminalProcesses: async (ids, target) => {
+          killed.push([Array.from(ids), target])
+          await cleanup?.(ids, target)
+        }
+      },
+      '../shared/provider': { providerIds: ['codex', 'claude', 'copilot', 'opencode-v2'] },
+      'node:os': { userInfo: () => ({ shell: '/bin/sh' }) },
+      './pty': {
+        spawnPty: (file, args, options) => {
+          const pty = makePty()
+          launches.push({ file, args: Array.from(args), options, pty })
+          return pty
+        }
+      },
+      './logging': { handleClientRequest: (channel, handler) => handlers.set(channel, handler) },
+      '../shared/terminal': { terminalIpcChannels },
+      './containerTarget': { requireContainerTarget },
+      './hostProcess': host
     },
-    './chatProcesses': {
-      killTerminalProcesses: async (ids, target) => {
-        killed.push([Array.from(ids), target])
-        await cleanup?.(ids, target)
-      }
-    },
-    '../shared/provider': { providerIds: ['codex', 'claude', 'copilot', 'opencode-v2'] },
-    'node:os': { userInfo: () => ({ shell: '/bin/sh' }) },
-    './pty': {
-      spawnPty: (file, args, options) => {
-        const pty = makePty()
-        launches.push({ file, args: Array.from(args), options, pty })
-        return pty
-      }
-    },
-    './logging': { handleClientRequest: (channel, handler) => handlers.set(channel, handler) },
-    '../shared/terminal': { terminalIpcChannels },
-    './containerTarget': { requireContainerTarget },
-    './hostProcess': host
-  })
+    {
+      Date: class extends Date {
+        static now() {
+          return now()
+        }
+      },
+      console: { ...console, error: (...args) => logs.push(args) }
+    }
+  )
   terminal.registerTerminalIpc()
   const sent = []
   const owner = {
@@ -133,6 +151,11 @@ const harness = (now = Date.now, { persistent = new Map(), cleanup, discoveryErr
     killed,
     ownerEvents,
     launches,
+    connections,
+    logs,
+    get discoveries() {
+      return discoveries
+    },
     create: (options) =>
       handlers.get(terminalIpcChannels.createSession)(
         { sender: owner },
@@ -369,4 +392,73 @@ test('container terminal scripts explicitly export safely quoted ownership marke
   })
   assert.equal(output, "chat'quoted\nterminal\n")
   assert.equal(script.includes('/do-not-export'), false)
+})
+
+for (const code of ['ERR_PROCESS_RUNTIME_REJECTED', 'EBUSY']) {
+  test(`${code} recovery uses backoff, logs once and keeps healthy sessions available`, async () => {
+    let now = 0
+    const first = harness()
+    const good = await first.create({ workspaceKey: 'workspace', chatKey: 'codex:healthy' })
+    await first.dispose({ preserve: true })
+    const persistent = first.persistent
+    const bad = '12345678-1234-4234-8234-123456789abd'
+    persistent.set(
+      bad,
+      Object.assign(new Error('Process runtime rejected the connection.'), { code })
+    )
+    const h = harness(() => now, { persistent })
+    const poll = () => h.handlers.get(terminalIpcChannels.listAgentSessions)()
+    for (let i = 0; i < 100; i++) assert.equal((await poll()).length, 1)
+    assert.equal(h.connections.filter((id) => id === bad).length, 1)
+    assert.equal(h.logs.length, 1)
+    now = 999
+    await poll()
+    assert.equal(h.connections.filter((id) => id === bad).length, 1)
+    now = 1000
+    await poll()
+    assert.equal(h.connections.filter((id) => id === bad).length, 2)
+    for (let i = 0; i < 100; i++) await poll()
+    assert.equal(h.logs.length, 1)
+    assert.equal(h.connections.filter((id) => id === bad).length, 2)
+    const recovered = {
+      ...persistent.get(good.id),
+      metadata: {
+        ...persistent.get(good.id).metadata,
+        sessionId: bad,
+        chatKey: 'codex:recovered'
+      }
+    }
+    persistent.set(bad, recovered)
+    now = 3000
+    assert.equal((await poll()).length, 2)
+    assert.equal(h.connections.filter((id) => id === bad).length, 3)
+    assert.equal(h.logs.length, 1)
+    assert.equal(h.launches.length, 0, 'discovery must never replay a terminal command')
+    await h.dispose()
+  })
+}
+
+test('stale authentication endpoints expire quietly without blocking healthy terminal recovery', async () => {
+  const first = harness()
+  await first.create({ workspaceKey: 'workspace', chatKey: 'codex:healthy' })
+  await first.dispose({ preserve: true })
+  first.persistent.set(
+    'stale',
+    Object.assign(new Error('Authentication rejected'), { code: 'ESTALE' })
+  )
+  const h = harness(Date.now, { persistent: first.persistent })
+  for (let i = 0; i < 100; i++)
+    assert.equal((await h.handlers.get(terminalIpcChannels.listAgentSessions)()).length, 1)
+  assert.equal(h.connections.filter((id) => id === 'stale').length, 1)
+  assert.equal(h.logs.length, 0)
+  await h.dispose()
+})
+
+test('discovery failures are throttled during listing but explicit cleanup still reports failure', async () => {
+  const h = harness(() => 0, { discoveryError: new Error('profile unavailable') })
+  for (let i = 0; i < 100; i++)
+    assert.equal((await h.handlers.get(terminalIpcChannels.listAgentSessions)()).length, 0)
+  assert.equal(h.discoveries, 1)
+  assert.equal(h.logs.length, 1)
+  await assert.rejects(h.dispose(), (error) => error.errors[0].message === 'profile unavailable')
 })

@@ -49,6 +49,23 @@ const validGate = (id: string, gate: string): boolean =>
   basename(gate) === 'permit' &&
   basename(dirname(gate)).startsWith(`sele-chat-${id}-`)
 
+// A user manager reached from a container can belong to the host. Compare kernel
+// namespaces and the filesystem root, rather than trusting a reachable D-Bus socket.
+const executionEnvironmentSource = String.raw`
+import json, os, sys
+def execution_environment():
+    root = os.stat('/')
+    return [os.stat('/proc/self/ns/' + name).st_ino for name in ('mnt', 'pid', 'user')] + [root.st_dev, root.st_ino]
+`
+export const executionEnvironmentProbeSource = `${executionEnvironmentSource}\nprint(json.dumps(execution_environment()))\n`
+export const verifiedProviderExecSource = `${executionEnvironmentSource}
+if execution_environment() != json.loads(sys.argv[1]):
+    sys.exit('Provider launch refused: the process manager is outside the selected environment.')
+os.execvpe(sys.argv[2], sys.argv[2:], os.environ)
+`
+
+class ProcessManagerEnvironmentMismatch extends Error {}
+
 /** Durable launch receipts, rather than process-name or environment heuristics. */
 export class ProviderProcessStore {
   private records = new Map<string, ProviderProcessRecord>()
@@ -198,6 +215,28 @@ export class ProviderProcessStore {
     return pending
   }
 
+  private executionEnvironment = async (
+    container: AppContainerTarget | null,
+    manager = false
+  ): Promise<string> => {
+    const command = ['python3', '-c', executionEnvironmentProbeSource]
+    const output = await this.execute(
+      manager ? 'systemd-run' : command[0],
+      manager
+        ? ['--user', '--pipe', '--wait', '--collect', '--quiet', '--', ...command]
+        : command.slice(1),
+      container
+    )
+    const identity: unknown = JSON.parse(output.trim())
+    if (
+      !Array.isArray(identity) ||
+      identity.length !== 5 ||
+      !identity.every((value) => Number.isSafeInteger(value) && value >= 0)
+    )
+      throw new Error('Unable to identify the provider execution environment.')
+    return JSON.stringify(identity)
+  }
+
   private scope = (record: ProviderProcessRecord): ProviderProcessScope => ({
     record,
     bind: async (chatId) => {
@@ -210,6 +249,7 @@ export class ProviderProcessStore {
       this.serializeLaunch(record.id, async () => {
         if (record.stopped) throw new Error('This chat process boundary has been stopped.')
         if (record.unavailable) return { file, args }
+        let environment: string
         // Probe in the execution environment, including the host outside Flatpak.
         // Requiring ExitType=cgroup keeps detached descendants alive after the CLI exits.
         try {
@@ -225,14 +265,28 @@ export class ProviderProcessStore {
             ],
             record.container
           )
-        } catch {
+          environment = await this.executionEnvironment(record.container)
+          if (environment !== (await this.executionEnvironment(record.container, true)))
+            throw new ProcessManagerEnvironmentMismatch(
+              'Process tracking is unavailable because the user systemd manager runs outside the selected environment.'
+            )
+        } catch (error) {
           if (record.stopped) throw new Error('This chat process boundary has been stopped.')
-          if (record.units.length)
+          if (error instanceof ProcessManagerEnvironmentMismatch && record.units.length) {
+            // Older versions could launch host services for container chats. Retire
+            // those exact receipts before admitting a correctly targeted launch.
+            await this.cleanup(record)
+            record.units = []
+            record.gate = null
+          } else if (record.units.length)
             throw new Error(
               'The chat process manager is unavailable; refusing an untracked launch.'
             )
+          if (record.stopped) throw new Error('This chat process boundary has been stopped.')
           record.unavailable =
-            'Process tracking requires Linux cgroup v2, Python 3, and a reachable user systemd manager (version 250 or newer).'
+            error instanceof ProcessManagerEnvironmentMismatch
+              ? error.message
+              : 'Process tracking requires Linux cgroup v2, Python 3, and a reachable user systemd manager (version 250 or newer).'
           await this.save(record)
           return { file, args }
         }
@@ -291,6 +345,10 @@ export class ProviderProcessStore {
               value !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ? [`--setenv=${key}`] : []
             ),
             '--',
+            'python3',
+            '-c',
+            verifiedProviderExecSource,
+            environment,
             file,
             ...args
           ]
@@ -351,6 +409,10 @@ export class ProviderProcessStore {
     await this.launches.get(record.id)
     await this.preparing.get(record.id)
     await this.save(record)
+    await this.cleanup(record)
+  }
+
+  private cleanup = async (record: ProviderProcessRecord): Promise<void> => {
     const failures: unknown[] = []
     if (record.gate) {
       try {

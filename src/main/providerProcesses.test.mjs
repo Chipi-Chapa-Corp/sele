@@ -69,7 +69,7 @@ test('provider executable lookup and launch use the same saved container', async
   )
   assert.deepEqual(
     h.calls.map((call) => call.method),
-    ['resolve', 'prepare', 'launch']
+    ['resolve', 'prepare', 'executable']
   )
   for (const call of h.calls) assert.equal(call.options.container, dev)
   assert.equal(h.calls.at(-1).file, '/container/bin/provider')

@@ -58,8 +58,12 @@ export const getProviderHostExecutableCommand = async (
   if (!scope) return getHostExecutableCommand(file, args, options)
   const targetOptions = { ...options, container: scope.record.container }
   const executable = await resolveHostExecutable(file, targetOptions)
-  return getProviderHostCommand(executable.file, args, {
+  const executableOptions = {
     ...targetOptions,
     env: executable.env
-  })
+  }
+  const command = await scope.prepare(executable.file, args, executableOptions)
+  // SDKs append their own CLI arguments. Keep those inside the target transport
+  // and, when available, after the provider in the systemd command as well.
+  return getHostExecutableCommand(command.file, command.args, executableOptions)
 }

@@ -86,6 +86,7 @@ test('a workspace shell restores the same PID, scrollback, input and resize afte
   assert.ok(originalOutput.startsWith('Previous agent output\r\n[process exited with code 7]\r\n'))
   assert.equal(originalChunks[0].replay, true)
   assert.equal(originalChunks.find(({ data }) => data.includes('started:')).replay, false)
+  await assert.rejects(connectPersistentTerminal(profile, id), { code: 'EBUSY' })
   first.detach()
   await new Promise((resolve) => setTimeout(resolve, 100))
   assert.deepEqual(await listPersistentTerminalIds(profile), [id])

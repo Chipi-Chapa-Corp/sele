@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import test from 'node:test'
-import { ProviderProcessStore, processListSource } from './ProviderProcessStore.ts'
+import {
+  ProviderProcessStore,
+  processListSource,
+  executionEnvironmentProbeSource,
+  verifiedProviderExecSource
+} from './ProviderProcessStore.ts'
+
+const environment = JSON.stringify([100, 101, 102, 103, 104])
 
 const fixture = async (t, override) => {
   const directory = await mkdtemp(join(tmpdir(), 'sele-process-ownership-'))
@@ -19,9 +26,10 @@ const fixture = async (t, override) => {
       const result = await override(file, args)
       if (result !== undefined) return result
     }
-    if (file === 'systemd-run') return 'systemd 257\n'
+    if (file === 'systemd-run') return args.includes('--version') ? 'systemd 257\n' : environment
     if (args.includes('show-environment')) return ''
     if (file === 'python3') {
+      if (args[1] === executionEnvironmentProbeSource) return environment
       if (args[1].includes('mkdtemp')) {
         const gate = `/tmp/sele-chat-${args[2]}-fixture/permit`
         gates.add(gate)
@@ -71,7 +79,16 @@ test('durable ownership survives restart; cleanup addresses only the recorded un
   assert.ok(launch.args.includes(`--property=ConditionPathExists=${scope.record.gate}`))
   assert.ok(launch.args.includes('--setenv=TOKEN'))
   assert.ok(!launch.args.some((arg) => arg.includes('secret-value')))
-  assert.deepEqual(launch.args.slice(-4), ['--', '/fixture/provider', '--argument', 'literal $()'])
+  assert.deepEqual(launch.args.slice(launch.args.indexOf('--')), [
+    '--',
+    'python3',
+    '-c',
+    verifiedProviderExecSource,
+    environment,
+    '/fixture/provider',
+    '--argument',
+    'literal $()'
+  ])
   const receipt = JSON.parse(await readFile(join(h.directory, `${scope.record.id}.json`), 'utf8'))
   assert.deepEqual(
     receipt.units,
@@ -245,4 +262,114 @@ test('a recorded boundary can still be stopped when process inspection fails', a
   assert.equal(group.status, 'unavailable')
   await h.store.stop(group.id)
   assert.equal(h.units.size, 0)
+})
+
+for (const provider of ['codex', 'claude', 'copilot', 'opencode-v2']) {
+  test(`${provider} stays in its selected container when the reachable manager belongs to the host`, async (t) => {
+    const h = await fixture(t, (file, args) => {
+      if (file === 'systemd-run' && !args.includes('--version')) return '[900,901,902,903,904]'
+    })
+    const container = { kind: 'container', tool: 'distrobox', name: 'dev' }
+    const scope = await h.store.create(provider, null, container)
+    await scope.bind('chat')
+    const launch = await scope.prepare(provider, ['literal argument'], {})
+    assert.deepEqual(launch, { file: provider, args: ['literal argument'] })
+    assert.equal(scope.record.units.length, 0)
+    assert.equal(scope.record.gate, null)
+    assert.match(scope.record.unavailable, /manager runs outside the selected environment/)
+    assert.ok(h.calls.every((call) => call.container === container))
+    assert.equal((await h.store.list(provider, 'chat'))[0].status, 'unavailable')
+  })
+}
+
+test('an old container receipt retires only its recorded host services before launching inside the container', async (t) => {
+  const h = await fixture(t, (file, args) => {
+    if (file === 'systemd-run' && !args.includes('--version')) return '[900,901,902,903,904]'
+  })
+  const container = { kind: 'container', tool: 'distrobox', name: 'dev' }
+  const scope = await h.store.create('codex', null, container)
+  await scope.bind('chat')
+  const unit = `sele-chat-${scope.record.id}-00000000-0000-4000-8000-000000000000.service`
+  const gate = `/tmp/sele-chat-${scope.record.id}-old/permit`
+  h.units.add(unit)
+  h.units.add('unrelated.service')
+  h.gates.add(gate)
+  const receipt = { ...scope.record, units: [unit], gate }
+  await writeFile(join(h.directory, `${scope.record.id}.json`), JSON.stringify(receipt))
+  const restarted = new ProviderProcessStore(h.directory, h.execute)
+  const recovered = await restarted.find('codex', null, 'chat', container)
+  assert.deepEqual(await recovered.prepare('codex', ['app-server'], {}), {
+    file: 'codex',
+    args: ['app-server']
+  })
+  assert.deepEqual([...h.units], ['unrelated.service'])
+  assert.equal(h.gates.size, 0)
+  assert.deepEqual(recovered.record.units, [])
+  assert.equal(recovered.record.gate, null)
+  assert.match(recovered.record.unavailable, /outside the selected environment/)
+  const persisted = JSON.parse(await readFile(join(h.directory, `${scope.record.id}.json`), 'utf8'))
+  assert.deepEqual(persisted, recovered.record)
+})
+
+test('a manager that changes environments after preflight cannot execute the provider', {
+  skip: process.platform !== 'linux'
+}, async () => {
+  const run = promisify(execFile)
+  const { stdout: actual } = await run('python3', ['-c', executionEnvironmentProbeSource])
+  const wrong = JSON.parse(actual)
+  wrong[0]++
+  await assert.rejects(
+    run('python3', [
+      '-c',
+      verifiedProviderExecSource,
+      JSON.stringify(wrong),
+      'python3',
+      '-c',
+      "print('provider started')"
+    ]),
+    (error) => /launch refused/.test(error.stderr) && !error.stdout.includes('provider started')
+  )
+  const input = '{"id":1,"method":"initialize"}\n'
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      verifiedProviderExecSource,
+      actual.trim(),
+      'python3',
+      '-c',
+      'import os,sys; print(os.environ["SELE_FIXTURE_ENV"]); print(repr(sys.argv[1])); print(sys.stdin.read(),end="")',
+      'literal $() argument\nwith newline'
+    ],
+    { env: { ...process.env, SELE_FIXTURE_ENV: 'preserved' }, input, encoding: 'utf8' }
+  )
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, "preserved\n'literal $() argument\\nwith newline'\n" + input)
+})
+
+test('failed cleanup of a legacy host launch blocks replacement and preserves ownership for retry', async (t) => {
+  let foreign = false,
+    broken = true
+  const h = await fixture(t, (file, args) => {
+    if (foreign && file === 'systemd-run' && !args.includes('--version'))
+      return '[900,901,902,903,904]'
+    if (args.includes('stop') && broken) throw new Error('Stop failed')
+  })
+  const scope = await h.store.create('codex', null, {
+    kind: 'container',
+    tool: 'distrobox',
+    name: 'dev'
+  })
+  await scope.prepare('codex', [], {})
+  const unit = scope.record.units[0]
+  h.units.add(unit)
+  foreign = true
+  await assert.rejects(scope.prepare('codex', [], {}), /Unable to stop/)
+  assert.equal(scope.record.unavailable, null)
+  assert.deepEqual(scope.record.units, [unit])
+  assert.ok(h.units.has(unit))
+  broken = false
+  assert.deepEqual(await scope.prepare('codex', [], {}), { file: 'codex', args: [] })
+  assert.equal(h.units.size, 0)
+  assert.deepEqual(scope.record.units, [])
 })

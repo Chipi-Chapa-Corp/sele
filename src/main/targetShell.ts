@@ -2,6 +2,16 @@ export const targetWorkingDirectoryFailureExitCode = 125
 
 export const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
+export const getStdinSafeLoginShellArgs = (script: string): string[] => [
+  'sh',
+  '-c',
+  // Login profiles may launch programs that read stdin (e.g. host-spawn).
+  // Give startup /dev/null, then restore the protocol stream before the command.
+  'exec 3<&0; exec sh -lc "$@" </dev/null',
+  'sele-login',
+  `exec 0<&3 3<&-\n${script}`
+]
+
 export const getRequiredWorkingDirectoryShellLine = (cwd: string): string =>
   `cd ${quotePosixShellArg(cwd)} || exit ${targetWorkingDirectoryFailureExitCode}`
 

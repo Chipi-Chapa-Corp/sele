@@ -345,7 +345,7 @@ test('background recovery initializes a retained runtime without submitting a tu
   )
 })
 
-for (const code of ['ENOENT', 'ECONNREFUSED']) {
+for (const code of ['ENOENT', 'ECONNREFUSED', 'ESTALE']) {
   test(`missing retained runtime (${code}) does not launch until a foreground request`, async (t) => {
     const { client, children, context } = fixture(t)
     client.persistent = true
