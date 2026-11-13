@@ -208,6 +208,10 @@ if (!process.versions.electron) {
       assert.equal(await run('document.querySelector("textarea").disabled'), true)
       await run('window.finishSave()')
       await settle()
+      await run(`new Promise(resolve => {
+        const check = () => document.querySelector('.limit-reset-queue time') ? resolve() : requestAnimationFrame(check)
+        check()
+      })`)
       assert.equal(await run('document.querySelector("dialog")'), null)
       assert.equal(
         await run(
