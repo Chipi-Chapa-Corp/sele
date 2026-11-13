@@ -98,7 +98,7 @@ test('expiration protects attached terminals and releases callbacks after detach
   assert.deepEqual(registry.completed(handle.id), { output: 'retained output', exitCode: 7 })
 })
 
-test('every command gets a tab immediately, including commands that finish before discovery', async () => {
+test('the registry exposes commands and retains completed output until dismissed', async () => {
   let now = 0
   const registry = createAgentTerminalSessions(() => now)
   const quick = registry.register('quick', options)

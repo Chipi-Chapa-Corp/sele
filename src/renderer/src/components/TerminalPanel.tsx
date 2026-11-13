@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ITheme, Terminal as XtermTerminal } from '@xterm/xterm'
 import { Plus, Terminal as TerminalIcon, X } from 'lucide-react'
 import type { AppContainerTarget } from '../../../shared/app'
+import type { AgentTerminalSession } from '../../../shared/terminal'
 import { appFontSettingsChangedEvent, getCodeFontAppearance } from '../fontAppearance'
 import { terminalApi } from '../terminalApi'
 import { createTerminalOutput } from '../terminalOutput'
@@ -99,6 +100,12 @@ type TerminalTabRuntime = {
 type TerminalWorkspace = {
   activeTabId: string | null
   tabs: TerminalTab[]
+}
+
+const getAgentTerminalWorkspaceKey = (source: AgentTerminalSession): string => {
+  if (source.workspaceKey !== undefined) return source.workspaceKey
+  const chat = getAgentTerminalChat(`${source.providerId}:${source.chatId}`)
+  return `${getContainerTargetKey(source.container)}\0${chat?.projectCwd ?? chat?.cwd ?? source.cwd ?? ''}`
 }
 
 const outputPauseThreshold = 512 * 1024
@@ -749,29 +756,72 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       try {
         const sessions = await terminalApi.listAgentSessions()
         if (disposed) return
-        const pending = sessions.filter(
-          (session) => !handledAgentSessionsRef.current.has(session.id)
-        )
-        for (const session of pending) handledAgentSessionsRef.current.add(session.id)
+        const sourcesById = new Map(sessions.map((source) => [source.id, source]))
+        const pending: AgentTerminalSession[] = []
+        for (const session of sessions) {
+          if (handledAgentSessionsRef.current.has(session.id)) continue
+          handledAgentSessionsRef.current.add(session.id)
+          // A task that ended before discovery was never opened. Do not mount a
+          // completed tab that could be mistaken for one the user chose to view.
+          if (session.status === 'exited' && session.closeOnCommandFinish !== false) {
+            void terminalApi.dismissAgentSession(session.id)
+            continue
+          }
+          pending.push(session)
+        }
         setWorkspaces((current) => {
           const next = new Map(current)
           let changed = false
+          const movedTabs: { target: string; tab: TerminalTab }[] = []
           for (const [key, workspace] of current) {
-            const tabs = workspace.tabs.map((tab) => {
-              const source = sessions.find((source) => source.id === tab.agentSessionId)
-              if (!source || tab.agentStopScope === source.stopScope) return tab
-              changed = true
-              return { ...tab, agentStopScope: source.stopScope }
+            const tabs = workspace.tabs.flatMap((tab) => {
+              const source = tab.agentSessionId ? sourcesById.get(tab.agentSessionId) : undefined
+              if (!source) return [tab]
+              if (
+                source.status === 'exited' &&
+                source.closeOnCommandFinish !== false &&
+                !viewedAgentTabsRef.current.has(tab.id)
+              ) {
+                void terminalApi.dismissAgentSession(source.id)
+                return []
+              }
+              const updated =
+                tab.agentStopScope === source.stopScope
+                  ? tab
+                  : { ...tab, agentStopScope: source.stopScope }
+              // Discovery may precede chat metadata. Reconcile ownership on every
+              // poll instead of stranding the tab under the command's initial cwd.
+              const target = getAgentTerminalWorkspaceKey(source)
+              if (target !== key) {
+                movedTabs.push({ target, tab: updated })
+                return []
+              }
+              return [updated]
             })
-            if (tabs.some((tab, index) => tab !== workspace.tabs[index]))
-              next.set(key, { ...workspace, tabs })
+            if (
+              tabs.length !== workspace.tabs.length ||
+              tabs.some((tab, index) => tab !== workspace.tabs[index])
+            ) {
+              changed = true
+              next.set(key, {
+                activeTabId: tabs.some((tab) => tab.id === workspace.activeTabId)
+                  ? workspace.activeTabId
+                  : (tabs[0]?.id ?? null),
+                tabs
+              })
+            }
+          }
+          for (const { target, tab } of movedTabs) {
+            const previous = next.get(target) ?? { activeTabId: null, tabs: [] }
+            next.set(target, {
+              activeTabId: previous.activeTabId ?? tab.id,
+              tabs: [...previous.tabs, tab]
+            })
           }
           for (const source of pending) {
             const key = source.chatId ? `${source.providerId}:${source.chatId}` : null
             const chat = key ? getAgentTerminalChat(key) : undefined
-            const target =
-              source.workspaceKey ??
-              `${getContainerTargetKey(source.container)}\0${chat?.projectCwd ?? chat?.cwd ?? source.cwd ?? ''}`
+            const target = getAgentTerminalWorkspaceKey(source)
             const previous = next.get(target) ?? { activeTabId: null, tabs: [] }
             const tab: TerminalTab = {
               id: crypto.randomUUID(),
@@ -787,9 +837,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               container: source.container,
               cwd: source.cwd,
               initialCommand: source.command,
-              // A command may finish before the first discovery poll. Keep its
-              // completed tab available instead of silently losing the command.
-              closeOnCommandFinish: source.closeOnCommandFinish ?? source.status !== 'exited',
+              closeOnCommandFinish: source.closeOnCommandFinish ?? true,
               focusOnShow: false
             }
             next.set(target, {
@@ -954,9 +1002,14 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           )
           if (closingIndex < 0) continue
           const finished = currentWorkspace.tabs[closingIndex]
+          const closeUnviewedAgentTab =
+            Boolean(finished.agentSessionId) &&
+            finished.closeOnCommandFinish &&
+            !viewedAgentTabsRef.current.has(tabId)
           // Failed actions and viewed agent commands continue without rerunning their command.
           const continueAsShell =
             completion?.exited &&
+            !closeUnviewedAgentTab &&
             ((!completion.succeeded &&
               finished.closeOnCommandFinish &&
               !finished.continueAsShell) ||
@@ -990,8 +1043,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             })
             return nextWorkspaces
           }
-          // Keep other failed sessions available for inspection.
-          if (completion?.exited && !completion.succeeded && !finished.continueAsShell)
+          // Keep failed sessions only when the tab was opened or explicitly persistent.
+          if (
+            completion?.exited &&
+            !completion.succeeded &&
+            !finished.continueAsShell &&
+            !closeUnviewedAgentTab
+          )
             return currentWorkspaces
           if (finished.agentSessionId) {
             if (!finished.closeOnCommandFinish || viewedAgentTabsRef.current.has(tabId))
@@ -1129,10 +1187,12 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             />
           </div>
         )}
-        {Array.from(workspaces, ([currentWorkspaceKey, currentWorkspace]) =>
+        {Array.from(workspaces).flatMap(([currentWorkspaceKey, currentWorkspace]) =>
           currentWorkspace.tabs.map((tab) => (
             <TerminalSession
-              workspaceKey={currentWorkspaceKey}
+              // Native attachments do not use a workspace to launch a shell. Moving
+              // their tabs must preserve the existing session and output stream.
+              workspaceKey={tab.agentSessionId ? undefined : currentWorkspaceKey}
               outputCache={tab.outputCache}
               initialOutput={tab.initialOutput}
               agentSessionId={tab.agentSessionId}

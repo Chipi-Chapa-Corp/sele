@@ -71,9 +71,20 @@ if (!process.versions.electron) {
             import {TerminalPanel, TerminalSession} from './src/renderer/src/components/TerminalPanel'
             import {ChatListItem} from './src/renderer/src/components/ChatListItem'
             import {chatTerminalActivity} from './src/renderer/src/chatTerminalActivity'
+            import {rememberAgentTerminalChats} from './src/renderer/src/agentTerminalChats'
+            import {createChatTerminalPoller} from './src/renderer/src/chatTerminalPolling'
             import './src/renderer/src/assets/styles/tokens.css'
             import './src/renderer/src/assets/styles/base.css'
             window.taskSnapshot = key => chatTerminalActivity.getSnapshot(key)
+            window.rememberAgentTerminalChats = rememberAgentTerminalChats
+            window.discoverRunningTasks = async ids => {
+              const poller = createChatTerminalPoller({
+                getChats: () => [{id:'fixture', providerId:'codex', done:false, status:null}],
+                readTasks: async () => ids, activity:chatTerminalActivity, onError:console.error
+              })
+              await poller.poll()
+              poller.dispose()
+            }
             window.terminals = []
             const open = Terminal.prototype.open
             Terminal.prototype.open = function(...args) {
@@ -398,6 +409,82 @@ if (!process.versions.electron) {
         }
         // Native jobs use the same tab strip and xterm, without rerunning their commands.
         const sources = terminal.agentTerminalSessions
+        // Discovery can precede chat metadata. Its tab must follow the owning project
+        // when that metadata arrives, without interrupting the original attachment.
+        const commandDirectory = path.join(directory, 'command-subdirectory')
+        await fs.mkdir(commandDirectory)
+        let routedStops = 0
+        const routed = sources.register('native-delayed-project', {
+          providerId: 'codex',
+          chatId: 'fixture',
+          chatTitle: 'Routed task',
+          cwd: commandDirectory,
+          container: { kind: 'container', tool: 'toolbox', name: 'fixture' },
+          command: 'npm run dev',
+          stop: async () => {
+            routedStops++
+          }
+        })
+        routed.append('ROUTED_TASK_RUNNING\r\n')
+        await run(`window.discoverRunningTasks([${JSON.stringify(routed.id)}])`)
+        const routedTab = `document.querySelector('[aria-label="Routed task 1"][aria-pressed]')`
+        const routedRegion = `document.querySelector('[aria-label="Routed task 1"][role="region"]')`
+        await waitFor(
+          `${routedRegion} !== null && window.terminals.some(t => window.text(t).includes('ROUTED_TASK_RUNNING'))`
+        )
+        assert.equal(await run(routedTab), null, 'The command directory initially owns the tab')
+        assert.equal(await run(`window.taskSnapshot('codex:fixture').running`), true)
+        await run(`window.routedRegion = ${routedRegion};
+          window.routedTerminalCount = window.terminals.length;
+          document.getElementById('focus-target').focus();
+          window.rememberAgentTerminalChats([{
+            id:'fixture', providerId:'codex', title:'Routed task',
+            cwd:${JSON.stringify(directory)}, projectCwd:${JSON.stringify(directory)}
+          }])`)
+        await waitFor(`${routedTab} !== null`)
+        assert.equal(await run(`${routedRegion} === window.routedRegion`), true)
+        assert.equal(await run('window.terminals.length === window.routedTerminalCount'), true)
+        assert.equal(await run('document.activeElement.id'), 'focus-target')
+        assert.equal(sources.status(routed.id), 'running')
+        assert.equal(routedStops, 0)
+        routed.append('OUTPUT_AFTER_PROJECT_RESOLVED\r\n')
+        await waitFor(
+          `window.terminals.some(t => window.text(t).includes('OUTPUT_AFTER_PROJECT_RESOLVED'))`
+        )
+        // Later project changes must also be reconciled. Explicit workspace ownership
+        // (such as a restored user shell) must stay where it was launched.
+        const pinned = sources.register('native-explicit-project', {
+          providerId: 'codex',
+          chatId: 'fixture',
+          chatTitle: 'Routed task',
+          cwd: commandDirectory,
+          container: { kind: 'container', tool: 'toolbox', name: 'fixture' },
+          command: 'npm run dev',
+          workspaceKey: `toolbox:fixture${String.fromCharCode(0)}${directory}`,
+          workspaceLabel: 'Pinned terminal',
+          stop: async () => {}
+        })
+        await waitFor(
+          `document.querySelector('[aria-label="Pinned terminal"][aria-pressed]') !== null`
+        )
+        await run(`window.rememberAgentTerminalChats([{
+          id:'fixture', providerId:'codex', title:'Routed task',
+          cwd:${JSON.stringify(directory)}, projectCwd:${JSON.stringify(commandDirectory)}
+        }])`)
+        await waitFor(`${routedTab} === null`)
+        assert.equal(await run(`${routedRegion} === window.routedRegion`), true)
+        assert.equal(
+          await run(
+            `document.querySelector('[aria-label="Pinned terminal"][aria-pressed]') !== null`
+          ),
+          true
+        )
+        await routed.finish()
+        await pinned.finish()
+        await run('window.discoverRunningTasks([])')
+        await waitFor(
+          `${routedRegion} === null && document.querySelector('[aria-label="Pinned terminal"][role="region"]') === null`
+        )
         let stopped = 0
         const sourceOptions = {
           providerId: 'claude',
@@ -431,6 +518,21 @@ if (!process.versions.electron) {
         assert.equal(await run(`${region(1)}.hidden`), true)
         await unseen.finish()
         await waitFor(`${tab(1)} === null`)
+
+        const unopenedAction = sources.register('native-unopened-action', {
+          ...sourceOptions,
+          chatId: 'unopened-action',
+          workspaceKey: `toolbox:fixture${String.fromCharCode(0)}${directory}`,
+          workspaceLabel: 'Unopened action',
+          closeOnCommandFinish: true
+        })
+        await waitFor(
+          `document.querySelector('[aria-label="Unopened action"][aria-pressed]') !== null`
+        )
+        await unopenedAction.finish(7)
+        await waitFor(
+          `document.querySelector('[aria-label="Unopened action"][role="region"]') === null`
+        )
 
         const viewed = sources.register('native-viewed', sourceOptions)
         viewed.append('server ready\r\n')
@@ -636,29 +738,35 @@ if (!process.versions.electron) {
           'The first tab in an already opened terminal panel remains after completion'
         )
 
-        // Commands that complete inside one discovery interval must still produce
-        // a tab with their original output, without executing the command again.
-        const quick = sources.register('quick-before-discovery', {
-          ...sourceOptions,
-          chatId: 'quick-chat',
-          chatTitle: 'Quick shell',
-          cwd: otherDirectory,
-          command: 'printf QUICK_COMMAND_OUTPUT',
-          background: false
-        })
-        quick.append('QUICK_COMMAND_OUTPUT\r\n')
-        await quick.finish(0)
-        const quickTab = `document.querySelector('[aria-label="Quick shell 1"][aria-pressed]')`
-        await waitFor(`${quickTab} !== null`)
-        await run(`${quickTab}.click()`)
-        await waitFor(`window.terminals.some(t => window.text(t).includes('QUICK_COMMAND_OUTPUT'))`)
-        assert.equal(
-          await run(`${quickTab} !== null`),
-          true,
-          'Completed-before-discovery tabs stay inspectable'
-        )
-        await run(`document.querySelector('[aria-label="Close Quick shell 1"]').click()`)
-        await waitFor(`${quickTab} === null`)
+        // Tasks that finish before discovery were never opened. Dismiss them
+        // without mounting a terminal, even in the currently visible project.
+        for (const exitCode of [0, 7]) {
+          const quick = sources.register(`quick-before-discovery-${exitCode}`, {
+            ...sourceOptions,
+            chatId: `quick-chat-${exitCode}`,
+            chatTitle: `Quick shell ${exitCode}`,
+            cwd: otherDirectory,
+            command: 'printf QUICK_COMMAND_OUTPUT',
+            background: false
+          })
+          quick.append('QUICK_COMMAND_OUTPUT\r\n')
+          await quick.finish(exitCode)
+          await waitFor(`(async () => !(await window.terminalApi.listAgentSessions())
+            .some(session => session.id === ${JSON.stringify(quick.id)}))()`)
+          assert.equal(
+            await run(
+              `document.querySelector('[aria-label="Quick shell ${exitCode} 1"][role="region"]')`
+            ),
+            null
+          )
+          assert.equal(
+            await run(
+              `window.terminals.some(t => window.text(t).includes('QUICK_COMMAND_OUTPUT'))`
+            ),
+            false,
+            'Completed-before-discovery tasks must not attach or become persistent shells'
+          )
+        }
 
         // Exercise Claude's real task-output-file reader through the same native tab.
         const logDirectory = path.join(directory, 'native logs', 'tasks')
