@@ -1,0 +1,137 @@
+.browser-settings {
+  container: browser-settings / inline-size;
+}
+
+.browser-connections__heading {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+}
+
+.browser-connections__heading p,
+.browser-settings__note,
+.browser-settings__feedback,
+.browser-settings__desktop-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.browser-settings .browser-connections__row,
+.browser-settings .browser-settings__compact-row:not(.settings-dialog__field--with-project-action) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+}
+
+.browser-connections__row .settings-dialog__field-header p {
+  font-size: 0.875rem;
+}
+
+.browser-connections__row p.browser-connections__connected {
+  color: var(--lead);
+}
+
+.browser-connections__actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+.browser-settings__disclosure {
+  width: 100%;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.browser-settings__disclosure > summary {
+  padding: 0.45rem 0;
+  color: var(--lead);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.browser-settings__disclosure > summary:focus-visible {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.125rem;
+  border-radius: 0.25rem;
+}
+
+.browser-settings__disclosure-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+  padding: 0.4rem 0 0.6rem;
+}
+
+.browser-settings__disclosure-body > .ui-button,
+.browser-settings__disclosure-body > .ui-button-group {
+  align-self: flex-start;
+}
+
+.browser-settings__section-disclosure {
+  margin-top: 1.2rem;
+}
+
+.browser-settings__steps {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+  line-height: 1.5;
+}
+
+.browser-settings__steps li + li {
+  margin-top: 0.3rem;
+}
+
+.browser-settings__path,
+.browser-settings__error {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.browser-settings__error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--error);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.browser-settings__feedback {
+  padding: 0.2rem 0;
+}
+
+.browser-settings__desktop-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.browser-settings__help-link {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  text-underline-offset: 0.15em;
+}
+
+@container browser-settings (max-width: 30rem) {
+  .browser-settings__wide-control {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.65rem;
+  }
+
+  .browser-settings__wide-control .ui-segmented-control {
+    max-width: 100%;
+    justify-self: stretch;
+  }
+}

@@ -142,6 +142,68 @@ database from existing OpenCode data. The original database is untouched. Existi
 `OPENCODE_DB` overrides are respected. Custom v1 plugins need v2 implementations; expired
 credentials or unsupported remote MCP OAuth credentials may require sign-in again.
 
+## Parallel work in your signed-in Chrome and Opera
+
+Sele's optional browser extension lets agents use your existing Chrome and Opera
+profiles while you keep working. Both browsers can stay connected simultaneously. Each
+has its own pairing address, encrypted credential, connection, and tab ownership. Each chat
+creates its own background tabs; Sele rejects
+access to tabs owned by another conversation. Input is sent to the target tab rather
+than the system mouse, keyboard or clipboard.
+
+1. Open **Settings → Browser & desktop → Your browsers**.
+2. Expand **Install the extension** and select **Open extension folder**. In your browser's Extensions manager, enable
+   Developer mode, choose **Load unpacked**, and select that folder.
+3. In the Chrome or Opera row, choose **Connect** (or **Copy address** for a saved binding). Paste it
+   into that browser's extension and select **Connect**. Keep the address private. Adding
+   Opera does not require disconnecting Chrome or regenerating Chrome's existing address.
+4. Install the bundled `skills/parallel-chrome` folder from that same extension folder
+   into `~/.codex/skills/parallel-chrome` for Codex and `~/.claude/skills/parallel-chrome`
+   for Claude (on Windows, `~` means your user home). Copy the entire folder, then start
+   a new chat so the agent can discover it. From a source checkout, the folder is
+   [resources/sele-chrome-extension/skills/parallel-chrome](resources/sele-chrome-extension/skills/parallel-chrome/SKILL.md).
+5. Existing and new website tabs become available automatically after pairing; no per-tab
+   sharing button is needed. Ask the chat to use the `parallel-chrome` skill and work in
+   its own background tab. Tabs claimed by another conversation remain inaccessible.
+
+Pairing survives normal Sele and Chrome restarts and reconnects automatically. A cold
+extension can take up to one minute to retry. Full Chrome restart or extension reload
+clears previous ownership and rediscovers current website tabs automatically; agents must
+revalidate the page rather than reuse old IDs. Canceling control in the browser debugger
+banner excludes that tab for the current browser session, including worker restarts.
+**Disconnect** deliberately removes pairing. The skill guides agent behavior; the extension
+connection supplies and enforces access. It does not configure standalone agent CLIs.
+
+Chrome tools retain their `chrome` namespace (`chrome_*` for MCP providers); Opera uses
+`opera` (`opera_*`). Tab IDs are local to each browser and can overlap: always use the
+matching namespace. Existing Codex chats receive both `chrome_*` and `opera_*` tools from the scoped
+MCP server when resumed, including chats whose original tool catalog had neither browser.
+The historical `sele_opera` configuration key identifies this shared transport; tool prefixes
+select the actual browser. Sele unloads an idle chat once to apply this
+catalog; running turns are preserved, and browser pairing is unchanged.
+The per-chat MCP address and key are stored with OS encryption and restored on
+Sele restart so a retained Codex runtime can keep its existing connection.
+Disconnect and pairing reset affect only the named browser. An existing
+saved Chrome binding is restored from its original location without rotating its credential.
+When connecting a second extension to an already occupied browser address, Sele rejects
+it; copy the other browser's own address instead. Opera uses the same unpacked extension.
+
+Automated transport tests cover simultaneous browser connections, overlapping tab IDs,
+separate conversation owners, scoped events, independent restart/reconnect and disconnect.
+Live acceptance in a signed-in Opera profile remains to be verified after installing this
+version of Sele; these tests do not operate the user's browser.
+
+The transport is designed for **macOS, Windows and Linux**, using the same Chrome extension.
+Sele stores its credential with Electron's OS-backed `safeStorage`: Keychain on macOS,
+DPAPI on Windows, and GNOME Keyring/libsecret or KWallet on Linux. Linux without a working
+secret store reports an error instead of using the insecure `basic_text` backend. Flatpak
+also needs access to its desktop secret service and the same host loopback connection.
+Live profile, restart and four-chat acceptance have been exercised on macOS; Windows and
+Linux host acceptance remain unverified. The separate **Connect computer** Linux desktop
+helper is not required for tab-scoped Chrome input.
+
+See [browser access and troubleshooting](docs/browser-use.md) for scopes and limitations.
+
 ## GitHub pull requests
 
 Enable **Settings → Git → Features → Enable pull requests** (off by default), then

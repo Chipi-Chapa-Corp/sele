@@ -31,6 +31,8 @@ export const createRendererBridge = (
     disconnectComputer: () => transport.invoke(desktopChannels.disconnectComputer),
     pairChrome: () => transport.invoke(desktopChannels.pairChrome),
     disconnectChrome: () => transport.invoke(desktopChannels.disconnectChrome),
+    pairOpera: () => transport.invoke(desktopChannels.pairOpera),
+    disconnectOpera: () => transport.invoke(desktopChannels.disconnectOpera),
     openChromeExtension: () => transport.invoke(desktopChannels.openChromeExtension)
   }
 

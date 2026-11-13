@@ -35,7 +35,10 @@ const fixture = (
     initializeResult = {},
     installedPlugins = [],
     pluginError = null,
-    processScope = undefined
+    processScope = undefined,
+    resumedThread = null,
+    restoredOpera = false,
+    mcpTools = []
   } = {}
 ) => {
   const children = []
@@ -61,6 +64,25 @@ const fixture = (
     supportsLocalHostTools,
     getCodexNativeChromeConfig,
     chromeAutomation: { status: { connected: false, pairingUrl: null } },
+    operaAutomation: { status: { connected: false, pairingUrl: null } },
+    getBrowserUseSession: (id) => ({
+      providerId: 'codex',
+      sessionId: id,
+      cwd: '/project',
+      containerKey: 'host'
+    }),
+    CodexOperaMcp: class {
+      async restore() {
+        return restoredOpera
+      }
+      hasScope() {
+        return true
+      }
+      async config() {
+        return { 'mcp_servers.sele_opera': { url: 'http://127.0.0.1:1234/mcp' } }
+      }
+      close() {}
+    },
     registerBrowserUseSession() {},
     removeBrowserUseSession() {},
     removeBrowserUseSessions() {},
@@ -72,6 +94,9 @@ const fixture = (
       readOnly = new Map()
       bind(id, specs) {
         this.bindings.set(id, specs)
+      }
+      isReadOnly(id) {
+        return this.readOnly.get(id) === true
       }
       setReadOnly(id, value) {
         this.readOnly.set(id, value)
@@ -119,7 +144,22 @@ const fixture = (
                               }
                             ]
                           }
-                        : {}
+                        : message.method === 'mcpServerStatus/list'
+                          ? {
+                              data: [
+                                {
+                                  name: 'sele_opera',
+                                  tools: Object.fromEntries(
+                                    mcpTools.map((name) => [name, { name }])
+                                  )
+                                }
+                              ]
+                            }
+                          : message.method === 'thread/unsubscribe' && resumedThread
+                            ? { status: 'notLoaded' }
+                            : message.method === 'thread/resume' && resumedThread
+                              ? { thread: resumedThread }
+                              : {}
                 })}\n`
               )
             })
@@ -129,6 +169,10 @@ const fixture = (
       children.push(child)
       return child
     }
+  }
+  context.pairedBrowserAutomations = {
+    chrome: context.chromeAutomation,
+    opera: context.operaAutomation
   }
   context.connectCodexRuntime = async () => {
     const child = context.spawn()
@@ -184,13 +228,13 @@ test('browser declarations are sent on interactive start/resume and excluded fro
       const request = children[0].requests.at(-1)
       assert.deepEqual(
         request.params.dynamicTools,
-        Object.keys(restricted).length ? undefined : specs
+        Object.keys(restricted).length || method === 'thread/resume' ? undefined : specs
       )
     }
   }
 })
 
-test('native Codex Chrome reuses installed plugins and omits unpaired Sele Chrome tools', async (t) => {
+test('native Codex Chrome reuses installed plugins while retaining later-paired Sele tools', async (t) => {
   const { client, children } = fixture(t, {
     installedPlugins: ['chrome', 'browser', 'unified-computer-use']
   })
@@ -213,10 +257,10 @@ test('native Codex Chrome reuses installed plugins and omits unpaired Sele Chrom
       true
     )
     assert.equal(request.params.nativeChrome, undefined)
-    if (method !== 'thread/fork')
+    if (method === 'thread/start')
       assert.deepEqual(
         request.params.dynamicTools.map((tool) => tool.name),
-        ['sele_browser']
+        ['chrome', 'sele_browser']
       )
   }
 })
@@ -243,7 +287,7 @@ test('default Codex queries leave native browser configuration to the installed 
   assert.ok(!children[0].requests.some((request) => request.method === 'plugin/installed'))
 })
 
-test('official Codex Chrome is additive and leaves paired Sele tools available', async (t) => {
+test('Chrome tools remain registered when pairing happens after a chat starts', async (t) => {
   const { client, children, context } = fixture(t)
   client.container = null
   client.dynamicTools.specs = [
@@ -259,10 +303,10 @@ test('official Codex Chrome is additive and leaves paired Sele tools available',
       ]) {
         context.chromeAutomation.status = status
         await client.request(method, { threadId: 'fixture' }, { nativeChrome })
-        const names = children[0].requests.at(-1).params.dynamicTools.map((tool) => tool.name)
+        const declarations = children[0].requests.at(-1).params.dynamicTools
         assert.deepEqual(
-          names,
-          status.connected || status.pairingUrl ? ['chrome', 'sele_browser'] : ['sele_browser']
+          declarations?.map((tool) => tool.name),
+          method === 'thread/start' ? ['chrome', 'sele_browser'] : undefined
         )
       }
     }
@@ -370,6 +414,10 @@ for (const code of ['ENOENT', 'ECONNREFUSED', 'ESTALE']) {
 test('background recovery preserves real connection failures', async (t) => {
   const { client, children, context } = fixture(t)
   client.persistent = true
+  context.pairedBrowserAutomations = {
+    chrome: context.chromeAutomation,
+    opera: context.operaAutomation
+  }
   context.connectCodexRuntime = async () => {
     throw new Error('Process runtime rejected the connection.')
   }
@@ -780,4 +828,98 @@ test('reattachment ignores ephemeral prediction forks reported by older runtime 
   await client.request('model/list')
   assert.deepEqual(restored, ['user-chat'])
   assert.equal(client.ownedThreadIds.has('prediction-fork'), false)
+})
+
+test('resumed local threads gain Opera through supported MCP config without replacing dynamicTools', async (t) => {
+  const { client, context, children } = fixture(t, {
+    resumedThread: { id: 'old-thread', cwd: '/project' }
+  })
+  client.container = null
+  context.operaAutomation.status.pairingUrl = 'saved-address'
+  const config = { 'features.recommended_plugins': false }
+  const result = await client.request('thread/resume', { threadId: 'old-thread', config })
+  assert.equal(result.thread.id, 'old-thread')
+  const resumes = children[0].requests.filter((request) => request.method === 'thread/resume')
+  assert.equal(resumes.length, 2)
+  assert.ok(children[0].requests.some((request) => request.method === 'thread/unsubscribe'))
+  assert.equal(resumes[1].params.config['features.recommended_plugins'], false)
+  assert.ok(resumes[1].params.config['mcp_servers.sele_opera'])
+  assert.equal(resumes[1].params.dynamicTools, undefined)
+  const beforeReuse = children[0].requests.length
+  await client.request('thread/resume', { threadId: 'old-thread', config })
+  assert.equal(
+    children[0].requests.length - beforeReuse,
+    1,
+    'do not unload an already configured chat'
+  )
+  for (const sandbox of ['read-only']) {
+    const before = children[0].requests.length
+    await client.request('thread/resume', { threadId: 'old-thread', sandbox })
+    assert.equal(children[0].requests.length - before, 1)
+    assert.equal(client.dynamicTools.isReadOnly('old-thread'), true)
+  }
+})
+
+test('Opera integration never unloads a running Codex turn', async (t) => {
+  const { client, context, children } = fixture(t, {
+    resumedThread: { id: 'running-thread', cwd: '/project', status: { type: 'active' } }
+  })
+  client.container = null
+  context.operaAutomation.status.pairingUrl = 'saved-address'
+  await client.request('thread/resume', { threadId: 'running-thread' })
+  assert.equal(
+    children[0].requests.filter((request) => request.method === 'thread/resume').length,
+    1
+  )
+  assert.ok(!children[0].requests.some((request) => request.method === 'thread/unsubscribe'))
+})
+
+test('retained chats without dynamic-tool snapshot metadata keep registered host tools after GUI restart', async (t) => {
+  const { client } = fixture(t, {
+    initializeResult: {
+      seleRuntime: {
+        threads: [{ thread: { id: 'old-running', cwd: '/project' }, readOnly: false }]
+      }
+    }
+  })
+  client.dynamicTools.specs = [
+    { type: 'namespace', name: 'chrome', tools: [{ type: 'function', name: 'tabs_context' }] }
+  ]
+  await client.request('model/list')
+  assert.equal(client.dynamicTools.bindings.get('old-running')[0]?.name, 'chrome')
+  assert.equal(client.ownsThread('old-running'), true)
+})
+
+test('old chats with only Chrome paired receive the attached-browser MCP catalog', async (t) => {
+  const { client, context, children } = fixture(t, {
+    resumedThread: { id: 'chrome-only-old-chat', cwd: '/project' }
+  })
+  client.container = null
+  context.chromeAutomation.status.pairingUrl = 'saved-chrome-address'
+  await client.request('thread/resume', { threadId: 'chrome-only-old-chat' })
+  assert.ok(
+    children[0].requests.some(
+      (request) =>
+        request.method === 'thread/resume' && request.params.config?.['mcp_servers.sele_opera']
+    ),
+    'Chrome must remain available even if the old dynamic catalog has no Chrome tools'
+  )
+})
+
+test('reattachment refreshes an Opera-only cached catalog but preserves a current two-browser catalog', async (t) => {
+  for (const mcpTools of [['opera_tabs_context'], ['chrome_tabs_context', 'opera_tabs_context']]) {
+    const thread = { id: 'cached-browser-chat', cwd: '/project' }
+    const { client, context, children } = fixture(t, {
+      restoredOpera: true,
+      mcpTools,
+      resumedThread: thread,
+      initializeResult: { seleRuntime: { threads: [{ thread, readOnly: false }] } }
+    })
+    client.container = null
+    context.chromeAutomation.status.pairingUrl = 'saved-chrome'
+    await client.request('model/list')
+    await client.request('thread/resume', { threadId: thread.id })
+    const releases = children[0].requests.filter((r) => r.method === 'thread/unsubscribe')
+    assert.equal(releases.length, mcpTools.includes('chrome_tabs_context') ? 0 : 1)
+  }
 })

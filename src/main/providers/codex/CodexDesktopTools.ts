@@ -5,15 +5,18 @@ import {
   computerToolDescription,
   executeComputerTool
 } from '../../desktop/ComputerTools'
-import { chromeAutomation } from '../../desktop/ChromeAutomation'
-import { createBrowserTools } from '../../browser/BrowserTools'
+import { pairedBrowserAutomations } from '../../desktop/ChromeAutomation'
+import { pairedBrowserNames, type PairedBrowserId } from '../../../shared/desktop'
+import { createBrowserTools, browserSelectionInstructions } from '../../browser/BrowserTools'
 import { getBrowserUseSession, onBrowserUseSessionRemoved } from './CodexBrowserSessions'
 
 export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(): void } {
-  const chrome = new Map<string, ReturnType<typeof createBrowserTools>>()
+  const browsers = new Map<PairedBrowserId, Map<string, ReturnType<typeof createBrowserTools>>>()
   const revoke = (sessionId: string): void => {
-    chrome.get(sessionId)?.close()
-    chrome.delete(sessionId)
+    for (const workspaces of browsers.values()) {
+      workspaces.get(sessionId)?.close()
+      workspaces.delete(sessionId)
+    }
   }
   let unsubscribe: (() => void) | undefined
   const subscribe = (): void => {
@@ -43,40 +46,46 @@ export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(
     },
     'sele'
   )
-  const definitions = createBrowserTools(chromeAutomation, {
-    providerId: 'codex',
-    sessionId: 'definitions',
-    cwd: '',
-    containerKey: 'host'
-  })
-  for (const definition of definitions.tools)
-    registry.register(
-      {
-        type: 'function',
-        name: definition.name,
-        description: `Optional Sele Chrome connection: ${definition.description} Only tabs shared using the Sele Chrome extension are available. Use this connection when the user chooses Sele's shared-tab extension. An existing official Chrome connection uses the provider's browser tools and does not require Sele pairing.`,
-        inputSchema: z.toJSONSchema(definition.schema)
-      },
-      async (args, context) => {
-        if (context.signal.aborted) throw new Error('Tool canceled.')
-        const scope = getBrowserUseSession(context.threadId)
-        if (!scope) throw new Error('Chrome session is not owned by Sele.')
-        subscribe()
-        let workspace = chrome.get(context.threadId)
-        if (!workspace) {
-          workspace = createBrowserTools(chromeAutomation, scope)
-          chrome.set(context.threadId, workspace)
-        }
-        const tool = workspace.tools.find((tool) => tool.name === definition.name)!
-        return convert(await tool.execute(args))
-      },
-      'chrome'
-    )
-  definitions.close()
+  for (const [browserId, automation] of Object.entries(pairedBrowserAutomations)) {
+    const id = browserId as PairedBrowserId
+    const workspaces = new Map<string, ReturnType<typeof createBrowserTools>>()
+    browsers.set(id, workspaces)
+    const definitions = createBrowserTools(automation, {
+      providerId: 'codex',
+      sessionId: 'definitions',
+      cwd: '',
+      containerKey: 'host'
+    })
+    for (const definition of definitions.tools)
+      registry.register(
+        {
+          type: 'function',
+          name: definition.name,
+          description: `Optional Sele ${pairedBrowserNames[id]} connection: ${definition.description} ${browserSelectionInstructions} Only ${pairedBrowserNames[id]} tabs shared using the Sele extension are available. Tab IDs belong to this browser only; use this namespace for every action on them. Use this connection when the user chooses Sele's shared-tab extension. An existing official Chrome connection uses the provider's browser tools and does not require Sele pairing.`,
+          inputSchema: z.toJSONSchema(definition.schema)
+        },
+        async (args, context) => {
+          if (context.signal.aborted) throw new Error('Tool canceled.')
+          const scope = getBrowserUseSession(context.threadId)
+          if (!scope) throw new Error(`${pairedBrowserNames[id]} session is not owned by Sele.`)
+          subscribe()
+          let workspace = workspaces.get(context.threadId)
+          if (!workspace) {
+            workspace = createBrowserTools(automation, scope)
+            workspaces.set(context.threadId, workspace)
+          }
+          const tool = workspace.tools.find((tool) => tool.name === definition.name)!
+          return convert(await tool.execute(args))
+        },
+        id
+      )
+    definitions.close()
+  }
   return {
     close: () => {
-      for (const workspace of chrome.values()) workspace.close()
-      chrome.clear()
+      for (const workspaces of browsers.values())
+        for (const workspace of workspaces.values()) workspace.close()
+      browsers.clear()
       unsubscribe?.()
       unsubscribe = undefined
     }
