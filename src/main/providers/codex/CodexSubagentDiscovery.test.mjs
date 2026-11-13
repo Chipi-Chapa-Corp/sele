@@ -17,6 +17,7 @@ const declaration = source.statements.find(
 const methods = [
   'getSubagentsInContext',
   'cancelSubagentInContext',
+  'readLatestTurnShell',
   'getThreadSubagents',
   'recordSubagentRunOutcome',
   'emitChatUpdated',
@@ -137,7 +138,7 @@ test('Codex stop interrupts the live child turn before it is persisted', async (
   }
   adapter.interruptTurnWithClient = async (_client, id, turnId) => {
     interrupted.push([id, turnId])
-    return { interrupted: true, turnId }
+    return turnId
   }
   adapter.markTurnInterrupted = () => {}
   adapter.setThreadStatus = () => {}

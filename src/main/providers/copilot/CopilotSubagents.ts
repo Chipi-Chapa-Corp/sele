@@ -1,6 +1,7 @@
 import type { SessionEvent } from '@github/copilot-sdk'
 import type { ProviderChatItem, ProviderSubagent } from '../../../shared/provider'
 import type { ProviderChatTurnWindow } from '../ProviderAdapter'
+import { getToolArgument } from '../providerValues.ts'
 import { isCopilotSystemContextMessage, renderCopilotChatWindow } from './CopilotItemRenderers.ts'
 
 export type CopilotAgentTask = {
@@ -32,15 +33,9 @@ export type CopilotSubagentFollowUp = {
 export const canMessageCopilotTask = (task: CopilotAgentTask | undefined): boolean =>
   Boolean(
     task &&
-    (task.status === 'running' || task.status === 'idle') &&
-    (task.executionMode === 'background' || task.canPromoteToBackground === true)
+      (task.status === 'running' || task.status === 'idle') &&
+      (task.executionMode === 'background' || task.canPromoteToBackground === true)
   )
-
-const getPromptArgument = (value: unknown): string | null => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const prompt = (value as Record<string, unknown>).prompt
-  return typeof prompt === 'string' && prompt.trim() ? prompt.trim() : null
-}
 
 /**
  * `TaskAgentInfo.prompt` is replaced by every follow-up, so the original instruction comes from the
@@ -53,16 +48,6 @@ const getSpawnArguments = (events: SessionEvent[], toolCallId: string | undefine
       event.type === 'tool.execution_start' && event.data.toolCallId === toolCallId
   )
   return start?.data.arguments
-}
-
-const getOriginalInstruction = (events: SessionEvent[], toolCallId: string | undefined) =>
-  getPromptArgument(getSpawnArguments(events, toolCallId))
-
-const getSpawnDescription = (events: SessionEvent[], toolCallId: string | undefined) => {
-  const args = getSpawnArguments(events, toolCallId)
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return null
-  const description = (args as Record<string, unknown>).description
-  return typeof description === 'string' && description.trim() ? description.trim() : null
 }
 
 /**
@@ -100,7 +85,7 @@ export const mergeCopilotSubagentFollowUps = (
   return merged
 }
 
-const truncate = (value: string, limit: number): string => {
+export const truncate = (value: string, limit: number): string => {
   const normalized = value.replace(/\s+/g, ' ').trim()
   return normalized.length <= limit ? normalized : `${normalized.slice(0, limit - 1)}…`
 }
@@ -109,11 +94,6 @@ const getTimestamp = (value: string | undefined): number | null => {
   if (!value) return null
   const timestamp = Date.parse(value)
   return Number.isFinite(timestamp) ? timestamp : null
-}
-
-const getTaskStatus = (status: CopilotAgentTask['status']): ProviderSubagent['status'] => {
-  if (status === 'cancelled') return 'stopped'
-  return status
 }
 
 export const createCopilotSubagentSummaries = (
@@ -149,7 +129,9 @@ export const createCopilotSubagentSummaries = (
       getTimestamp(terminal?.timestamp) ??
       (eventTimestamps.length > 0 ? Math.max(...eventTimestamps) : createdAt)
     const status: ProviderSubagent['status'] = task
-      ? getTaskStatus(task.status)
+      ? task.status === 'cancelled'
+        ? 'stopped'
+        : task.status
       : terminal?.type === 'subagent.failed'
         ? 'failed'
         : terminal
@@ -157,17 +139,17 @@ export const createCopilotSubagentSummaries = (
           : started
             ? 'running'
             : 'unknown'
-    const toolCallId = task?.toolCallId ?? started?.data.toolCallId
+    const spawnArguments = getSpawnArguments(events, task?.toolCallId ?? started?.data.toolCallId)
     // The delegation's short description names the subagent; the agent type is generic.
     const title =
       task?.description.trim() ||
-      getSpawnDescription(events, toolCallId) ||
+      getToolArgument(spawnArguments, 'description') ||
       started?.data.agentDisplayName.trim() ||
       task?.agentType.trim() ||
       started?.data.agentName.trim() ||
       `Subagent ${agentId}`
     const description =
-      getOriginalInstruction(events, toolCallId) ||
+      getToolArgument(spawnArguments, 'prompt') ||
       task?.description.trim() ||
       task?.prompt.trim() ||
       started?.data.agentDescription.trim() ||
@@ -214,11 +196,7 @@ export const renderCopilotSubagentWindow = (
   summary: ProviderSubagent,
   events: SessionEvent[],
   window: ProviderChatTurnWindow
-): {
-  items: ProviderChatItem[]
-  itemsStartTurnIndex: number
-  turnCount: number
-} => {
+): ReturnType<typeof renderCopilotChatWindow> => {
   const page = renderCopilotChatWindow(
     events,
     {

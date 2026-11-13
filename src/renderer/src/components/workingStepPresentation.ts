@@ -2,25 +2,19 @@ export const workingItemPageSize = 50
 import type {
   ProviderToolActivity,
   ProviderWorkingItem,
-  ProviderWorkingStep,
-  ProviderWorkingTool
+  ProviderWorkingStep
 } from '../../../shared/provider'
 import { getToolsFromToolItem } from './ChatToolActivity'
 
 export type ProviderToolItem = Exclude<ProviderWorkingItem, { type: 'message' }>
 
-export type ProviderWorkingMessageItem = Extract<ProviderWorkingItem, { type: 'message' }>
+type ProviderWorkingMessageItem = Extract<ProviderWorkingItem, { type: 'message' }>
 
 export type WorkingBlock =
   | { type: 'message'; item: ProviderWorkingMessageItem }
-  | { type: 'tools'; items: ProviderToolItem[] }
+  | { type: 'tools'; item: ProviderToolItem }
 
-export const longRunningActivities = new Set<ProviderToolActivity>([
-  'npm',
-  'npx',
-  'script',
-  'command'
-])
+const longRunningActivities = new Set<ProviderToolActivity>(['npm', 'npx', 'script', 'command'])
 
 export const getActiveToolIds = (item: ProviderWorkingStep): Set<string> => {
   const activeToolIds = new Set<string>()
@@ -64,7 +58,7 @@ export const getActiveToolIds = (item: ProviderWorkingStep): Set<string> => {
 // that makes the hidden counts disagree and can merge across extracted image rows.
 export const groupWorkingItems = (items: ProviderWorkingItem[]): WorkingBlock[] =>
   items.map((item) =>
-    item.type === 'message' ? { type: 'message', item } : { type: 'tools', items: [item] }
+    item.type === 'message' ? { type: 'message', item } : { type: 'tools', item }
   )
 
 export const partitionGeneratedImageItems = (
@@ -72,24 +66,13 @@ export const partitionGeneratedImageItems = (
 ): { generatedImages: ProviderToolItem[]; remaining: ProviderWorkingItem[] } => {
   const generatedImages: ProviderToolItem[] = []
   const remaining: ProviderWorkingItem[] = []
-  const isGeneratedImageTool = (tool: ProviderWorkingTool): boolean =>
-    tool.icon === 'image-generation' && tool.images.length > 0
 
+  // A grouped sequence owns its child paging. Keep it intact so the loaded child indexes and
+  // counts remain stable; generated images inside it are rendered lazily with the other tools.
   for (const item of items) {
-    if (item.type === 'message') {
-      remaining.push(item)
-      continue
-    }
-
-    if (item.type === 'tool') {
-      if (isGeneratedImageTool(item)) generatedImages.push(item)
-      else remaining.push(item)
-      continue
-    }
-
-    // A grouped sequence owns its child paging. Keep it intact so the loaded child indexes and
-    // counts remain stable; generated images inside it are rendered lazily with the other tools.
-    remaining.push(item)
+    if (item.type === 'tool' && item.icon === 'image-generation' && item.images.length > 0)
+      generatedImages.push(item)
+    else remaining.push(item)
   }
 
   return { generatedImages, remaining }

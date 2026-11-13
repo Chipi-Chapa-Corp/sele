@@ -1,11 +1,7 @@
 import { startTransition, useEffect } from 'react'
 import type { ProviderChatDetail } from '../../../../shared/provider'
 import { getChatCommitMarkerTerminalStatus } from '../../chatCommitMarker'
-import {
-  getChatDetailTurnCount,
-  retainLoadedChatDetailTurnWindow,
-  shouldPreserveOptimisticTurnUntilUserMessage
-} from '../../chatDetailWindow'
+import { getChatDetailTurnCount, retainLoadedChatDetailTurnWindow } from '../../chatDetailWindow'
 import { chatTerminalActivity } from '../../chatTerminalActivity'
 import { getEffectiveChatTurnWindow, getLatestChatTurnWindow } from '../../chatTurnWindow'
 import { conversationViews } from '../../conversationViews'
@@ -20,19 +16,8 @@ import {
   isChatDetailSnapshotStale
 } from '../chatControllerUtils'
 import { chatTurnWindowSize, streamingChatUpdateIntervalMs } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
-import { useWorkspaceViewportState } from '../state/useWorkspaceViewportState'
 import { useWorkspaceChatProjection } from './useWorkspaceChatProjection'
-
-type WorkspaceChatUpdatesDependencies = {
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceChatUpdates({
   subagentState,
@@ -40,7 +25,9 @@ export function useWorkspaceChatUpdates({
   viewportState,
   chatProjection,
   gitState
-}: WorkspaceChatUpdatesDependencies) {
+}: WorkspaceState & {
+  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
+}) {
   useEffect(
     () =>
       providerApi.onChatUpdated((event) => {
@@ -60,8 +47,7 @@ export function useWorkspaceChatUpdates({
           viewingUpdatedChat && event.detail && !staleSelectedDetail
             ? getChatDetailFromUpdate(event.detail, chatState.chatDetailRef.current, {
                 preserveCurrentTurnWindow: !viewportState.chatAutoScrollEnabledRef.current,
-                preserveOptimisticTurnUntilUserMessage:
-                  shouldPreserveOptimisticTurnUntilUserMessage(event.providerId)
+                preserveOptimisticTurnUntilUserMessage: true
               })
             : null
         const selectedDetail = (() => {

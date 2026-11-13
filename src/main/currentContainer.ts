@@ -8,10 +8,7 @@ import {
 import { normalizeContainerTarget } from './containerTarget'
 
 type ContainerEnvironment = Record<string, string>
-export type CurrentContainerHostBridge = {
-  file: string
-  argsPrefix: string[]
-}
+export type CurrentContainerHostBridge = { file: string }
 
 const supportedContainerTools = new Set<AppContainerTool>([
   'distrobox',
@@ -51,44 +48,6 @@ const unquoteEnvironmentValue = (value: string): string => {
   return trimmed
 }
 
-const readEnvironmentFile = async (path: string): Promise<ContainerEnvironment | null> => {
-  try {
-    const file = await readFile(path, 'utf8')
-    const environment: ContainerEnvironment = {}
-
-    for (const line of file.split('\n')) {
-      const trimmedLine = line.trim()
-      if (!trimmedLine || trimmedLine.startsWith('#')) continue
-
-      const separatorIndex = trimmedLine.indexOf('=')
-      if (separatorIndex <= 0) continue
-
-      const key = trimmedLine.slice(0, separatorIndex).trim()
-      const value = unquoteEnvironmentValue(trimmedLine.slice(separatorIndex + 1))
-      if (key && value) environment[key] = value
-    }
-
-    return environment
-  } catch (error) {
-    if (!isExpectedFileAbsenceError(error)) {
-      console.error('[caught:currentContainer:readEnvironmentFile]', error)
-    }
-    return null
-  }
-}
-
-const fileExists = async (path: string): Promise<boolean> => {
-  try {
-    await readFile(path, { encoding: 'utf8', flag: 'r' })
-    return true
-  } catch (error) {
-    if (!isExpectedFileAbsenceError(error)) {
-      console.error('[caught:currentContainer:fileExists]', error)
-    }
-    return false
-  }
-}
-
 const readTextFile = async (path: string): Promise<string | null> => {
   try {
     return await readFile(path, 'utf8')
@@ -99,6 +58,28 @@ const readTextFile = async (path: string): Promise<string | null> => {
     return null
   }
 }
+
+const readEnvironmentFile = async (path: string): Promise<ContainerEnvironment | null> => {
+  const file = await readTextFile(path)
+  if (file === null) return null
+  const environment: ContainerEnvironment = {}
+
+  for (const line of file.split('\n')) {
+    const trimmedLine = line.trim()
+    if (!trimmedLine || trimmedLine.startsWith('#')) continue
+
+    const separatorIndex = trimmedLine.indexOf('=')
+    if (separatorIndex <= 0) continue
+
+    const key = trimmedLine.slice(0, separatorIndex).trim()
+    const value = unquoteEnvironmentValue(trimmedLine.slice(separatorIndex + 1))
+    if (key && value) environment[key] = value
+  }
+
+  return environment
+}
+
+const fileExists = async (path: string): Promise<boolean> => (await readTextFile(path)) !== null
 
 const getEnvironmentValue = (...keys: string[]): string | null => {
   for (const key of keys) {
@@ -156,25 +137,20 @@ const detectCurrentContainerHostBridge = async (): Promise<CurrentContainerHostB
   if (!(await hasCurrentContainerMarker())) return null
 
   const available = await runTextCommand('distrobox-host-exec', ['true'])
-  return available == null ? null : { file: 'distrobox-host-exec', argsPrefix: [] }
+  return available == null ? null : { file: 'distrobox-host-exec' }
 }
 
-export const getCurrentContainerHostBridge = (): Promise<CurrentContainerHostBridge | null> => {
-  if (!currentContainerHostBridge) {
-    currentContainerHostBridge = detectCurrentContainerHostBridge()
-  }
+export const getCurrentContainerHostBridge = (): Promise<CurrentContainerHostBridge | null> =>
+  (currentContainerHostBridge ??= detectCurrentContainerHostBridge())
 
-  return currentContainerHostBridge
-}
-
-export const runCurrentContainerHostTextCommand = async (
+const runCurrentContainerHostTextCommand = async (
   file: string,
   args: string[]
 ): Promise<string | null> => {
   const bridge = await getCurrentContainerHostBridge()
   if (!bridge) return null
 
-  return runTextCommand(bridge.file, [...bridge.argsPrefix, file, ...args])
+  return runTextCommand(bridge.file, [file, ...args])
 }
 
 const parseContainerId = (value: string | null | undefined): string | null => {
@@ -316,10 +292,8 @@ const detectCurrentContainerTarget = async (): Promise<AppContainerTarget | null
   return { kind: 'container', tool, name }
 }
 
-export const getCurrentContainerTarget = (): Promise<AppContainerTarget | null> => {
-  if (!currentContainerTarget) currentContainerTarget = detectCurrentContainerTarget()
-  return currentContainerTarget
-}
+export const getCurrentContainerTarget = (): Promise<AppContainerTarget | null> =>
+  (currentContainerTarget ??= detectCurrentContainerTarget())
 
 export const isCurrentContainerTarget = async (
   container: AppContainerTarget | null | undefined

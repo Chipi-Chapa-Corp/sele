@@ -3,19 +3,8 @@ import { isExpectedFileAbsenceError } from '../../../../shared/expectedAbsence.t
 import { appApi } from '../../appApi'
 import { providerApi } from '../../providerApi'
 import { getChatCwdGroupKey, getChatCwdLabel } from '../chatControllerUtils'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceSelection } from '../useWorkspaceSelection'
 import { useWorkspaceSidebarModel } from './useWorkspaceSidebarModel'
-
-type WorkspaceProjectResourcesDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  session: ReturnType<typeof useWorkspaceSelection>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  sidebarModel: ReturnType<typeof useWorkspaceSidebarModel>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceProjectResources({
   chatState,
@@ -23,7 +12,9 @@ export function useWorkspaceProjectResources({
   sourceState,
   sidebarModel,
   projectState
-}: WorkspaceProjectResourcesDependencies) {
+}: WorkspaceSession & {
+  sidebarModel: ReturnType<typeof useWorkspaceSidebarModel>
+}) {
   const { loadingCwdNotesRef, loadingProjectIconsRef, setCwdNotesByGroup, setProjectIconsByGroup } =
     projectState
   const messageBoxNotesCwd = chatState.selectedChat

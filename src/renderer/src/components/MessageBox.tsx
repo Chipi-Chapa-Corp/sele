@@ -146,9 +146,7 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
         { id: crypto.randomUUID(), content, comment }
       ])
       onQuoteRequestHandled?.(quoteRequest.id)
-      mentions.setFileMention(null)
-      mentions.setSkillMention(null)
-      mentions.setProjectMention(null)
+      mentions.closeMentions()
 
       const textarea = textareaRef.current
       if (!textarea) return
@@ -170,7 +168,6 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     editing: editing,
     textareaRef: textareaRef,
     editingState: editingState,
-    editSessionIdRef: editSessionIdRef,
     setAttachmentSelectionError: setAttachmentSelectionError
   })
 
@@ -179,10 +176,7 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     sending.submitMessage()
   }
 
-  const handleStop = (): void => {
-    if (!onStop) return
-    void onStop()
-  }
+  const handleStop = (): void => void onStop?.()
   const keyboard = useComposerKeyboard({
     options: props,
     draft: draft,

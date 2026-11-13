@@ -1,18 +1,21 @@
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import 'react-diff-view/style/index.css'
-import type { ProviderToolActivity, ProviderWorkingTool } from '../../../shared/provider'
+import type {
+  ProviderToolActivity,
+  ProviderWorkingTool,
+  ProviderWorkingToolGroup
+} from '../../../shared/provider'
 import { getToolSequenceDisplayLabel } from '../toolDisplayLabel'
 import './ChatDetailItem.css'
-import { getToolsFromToolItem, ToolItem } from './ChatToolActivity'
+import { ToolItem } from './ChatToolActivity'
 import { ToolStatusIcon } from './ToolActivityIcon'
 import './UnifiedDiff.css'
 import { useWorkingDisclosure } from './WorkingDisclosure'
-import type { ProviderToolItem } from './workingStepPresentation'
 
-export const workingToolPageSize = 50
+const workingToolPageSize = 50
 
-export const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolActivity => {
+const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolActivity => {
   if (tools.length === 0) return 'other'
 
   const activityCounts = tools.reduce<Map<ProviderToolActivity, number>>((counts, tool) => {
@@ -27,7 +30,7 @@ export const getDominantActivity = (tools: ProviderWorkingTool[]): ProviderToolA
 }
 
 export const ToolSequence: React.FC<{
-  items: ProviderToolItem[]
+  item: ProviderWorkingToolGroup
   activeToolIds: Set<string>
   expanded: boolean
   onLoadItem: ((itemId: string) => Promise<void> | void) | undefined
@@ -35,7 +38,7 @@ export const ToolSequence: React.FC<{
   onDisclosureToggle: (() => void) | undefined
   projectCwd: string | null | undefined
 }> = ({
-  items,
+  item,
   activeToolIds,
   expanded,
   onLoadItem,
@@ -44,10 +47,9 @@ export const ToolSequence: React.FC<{
   projectCwd
 }) => {
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle')
-  const sequenceItem = items.length === 1 && items[0]?.type === 'toolGroup' ? items[0] : null
-  const tools = items.flatMap(getToolsFromToolItem)
+  const { tools } = item
   const [open, setOpen] = useWorkingDisclosure(
-    `sequence:${items[0]?.id}`,
+    `sequence:${item.id}`,
     expanded,
     `tool:${tools[0]?.id}`
   )
@@ -55,28 +57,28 @@ export const ToolSequence: React.FC<{
   const active = activeTools.length > 0
   const dominantActivity = active
     ? getDominantActivity(activeTools)
-    : (sequenceItem?.dominantActivity ?? getDominantActivity(tools))
-  const sequenceActivities = sequenceItem?.toolActivities?.length
-    ? sequenceItem.toolActivities
+    : (item.dominantActivity ?? getDominantActivity(tools))
+  const sequenceActivities = item.toolActivities?.length
+    ? item.toolActivities
     : tools.map((tool) => tool.activity)
-  const otherToolLabels = sequenceItem?.otherToolLabels?.length
-    ? sequenceItem.otherToolLabels
+  const otherToolLabels = item.otherToolLabels?.length
+    ? item.otherToolLabels
     : tools
         .filter((tool) => tool.activity === 'other')
         .map((tool) => tool.summaryLabel ?? tool.label)
   const baseLabel = getToolSequenceDisplayLabel(sequenceActivities, active, otherToolLabels)
-  const totalCount = Math.max(sequenceItem?.toolCount ?? 0, tools.length)
-  const startIndex = sequenceItem?.toolsStartIndex ?? Math.max(0, totalCount - tools.length)
+  const totalCount = Math.max(item.toolCount ?? 0, tools.length)
+  const startIndex = item.toolsStartIndex ?? Math.max(0, totalCount - tools.length)
   const endIndex = Math.min(totalCount, startIndex + tools.length)
   const hiddenBefore = Math.max(0, startIndex)
   const hiddenAfter = Math.max(0, totalCount - endIndex)
   const label =
     totalCount > tools.length ? `${baseLabel} · ${tools.length}/${totalCount}` : baseLabel
   const loadPage = async (nextStartIndex: number): Promise<void> => {
-    if (!sequenceItem || !onLoadPage || loadState === 'loading') return
+    if (!onLoadPage || loadState === 'loading') return
     setLoadState('loading')
     try {
-      await onLoadPage(sequenceItem.id, nextStartIndex)
+      await onLoadPage(item.id, nextStartIndex)
       setLoadState('idle')
     } catch (error) {
       console.error('[caught:ChatDetailItem:loadPage]', error)
@@ -114,14 +116,13 @@ export const ToolSequence: React.FC<{
               Load {Math.min(workingToolPageSize, hiddenBefore)} previous · {hiddenBefore} hidden
             </button>
           )}
-          {tools.map((item) => (
-            <div key={item.id} data-working-motion-id={item.id}>
+          {tools.map((tool) => (
+            <div key={tool.id} data-working-motion-id={tool.id}>
               <ToolItem
-                item={item}
+                item={tool}
                 activeToolIds={activeToolIds}
-                expanded={expanded && item === tools.at(-1) && hiddenAfter === 0}
-                key={item.id}
-                onLoad={onLoadItem ? () => onLoadItem(item.id) : undefined}
+                expanded={expanded && tool === tools.at(-1) && hiddenAfter === 0}
+                onLoad={onLoadItem ? () => onLoadItem(tool.id) : undefined}
                 onDisclosureToggle={onDisclosureToggle}
                 projectCwd={projectCwd}
               />

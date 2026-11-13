@@ -82,7 +82,15 @@ const fixture = () => {
   })
   vm.runInContext(code, context)
   // biome-ignore lint/correctness/useHookAtTopLevel: isolated controller with a deterministic useRef test double.
-  const api = context.useChatListController(dependencies)
+  const api = context.useChatListController({
+    chatRead: dependencies,
+    chatCache: dependencies,
+    chatState: dependencies,
+    chatProjection: dependencies,
+    sourceState: dependencies,
+    projectState: {},
+    sidebarModel: {}
+  })
   const flush = () => {
     while (updates.length) chats = updates.shift()(chats)
   }

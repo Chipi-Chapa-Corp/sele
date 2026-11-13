@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {
-  anchorCodexCommandsByStart,
-  CodexCommandStartAnchors,
-  readCodexItemStartTimes
-} from './CodexCommandStartAnchors.ts'
+import { anchorCodexCommandsByStart, CodexCommandStartAnchors } from './CodexCommandStartAnchors.ts'
 import { getChatItems } from './CodexItemRenderers.ts'
 import { getToolSequenceDisplayLabel } from '../../../renderer/src/toolDisplayLabel.ts'
 
@@ -15,22 +11,11 @@ const command = (id, status = 'completed') => ({
   status
 })
 const message = (id) => ({ id, type: 'agentMessage', phase: 'final_answer', text: id })
-const event = (id, start, finish) =>
-  JSON.stringify({
-    type: 'event_msg',
-    payload: {
-      type: 'item_completed',
-      turn_id: 'turn',
-      item: { id },
-      started_at_ms: start,
-      completed_at_ms: finish
-    }
-  })
-const transcript = [
-  event('slow', 100, 1500),
-  event('check', 200, 210),
-  event('answer', 220, 230)
-].join('\n')
+const starts = new Map([
+  ['slow', 100],
+  ['check', 200],
+  ['answer', 220]
+])
 const turn = {
   id: 'turn',
   status: 'completed',
@@ -38,7 +23,7 @@ const turn = {
 }
 
 test('VPN late completion is anchored by start before the checks and final response', () => {
-  const result = anchorCodexCommandsByStart(turn, readCodexItemStartTimes(transcript).get('turn'))
+  const result = anchorCodexCommandsByStart(turn, starts)
   assert.deepEqual(
     result.items.map((item) => item.id),
     ['slow', 'check', 'answer']
@@ -178,39 +163,6 @@ test('timestamp work stays linear for large unchanged and repeatedly moved histo
       assert.equal(result, turn)
     }
   }
-})
-
-test('optional metadata is read once for the same snapshot and does not touch ordinary turns', async () => {
-  const store = new CodexCommandStartAnchors()
-  let reads = 0
-  const read = async () => {
-    reads++
-    return transcript
-  }
-  const thread = { id: 'chat', path: '/rollout', turns: [turn] }
-  assert.equal(await store.load(thread, read), true)
-  assert.deepEqual(
-    store.project(turn).items.map((item) => item.id),
-    ['slow', 'check', 'answer']
-  )
-  assert.equal(await store.load(thread, read), false)
-  assert.equal(reads, 1)
-  const ordinary = { ...turn, items: [command('check'), message('answer')] }
-  await store.load({ ...thread, turns: [ordinary] }, read)
-  assert.equal(reads, 1)
-  assert.equal(store.project(ordinary), ordinary)
-})
-
-test('missing rollout leaves usable history untouched', async () => {
-  const store = new CodexCommandStartAnchors()
-  const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
-  assert.equal(
-    await store.load({ id: 'chat', path: '/missing', turns: [turn] }, async () => {
-      throw missing
-    }),
-    false
-  )
-  assert.equal(store.project(turn), turn)
 })
 
 test('fresh snapshots retain scripts in their original group before optional metadata reloads', () => {

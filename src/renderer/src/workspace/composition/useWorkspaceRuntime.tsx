@@ -19,13 +19,11 @@ import { useWorkspaceSelectionPreferences } from '../features/useWorkspaceSelect
 import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
 import { useWorkspaceSources } from '../features/useWorkspaceSources'
 import { useWorkspaceProviderUpdates } from '../wiring/useWorkspaceProviderUpdates'
-import { useWorkspaceState } from './useWorkspaceState'
+import type { WorkspaceState } from './useWorkspaceState'
 
-type WorkspaceRuntimeDependencies = {
-  state: ReturnType<typeof useWorkspaceState>
-}
+export type WorkspaceRuntime = WorkspaceState & ReturnType<typeof useWorkspaceRuntime>
 
-export function useWorkspaceRuntime({ state }: WorkspaceRuntimeDependencies) {
+export function useWorkspaceRuntime({ state }: { state: WorkspaceState }) {
   const settings = useWorkspaceSettingsContext(state)
 
   const provider = useWorkspaceProviderContext(state)

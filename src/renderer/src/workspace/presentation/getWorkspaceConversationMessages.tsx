@@ -1,35 +1,7 @@
 import { conversationViews } from '../../conversationViews'
 import type { StartingChat } from '../../startingChat'
-import { useWorkspaceChatCache } from '../features/useWorkspaceChatCache'
-import { useWorkspaceScroll } from '../features/useWorkspaceScroll'
 import { useWorkspaceTurnRendering } from '../features/useWorkspaceTurnRendering'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
-import { useWorkspaceViewportState } from '../state/useWorkspaceViewportState'
-import { useCommitController } from '../useCommitController'
-import { useConversationViewModel } from '../useConversationViewModel'
-import { useChatInteractionController } from '../useChatInteractionController'
-import { useWorkspaceSelection } from '../useWorkspaceSelection'
-import { useSubagentController } from '../useSubagentController'
-
-type WorkspaceConversationMessagesDependencies = {
-  startingChat: StartingChat | null
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  chatCache: ReturnType<typeof useWorkspaceChatCache>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  scroll: ReturnType<typeof useWorkspaceScroll>
-  session: ReturnType<typeof useWorkspaceSelection>
-  interactions: ReturnType<typeof useChatInteractionController>
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  conversation: ReturnType<typeof useConversationViewModel>
-  commits: ReturnType<typeof useCommitController>
-  subagents: ReturnType<typeof useSubagentController>
-  turnRendering: ReturnType<typeof useWorkspaceTurnRendering>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceConversationMessages({
   startingChat,
@@ -46,7 +18,10 @@ export function getWorkspaceConversationMessages({
   subagents,
   turnRendering,
   subagentState
-}: WorkspaceConversationMessagesDependencies) {
+}: WorkspaceChanges & {
+  startingChat: StartingChat | null
+  turnRendering: ReturnType<typeof useWorkspaceTurnRendering>
+}) {
   return {
     startingChat,
     visible: Boolean(chatState.selectedChat),

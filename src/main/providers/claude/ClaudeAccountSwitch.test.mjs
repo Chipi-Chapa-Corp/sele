@@ -229,7 +229,6 @@ const setup = () => {
         calls.push(['usage-fallback'])
         return { seven_day: { utilization: 19, resets_at: null } }
       },
-      rememberUsage: async () => {},
       getLastUsage: async () => null
     },
     getClaudePermissionMode: () => 'default',

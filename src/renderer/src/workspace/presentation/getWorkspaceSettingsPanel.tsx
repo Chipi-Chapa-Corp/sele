@@ -3,39 +3,7 @@ import { type SettingsPanelProps } from '../../components/SettingsPanel'
 import { appAppearanceZoomLevelToPercent } from '../../settings'
 import { getFolderName } from '../chatControllerUtils'
 import { writeChatGroupingPreference } from '../controllerTypes'
-import { useWorkspaceChrome } from '../features/useWorkspaceChrome'
-import { useWorkspaceGitModels } from '../features/useWorkspaceGitModels'
-import { useWorkspaceProviderAccounts } from '../features/useWorkspaceProviderAccounts'
-import { useWorkspaceProviderContext } from '../features/useWorkspaceProviderContext'
-import { useWorkspaceResourceActions } from '../features/useWorkspaceResourceActions'
-import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
-import { useWorkspaceSettingsOptions } from '../features/useWorkspaceSettingsOptions'
-import { useWorkspaceSourceControls } from '../features/useWorkspaceSourceControls'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceSelection } from '../useWorkspaceSelection'
-import { useSettingsController } from '../useSettingsController'
-
-type WorkspaceSettingsPanelDependencies = {
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  accountActions: ReturnType<typeof useWorkspaceProviderAccounts>
-  session: ReturnType<typeof useWorkspaceSelection>
-  sourceControls: ReturnType<typeof useWorkspaceSourceControls>
-  settingsOptions: ReturnType<typeof useWorkspaceSettingsOptions>
-  settingsActions: ReturnType<typeof useSettingsController>
-  gitModels: ReturnType<typeof useWorkspaceGitModels>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  resourceActions: ReturnType<typeof useWorkspaceResourceActions>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  chrome: ReturnType<typeof useWorkspaceChrome>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceSettingsPanel({
   settings,
@@ -53,7 +21,7 @@ export function getWorkspaceSettingsPanel({
   sourceState,
   providerState,
   chrome
-}: WorkspaceSettingsPanelDependencies) {
+}: WorkspaceChanges) {
   const settingsProjectLabel = settings.settingsProjectCwd
     ? getFolderName(settings.settingsProjectCwd)
     : 'Project'

@@ -8,23 +8,10 @@ import {
 } from '../changeTree'
 import { type GitSyncAction } from './controllerTypes'
 import { isFileTreeScope, isGitChangesScope } from './chatControllerUtils'
-import type { useWorkspacePanes } from './features/useWorkspacePanes'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
-import type { useWorkspaceSelection } from './useWorkspaceSelection'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the derived change data below.
-export function useChangesData({
-  panes,
-  gitState,
-  session,
-  chatState
-}: {
-  panes: ReturnType<typeof useWorkspacePanes>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  session: ReturnType<typeof useWorkspaceSelection>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-}) {
+export function useChangesData({ panes, gitState, session, chatState }: WorkspaceChat) {
   const { changesPaneView } = panes
   const {
     gitChangesScope,

@@ -2,20 +2,15 @@ import { appApi } from '../../appApi'
 import { getContainerTargetKey } from '../../containerSelection'
 import { useProviderUpdates } from '../../useProviderUpdates'
 import { useWorkspaceProviderContext } from '../features/useWorkspaceProviderContext'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-
-type WorkspaceProviderUpdatesDependencies = {
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceProviderUpdates({
   sourceState,
   providerState,
   provider
-}: WorkspaceProviderUpdatesDependencies) {
+}: WorkspaceState & {
+  provider: ReturnType<typeof useWorkspaceProviderContext>
+}) {
   const updates = useProviderUpdates({
     providerIds: sourceState.newSessionAvailableProviderIds,
     container: sourceState.newSessionContainer,

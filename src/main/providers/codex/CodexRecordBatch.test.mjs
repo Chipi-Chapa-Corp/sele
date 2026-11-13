@@ -21,6 +21,7 @@ test('actual Codex item handlers batch appends and deltas until a snapshot is re
     'pendingTurnIds',
     'rolledBackTurnIds',
     'updateItem',
+    'updateItemFromDelta',
     'isRolledBackTurn',
     'bumpThreadRevision',
     'handleAgentMessageDelta'

@@ -2,12 +2,12 @@ import { Bot, MessageSquare } from 'lucide-react'
 import { useMemo } from 'react'
 import type { DropdownOption } from '../../components/Dropdown'
 import {
-  chatApprovalModeIcons,
-  chatSandboxModeIcons,
+  approvalModeIcons,
   formatModelLabel,
-  formatSelectionLabel,
-  getChatServiceTierIcon
-} from '../../messageBoxPreferences'
+  formatOptionLabel,
+  sandboxModeIcons
+} from '../../composer/configPresentation'
+import { getChatServiceTierIcon } from '../../messageBoxPreferences'
 import { getReasoningEffortPresentation } from '../../reasoningEffortPresentation'
 import {
   appChatManualDropdownValue,
@@ -15,21 +15,13 @@ import {
   type AppChatDropdownSettings
 } from '../../settings'
 import { getDefaultModel, modelHasServiceTierOptions } from '../appearanceControllerUtils'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
-import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceSettingsOptionsDependencies = {
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceSettingsOptions({
   settings,
   providerState,
   provider
-}: WorkspaceSettingsOptionsDependencies) {
+}: WorkspaceSession) {
   const settingsConfiguredModel =
     settings.settingsPanelSettings.chat.forceModel === appChatManualDropdownValue
       ? providerState.model
@@ -58,7 +50,7 @@ export function useWorkspaceSettingsOptions({
       value: mode.id,
       label: mode.label,
       description: mode.description || undefined,
-      icon: chatSandboxModeIcons[mode.id]
+      icon: sandboxModeIcons[mode.id]
     }))
   ]
 
@@ -73,7 +65,7 @@ export function useWorkspaceSettingsOptions({
       value: mode.id,
       label: mode.label,
       description: mode.description || undefined,
-      icon: chatApprovalModeIcons[mode.id]
+      icon: approvalModeIcons[mode.id]
     }))
   ]
 
@@ -111,7 +103,7 @@ export function useWorkspaceSettingsOptions({
         value: option.id,
         label: presentation.isKnown
           ? presentation.label
-          : formatSelectionLabel(option.label || option.id),
+          : formatOptionLabel(option.label || option.id),
         description: option.description || undefined,
         icon: presentation.icon
       }

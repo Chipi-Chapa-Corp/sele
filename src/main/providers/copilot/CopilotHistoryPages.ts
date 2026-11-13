@@ -79,6 +79,10 @@ export class CopilotHistoryPages {
     let olderBefore: string | undefined
     let olderEnd: string | undefined
     let hasOlder = false
+    const classify = (event: SessionEvent) =>
+      classifyCopilotTurnRecord(
+        agentId ? ({ ...event, agentId: undefined } as SessionEvent) : event
+      )
     for (;;) {
       const page = await this.readNative(session, before, max, agentId)
       let added = page.events
@@ -89,13 +93,7 @@ export class CopilotHistoryPages {
       }
       chunks.unshift(added)
       events = chunks.flat()
-      const starts = events.flatMap((event, index) =>
-        classifyCopilotTurnRecord(
-          agentId ? ({ ...event, agentId: undefined } as SessionEvent) : event
-        ) === 'start'
-          ? [index]
-          : []
-      )
+      const starts = events.flatMap((event, index) => (classify(event) === 'start' ? [index] : []))
       first = boundary.startId
         ? events.findIndex((event) => event.id === boundary.startId)
         : agentId
@@ -105,12 +103,7 @@ export class CopilotHistoryPages {
         throw new Error('Copilot history pagination did not advance.')
       if (boundary.startId && first < 0 && !page.hasMore)
         throw new Error('Copilot history changed. Reopen the conversation.')
-      const hasContent = events.some(
-        (event) =>
-          classifyCopilotTurnRecord(
-            agentId ? ({ ...event, agentId: undefined } as SessionEvent) : event
-          ) !== 'ignore'
-      )
+      const hasContent = events.some((event) => classify(event) !== 'ignore')
       if (
         boundary.startId
           ? first >= 0
@@ -157,11 +150,8 @@ export class CopilotHistoryPages {
     }
   }
 
-  async subagents(session: CopilotSession): Promise<SessionEvent[]> {
-    const events: SessionEvent[] = []
-    const seen = new Set<string>()
-    let cursor: string | undefined
-    for (;;) {
+  subagents(session: CopilotSession): Promise<SessionEvent[]> {
+    return this.readBackward(async (cursor) => {
       const page = await session.rpc.eventLog.read({
         cursor,
         max: eventPageSize,
@@ -171,52 +161,52 @@ export class CopilotHistoryPages {
         types: ['subagent.started', 'subagent.completed', 'subagent.failed']
       })
       if (page.cursorStatus !== 'ok') throw new Error('Copilot subagent history cursor expired.')
-      events.unshift(...page.events)
-      if (!page.hasMore) return events
-      if (seen.has(page.cursor) || page.cursor === cursor)
-        throw new Error('Copilot history pagination did not advance.')
-      seen.add(page.cursor)
-      cursor = page.cursor
-    }
+      return page
+    })
   }
 
-  async inputsSince(session: CopilotSession, timestamp: number): Promise<SessionEvent[]> {
-    const inputs: SessionEvent[] = []
-    const seen = new Set<string>()
-    let cursor: string | undefined
-    for (;;) {
-      const page = await session.rpc.eventLog.read({
-        cursor,
-        max: eventPageSize,
-        direction: 'backward',
-        includeEphemeral: false,
-        agentScope: 'primary',
-        types: ['user.message']
-      })
-      if (page.cursorStatus !== 'ok') throw new Error('Copilot input history cursor expired.')
-      inputs.unshift(...page.events)
-      if (!page.hasMore || page.events.some((event) => Date.parse(event.timestamp) < timestamp))
-        return inputs
-      if (seen.has(page.cursor) || page.cursor === cursor)
-        throw new Error('Copilot history pagination did not advance.')
-      seen.add(page.cursor)
-      cursor = page.cursor
-    }
+  inputsSince(session: CopilotSession, timestamp: number): Promise<SessionEvent[]> {
+    return this.readBackward(
+      async (cursor) => {
+        const page = await session.rpc.eventLog.read({
+          cursor,
+          max: eventPageSize,
+          direction: 'backward',
+          includeEphemeral: false,
+          agentScope: 'primary',
+          types: ['user.message']
+        })
+        if (page.cursorStatus !== 'ok') throw new Error('Copilot input history cursor expired.')
+        return page
+      },
+      (events) => events.some((event) => Date.parse(event.timestamp) < timestamp)
+    )
   }
 
-  async complete(session: CopilotSession): Promise<SessionEvent[]> {
+  complete(session: CopilotSession): Promise<SessionEvent[]> {
+    return this.readBackward(async (cursor) => {
+      if (cursor) await new Promise<void>((resolve) => setImmediate(resolve))
+      return this.readNative(session, cursor, eventPageSize)
+    })
+  }
+
+  private async readBackward(
+    readPage: (
+      cursor: string | undefined
+    ) => Promise<{ events: SessionEvent[]; hasMore: boolean; cursor: string }>,
+    isLastPage: (events: SessionEvent[]) => boolean = () => false
+  ): Promise<SessionEvent[]> {
     const chunks: SessionEvent[][] = []
     const seen = new Set<string>()
     let cursor: string | undefined
     for (;;) {
-      const page = await this.readNative(session, cursor, eventPageSize)
+      const page = await readPage(cursor)
       chunks.unshift(page.events)
-      if (!page.hasMore) return chunks.flat()
+      if (!page.hasMore || isLastPage(page.events)) return chunks.flat()
       if (seen.has(page.cursor) || page.cursor === cursor)
         throw new Error('Copilot history pagination did not advance.')
       seen.add(page.cursor)
       cursor = page.cursor
-      await new Promise<void>((resolve) => setImmediate(resolve))
     }
   }
 

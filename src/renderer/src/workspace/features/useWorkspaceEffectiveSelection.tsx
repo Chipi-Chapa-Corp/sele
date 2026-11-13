@@ -1,28 +1,18 @@
 import { useMemo } from 'react'
 import type { ProviderModelId } from '../../../../shared/provider'
-import { formatModelLabel } from '../../messageBoxPreferences'
+import { formatModelLabel } from '../../composer/configPresentation'
 import { resolveEffectiveModel } from '../../modelSelection'
 import { appChatManualDropdownValue, appChatStandardSpeedValue } from '../../settings'
 import { getDefaultReasoningEffort } from '../appearanceControllerUtils'
 import { modelSupportsReasoningEffort, modelSupportsServiceTier } from '../chatControllerUtils'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceModelCatalogs } from './useWorkspaceModelCatalogs'
-import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
-import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceEffectiveSelectionDependencies = {
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  catalogs: ReturnType<typeof useWorkspaceModelCatalogs>
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceEffectiveSelection({
   provider,
   settings,
   providerState,
   catalogs
-}: WorkspaceEffectiveSelectionDependencies) {
+}: WorkspaceSession) {
   const resolvedModelIdsById = useMemo(
     () =>
       new Map<ProviderModelId, ProviderModelId>(

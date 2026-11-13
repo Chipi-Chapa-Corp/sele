@@ -69,21 +69,14 @@ const requestTimeoutMs = 30_000
 const threadListRequestTimeoutMs = 180_000
 const codexResourceMemoryHigh = '2G'
 
-type AppServerCommand = {
-  command: string
-  args: string[]
-  env?: NodeJS.ProcessEnv
-}
-
 const getAppServerCommand = async (
   binary: string,
   options: {
     container?: AppContainerTarget | null
     accountId?: string
     existingOnly?: boolean
-    owned?: boolean
   } = {}
-): Promise<AppServerCommand> => {
+) => {
   // Account handoffs must release the writer as soon as we unsubscribe, rather
   // than retaining it for Codex's default inactive-thread grace period.
   const appServerArgs = ['app-server', '-c', 'thread_unload_delay_secs=0', '--listen', 'stdio://']
@@ -107,7 +100,6 @@ const getAppServerCommand = async (
   )
   const canUseSystemd =
     !scope &&
-    !options.owned &&
     process.platform === 'linux' &&
     !isRunningInFlatpak() &&
     container?.kind !== 'container' &&
@@ -184,14 +176,9 @@ export class CodexAppServerClient {
   private browserSessionCwds = new Map<string, string>()
   private ownedThreadIds = new Set<string>()
   readonly dynamicTools = new CodexDynamicTools()
-  private requestFailureListeners = new Set<
-    (method: string, params: unknown, error: unknown) => void
-  >()
-  onRequestFailed = (
-    listener: (method: string, params: unknown, error: unknown) => void
-  ): (() => void) => {
+  private requestFailureListeners = new Set<(method: string, error: unknown) => void>()
+  onRequestFailed = (listener: (method: string, error: unknown) => void): void => {
     this.requestFailureListeners.add(listener)
-    return () => this.requestFailureListeners.delete(listener)
   }
 
   get connectionIdentity(): object | null {
@@ -230,9 +217,6 @@ export class CodexAppServerClient {
           if (result.status === 'notLoaded') closed()
         })
       ])
-      this.ownedThreadIds.delete(threadId)
-      this.browserSessionCwds.delete(threadId)
-      removeBrowserUseSession(this, threadId)
     } finally {
       clearTimeout(timeout)
       unsubscribe()
@@ -306,7 +290,7 @@ export class CodexAppServerClient {
     } catch (error) {
       for (const listener of this.requestFailureListeners) {
         try {
-          listener(method, params, error)
+          listener(method, error)
         } catch (notificationError) {
           console.error('Unable to report Codex request failure.', notificationError)
         }
@@ -441,8 +425,7 @@ export class CodexAppServerClient {
       {
         container: this.container,
         accountId: this.accountId,
-        existingOnly,
-        owned: Boolean(providerProcessContext.getStore())
+        existingOnly
       }
     )
     const hostCommand = await (existingOnly ? getHostCommand : getProviderHostCommand)(
@@ -554,7 +537,7 @@ export class CodexAppServerClient {
             params: { threadIds: recoveredThreadIds }
           })
         )
-      this.sendNotification('initialized')
+      this.write({ method: 'initialized' })
       this.initialized = true
     } catch (error) {
       if (this.process === child)
@@ -572,30 +555,22 @@ export class CodexAppServerClient {
     const id = this.nextRequestId++
 
     return new Promise<Result>((resolve, reject) => {
-      const abort = (): void => {
+      const fail = (error: Error): void => {
         const pending = this.pendingRequests.get(id)
         if (!pending) return
         clearTimeout(pending.timeout)
         pending.cleanup?.()
         this.pendingRequests.delete(id)
-        reject(new Error('Request canceled.'))
+        reject(error)
         if (method === 'userVerification/verify' || method === 'thread/sample')
           void this.sendRequest(
             method === 'thread/sample' ? 'thread/sample/cancel' : 'userVerification/cancel',
             { requestId: id }
           ).catch((error) => console.error(`Unable to cancel ${method}.`, error))
       }
+      const abort = (): void => fail(new Error('Request canceled.'))
       const timeout = setTimeout(
-        () => {
-          this.pendingRequests.get(id)?.cleanup?.()
-          this.pendingRequests.delete(id)
-          reject(new Error(`Codex app-server request timed out: ${method}`))
-          if (method === 'userVerification/verify' || method === 'thread/sample')
-            void this.sendRequest(
-              method === 'thread/sample' ? 'thread/sample/cancel' : 'userVerification/cancel',
-              { requestId: id }
-            ).catch((error) => console.error(`Unable to cancel ${method}.`, error))
-        },
+        () => fail(new Error(`Codex app-server request timed out: ${method}`)),
         method === 'userVerification/verify'
           ? 120_000
           : method === 'thread/list'
@@ -625,10 +600,6 @@ export class CodexAppServerClient {
     })
   }
 
-  private sendNotification = (method: string): void => {
-    this.write({ method })
-  }
-
   private write = (message: unknown): void => {
     if (!this.process?.stdin.writable) throw new Error('Codex app-server is not running')
     this.process.stdin.write(`${JSON.stringify(message)}\n`)
@@ -647,16 +618,9 @@ export class CodexAppServerClient {
     const method = message.method
     if (typeof method === 'string') {
       if (typeof message.id === 'number') {
-        this.handleServerRequest({
-          id: message.id,
-          method,
-          params: 'params' in message ? message.params : undefined
-        })
+        this.handleServerRequest({ id: message.id, method, params: message.params })
       } else {
-        const notification = {
-          method,
-          params: 'params' in message ? message.params : undefined
-        }
+        const notification = { method, params: message.params }
 
         if (method === 'thread/closed') {
           const threadId = (notification.params as { threadId?: string } | undefined)?.threadId
@@ -718,11 +682,7 @@ export class CodexAppServerClient {
         if (listener(request)) return
       } catch (error) {
         console.error(`Codex server request listener failed for ${request.method}`, error)
-        this.rejectServerRequest(
-          request.id,
-          error instanceof Error ? error.message : String(error),
-          -32603
-        )
+        this.rejectServerRequest(request.id, error instanceof Error ? error.message : String(error))
         return
       }
     }

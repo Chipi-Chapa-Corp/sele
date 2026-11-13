@@ -17,68 +17,34 @@ import {
 import { getComposerDraftScopeKey } from '../composerDraft'
 import { getContainerTargetKey } from '../containerSelection'
 import { getChatKey, getChatProjectCwd, mergeProjects } from './chatControllerUtils'
-import type { useWorkspaceChatCache } from './features/useWorkspaceChatCache'
-import type { useWorkspaceChatProjection } from './features/useWorkspaceChatProjection'
-import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
 import type { useWorkspaceSidebarModel } from './features/useWorkspaceSidebarModel'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useWorkspaceProjectState } from './state/useWorkspaceProjectState'
-import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
+import type { WorkspaceSession } from './useWorkspaceSelection'
 
 // Return shape is inferred from the controller declarations below.
-export function useChatListController(
-  dependencies: Pick<ReturnType<typeof useWorkspaceChatReadState>, 'applyChatMetadata'> &
-    Pick<ReturnType<typeof useWorkspaceChatCache>, 'removeRecentChatCacheEntry'> &
-    Pick<
-      ReturnType<typeof useWorkspaceChatState>,
-      'selectedChat' | 'selectedChatKeyRef' | 'chatDetail' | 'chatOrderMutationsRef' | 'setChats'
-    > &
-    Pick<ReturnType<typeof useWorkspaceChatProjection>, 'showNewChatView' | 'applyChatDetail'> &
-    Pick<ReturnType<typeof useWorkspaceSourceState>, 'newSessionContainer'> &
-    Pick<
-      ReturnType<typeof useWorkspaceProjectState>,
-      | 'projectCollapseFrameRef'
-      | 'expandedProjectGroupsBeforeDragRef'
-      | 'draggedProjectGroupKeyRef'
-      | 'projectDropInsertionIndexRef'
-      | 'setDraggedProjectGroupKey'
-      | 'setProjectDropInsertionIndex'
-      | 'setCollapsedCwdGroups'
-      | 'projectOrderMutationRef'
-      | 'projects'
-      | 'setProjects'
-      | 'chatGroupingPreference'
-      | 'collapsedCwdGroups'
-    > &
-    Pick<ReturnType<typeof useWorkspaceSidebarModel>, 'activeChatGroups' | 'searchTerms'>
-) {
-  const {
-    applyChatMetadata,
-    removeRecentChatCacheEntry,
-    selectedChat,
-    selectedChatKeyRef,
-    chatDetail,
-    showNewChatView,
-    newSessionContainer,
-    applyChatDetail,
-    chatOrderMutationsRef,
-    setChats,
+export function useChatListController({
+  chatRead: { applyChatMetadata },
+  chatCache: { removeRecentChatCacheEntry },
+  chatState: { selectedChat, selectedChatKeyRef, chatDetail, chatOrderMutationsRef, setChats },
+  chatProjection: { showNewChatView, applyChatDetail },
+  sourceState: { newSessionContainer },
+  projectState: {
     projectCollapseFrameRef,
     expandedProjectGroupsBeforeDragRef,
     draggedProjectGroupKeyRef,
     projectDropInsertionIndexRef,
     setDraggedProjectGroupKey,
     setProjectDropInsertionIndex,
-    activeChatGroups,
     setCollapsedCwdGroups,
     projectOrderMutationRef,
     projects,
     setProjects,
     chatGroupingPreference,
-    searchTerms,
     collapsedCwdGroups
-  } = dependencies
-
+  },
+  sidebarModel: { activeChatGroups, searchTerms }
+}: WorkspaceSession & {
+  sidebarModel: ReturnType<typeof useWorkspaceSidebarModel>
+}) {
   const releaseChatDrafts = (state: ComposerDraftState, chat: ProviderChat): ComposerDraftState => {
     const currentChat =
       chatDetail?.id === chat.id && selectedChat?.providerId === chat.providerId ? chatDetail : chat

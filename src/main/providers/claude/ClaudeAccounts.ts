@@ -145,21 +145,6 @@ export class ClaudeAccounts {
     return `${getContainerTargetKey(options.container)}:${active}`
   }
 
-  /** Records limits Claude returned directly, so later failures can still show them. */
-  rememberUsage = async (
-    options: ProviderSourceOptions,
-    limits: ClaudeUsageCacheEntry['limits']
-  ): Promise<void> => {
-    if (!limits) return
-    const key = await this.usageCacheKey(options)
-    await this.saveUsageCache(key, (current) => ({
-      ...current,
-      at: Date.now(),
-      limits,
-      retryAt: 0
-    }))
-  }
-
   /** The last limits for the active account, if recent enough to show. */
   getLastUsage = async (
     options: ProviderSourceOptions = {}

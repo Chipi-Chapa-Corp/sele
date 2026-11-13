@@ -141,10 +141,9 @@ function Fixture() {
       setChats((current) => [...current, chat])
       setSelected(chat)
     },
-    renderChatGroup: (group, contentId) => (
+    renderChatGroup: (group) => (
       <ChatListGroup
         group={group}
-        contentId={contentId}
         open
         selectedChatKey={`${selected.providerId}:${selected.id}`}
         onToggle={() => {}}

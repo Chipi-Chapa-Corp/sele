@@ -172,11 +172,20 @@ if (!process.versions.electron) {
         { type: 'message', id: 'initial-user', role: 'user', content: 'A saved question' },
         { type: 'message', id: 'initial-answer', role: 'assistant', content: 'Saved LAN answer' }
       ]
-      if (process.env.SELE_ANDROID_POLISH_ONLY) items.push({
-        type: 'working', id: 'polish-working', status: 'working', startedAt: now - 65000,
-        items: [], tokenUsage: {inputTokens: 100, cachedInputTokens: 0, outputTokens: 200,
-          cost: {input: .02, cachedInput: 0, output: .1, total: .12}}
-      })
+      if (process.env.SELE_ANDROID_POLISH_ONLY)
+        items.push({
+          type: 'working',
+          id: 'polish-working',
+          status: 'working',
+          startedAt: now - 65000,
+          items: [],
+          tokenUsage: {
+            inputTokens: 100,
+            cachedInputTokens: 0,
+            outputTokens: 200,
+            cost: { input: 0.02, cachedInput: 0, output: 0.1, total: 0.12 }
+          }
+        })
       const detail = () => ({
         ...chat,
         revision,
@@ -216,7 +225,9 @@ if (!process.versions.electron) {
         getModels: () => [
           {
             id: 'fixture',
-            label: process.env.SELE_MOBILE_LONG_MODEL_LABEL ? 'GPT-6.1 Extended reasoning with a long mobile preset name' : 'Fixture model',
+            label: process.env.SELE_MOBILE_LONG_MODEL_LABEL
+              ? 'GPT-6.1 Extended reasoning with a long mobile preset name'
+              : 'Fixture model',
             isDefault: true,
             supportedReasoningEfforts: [],
             defaultReasoningEffort: 'medium'
@@ -265,7 +276,17 @@ if (!process.versions.electron) {
       ]) {
         operations[name] = () => []
       }
-      operations.getSkills = () => [{name:'native-skill',displayName:null,shortDescription:'Native skill',description:'Native IME selection fixture',path:'/fixture/native-skill/SKILL.md',scope:'repo',enabled:true}]
+      operations.getSkills = () => [
+        {
+          name: 'native-skill',
+          displayName: null,
+          shortDescription: 'Native skill',
+          description: 'Native IME selection fixture',
+          path: '/fixture/native-skill/SKILL.md',
+          scope: 'repo',
+          enabled: true
+        }
+      ]
       globalThis.lanFixture = {
         operations,
         detail,
@@ -280,47 +301,121 @@ if (!process.versions.electron) {
         const preferenceValues = {}
         host.handleClientRequest('sele:preferences', (event, request) => {
           preferenceClients.set(event.sender.id, event.sender)
-          if(request.action === 'load') return {ok:true,value:{...preferenceValues}}
+          if (request.action === 'load') return { ok: true, value: { ...preferenceValues } }
           assert.equal(request.action, 'write')
-          for(const [key,value] of Object.entries(request.values)) {
-            if(value===null)delete preferenceValues[key]
-            else preferenceValues[key]=value
+          for (const [key, value] of Object.entries(request.values)) {
+            if (value === null) delete preferenceValues[key]
+            else preferenceValues[key] = value
           }
-          for(const client of preferenceClients.values()) if(!client.isDestroyed())client.send('sele:preferences-changed',request.values)
-          return {ok:true,value:null}
+          for (const client of preferenceClients.values())
+            if (!client.isDestroyed()) client.send('sele:preferences-changed', request.values)
+          return { ok: true, value: null }
         })
         const sleepClients = new Map()
         let sleeping = null
         const sleep = host.createChatSleepState({
           read: async () => ({ sleeping, legacy: null }),
-          write: async (value) => { sleeping = value },
-          broadcast: (state) => { for (const client of sleepClients.values()) if (!client.isDestroyed()) client.send(host.appIpcChannels.chatSleepUpdated, state) }
+          write: async (value) => {
+            sleeping = value
+          },
+          broadcast: (state) => {
+            for (const client of sleepClients.values())
+              if (!client.isDestroyed()) client.send(host.appIpcChannels.chatSleepUpdated, state)
+          }
         })
         host.handleClientRequest(host.appIpcChannels.getChatSleep, (event) => {
           sleepClients.set(event.sender.id, event.sender)
           return sleep.getState()
         })
-        host.handleClientRequest(host.appIpcChannels.updateChatSleep, (_event, changes) => sleep.update(changes))
+        host.handleClientRequest(host.appIpcChannels.updateChatSleep, (_event, changes) =>
+          sleep.update(changes)
+        )
         const defaults = {
           getDefaultCwd: '/fixture',
-          getProjects: [{cwd:'/fixture',name:'A project with a long name that should wrap in the sidebar',additionalCwds:[],icon:null,sidebarOrder:null,addedAt:1,updatedAt:1}],
+          getProjects: [
+            {
+              cwd: '/fixture',
+              name: 'A project with a long name that should wrap in the sidebar',
+              additionalCwds: [],
+              icon: null,
+              sidebarOrder: null,
+              addedAt: 1,
+              updatedAt: 1
+            }
+          ],
           getDeletedProjectCwds: [],
           getContainerSuggestions: [],
           getSshEnvironments: [],
           getProjectIcon: null,
-          getFileTree: {repositoryRoot:'/fixture',branchName:'main',files:[{path:'README.md'}]},
-          getFileTreeListing: {repositoryRoot:'/fixture',branchName:'main',fileCount:1,paths:'README.md'},
-          getGitHubPullRequests: {repository:'fixture/sele',totalCount:1,page:1,pageCount:1,pullRequests:[{number:123,title:'Phone pull request',url:'https://github.com/fixture/sele/pull/123',state:'open',isDraft:false,author:'fixture'}]},
-          getGitHubPullRequest: {number:123,title:'Phone pull request',url:'https://github.com/fixture/sele/pull/123',state:'open',isDraft:false,author:'fixture',repository:'fixture/sele',body:'Mobile PR detail',baseRefName:'main',headRefName:'phone',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),mergedAt:null,closedAt:null,additions:1,deletions:0,changedFiles:1,reviewDecision:'REVIEW_REQUIRED',activity:[]},
+          getFileTree: {
+            repositoryRoot: '/fixture',
+            branchName: 'main',
+            files: [{ path: 'README.md' }]
+          },
+          getFileTreeListing: {
+            repositoryRoot: '/fixture',
+            branchName: 'main',
+            fileCount: 1,
+            paths: 'README.md'
+          },
+          getGitHubPullRequests: {
+            repository: 'fixture/sele',
+            totalCount: 1,
+            page: 1,
+            pageCount: 1,
+            pullRequests: [
+              {
+                number: 123,
+                title: 'Phone pull request',
+                url: 'https://github.com/fixture/sele/pull/123',
+                state: 'open',
+                isDraft: false,
+                author: 'fixture'
+              }
+            ]
+          },
+          getGitHubPullRequest: {
+            number: 123,
+            title: 'Phone pull request',
+            url: 'https://github.com/fixture/sele/pull/123',
+            state: 'open',
+            isDraft: false,
+            author: 'fixture',
+            repository: 'fixture/sele',
+            body: 'Mobile PR detail',
+            baseRefName: 'main',
+            headRefName: 'phone',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            mergedAt: null,
+            closedAt: null,
+            additions: 1,
+            deletions: 0,
+            changedFiles: 1,
+            reviewDecision: 'REVIEW_REQUIRED',
+            activity: []
+          },
           getSourceAvailability: {
             gitAvailable: Boolean(process.env.SELE_ANDROID_WORKSPACE_ONLY),
             providers: [{ providerId: 'codex', available: true }]
           }
         }
-        if (process.env.SELE_ANDROID_WORKSPACE_ONLY) Object.assign(defaults, {
-          getGitChanges: {repositoryRoot:'/fixture',branchName:'feature/a-long-branch-name-for-phone-layout',baseRef:'HEAD',unpulledCount:12,unpushedCount:345,untrackedFilesHiddenForPerformance:false,files:[]},
-          getGitBranches: {repositoryRoot:'/fixture',currentBranch:'feature/a-long-branch-name-for-phone-layout',branches:['main','feature/a-long-branch-name-for-phone-layout']}
-        })
+        if (process.env.SELE_ANDROID_WORKSPACE_ONLY)
+          Object.assign(defaults, {
+            getGitChanges: {
+              repositoryRoot: '/fixture',
+              branchName: 'feature/a-long-branch-name-for-phone-layout',
+              unpulledCount: 12,
+              unpushedCount: 345,
+              untrackedFilesHiddenForPerformance: false,
+              files: []
+            },
+            getGitBranches: {
+              repositoryRoot: '/fixture',
+              currentBranch: 'feature/a-long-branch-name-for-phone-layout',
+              branches: ['main', 'feature/a-long-branch-name-for-phone-layout']
+            }
+          })
         for (const [name, value] of Object.entries(defaults)) {
           host.handleClientRequest(host.appIpcChannels[name], () => value)
         }
@@ -499,25 +594,48 @@ if (!process.versions.electron) {
         await handlers.get(host.localAccessChannels.configure)({}, { enabled: true, port })
         await waitFor('!document.getElementById("sele-connection-status")')
         await new Promise((resolve) => setTimeout(resolve, 250))
-        assert.equal(await run('window.pickerSurvived'), true, 'reconnect cannot discard an open picker')
+        assert.equal(
+          await run('window.pickerSurvived'),
+          true,
+          'reconnect cannot discard an open picker'
+        )
         const imageFiles = []
         for (let index = 0; index < 3; index++) {
           const imagePath = path.join(directory, `phone-${index}.png`)
-          const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64')
+          const image = Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=',
+            'base64'
+          )
           await fs.writeFile(imagePath, Buffer.concat([image, Buffer.alloc(1024 * 1024)]))
           imageFiles.push(imagePath)
         }
-        const { root: pickerDocument } = await window.webContents.debugger.sendCommand('DOM.getDocument')
-        const { nodeId: pickerNode } = await window.webContents.debugger.sendCommand('DOM.querySelector', {
-          nodeId: pickerDocument.nodeId, selector: 'input[type="file"]'
-        })
+        const { root: pickerDocument } =
+          await window.webContents.debugger.sendCommand('DOM.getDocument')
+        const { nodeId: pickerNode } = await window.webContents.debugger.sendCommand(
+          'DOM.querySelector',
+          {
+            nodeId: pickerDocument.nodeId,
+            selector: 'input[type="file"]'
+          }
+        )
         await window.webContents.debugger.sendCommand('DOM.setFileInputFiles', {
-          nodeId: pickerNode, files: imageFiles
+          nodeId: pickerNode,
+          files: imageFiles
         })
-        await waitFor('!window.pickerSurvived && Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))')
-        await run('document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()')
-        await waitFor('document.querySelectorAll(\'.message-box__attachment-preview--image\').length === 3')
-        assert.equal(globalThis.lanFixture.sends, 1, 'attachment recovery does not replay chat sends')
+        await waitFor(
+          '!window.pickerSurvived && Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))'
+        )
+        await run(
+          'document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()'
+        )
+        await waitFor(
+          "document.querySelectorAll('.message-box__attachment-preview--image').length === 3"
+        )
+        assert.equal(
+          globalThis.lanFixture.sends,
+          1,
+          'attachment recovery does not replay chat sends'
+        )
         window.webContents.debugger.detach()
         await run(`preferencesApi.setItem('sele:lan-fixture-draft', 'keep on phone')`)
         // Access keys are per tab; settings and drafts live on the host.
@@ -549,14 +667,20 @@ if (!process.versions.electron) {
           'keep on phone'
         )
         // Compact media rules must have no effect on a wide desktop workspace.
-        const hoverPoint = await run(`(()=>{const r=document.querySelector('[data-chat-id="lan-fixture"] .chat-list-item__main').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`)
+        const hoverPoint = await run(
+          `(()=>{const r=document.querySelector('[data-chat-id="lan-fixture"] .chat-list-item__main').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`
+        )
         window.webContents.sendInputEvent({ type: 'mouseMove', ...hoverPoint })
         await waitFor('Boolean(document.querySelector(".chat-list-item__detail-card"))')
         window.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 })
         await waitFor('!document.querySelector(".chat-list-item__detail-card")')
         console.log('DESKTOP HOVER PASSED: mouse details preserved')
-        await run('document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()')
-        await waitFor('document.getElementById("chat-search-content")?.textContent.includes("Live answer over the LAN")')
+        await run(
+          'document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()'
+        )
+        await waitFor(
+          'document.getElementById("chat-search-content")?.textContent.includes("Live answer over the LAN")'
+        )
         await run(`(async () => {
           await document.fonts.ready;
           const style=document.createElement('style');style.id='desktop-comparison-freeze';
@@ -564,8 +688,13 @@ if (!process.versions.electron) {
           document.head.append(style);
           await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         })()`)
-        assert.equal(await run('Boolean(document.querySelector(".mobile-conversation-header"))'), false)
-        await run(`(async()=>{await new Promise(resolve=>setTimeout(resolve,350));for(const animation of document.getAnimations()){try{animation.finish()}catch{animation.pause()}}})()`)
+        assert.equal(
+          await run('Boolean(document.querySelector(".mobile-conversation-header"))'),
+          false
+        )
+        await run(
+          `(async()=>{await new Promise(resolve=>setTimeout(resolve,350));for(const animation of document.getAnimations()){try{animation.finish()}catch{animation.pause()}}})()`
+        )
         const desktopBefore = await window.webContents.capturePage()
         const disabled = await run(`(() => {
           window.__seleMobileMedia=[];
@@ -579,9 +708,18 @@ if (!process.versions.electron) {
         await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
         const desktopAfter = await window.webContents.capturePage()
         await fs.mkdir(path.resolve('test-results/local-access'), { recursive: true })
-        await fs.writeFile(path.resolve('test-results/local-access/desktop-before.png'), desktopBefore.toPNG())
-        await fs.writeFile(path.resolve('test-results/local-access/desktop-after.png'), desktopAfter.toPNG())
-        assert.ok(desktopAfter.toBitmap().equals(desktopBefore.toBitmap()), 'desktop pixels stay unchanged when compact CSS is removed')
+        await fs.writeFile(
+          path.resolve('test-results/local-access/desktop-before.png'),
+          desktopBefore.toPNG()
+        )
+        await fs.writeFile(
+          path.resolve('test-results/local-access/desktop-after.png'),
+          desktopAfter.toPNG()
+        )
+        assert.ok(
+          desktopAfter.toBitmap().equals(desktopBefore.toBitmap()),
+          'desktop pixels stay unchanged when compact CSS is removed'
+        )
         await run(
           `window.__seleMobileMedia.forEach(([media,text])=>media.mediaText=text);document.getElementById('desktop-comparison-freeze').remove()`
         )
@@ -593,7 +731,9 @@ if (!process.versions.electron) {
         console.log('DESKTOP LAYOUT PASSED: identical pixels with compact CSS disabled')
         window.setSize(420, 820)
         await waitFor('Boolean(document.querySelector(".mobile-conversation-header"))')
-        await run('document.querySelector(".mobile-conversation-header button[aria-label=\\"Open sidebar\\"]").click()')
+        await run(
+          'document.querySelector(".mobile-conversation-header button[aria-label=\\"Open sidebar\\"]").click()'
+        )
         await waitFor('document.querySelector("main.chat")?.dataset.mobilePane === "chats"')
         await run(
           'document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()'

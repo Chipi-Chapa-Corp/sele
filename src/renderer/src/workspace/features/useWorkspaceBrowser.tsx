@@ -3,21 +3,18 @@ import type { BrowserOpenRequest } from '../../../../shared/browser'
 import { isExpectedUrlParseError } from '../../../../shared/expectedAbsence.ts'
 import { appApi } from '../../appApi'
 import { browserApi } from '../../browserApi'
-import { useWorkspaceDialogState } from '../state/useWorkspaceDialogState'
 import { useWorkspacePanes } from './useWorkspacePanes'
 import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceBrowserDependencies = {
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  dialogState: ReturnType<typeof useWorkspaceDialogState>
-  panes: ReturnType<typeof useWorkspacePanes>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceBrowser({
   settings,
   dialogState,
   panes
-}: WorkspaceBrowserDependencies) {
+}: WorkspaceState & {
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+  panes: ReturnType<typeof useWorkspacePanes>
+}) {
   const handleOpenBrowserRequest = useCallback(
     (request: BrowserOpenRequest): void => {
       if (!settings.effectiveAppSettings.browser.enabled) {

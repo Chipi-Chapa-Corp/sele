@@ -62,7 +62,7 @@ export type ProviderAdapter = {
   releaseChat?: (chatId: string, options?: ProviderSourceOptions) => Promise<void>
   /** Stop owned work without starting an idle runtime; return descendant session IDs too. */
   stopChatProcesses?: (chatId: string, options?: ProviderSourceOptions) => Promise<string[]>
-  getChatTerminalTasks?: (chatId: string, options?: ProviderSourceOptions) => Promise<string[]>
+  getChatTerminalTasks: (chatId: string, options?: ProviderSourceOptions) => Promise<string[]>
   /** Import text exchanges while idle, preserving the session's own tool history. */
   importHistory?: (
     chatId: string | null,
@@ -118,7 +118,7 @@ export type ProviderAdapter = {
    * A bounded, read-only transcript path for renderer navigation. Providers that implement this
    * must avoid hydrating transcript content outside the requested turn window.
    */
-  getChatWindow?: (
+  getChatWindow: (
     chatId: string,
     window: ProviderChatTurnWindow,
     options?: { container?: AppContainerTarget | null }
@@ -127,13 +127,13 @@ export type ProviderAdapter = {
    * Cursor-native transcript navigation for providers whose history API does not expose an exact
    * total count. The returned items must be chronological even when the provider reads backwards.
    */
-  getChatCursorWindow?: (
+  getChatCursorWindow: (
     chatId: string,
     window: ProviderChatTurnCursorWindow,
     options?: { container?: AppContainerTarget | null }
   ) => Promise<ProviderChatDetail>
   /** Resolve an item to a bounded transcript window without hydrating unrelated turn items. */
-  getChatWindowForItem?: (
+  getChatWindowForItem: (
     chatId: string,
     itemId: string,
     limit: number,
@@ -205,7 +205,7 @@ export type ProviderAdapter = {
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatDetail>
   /** Hold delivery until the reset outbox has been atomically moved to durable pending storage. */
-  enqueueLimitResetMessage?: (
+  enqueueLimitResetMessage: (
     chatId: string,
     message: string,
     messageId: string,

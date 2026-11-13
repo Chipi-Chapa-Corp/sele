@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { DesktopApi, DesktopState } from '../../../shared/desktop'
 import { appApi } from '../appApi'
 import { Button } from './Button'
+import { getErrorMessage } from '../workspace/chatControllerUtils'
 
 const api = (): DesktopApi => (window as unknown as { desktopApi: DesktopApi }).desktopApi
 export function DesktopAutomationSettings(): React.ReactElement {
@@ -36,11 +37,7 @@ export function DesktopAutomationSettings(): React.ReactElement {
     try {
       setState(await operation())
     } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
-          : String(error)
-      )
+      setError(getErrorMessage(error, String(error)))
     } finally {
       setBusy(false)
     }

@@ -10,9 +10,7 @@ export type CodexDynamicToolSpec = {
 export type CodexDynamicToolResult = {
   success: boolean
   contentItems: Array<
-    | { type: 'inputText'; text: string }
-    | { type: 'inputImage'; imageUrl: string }
-    | { type: 'inputAudio'; audioUrl: string }
+    { type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string }
   >
 }
 type Handler = (
@@ -44,11 +42,7 @@ export class CodexDynamicTools {
     else this.blockedThreads.delete(threadId)
   }
 
-  register(
-    spec: CodexDynamicToolSpec,
-    handler: Handler,
-    namespace: string | null = null
-  ): () => void {
+  register(spec: CodexDynamicToolSpec, handler: Handler, namespace: string | null = null): void {
     const key = `${namespace ?? ''}:${spec.name}`
     if (
       !/^[a-zA-Z0-9_-]{1,64}$/.test(spec.name) ||
@@ -56,11 +50,7 @@ export class CodexDynamicTools {
       this.tools.has(key)
     )
       throw new Error('Invalid or duplicate dynamic tool name')
-    const registered = { spec: structuredClone(spec), handler, namespace }
-    this.tools.set(key, registered)
-    return () => {
-      if (this.tools.get(key) === registered) this.tools.delete(key)
-    }
+    this.tools.set(key, { spec: structuredClone(spec), handler, namespace })
   }
 
   get specs(): Array<
@@ -140,25 +130,12 @@ export class CodexDynamicTools {
     const controller = new AbortController()
     this.active.add(controller)
     try {
-      const result = await tool.handler(arguments_, {
+      return await tool.handler(arguments_, {
         threadId: request.threadId,
         turnId: request.turnId,
         callId: request.callId,
         signal: controller.signal
       })
-      if (
-        !result ||
-        typeof result.success !== 'boolean' ||
-        !Array.isArray(result.contentItems) ||
-        !result.contentItems.every(
-          (item) =>
-            (item.type === 'inputText' && typeof item.text === 'string') ||
-            (item.type === 'inputImage' && typeof item.imageUrl === 'string') ||
-            (item.type === 'inputAudio' && typeof item.audioUrl === 'string')
-        )
-      )
-        return fail('The client tool returned an invalid result.')
-      return result
     } catch {
       return fail('The client tool failed to execute.')
     } finally {

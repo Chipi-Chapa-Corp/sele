@@ -66,7 +66,6 @@ test('stops empty-rollout retries at the configured boundary and reports the fin
         throw expectedError
       },
       {
-        attempts: 3,
         delay: async () => {},
         onRetry: (error, attempt) => retries.push([error, attempt]),
         onFinalFailure: (error, attempts) => failures.push([error, attempts])

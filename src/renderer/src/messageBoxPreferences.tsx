@@ -1,15 +1,6 @@
 import { preferences as preferenceStorage } from './preferences.ts'
 import { createAfterPaintWriter } from './afterPaintWriter'
-import {
-  BadgeCheck,
-  FileLock,
-  FolderPen,
-  Gauge,
-  ShieldQuestionMark,
-  Sparkles,
-  UnlockKeyhole,
-  Zap
-} from 'lucide-react'
+import { Gauge, Zap } from 'lucide-react'
 import type {
   ProviderAgentMode,
   ProviderApprovalMode,
@@ -30,8 +21,8 @@ import {
   isProviderServiceTier,
   providerIds
 } from '../../shared/provider'
-import type { DropdownOption } from './components/Dropdown'
 import { ProviderIcon } from './components/ProviderIcon'
+import { fastServiceTierIconClassName, isFastServiceTier } from './composer/configPresentation'
 import { providerLabels } from './providerSettings'
 
 type LegacyProviderAccessMode = 'sandbox' | 'auto' | 'full'
@@ -204,49 +195,15 @@ export const writeStoredChatMessageBoxSelections = (
   selections: Record<string, StoredMessageBoxSelection>
 ): void => chatSelectionsWriter.schedule(selections)
 
-const getDropdownOptions = <TValue extends string>(
-  labels: Record<TValue, string>
-): DropdownOption<TValue>[] =>
-  Object.entries(labels).map(([value, label]) => ({
-    value: value as TValue,
-    label: label as string
-  }))
-
-export const providerOptions = getDropdownOptions(providerLabels).map((option) => ({
-  ...option,
-  icon: <ProviderIcon providerId={option.value} aria-hidden="true" />
+export const providerOptions = providerIds.map((value) => ({
+  value,
+  label: providerLabels[value],
+  icon: <ProviderIcon providerId={value} aria-hidden="true" />
 }))
 
-export const formatModelLabel = (label: string): string => label.replace(/-/g, ' ')
-
-export const formatSelectionLabel = (value: string): string =>
-  value
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1))
-    .join(' ') || value
-
-const highlightedControlIconClassName = 'message-box__selected-control-icon'
-
-export const chatApprovalModeIcons = {
-  'ask-user': <ShieldQuestionMark aria-hidden="true" />,
-  'auto-review': <Sparkles aria-hidden="true" />,
-  never: <BadgeCheck aria-hidden="true" />
-} satisfies Record<ProviderApprovalMode, React.ReactNode>
-
-export const chatSandboxModeIcons = {
-  'read-only': <FileLock aria-hidden="true" />,
-  'workspace-write': <FolderPen aria-hidden="true" />,
-  'danger-full-access': (
-    <UnlockKeyhole className={highlightedControlIconClassName} aria-hidden="true" />
-  )
-} satisfies Record<ProviderSandboxMode, React.ReactNode>
-
 export const getChatServiceTierIcon = (id: string, label = id): React.ReactNode =>
-  id.toLocaleLowerCase() === 'fast' ||
-  id.toLocaleLowerCase() === 'priority' ||
-  label.toLocaleLowerCase() === 'fast' ? (
-    <Zap className="message-box__fast-speed-icon" aria-hidden="true" />
+  isFastServiceTier(id, label) ? (
+    <Zap className={fastServiceTierIconClassName} aria-hidden="true" />
   ) : (
     <Gauge aria-hidden="true" />
   )

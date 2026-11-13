@@ -1,20 +1,4 @@
-import { useWorkspacePanes } from '../features/useWorkspacePanes'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useChangesData } from '../useChangesData'
-import { useCommitController } from '../useCommitController'
-import { useGitViewModel } from '../useGitViewModel'
-import { useGitSyncController } from '../useGitSyncController'
-import { useWorkspaceSelection } from '../useWorkspaceSelection'
-
-type WorkspaceChangesFooterDependencies = {
-  panes: ReturnType<typeof useWorkspacePanes>
-  gitPresentation: ReturnType<typeof useGitViewModel>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  session: ReturnType<typeof useWorkspaceSelection>
-  commits: ReturnType<typeof useCommitController>
-  gitSync: ReturnType<typeof useGitSyncController>
-  changes: ReturnType<typeof useChangesData>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceChangesFooter({
   panes,
@@ -24,7 +8,7 @@ export function getWorkspaceChangesFooter({
   commits,
   gitSync,
   changes
-}: WorkspaceChangesFooterDependencies) {
+}: WorkspaceChanges) {
   return {
     visible: panes.changesPaneView === 'git' && panes.gitPaneView === 'changes',
     commitDisabled: gitPresentation.commitDisabled,

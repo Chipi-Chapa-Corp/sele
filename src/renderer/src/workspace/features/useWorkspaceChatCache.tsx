@@ -9,21 +9,16 @@ import {
   trimRecentChatCache
 } from '../chatControllerUtils'
 import { type RecentChatCacheEntry } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceChatCacheDependencies = {
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceChatCache({
   settings,
   providerState,
   chatState
-}: WorkspaceChatCacheDependencies) {
+}: WorkspaceState & {
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+}) {
   const recentChatCacheLimitRef = useRef(settings.effectiveAppSettings.chat.recentChatCacheLimit)
 
   const recentChatCacheRef = useRef(new Map<string, RecentChatCacheEntry>())

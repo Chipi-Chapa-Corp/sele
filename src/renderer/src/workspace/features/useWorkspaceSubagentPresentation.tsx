@@ -6,31 +6,7 @@ import { getRenderableText } from '../../renderableText'
 import { SubagentCompletionTimeline, type SubagentCompletion } from '../../subagentTimeline'
 import { getVisibleSubagentRows } from '../../subagentUi'
 import { useLatestHandler } from '../stableProps'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
-
-import type { useConversationViewModel } from '../useConversationViewModel'
-import type { useWorkspaceSelection } from '../useWorkspaceSelection'
-import type { useSubagentController } from '../useSubagentController'
-type WorkspaceSubagentPresentationDependencies = {
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  session: Pick<
-    ReturnType<typeof useWorkspaceSelection>,
-    'selectedChatKey' | 'selectedChatSubagents' | 'activeSubagentChatView'
-  >
-  conversation: Pick<
-    ReturnType<typeof useConversationViewModel>,
-    | 'effectiveChatTurnWindow'
-    | 'visibleChatItems'
-    | 'subagentChatConversationModel'
-    | 'subagentVisibleChatItems'
-  >
-  subagents: Pick<
-    ReturnType<typeof useSubagentController>,
-    'handleOpenSubagentChat' | 'handleCancelSubagent'
-  >
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function useWorkspaceSubagentPresentation({
   subagentState,
@@ -38,7 +14,7 @@ export function useWorkspaceSubagentPresentation({
   session,
   conversation,
   subagents
-}: WorkspaceSubagentPresentationDependencies) {
+}: WorkspaceChanges) {
   const { selectedChatKey, selectedChatSubagents, activeSubagentChatView } = session
   const {
     effectiveChatTurnWindow,

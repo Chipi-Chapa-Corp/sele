@@ -1,20 +1,15 @@
 import { type MessageBoxSelection } from '../../messageBoxPreferences'
 import { getDefaultReasoningEffort } from '../appearanceControllerUtils'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceEffectiveSelection } from './useWorkspaceEffectiveSelection'
-import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
-
-type WorkspaceChatPresetDependencies = {
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceChatPreset({
   providerState,
   provider,
   effectiveSelection
-}: WorkspaceChatPresetDependencies) {
+}: WorkspaceSession & {
+  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
+}) {
   const handleChatPresetChange = (selection: Partial<MessageBoxSelection>): void => {
     // Apply the complete combination in one render, including transitions out of full access.
     if (selection.model !== undefined) {

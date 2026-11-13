@@ -16,6 +16,19 @@ const boundedHeight = (height: unknown): number =>
     ? Math.max(48, Math.min(10000, height))
     : 200
 
+const postInit = (target: Window, html: string): void =>
+  target.postMessage(
+    {
+      type: 'visualization:init',
+      html,
+      dark: document.documentElement.dataset.colorScheme === 'dark'
+    },
+    '*'
+  )
+
+const postFollowUpResult = (target: Window, id: number, error?: string): void =>
+  target.postMessage({ type: 'visualization:follow-up-result', id, error }, '*')
+
 function VisualizationContent({
   reference,
   options
@@ -78,14 +91,7 @@ function VisualizationContent({
       const data = event.data
       const source = event.source as Window
       if (data?.type === 'visualization:ready') {
-        source.postMessage(
-          {
-            type: 'visualization:init',
-            html: document.html,
-            dark: window.document.documentElement.dataset.colorScheme === 'dark'
-          },
-          '*'
-        )
+        postInit(source, document.html)
         return
       }
       if (data?.type === 'visualization:rendered' && document.id === pendingDocument?.id) {
@@ -116,26 +122,12 @@ function VisualizationContent({
         data.prompt.length <= 32000
       ) {
         if (document.id !== activeDocument?.id) {
-          source.postMessage(
-            {
-              type: 'visualization:follow-up-result',
-              id: data.id,
-              error: 'Visualization is still loading.'
-            },
-            '*'
-          )
+          postFollowUpResult(source, data.id, 'Visualization is still loading.')
           return
         }
         setFollowUp((current) => {
           if (current) {
-            source.postMessage(
-              {
-                type: 'visualization:follow-up-result',
-                id: data.id,
-                error: 'Another request is pending.'
-              },
-              '*'
-            )
+            postFollowUpResult(source, data.id, 'Another request is pending.')
             return current
           }
           return {
@@ -177,12 +169,7 @@ function VisualizationContent({
 
   const answerFollowUp = (accepted: boolean): void => {
     if (!followUp) return
-    const reply = (error?: string): void => {
-      followUp.source.postMessage(
-        { type: 'visualization:follow-up-result', id: followUp.id, error },
-        '*'
-      )
-    }
+    const reply = (error?: string): void => postFollowUpResult(followUp.source, followUp.id, error)
     if (accepted) {
       const event = new CustomEvent('sele:visualization-follow-up', {
         bubbles: true,
@@ -201,6 +188,19 @@ function VisualizationContent({
     setRevision((value) => value + 1)
   }
 
+  const reloadButton = (
+    <Button
+      aria-label="Reload visualization"
+      title="Reload visualization"
+      disabled={loading}
+      aria-busy={loading}
+      callback={reload}
+      icon={<RotateCw aria-hidden="true" />}
+      size="small"
+      theme="transparent"
+    />
+  )
+
   const documents = [activeDocument, pendingDocument].filter(
     (document): document is VisualizationDocument => document !== null
   )
@@ -215,31 +215,11 @@ function VisualizationContent({
         open={expanded}
         label={reference.title || 'Expanded visualization'}
         onClose={() => setExpanded(false)}
-        actions={
-          <Button
-            aria-label="Reload visualization"
-            title="Reload visualization"
-            disabled={loading}
-            aria-busy={loading}
-            callback={reload}
-            icon={<RotateCw aria-hidden="true" />}
-            size="small"
-            theme="transparent"
-          />
-        }
+        actions={reloadButton}
       >
         <div className="visualization__actions" hidden={expanded}>
           {reference.title && <span className="visualization__title">{reference.title}</span>}
-          <Button
-            aria-label="Reload visualization"
-            title="Reload visualization"
-            disabled={loading}
-            aria-busy={loading}
-            callback={reload}
-            icon={<RotateCw aria-hidden="true" />}
-            size="small"
-            theme="transparent"
-          />
+          {reloadButton}
           <Button
             aria-label="Expand visualization"
             title="Expand visualization"
@@ -273,15 +253,8 @@ function VisualizationContent({
                 sandbox="allow-scripts"
                 referrerPolicy="no-referrer"
                 title={reference.title || 'Interactive visualization'}
-                onLoad={(event) =>
-                  event.currentTarget.contentWindow?.postMessage(
-                    {
-                      type: 'visualization:init',
-                      html: document.html,
-                      dark: window.document.documentElement.dataset.colorScheme === 'dark'
-                    },
-                    '*'
-                  )
+                onLoad={({ currentTarget: { contentWindow } }) =>
+                  contentWindow && postInit(contentWindow, document.html)
                 }
               />
             )

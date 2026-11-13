@@ -56,21 +56,15 @@ export const ComposerTextInput = memo(function ComposerTextInput({
             style={mentions.mentionMenuStyle}
           >
             <Dropdown
-              activeIndex={mentions.activeMentionIndex}
-              aria-label={
-                mentions.projectMentionMenuOpen
-                  ? 'Projects'
-                  : mentions.skillMentionMenuOpen
-                    ? 'Skills and apps'
-                    : 'Files'
-              }
+              activeIndex={mentions.activeMentionMenu.activeIndex}
+              aria-label={mentions.activeMentionMenu.label}
               emptyContent={mentions.mentionDropdownEmptyContent}
-              listboxId={mentions.mentionListboxId}
+              listboxId={mentions.activeMentionMenu.listboxId}
               menuOnly
               options={mentions.mentionDropdownOptions}
               value=""
-              onActiveIndexChange={mentions.setActiveMentionIndex}
-              onChange={mentions.handleSelectMentionDropdown}
+              onActiveIndexChange={mentions.activeMentionMenu.setActiveIndex}
+              onChange={(value) => mentions.activeMentionMenu.select(Number(value))}
             />
           </div>,
           document.body
@@ -128,18 +122,16 @@ export const ComposerTextInput = memo(function ComposerTextInput({
             ? `Suggested next prompt: ${visiblePromptSuggestion.text}. ${compact ? 'Tap Send to send immediately.' : 'Press Tab to accept into draft, Enter to send immediately, or Escape to dismiss.'}`
             : undefined
         }
-        aria-controls={mentions.mentionMenuOpen ? mentions.mentionListboxId : undefined}
+        aria-controls={mentions.mentionMenuOpen ? mentions.activeMentionMenu.listboxId : undefined}
         aria-expanded={mentions.mentionMenuOpen}
         aria-activedescendant={
           mentions.mentionMenuOpen && mentions.mentionDropdownOptions.length > 0
-            ? `${mentions.mentionListboxId}-option-${Math.min(mentions.activeMentionIndex, mentions.mentionDropdownOptions.length - 1)}`
+            ? `${mentions.activeMentionMenu.listboxId}-option-${Math.min(mentions.activeMentionMenu.activeIndex, mentions.mentionDropdownOptions.length - 1)}`
             : undefined
         }
         onBlur={(event) => {
           if (isTouchEditingActivation(event.currentTarget.ownerDocument)) return
-          mentions.setFileMention(null)
-          mentions.setSkillMention(null)
-          mentions.setProjectMention(null)
+          mentions.closeMentions()
         }}
         onChange={handleMessageChange}
         onKeyDown={keyboard.handleMessageKeyDown}

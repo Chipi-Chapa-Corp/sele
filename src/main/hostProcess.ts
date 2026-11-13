@@ -768,10 +768,7 @@ const buildHostBridgeCommand = (
   options: HostCommandOptions
 ): HostCommand => ({
   file: bridge.file,
-  args: [
-    ...bridge.argsPrefix,
-    ...getStdinSafeLoginShellArgs(getCommandScript(file, args, options))
-  ],
+  args: [...getStdinSafeLoginShellArgs(getCommandScript(file, args, options))],
   env: process.env
 })
 
@@ -867,7 +864,6 @@ const buildHostBridgeExecutableCommand = async (
 ): Promise<HostCommand> => ({
   file: await writeExecutableWrapper(file, [
     bridge.file,
-    ...bridge.argsPrefix,
     ...getStdinSafeLoginShellArgs(getCommandScript(file, args, { cwd: options.cwd }, ['"$@"'])),
     'sele-host-bridge'
   ]),

@@ -109,7 +109,7 @@ export function createImportedHistoryFixture() {
     stats,
     read: async () => prepareChatDetailForRenderer(await wrapped.getChat(base.id)),
     working: async (id: string) => {
-      const detail = await wrapped.getChatWindowForItem!(base.id, id, 1)
+      const detail = await wrapped.getChatWindowForItem(base.id, id, 1)
       const step = detail.items.find((item) => item.id === id)
       if (step?.type !== 'working') throw new Error('Archived working section not found')
       return prepareWorkingStepPage(step, 0, 50)

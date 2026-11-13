@@ -91,40 +91,34 @@ export const WorkingStepContent = memo(function WorkingStepContent({
             `gap:${segment.startIndex}`
           ),
           ...segment.blocks.map((block) => {
-            if (block.type === 'tools')
+            if (block.type === 'tools') {
+              const toolItem = block.item
+              const toolProps = {
+                activeToolIds,
+                expanded: active && toolItem === lastWorkingItem,
+                onDisclosureToggle,
+                projectCwd
+              }
               return (
-                <div key={block.items[0]?.id} data-working-motion-id={block.items[0]?.id}>
-                  {block.items.length > 1 ||
-                  block.items.some(
-                    (toolItem) =>
-                      toolItem.type === 'toolGroup' &&
-                      Math.max(toolItem.toolCount ?? 0, toolItem.tools.length) > 1
-                  ) ? (
+                <div key={toolItem.id} data-working-motion-id={toolItem.id}>
+                  {toolItem.type === 'toolGroup' &&
+                  Math.max(toolItem.toolCount ?? 0, toolItem.tools.length) > 1 ? (
                     <ToolSequence
-                      items={block.items}
-                      activeToolIds={activeToolIds}
-                      expanded={active && block.items.at(-1) === lastWorkingItem}
-                      key={block.items[0]?.id}
+                      {...toolProps}
+                      item={toolItem}
                       onLoadItem={onLoadItem}
                       onLoadPage={onLoadToolPage}
-                      onDisclosureToggle={onDisclosureToggle}
-                      projectCwd={projectCwd}
                     />
                   ) : (
-                    block.items.map((toolItem) => (
-                      <ToolItem
-                        item={toolItem}
-                        activeToolIds={activeToolIds}
-                        expanded={active && toolItem === lastWorkingItem}
-                        key={toolItem.id}
-                        onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
-                        onDisclosureToggle={onDisclosureToggle}
-                        projectCwd={projectCwd}
-                      />
-                    ))
+                    <ToolItem
+                      {...toolProps}
+                      item={toolItem}
+                      onLoad={onLoadItem ? () => onLoadItem(toolItem.id) : undefined}
+                    />
                   )}
                 </div>
               )
+            }
             const streaming =
               active &&
               block.item === lastWorkingItem &&

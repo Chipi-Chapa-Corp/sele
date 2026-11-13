@@ -15,6 +15,11 @@ import { chatProcessEnvironment } from '../../chatProcessOwnership.ts'
 const nativeClients = new WeakMap<OpencodeClient, OpenCodeClient>()
 export const getOpenCodeV2Client = (client: OpencodeClient): OpenCodeClient | undefined =>
   nativeClients.get(client)
+export const requireOpenCodeV2Client = (client: OpencodeClient): OpenCodeClient => {
+  const native = nativeClients.get(client)
+  if (!native) throw new Error('OpenCode 2 client is unavailable.')
+  return native
+}
 type ChatPreview = { messages: OpenCodeMessageWithParts[]; hasOlder: boolean }
 const previews = new WeakMap<
   OpencodeClient,
@@ -99,7 +104,6 @@ export const fromOpenCodeV2Session = (session: SessionInfo): Session =>
     directory: session.location.directory,
     slug: session.id,
     version: '2',
-    projectID: session.projectID,
     permission: session.permissions?.map((rule) => ({
       permission:
         rule.action === 'shell' ? 'bash' : rule.action === 'subagent' ? 'task' : rule.action,
@@ -365,6 +369,8 @@ export const createOpenCodeV2Client = (options: {
     return p.sessionID
   }
   const location = (p: Params) => (p.directory ? { directory: p.directory } : undefined)
+  const readSession = async (p: Params, request?: RequestOptions) =>
+    result(fromOpenCodeV2Session(remember(await native.session.get({ sessionID: id(p) }, request))))
   const convert = (message: SessionMessageInfo, session: SessionInfo, parentID?: string) => {
     const imported = message.metadata?.seleImport
     if (
@@ -598,6 +604,11 @@ export const createOpenCodeV2Client = (options: {
         directory: session.location.directory,
         payload: { type, properties: { sessionID, ...properties } }
       })
+      const snapshot = function* (record: OpenCodeMessageWithParts | null) {
+        if (!record) return
+        yield emit('message.updated', { info: record.info })
+        for (const part of record.parts) yield emit('message.part.updated', { part })
+      }
       if (event.type === 'session.step.started') {
         const d = event.data
         const record = fromOpenCodeV2Message(
@@ -632,8 +643,7 @@ export const createOpenCodeV2Client = (options: {
           record = convert(current, session) ?? undefined
           if (!record) continue
           messages.set(d.assistantMessageID, record)
-          yield emit('message.updated', { info: record.info })
-          for (const part of record.parts) yield emit('message.part.updated', { part })
+          yield* snapshot(record)
           // A fetched snapshot may already include this delta. Reconcile at the next end event.
           if (event.type.endsWith('.delta')) continue
         }
@@ -681,6 +691,7 @@ export const createOpenCodeV2Client = (options: {
           .filter((item) => item.type === 'text')
           .map((item) => item.text ?? '')
           .join('\n')
+        const at = 'created' in event ? event.created : Date.now()
         const state =
           event.type === 'session.tool.success'
             ? {
@@ -689,10 +700,7 @@ export const createOpenCodeV2Client = (options: {
                 metadata,
                 title: tool,
                 output,
-                time: {
-                  start: 'created' in event ? event.created : Date.now(),
-                  end: 'created' in event ? event.created : Date.now()
-                },
+                time: { start: at, end: at },
                 attachments: content.flatMap((item, fileIndex) =>
                   item.type === 'file'
                     ? [
@@ -714,17 +722,9 @@ export const createOpenCodeV2Client = (options: {
                   input,
                   metadata,
                   error: errorInfo(data.error).data.message,
-                  time: {
-                    start: 'created' in event ? event.created : Date.now(),
-                    end: 'created' in event ? event.created : Date.now()
-                  }
+                  time: { start: at, end: at }
                 }
-              : {
-                  status: 'running',
-                  input,
-                  metadata,
-                  time: { start: 'created' in event ? event.created : Date.now() }
-                }
+              : { status: 'running', input, metadata, time: { start: at } }
         const part = {
           id: partId(messageID, index),
           sessionID,
@@ -743,26 +743,20 @@ export const createOpenCodeV2Client = (options: {
           request
         )
         const previous = messages.get(d.assistantMessageID)
-        const record = convert(
-          current,
-          session,
-          previous?.info.role === 'assistant' ? previous.info.parentID : undefined
+        yield* snapshot(
+          convert(
+            current,
+            session,
+            previous?.info.role === 'assistant' ? previous.info.parentID : undefined
+          )
         )
-        if (record) {
-          yield emit('message.updated', { info: record.info })
-          for (const part of record.parts) yield emit('message.part.updated', { part })
-        }
         messages.delete(d.assistantMessageID)
       } else if (event.type === 'session.inbox.delivered') {
         const current = await native.session.message.get(
           { sessionID, messageID: event.data.inboxID },
           request
         )
-        const record = convert(current, session)
-        if (record) {
-          yield emit('message.updated', { info: record.info })
-          for (const part of record.parts) yield emit('message.part.updated', { part })
-        }
+        yield* snapshot(convert(current, session))
       } else if (
         event.type === 'session.compaction.ended' ||
         event.type === 'session.compaction.failed'
@@ -771,11 +765,7 @@ export const createOpenCodeV2Client = (options: {
           { sessionID, type: 'compaction', limit: 1, order: 'desc' },
           request
         )
-        const record = history.data[0] ? convert(history.data[0], session) : null
-        if (record) {
-          yield emit('message.updated', { info: record.info })
-          for (const part of record.parts) yield emit('message.part.updated', { part })
-        }
+        yield* snapshot(history.data[0] ? convert(history.data[0], session) : null)
       } else if (event.type === 'permission.asked') {
         yield emit('permission.asked', permission(event.data))
       } else if (event.type === 'permission.replied') {
@@ -855,10 +845,7 @@ export const createOpenCodeV2Client = (options: {
         )
     },
     session: {
-      get: async (p: Params, request?: RequestOptions) =>
-        result(
-          fromOpenCodeV2Session(remember(await native.session.get({ sessionID: id(p) }, request)))
-        ),
+      get: readSession,
       create: async (p: Params = {}, request?: RequestOptions) =>
         result(
           fromOpenCodeV2Session(
@@ -889,9 +876,7 @@ export const createOpenCodeV2Client = (options: {
           },
           request
         )
-        return result(
-          fromOpenCodeV2Session(remember(await native.session.get({ sessionID: id(p) }, request)))
-        )
+        return readSession(p, request)
       },
       messages: readMessages,
       message: async (p: Params, request?: RequestOptions) => {
@@ -986,9 +971,7 @@ export const createOpenCodeV2Client = (options: {
         lastUsers.delete(id(p))
         for (const [messageID, message] of messages)
           if (message.info.sessionID === id(p)) messages.delete(messageID)
-        return result(
-          fromOpenCodeV2Session(remember(await native.session.get({ sessionID: id(p) }, request)))
-        )
+        return readSession(p, request)
       },
       summarize: async (p: Params, request?: RequestOptions) => {
         await prepare(p, request)
@@ -1005,19 +988,21 @@ export const createOpenCodeV2Client = (options: {
             cursors.set(queryKey, offsets)
           }
           const offset = p.cursor ?? 0
+          const listPage = (limit: number, cursor: string | undefined) =>
+            native.session.list(
+              {
+                limit,
+                ...(cursor
+                  ? { cursor }
+                  : { directory: p.directory, ...(p.roots ? { parentID: null } : {}) })
+              },
+              request
+            )
           if (!offsets.has(offset)) {
             let position = 0
             let cursor: string | undefined
             while (position < offset) {
-              const page = await native.session.list(
-                {
-                  limit: Math.min(p.limit ?? 100, offset - position),
-                  ...(cursor
-                    ? { cursor }
-                    : { directory: p.directory, ...(p.roots ? { parentID: null } : {}) })
-                },
-                request
-              )
+              const page = await listPage(Math.min(p.limit ?? 100, offset - position), cursor)
               position += page.data.length
               cursor = page.cursor.next ?? undefined
               offsets.set(position, cursor)
@@ -1025,16 +1010,7 @@ export const createOpenCodeV2Client = (options: {
             }
             if (position < offset) return result([])
           }
-          const cursor = offsets.get(offset)
-          const page = await native.session.list(
-            {
-              limit: p.limit ?? 100,
-              ...(cursor
-                ? { cursor }
-                : { directory: p.directory, ...(p.roots ? { parentID: null } : {}) })
-            },
-            request
-          )
+          const page = await listPage(p.limit ?? 100, offsets.get(offset))
           offsets.set(offset + page.data.length, page.cursor.next ?? undefined)
           return result(page.data.map((item) => fromOpenCodeV2Session(remember(item))))
         }

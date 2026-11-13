@@ -228,8 +228,6 @@ export const remoteBrowserRequest = (
         })
         break
       }
-      default:
-        throw new Error('Unsupported browser action.')
     }
     return null
   }

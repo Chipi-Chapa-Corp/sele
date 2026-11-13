@@ -1,6 +1,5 @@
 import type { AppContainerTarget } from '../../../shared/app'
 import type { ProviderAccountRateLimit } from '../../../shared/provider'
-import { isRecord } from '../providerValues.ts'
 
 type OpenCodeGoUsageWindow = {
   status?: unknown
@@ -12,25 +11,6 @@ type OpenCodeGoUsagePayload = {
   rolling?: OpenCodeGoUsageWindow | null
   weekly?: OpenCodeGoUsageWindow | null
   monthly?: OpenCodeGoUsageWindow | null
-}
-
-const getApiKeyFromEntry = (entry: unknown): string | null => {
-  if (!isRecord(entry)) return null
-  if (entry.type === 'api' && typeof entry.key === 'string' && entry.key.trim()) {
-    return entry.key.trim()
-  }
-  return null
-}
-
-/** API keys saved in OpenCode's auth store, keyed by OpenCode provider ID. OAuth entries are skipped. */
-export const extractOpenCodeApiKeys = (store: unknown): Record<string, string> => {
-  if (!isRecord(store)) return {}
-  const keys: Record<string, string> = {}
-  for (const [providerId, entry] of Object.entries(store)) {
-    const key = getApiKeyFromEntry(entry)
-    if (key) keys[providerId] = key
-  }
-  return keys
 }
 
 export const usesLocalOpenCodeAuth = (

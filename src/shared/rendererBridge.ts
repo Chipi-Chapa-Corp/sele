@@ -258,8 +258,6 @@ export const createRendererBridge = (
       transport.invoke(providerIpcChannels.getConfig, providerId, options),
     setConfigValue: (providerId, name, path, value, options) =>
       transport.invoke(providerIpcChannels.setConfigValue, providerId, name, path, value, options),
-    setConfigFeature: (providerId, name, enabled, options) =>
-      transport.invoke(providerIpcChannels.setConfigFeature, providerId, name, enabled, options),
     getApps: (providerId, options) =>
       transport.invoke(providerIpcChannels.getApps, providerId, options),
     setSkillEnabled: (providerId, path, enabled, cwd, options) =>

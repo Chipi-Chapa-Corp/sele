@@ -28,6 +28,7 @@ import {
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { Input } from './Input'
 import { SegmentedControl, type SegmentedControlOption } from './SegmentedControl'
+import { SettingsSection } from './settingsFields'
 import type { SettingsPanelProps } from './SettingsPanel.types'
 
 const themeOptions = [
@@ -178,173 +179,148 @@ export function SettingsAppearancePanel(props: SettingsPanelProps): React.ReactN
     specialOptions: readonly DropdownOption<string>[]
   }[]
   return (
-    <section
-      className="settings-dialog__panel"
-      id="settings-panel-appearance"
-      role="tabpanel"
-      aria-label="Appearance settings"
-    >
-      <section className="settings-dialog__section" aria-labelledby="settings-appearance-window">
-        <h2 className="settings-dialog__section-heading" id="settings-appearance-window">
-          {isRemoteClient() ? 'Display' : 'Window'}
-        </h2>
-        <div className="settings-dialog__section-cards">
+    <>
+      <SettingsSection
+        id="settings-appearance-window"
+        title={isRemoteClient() ? 'Display' : 'Window'}
+      >
+        {toggleField(
+          { section: 'appearance', key: 'theme' },
+          'Theme',
+          'Theme',
+          themeOptions,
+          settingsPanelSettings.appearance.theme,
+          handleThemePreferenceChange
+        )}
+        {!isRemoteClient() && (
+          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
+            <label
+              className="settings-dialog__field-header"
+              htmlFor="settings-appearance-zoom-level"
+            >
+              <h3>Zoom</h3>
+            </label>
+            {renderProjectSettingAction(appearanceZoomPath, 'Zoom')}
+            <div className="settings-dialog__number-with-unit">
+              <Input
+                aria-label="Application zoom percentage"
+                className="settings-dialog__number-input"
+                id="settings-appearance-zoom-level"
+                type="number"
+                min={appAppearanceZoomPercentMin}
+                max={appAppearanceZoomPercentMax}
+                step={1}
+                disabled={isScopedSettingControlDisabled(appearanceZoomPath)}
+                value={appearanceZoomLevelInput}
+                onBlur={handleAppearanceZoomLevelInputBlur}
+                onChange={(event) =>
+                  handleAppearanceZoomLevelInputChange(event.currentTarget.value)
+                }
+              />
+              <span aria-hidden="true" className="settings-dialog__number-unit">
+                %
+              </span>
+            </div>
+          </div>
+        )}
+      </SettingsSection>
+      {!isRemoteClient() && (
+        <SettingsSection id="settings-appearance-window-controls" title="Window Controls">
           {toggleField(
-            { section: 'appearance', key: 'theme' },
-            'Theme',
-            'Theme',
-            themeOptions,
-            settingsPanelSettings.appearance.theme,
-            handleThemePreferenceChange
+            { section: 'appearance', key: 'position' },
+            'Position',
+            'Position',
+            appearancePositionOptions,
+            settingsPanelSettings.appearance.position,
+            handleAppearancePositionChange
           )}
-          {!isRemoteClient() && (
-            <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-              <label
-                className="settings-dialog__field-header"
-                htmlFor="settings-appearance-zoom-level"
-              >
-                <h3>Zoom</h3>
-              </label>
-              {renderProjectSettingAction(appearanceZoomPath, 'Zoom')}
-              <div className="settings-dialog__number-with-unit">
-                <Input
-                  aria-label="Application zoom percentage"
-                  className="settings-dialog__number-input"
-                  id="settings-appearance-zoom-level"
-                  type="number"
-                  min={appAppearanceZoomPercentMin}
-                  max={appAppearanceZoomPercentMax}
-                  step={1}
-                  disabled={isScopedSettingControlDisabled(appearanceZoomPath)}
-                  value={appearanceZoomLevelInput}
-                  onBlur={handleAppearanceZoomLevelInputBlur}
-                  onChange={(event) =>
-                    handleAppearanceZoomLevelInputChange(event.currentTarget.value)
-                  }
+          {toggleField(
+            { section: 'appearance', key: 'style' },
+            'Style',
+            'Window control style',
+            appearanceStyleOptions,
+            settingsPanelSettings.appearance.style,
+            handleAppearanceStyleChange,
+            windowControlsHidden
+          )}
+        </SettingsSection>
+      )}
+      <SettingsSection id="settings-appearance-buttons" title="Buttons">
+        {toggleField(
+          { section: 'appearance', key: 'controlStyle' },
+          'Style',
+          'Button style',
+          appearanceControlStyleOptions,
+          settingsPanelSettings.appearance.controlStyle,
+          handleAppearanceControlStyleChange
+        )}
+      </SettingsSection>
+      <SettingsSection id="settings-appearance-fonts" title="Fonts">
+        {appearanceFontFields.map((field) => {
+          const path = {
+            section: 'appearance',
+            key: field.key
+          } satisfies AppProjectSettingPath
+          const font = settingsPanelSettings.appearance[field.key]
+          const specialValues = new Set(field.specialOptions.map((option) => option.value))
+          const selectedFontIsMissing =
+            !specialValues.has(font.family) &&
+            !installedFontFamilies.some((family) => family === font.family)
+          const options = [
+            ...field.specialOptions,
+            ...(selectedFontIsMissing
+              ? [{ value: font.family, label: `${font.family} (Unavailable)` }]
+              : []),
+            ...installedFontOptions
+          ]
+          const draftKey = `${settingsScopeKey}:${field.key}`
+          const sizeInput =
+            appearanceFontSizeInputDraft?.key === draftKey
+              ? appearanceFontSizeInputDraft.value
+              : String(appFontSizeToScalePercent(font.size))
+          const disabled = isScopedSettingControlDisabled(path)
+
+          return (
+            <div
+              className={getSettingsFieldClassName('settings-dialog__field--inline')}
+              key={field.key}
+            >
+              <div className="settings-dialog__field-header">
+                <h3>{field.label}</h3>
+                {!installedFontsLoaded && <p>Loading installed fonts…</p>}
+              </div>
+              {renderProjectSettingAction(path, field.label)}
+              <div className="settings-dialog__font-controls">
+                <Dropdown
+                  aria-label={field.label}
+                  className="settings-dialog__font-dropdown"
+                  disabled={disabled}
+                  options={options}
+                  value={font.family}
+                  onChange={(family) => handleAppearanceFontFamilyChange(field.key, family)}
                 />
-                <span aria-hidden="true" className="settings-dialog__number-unit">
-                  %
-                </span>
+                <label className="settings-dialog__font-size">
+                  <span className="sr-only">{field.label} scale</span>
+                  <Input
+                    aria-label={`${field.label} scale percentage`}
+                    type="number"
+                    min={appFontScalePercentMin}
+                    max={appFontScalePercentMax}
+                    step={2.5}
+                    disabled={disabled}
+                    value={sizeInput}
+                    onBlur={handleAppearanceFontSizeInputBlur}
+                    onChange={(event) =>
+                      handleAppearanceFontSizeInputChange(field.key, event.currentTarget.value)
+                    }
+                  />
+                  <span aria-hidden="true">%</span>
+                </label>
               </div>
             </div>
-          )}
-        </div>
-      </section>
-      {!isRemoteClient() && (
-        <section
-          className="settings-dialog__section"
-          aria-labelledby="settings-appearance-window-controls"
-        >
-          <h2 className="settings-dialog__section-heading" id="settings-appearance-window-controls">
-            Window Controls
-          </h2>
-          <div className="settings-dialog__section-cards">
-            {toggleField(
-              { section: 'appearance', key: 'position' },
-              'Position',
-              'Position',
-              appearancePositionOptions,
-              settingsPanelSettings.appearance.position,
-              handleAppearancePositionChange
-            )}
-            {toggleField(
-              { section: 'appearance', key: 'style' },
-              'Style',
-              'Window control style',
-              appearanceStyleOptions,
-              settingsPanelSettings.appearance.style,
-              handleAppearanceStyleChange,
-              windowControlsHidden
-            )}
-          </div>
-        </section>
-      )}
-      <section className="settings-dialog__section" aria-labelledby="settings-appearance-buttons">
-        <h2 className="settings-dialog__section-heading" id="settings-appearance-buttons">
-          Buttons
-        </h2>
-        <div className="settings-dialog__section-cards">
-          {toggleField(
-            { section: 'appearance', key: 'controlStyle' },
-            'Style',
-            'Button style',
-            appearanceControlStyleOptions,
-            settingsPanelSettings.appearance.controlStyle,
-            handleAppearanceControlStyleChange
-          )}
-        </div>
-      </section>
-      <section className="settings-dialog__section" aria-labelledby="settings-appearance-fonts">
-        <h2 className="settings-dialog__section-heading" id="settings-appearance-fonts">
-          Fonts
-        </h2>
-        <div className="settings-dialog__section-cards">
-          {appearanceFontFields.map((field) => {
-            const path = {
-              section: 'appearance',
-              key: field.key
-            } satisfies AppProjectSettingPath
-            const font = settingsPanelSettings.appearance[field.key]
-            const specialValues = new Set(field.specialOptions.map((option) => option.value))
-            const selectedFontIsMissing =
-              !specialValues.has(font.family) &&
-              !installedFontFamilies.some((family) => family === font.family)
-            const options = [
-              ...field.specialOptions,
-              ...(selectedFontIsMissing
-                ? [{ value: font.family, label: `${font.family} (Unavailable)` }]
-                : []),
-              ...installedFontOptions
-            ]
-            const draftKey = `${settingsScopeKey}:${field.key}`
-            const sizeInput =
-              appearanceFontSizeInputDraft?.key === draftKey
-                ? appearanceFontSizeInputDraft.value
-                : String(appFontSizeToScalePercent(font.size))
-            const disabled = isScopedSettingControlDisabled(path)
-
-            return (
-              <div
-                className={getSettingsFieldClassName('settings-dialog__field--inline')}
-                key={field.key}
-              >
-                <div className="settings-dialog__field-header">
-                  <h3>{field.label}</h3>
-                  {!installedFontsLoaded && <p>Loading installed fonts…</p>}
-                </div>
-                {renderProjectSettingAction(path, field.label)}
-                <div className="settings-dialog__font-controls">
-                  <Dropdown
-                    aria-label={field.label}
-                    className="settings-dialog__font-dropdown"
-                    disabled={disabled}
-                    options={options}
-                    value={font.family}
-                    onChange={(family) => handleAppearanceFontFamilyChange(field.key, family)}
-                  />
-                  <label className="settings-dialog__font-size">
-                    <span className="sr-only">{field.label} scale</span>
-                    <Input
-                      aria-label={`${field.label} scale percentage`}
-                      type="number"
-                      min={appFontScalePercentMin}
-                      max={appFontScalePercentMax}
-                      step={2.5}
-                      disabled={disabled}
-                      value={sizeInput}
-                      onBlur={handleAppearanceFontSizeInputBlur}
-                      onChange={(event) =>
-                        handleAppearanceFontSizeInputChange(field.key, event.currentTarget.value)
-                      }
-                    />
-                    <span aria-hidden="true">%</span>
-                  </label>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </section>
-    </section>
+          )
+        })}
+      </SettingsSection>
+    </>
   )
 }

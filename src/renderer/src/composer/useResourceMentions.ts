@@ -1,19 +1,21 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import type { AppContainerTarget } from '../../../shared/app'
-import type { ProviderApp, ProviderSkill } from '../../../shared/provider'
+import type { ProviderApp, ProviderId, ProviderSkill } from '../../../shared/provider'
+import type { ComposerMention } from '../composerMention'
 import { providerApi } from '../providerApi'
 import { maxSelectedAppCount, maxSelectedSkillCount } from './composerLimits'
 import {
   ComposerCache,
   ComposerResult,
-  SkillMention,
+  applyMentionReplacement,
   getComposerResults,
-  isComposerCacheCurrent
+  isComposerCacheCurrent,
+  removeComposerMention
 } from './mentionResults'
 
 type ResourceMentionsDependencies = {
-  providerId: 'codex' | 'claude' | 'copilot' | 'opencode-v2'
+  providerId: ProviderId
   cwd: string | null
   composerSourceKey: string
   selectedSkills: ProviderSkill[]
@@ -41,7 +43,7 @@ export function useResourceMentions({
   setSelectedApps,
   textareaRef
 }: ResourceMentionsDependencies) {
-  const [skillMention, setSkillMention] = useState<SkillMention | null>(null)
+  const [skillMention, setSkillMention] = useState<ComposerMention | null>(null)
 
   const [composerCache, setComposerCache] = useState<ComposerCache | null>(null)
 
@@ -56,27 +58,21 @@ export function useResourceMentions({
       (selectedSkills.length < maxSelectedSkillCount || selectedApps.length < maxSelectedAppCount)
   )
 
+  const currentComposerCache = isComposerCacheCurrent(
+    composerCache,
+    providerId,
+    cwd,
+    composerSourceKey,
+    providerResourcesRevision
+  )
+    ? composerCache
+    : null
+
   const composerResults = useMemo(
     () =>
       getComposerResults(
-        isComposerCacheCurrent(
-          composerCache,
-          providerId,
-          cwd,
-          composerSourceKey,
-          providerResourcesRevision
-        )
-          ? composerCache.skills
-          : [],
-        isComposerCacheCurrent(
-          composerCache,
-          providerId,
-          cwd,
-          composerSourceKey,
-          providerResourcesRevision
-        )
-          ? composerCache.apps
-          : [],
+        currentComposerCache?.skills ?? [],
+        currentComposerCache?.apps ?? [],
         skillMention?.query ?? ''
       ).filter((result) =>
         result.kind === 'skill'
@@ -85,31 +81,11 @@ export function useResourceMentions({
           : selectedApps.length < maxSelectedAppCount &&
             !selectedApps.some((selectedApp) => selectedApp.id === result.app.id)
       ),
-    [
-      composerCache,
-      composerSourceKey,
-      cwd,
-      providerId,
-      providerResourcesRevision,
-      selectedApps,
-      selectedSkills,
-      skillMention?.query
-    ]
+    [currentComposerCache, selectedApps, selectedSkills, skillMention?.query]
   )
 
   useEffect(() => {
-    if (
-      !skillMentionMenuOpen ||
-      isComposerCacheCurrent(
-        composerCache,
-        providerId,
-        cwd,
-        composerSourceKey,
-        providerResourcesRevision
-      )
-    ) {
-      return
-    }
+    if (!skillMentionMenuOpen || currentComposerCache) return
 
     let active = true
 
@@ -151,9 +127,9 @@ export function useResourceMentions({
       active = false
     }
   }, [
-    composerCache,
     composerSourceKey,
     container,
+    currentComposerCache,
     cwd,
     providerId,
     providerResourcesRevision,
@@ -164,15 +140,7 @@ export function useResourceMentions({
   const handleSelectComposerMention = (result: ComposerResult): void => {
     if (!skillMention) return
 
-    const prefix = message.slice(0, skillMention.start)
-    const suffix = message.slice(skillMention.end)
-    const removeLeadingSuffixSpace =
-      suffix.startsWith(' ') && (prefix.length === 0 || prefix.endsWith(' '))
-    const nextSuffix = removeLeadingSuffixSpace ? suffix.slice(1) : suffix
-    const nextMessage = prefix + nextSuffix
-    const nextCaret = prefix.length
-
-    setMessage(nextMessage)
+    applyMentionReplacement(removeComposerMention(message, skillMention), setMessage, textareaRef)
     setSkillMention(null)
     if (result.kind === 'skill') {
       setSelectedSkills((skills) =>
@@ -187,18 +155,11 @@ export function useResourceMentions({
           : [...apps, result.app].slice(0, maxSelectedAppCount)
       )
     }
-
-    window.requestAnimationFrame(() => {
-      const textarea = textareaRef.current
-      if (!textarea) return
-      textarea.focus({ preventScroll: true })
-      textarea.setSelectionRange(nextCaret, nextCaret)
-    })
   }
   return {
     skillMention,
     setSkillMention,
-    composerCache,
+    currentComposerCache,
     composerLoadErrorScope,
     activeSkillMentionIndex,
     setActiveSkillMentionIndex,

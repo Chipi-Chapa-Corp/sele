@@ -1637,12 +1637,6 @@ export const registerProviderIpc = (): void => {
         // The adapter validates values against the schema before writing.
         (value) => value as ProviderConfigValue,
         requireSourceOptions
-      ],
-      setConfigFeature: [
-        requireProviderId,
-        requireConfigName('Invalid feature name'),
-        requireBoolean,
-        requireSourceOptions
       ]
     },
     (call) => withWorkspaceUpdate<unknown>(call())

@@ -21,18 +21,9 @@ import { appChatManualDropdownValue } from '../../settings'
 import { getDefaultModel, getDefaultReasoningEffort } from '../appearanceControllerUtils'
 import { getChatKey, isActiveChatStatus } from '../chatControllerUtils'
 import { fallbackDefaultApprovalMode, fallbackDefaultSandboxMode } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
 import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceSelectionPreferencesDependencies = {
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  projectRecordsByCwd: Map<string, AppProject>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceSelectionPreferences({
   providerState,
@@ -40,7 +31,11 @@ export function useWorkspaceSelectionPreferences({
   provider,
   settings,
   projectRecordsByCwd
-}: WorkspaceSelectionPreferencesDependencies) {
+}: WorkspaceState & {
+  provider: ReturnType<typeof useWorkspaceProviderContext>
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+  projectRecordsByCwd: Map<string, AppProject>
+}) {
   useEffect(
     () =>
       onPreferencesChanged((keys) => {

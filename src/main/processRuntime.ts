@@ -150,17 +150,19 @@ export const connectProcessRuntime = async (
   // A loopback endpoint also works across Flatpak's per-instance /tmp namespaces.
   // The private profile contains the capability token; only loopback accepts connections.
   const endpointPath = join(directory, 'endpoint.json')
-  const reconnect = async (): Promise<RuntimeProcess> => {
-    const endpoint = JSON.parse(await readFile(endpointPath, 'utf8')) as { port: number }
-    if (!Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65535)
-      throw new Error('Invalid Process runtime endpoint.')
-    return attach(directory, endpoint.port, token)
+  const reconnect = async (): Promise<RuntimeProcess | undefined> => {
+    try {
+      const endpoint = JSON.parse(await readFile(endpointPath, 'utf8')) as { port: number }
+      if (!Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65535)
+        throw new Error('Invalid Process runtime endpoint.')
+      return await attach(directory, endpoint.port, token)
+    } catch (error) {
+      if (!missingListener(error)) throw error
+      return undefined
+    }
   }
-  try {
-    return await reconnect()
-  } catch (error) {
-    if (!missingListener(error)) throw error
-  }
+  const running = await reconnect()
+  if (running) return running
 
   // Serialize launch across app instances. A dead launcher must not leave a
   // permanent lock, and a live runtime must never be replaced by a second worker.
@@ -187,22 +189,16 @@ export const connectProcessRuntime = async (
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
-      try {
-        return await reconnect()
-      } catch (error) {
-        if (!missingListener(error)) throw error
-      }
+      const runtime = await reconnect()
+      if (runtime) return runtime
       if (Date.now() >= deadline)
         throw new Error('Timed out waiting for the Process runtime launcher.')
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
   }
   try {
-    try {
-      return await reconnect()
-    } catch (error) {
-      if (!missingListener(error)) throw error
-    }
+    const launched = await reconnect()
+    if (launched) return launched
     const script = join(directory, 'runtime.cjs')
     await writeFile(script, options.source, { mode: 0o600 })
     const startupErrorPath = join(directory, 'startup-error.txt')
@@ -244,11 +240,8 @@ export const connectProcessRuntime = async (
       if (launchError) throw launchError
       if (worker.exitCode !== null)
         throw await startupFailure('Process runtime exited during startup. See its runtime.log.')
-      try {
-        return await reconnect()
-      } catch (error) {
-        if (!missingListener(error)) throw error
-      }
+      const runtime = await reconnect()
+      if (runtime) return runtime
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
     throw await startupFailure('Process runtime did not become ready. See its runtime.log.')
