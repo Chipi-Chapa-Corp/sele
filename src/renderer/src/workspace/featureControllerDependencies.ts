@@ -135,6 +135,7 @@ export type ChatInteractionControllerDependencies = {
 }
 
 export type ChatMessagingControllerDependencies = {
+  chatNavigationRequestRef: React.RefObject<number>
   authenticationRequired: boolean
   messageBoxSelection: MessageBoxSelection
   rememberStartedChatSelection: (

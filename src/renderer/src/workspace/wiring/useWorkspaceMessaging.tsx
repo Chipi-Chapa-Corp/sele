@@ -77,6 +77,7 @@ export function useWorkspaceMessaging({
     handleStopChat,
     resolveSelectedUserInput
   } = useChatMessagingController({
+    chatNavigationRequestRef: chatState.chatNavigationRequestRef,
     authenticationRequired: chatErrors.authenticationRequired,
     messageBoxSelection: {
       agentMode: providerState.agentMode,

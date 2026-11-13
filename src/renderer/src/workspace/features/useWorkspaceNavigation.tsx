@@ -50,7 +50,7 @@ export function useWorkspaceNavigation({
   session
 }: WorkspaceNavigationDependencies) {
   const { activeSubagentChatView } = session
-  const selectionRequest = useRef(0)
+  const selectionRequest = chatState.chatNavigationRequestRef
 
   const handleSelectChat = (chat: ProviderChat): void => {
     const request = ++selectionRequest.current

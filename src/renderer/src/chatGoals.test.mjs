@@ -80,6 +80,7 @@ const setup = (overrides = {}) => {
     getComposerDraftScopeKey: (chat, workspace) => chat ?? workspace,
     moveComposerDraftScope: (_state, from, to) => drafts.push([from, to]),
     applyViewedChatDetail: (_provider, chat) => calls.push(['view', chat]),
+    applyChatDetail: (_provider, chat) => calls.push(['background', chat]),
     hasProviderUserMessage: () => false,
     getOptimisticItems: () =>
       assert.fail('must not invent an ordinary message for native goal commands'),
@@ -155,6 +156,76 @@ test('starting from a goal creates and selects a chat with current settings and 
   assert.equal(h.drafts[0][1], 'codex:chat')
   assert.equal(h.globals.sendInFlightRef.current, false)
   assert.equal(h.states.at(-1), 'idle')
+})
+
+for (const navigation of ['another chat', 'pending selection', 'back to the composer']) {
+  for (const goal of [false, true]) {
+    test(`late ${goal ? 'goal' : 'message'} creation stays in the background after ${navigation}`, async () => {
+      const h = setup({
+        selectedChatKeyRef: { current: null },
+        getOptimisticItems: (_items, content) => [{ type: 'message', role: 'user', content }]
+      })
+      let finish
+      let refreshes = 0
+      let viewed = 0
+      h.globals.providerApi.startChat = () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+      h.globals.providerApi.setViewedChat = () => {
+        viewed++
+      }
+      h.globals.providerApi.getChat = async () => {
+        refreshes++
+        return { id: 'chat', items: [] }
+      }
+      const sending = goal ? h.start('Checks pass') : h.send('First message')
+      h.globals.chatNavigationRequestRef.current++
+      if (navigation === 'another chat') h.globals.selectedChatKeyRef.current = 'claude:other'
+      if (navigation === 'back to the composer') {
+        h.globals.chatNavigationRequestRef.current++
+        h.globals.selectedChatKeyRef.current = null
+      }
+      const detail = { id: 'chat', items: [] }
+      finish(detail)
+      await sending
+      assert.equal(h.calls.filter(([type]) => type === 'view').length, 0)
+      assert.equal(h.calls.find(([type]) => type === 'background')[1], detail)
+      assert.equal(viewed, 0, 'do not change the provider transcript subscription')
+      assert.equal(refreshes, 0, 'background events and explicit opening refresh the chat')
+      assert.equal(h.drafts.length, 0, 'leave the destination composer draft alone')
+      assert.equal(h.globals.sendInFlightRef.current, false)
+      assert.equal(h.starting.at(-1), null)
+      assert.equal(h.states.at(-1), 'idle')
+    })
+  }
+}
+
+test('sending to a new chat from an existing chat respects a later selection', async () => {
+  const h = setup({
+    selectedChat: { providerId: 'codex', id: 'source' },
+    selectedChatKeyRef: { current: 'codex:source' },
+    changesProjectCwd: '/repo',
+    getChatGroupKey: () => '/repo'
+  })
+  let finish
+  h.globals.providerApi.startChat = () =>
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  const sending = h.send('First message', undefined, [], null, [], [], undefined, 'new')
+  h.globals.chatNavigationRequestRef.current++
+  h.globals.selectedChatKeyRef.current = 'claude:other'
+  finish({ id: 'chat', items: [] })
+  assert.equal(await sending, true)
+  assert.equal(
+    h.calls.some(([type]) => type === 'view'),
+    false
+  )
+  assert.equal(
+    h.calls.some(([type]) => type === 'background'),
+    true
+  )
 })
 
 test('No Project goals preserve workspace selection', async () => {

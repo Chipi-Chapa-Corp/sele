@@ -16,6 +16,8 @@ import { getOpenCodeInstallations } from './providers/opencode/OpenCodeInstallat
 import { supportsOpenCodeServerContainer } from './providers/opencode/OpenCodeServerClient'
 
 const sourceAvailabilityTimeoutMs = 5_000
+// Entering a container (or starting an SSH connection) can outlast a local CLI probe.
+const containerAvailabilityTimeoutMs = 30_000
 const sourceAvailabilityMaxBuffer = 64 * 1024
 const sourceAvailabilityProviderIds = [
   'codex',
@@ -51,7 +53,10 @@ const runAvailabilityCommand = async (
           encoding: 'utf8',
           env: hostCommand.env,
           maxBuffer: sourceAvailabilityMaxBuffer,
-          timeout: sourceAvailabilityTimeoutMs
+          timeout:
+            container?.kind === 'container'
+              ? containerAvailabilityTimeoutMs
+              : sourceAvailabilityTimeoutMs
         },
         (error, stdout) => {
           if (error) {

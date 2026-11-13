@@ -159,6 +159,8 @@ export function useWorkspaceChatState() {
 
   const selectedChatKeyRef = useRef<string | null>(null)
 
+  const chatNavigationRequestRef = useRef(0)
+
   const selectedChatUpdatedAtRef = useRef<number | null>(null)
 
   const chatOrderMutationsRef = useRef(new Map<string, number>())
@@ -233,6 +235,7 @@ export function useWorkspaceChatState() {
     runPromptActionRef,
     chatsRef,
     selectedChatKeyRef,
+    chatNavigationRequestRef,
     selectedChatUpdatedAtRef,
     chatOrderMutationsRef,
     selectedChatRef

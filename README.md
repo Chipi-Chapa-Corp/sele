@@ -81,6 +81,14 @@ If the Flatpak cannot see a host Copilot install, point Sele at that executable 
 flatpak override --user --env=SELE_COPILOT_PATH="$(command -v copilot)" com.chipichapa.sele
 ```
 
+Provider updates run in the selected host or container environment with your user permissions.
+If Copilot reports `EACCES` under `/usr/lib/node_modules`, that installation needs an administrator
+to update it, or a reinstall in a user-writable directory. Follow
+[GitHub's installation instructions](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli)
+in the affected environment, then ensure its `PATH` selects the new executable. For host installs,
+you can also set `SELE_COPILOT_PATH` explicitly. Container availability probes allow up to 30 seconds
+for startup; local probes allow five seconds.
+
 Claude Code can be configured the same way when it is outside Sele's desktop `PATH`:
 
 ```bash

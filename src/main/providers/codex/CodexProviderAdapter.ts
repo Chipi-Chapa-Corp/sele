@@ -3662,10 +3662,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rememberThreadContainer(startedThread.thread.id)
     await onChatCreated?.(startedThread.thread.id)
 
-    const [cwd, name] = await Promise.all([
-      this.resolveThreadCwd(startedThread.thread, options?.cwd ?? null),
-      this.resolveThreadName(startedThread.thread)
-    ])
+    // This thread was just created: it has no saved title override. Reading the
+    // entire session index here adds history-sized work to every new chat.
+    const cwd = await this.resolveThreadCwd(startedThread.thread, options?.cwd ?? null)
+    const name = getThreadName(startedThread.thread)
     const thread = {
       ...startedThread.thread,
       name,

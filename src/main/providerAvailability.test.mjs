@@ -22,6 +22,7 @@ const code = ts.transpile(
 
 const fixture = ({ resolveError, stdout = '', executeError = null } = {}) => {
   const commands = []
+  const executions = []
   const warnings = []
   const api = vm.runInNewContext(code, {
     process: { env: {} },
@@ -40,12 +41,13 @@ const fixture = ({ resolveError, stdout = '', executeError = null } = {}) => {
       if (resolveError) throw resolveError
       return { file, args, env: {} }
     },
-    execFile: (_file, _args, _options, callback) => {
+    execFile: (file, args, options, callback) => {
+      executions.push({ file, args: Array.from(args), options })
       callback(executeError, stdout)
       return { stdin: { end() {} } }
     }
   })
-  return { ...api, commands, warnings }
+  return { ...api, commands, executions, warnings }
 }
 
 test('missing host Codex is unavailable without logging a discovery error', async () => {
@@ -84,4 +86,27 @@ test('transport failures remain unavailable even if stdout includes the found ma
   const container = { kind: 'container', tool: 'ssh', name: 'remote' }
   assert.equal(await f.isProviderAvailableInSource('codex', container), false)
   assert.equal(f.warnings.length, 1)
+})
+
+test('container probes allow startup time while local probes keep their short timeout', async () => {
+  const f = fixture({ stdout: availabilityFoundMarker })
+  for (const tool of ['distrobox', 'toolbox', 'docker', 'podman', 'ssh']) {
+    assert.equal(
+      await f.isProviderAvailableInSource('codex', { kind: 'container', tool, name: 'dev' }),
+      true
+    )
+    assert.equal(f.executions.at(-1).options.timeout, 30_000)
+  }
+  assert.equal(await f.isProviderAvailableInSource('codex', null), true)
+  assert.equal(f.executions.at(-1).options.timeout, 5_000)
+})
+
+test('batched source discovery also allows time to enter a container', async () => {
+  const f = fixture({ stdout: 'git\ncodex\ncopilot\n' })
+  const availability = await f.getSourceAvailability({
+    container: { kind: 'container', tool: 'distrobox', name: 'dev' }
+  })
+  assert.equal(availability.gitAvailable, true)
+  assert.equal(availability.providers.find((item) => item.providerId === 'codex').available, true)
+  assert.equal(f.executions[0].options.timeout, 30_000)
 })

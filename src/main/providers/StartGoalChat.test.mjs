@@ -109,6 +109,7 @@ test('Codex establishes the goal before admitting the first turn and stops on go
     getTurnModelOptions: () => ({}),
     getTurnAccessOptions: () => ({}),
     getThreadTurns: () => [],
+    getThreadName: () => null,
     createUserInput: (text) => [{ type: 'text', text }]
   })
   Object.assign(adapter, {
@@ -130,7 +131,7 @@ test('Codex establishes the goal before admitting the first turn and stops on go
     },
     rememberThreadContainer() {},
     resolveThreadCwd: async () => '/repo',
-    resolveThreadName: async () => 'New chat',
+    resolveThreadName: () => assert.fail('a new thread must not scan saved session titles'),
     cacheThread() {},
     addSubmittedPendingTurn: async () => ({ id: 'pending' }),
     emitChatUpdated() {},
@@ -192,7 +193,8 @@ test('Codex deferred startup creates an idle thread without admitting a model tu
     getRecommendedPluginsConfig: () => ({}),
     getThreadAccessOptions: () => ({}),
     getThreadModelOptions: () => ({}),
-    getThreadTurns: () => []
+    getThreadTurns: () => [],
+    getThreadName: () => null
   })
   let cached
   Object.assign(adapter, {
@@ -205,7 +207,7 @@ test('Codex deferred startup creates an idle thread without admitting a model tu
     },
     rememberThreadContainer: () => {},
     resolveThreadCwd: async () => '/repo',
-    resolveThreadName: async () => null,
+    resolveThreadName: () => assert.fail('a new thread must not scan saved session titles'),
     cacheThread: (thread) => {
       cached = thread
     },

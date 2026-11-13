@@ -67,6 +67,7 @@ import type { SubagentChatView } from './controllerTypes'
 // Return shape is inferred from the controller declarations below.
 export function useChatMessagingController(dependencies: ChatMessagingControllerDependencies) {
   const {
+    chatNavigationRequestRef,
     authenticationRequired,
     messageBoxSelection,
     rememberStartedChatSelection,
@@ -637,6 +638,8 @@ export function useChatMessagingController(dependencies: ChatMessagingController
     }
 
     if (!selectedChat || sendTarget === 'new') {
+      const navigationRequest = chatNavigationRequestRef.current
+      const startingChatKey = selectedChatKeyRef.current
       setSendState('sending')
 
       // Sending into an empty composer must paint before provider process
@@ -716,6 +719,16 @@ export function useChatMessagingController(dependencies: ChatMessagingController
         })
         rememberStartedChatSelection(startingProviderId, detail.id, messageBoxSelection)
         const startedChatKey = getChatKey({ providerId: startingProviderId, id: detail.id })
+        // A navigation request takes precedence even while its history is still loading,
+        // or if the user has left and returned to the original empty composer.
+        if (
+          chatNavigationRequestRef.current !== navigationRequest ||
+          selectedChatKeyRef.current !== startingChatKey
+        ) {
+          applyChatDetail(startingProviderId, detail)
+          setSendState('idle')
+          return true
+        }
         const workspaceKey = `${getContainerTargetKey(changesContainer)}\0${newSessionCwd ?? ''}`
         // The provider's opening message can have no timestamp, or inherit the
         // thread's older creation time. Its returned chat ID is authoritative.
