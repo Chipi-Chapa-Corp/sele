@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useChatPaneLayout } from '../../useChatPaneLayout'
-import { getFixedChangeSource, type ChangesPaneView } from '../controllerTypes'
+import { type ChangesPaneView } from '../controllerTypes'
 import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
 
 type WorkspacePanesDependencies = {
@@ -8,8 +8,6 @@ type WorkspacePanesDependencies = {
 }
 
 export function useWorkspacePanes({ settings }: WorkspacePanesDependencies) {
-  const changeSource = getFixedChangeSource()
-
   const [storedChangesPaneView, setChangesPaneView] = useState<ChangesPaneView>('git')
 
   const [storedGitPaneView, setGitPaneView] = useState<'changes' | 'pull-requests'>('changes')
@@ -27,11 +25,8 @@ export function useWorkspacePanes({ settings }: WorkspacePanesDependencies) {
   const { changesResizeHandleRef, handleStartChatResize, panelsRef, panelsStyle, resizeHandleRef } =
     useChatPaneLayout(changesSidebarExpanded)
 
-  const changeSourceRef = useRef(changeSource)
-
   const lastNonTerminalChangesPaneViewRef = useRef<Exclude<ChangesPaneView, 'terminal'>>('git')
   return {
-    changeSource,
     setChangesPaneView,
     gitPaneView,
     setGitPaneView,
@@ -43,7 +38,6 @@ export function useWorkspacePanes({ settings }: WorkspacePanesDependencies) {
     panelsRef,
     panelsStyle,
     resizeHandleRef,
-    changeSourceRef,
     lastNonTerminalChangesPaneViewRef
   }
 }

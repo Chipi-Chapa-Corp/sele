@@ -1,11 +1,9 @@
 import type { SessionKey, SessionStore, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
 import { isExpectedCommandAbsenceError } from '../../../shared/expectedAbsence.ts'
 import { parseClaudeSubagentMetadataLines } from './ClaudeSubagents.ts'
+import { isRecord } from '../providerValues.ts'
 
 export type RunClaudeSessionCommand = (script: string, args?: string[]) => Promise<string>
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 /** SDK-compatible transcript access; the caller chooses the process that reads/parses it. */
 export class ClaudeRemoteSessionStore implements SessionStore {
   constructor(private readonly run: RunClaudeSessionCommand) {}

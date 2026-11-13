@@ -7,6 +7,7 @@ import type {
   ProviderWorkingToolPage,
   ProviderWorkingTool
 } from '../../shared/provider'
+import { unloadWorkingStepItems } from '../../shared/chatTurns.ts'
 
 export const rendererWorkingItemPageSize = 50
 export const rendererWorkingItemWindowSize = rendererWorkingItemPageSize * 2
@@ -429,21 +430,6 @@ export const groupWorkingStepItems = (step: ProviderWorkingStep): ProviderWorkin
   }
 }
 
-export const unloadWorkingStep = (step: ProviderWorkingStep): ProviderWorkingStep => {
-  const stepWithoutSegments = { ...step }
-  delete stepWithoutSegments.itemSegments
-  return {
-    ...stepWithoutSegments,
-    items: [],
-    itemsLoaded: false,
-    itemCount:
-      step.itemsLoaded === false
-        ? step.itemCount
-        : Math.max(step.itemCount ?? 0, step.items.length),
-    itemsStartIndex: 0
-  }
-}
-
 export const prepareWorkingStepPage = (
   step: ProviderWorkingStep,
   startIndex: number,
@@ -565,7 +551,7 @@ export const unloadHistoricalWorkingSteps = <T extends Pick<ProviderChatDetail, 
     const nextItem =
       index === latestWorkingStepIndex || itemCount <= rendererHistoricalWorkingItemLazyThreshold
         ? prepareLatestWorkingStep(groupedItem)
-        : unloadWorkingStep(groupedItem)
+        : unloadWorkingStepItems(groupedItem)
     if (
       nextItem.items !== item.items ||
       nextItem.itemsLoaded !== item.itemsLoaded ||

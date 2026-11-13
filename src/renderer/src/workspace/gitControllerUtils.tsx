@@ -2,8 +2,6 @@ import { GitBranch, GitMerge, GitPullRequestArrow, Upload } from 'lucide-react'
 
 import type { AppGitPullStrategy, AppGitRecoveryActionId } from '../../../shared/app'
 
-import type { ProviderChatDetail } from '../../../shared/provider'
-
 import {
   type AppAppearancePositionPreference,
   type AppAppearanceStylePreference,
@@ -96,18 +94,6 @@ export const applyWindowControlAppearancePreferences = (
 
 export const getFileTreeEmptyMessage = (cwd: string | null): string =>
   cwd ? 'No files found.' : 'Choose a folder to see files.'
-
-export const getApprovalSummary = (
-  approval: NonNullable<ProviderChatDetail['pendingApproval']>
-): string => {
-  if (approval.command) return approval.command
-  if (approval.reason) return approval.reason
-  if (approval.cwd) return approval.cwd
-
-  return approval.type === 'fileChange'
-    ? 'File changes require approval'
-    : 'Command requires approval'
-}
 
 export const getProviderUpdateSummary = (
   suggestion: ProviderUpdateSuggestion,

@@ -5,7 +5,7 @@ import { buildQuotedPrompt } from '../composerQuotes'
 import { buildLinkedChatPrompt, getLinkedChatKey } from '../linkedChats'
 import { captureMessageFlight } from '../motion/messageFlight'
 import { maxSelectedAppCount, maxSelectedSkillCount } from './composerLimits'
-import { getSelectedSkillInputs, isComposerCacheCurrent } from './mentionResults'
+import { getSelectedSkillInputs } from './mentionResults'
 import { useComposerEditing } from './useComposerEditing'
 import { noLinkedChats } from './useComposerLinkedChats'
 import { useComposerMentions } from './useComposerMentions'
@@ -20,8 +20,6 @@ type ComposerSubmissionDependencies = {
     MessageBoxProps,
     | 'activePrimaryMode'
     | 'providerId'
-    | 'cwd'
-    | 'providerResourcesRevision'
     | 'selectedReview'
     | 'operationsDisabled'
     | 'providerUpdating'
@@ -48,14 +46,13 @@ type ComposerSubmissionDependencies = {
   >
   linked: Pick<
     ReturnType<typeof useComposerLinkedChats>,
-    'linkedChats' | 'linkedChatsBlockSend' | 'updateLinkedChats' | 'restoreLinkedChatsBeforeEdit'
+    'linkedChats' | 'linkedChatsBlockSend' | 'updateLinkedChats'
   >
   attachments: Pick<ReturnType<typeof useComposerAttachments>, 'attachmentSelectionPending'>
   mentions: ReturnType<typeof useComposerMentions>
   editing: boolean
   textareaRef: RefObject<HTMLTextAreaElement | null>
   editingState: ReturnType<typeof useComposerEditing>
-  editSessionIdRef: RefObject<string | null>
   setAttachmentSelectionError: Dispatch<SetStateAction<string | null>>
 }
 
@@ -68,14 +65,11 @@ export function useComposerSubmission({
   editing,
   textareaRef,
   editingState,
-  editSessionIdRef,
   setAttachmentSelectionError
 }: ComposerSubmissionDependencies) {
   const {
     activePrimaryMode = 'queue',
     providerId,
-    cwd = null,
-    providerResourcesRevision = 0,
     selectedReview = null,
     operationsDisabled = false,
     providerUpdating = false,
@@ -99,8 +93,7 @@ export function useComposerSubmission({
     setSelectedApps,
     setComposerDrafts
   } = draft
-  const { linkedChats, linkedChatsBlockSend, updateLinkedChats, restoreLinkedChatsBeforeEdit } =
-    linked
+  const { linkedChats, linkedChatsBlockSend, updateLinkedChats } = linked
   const { attachmentSelectionPending } = attachments
 
   const submitMessage = (
@@ -110,15 +103,7 @@ export function useComposerSubmission({
     const nextMessage = content.trim()
     const typedSkillInputs = getSelectedSkillInputs(
       nextMessage,
-      isComposerCacheCurrent(
-        mentions.composerCache,
-        providerId,
-        cwd,
-        mentions.composerSourceKey,
-        providerResourcesRevision
-      )
-        ? mentions.composerCache.skills
-        : []
+      mentions.currentComposerCache?.skills ?? []
     )
     const availableSkillInputs = Array.from(
       new Map(
@@ -185,13 +170,7 @@ export function useComposerSubmission({
     }
 
     if (editing) {
-      const previousDraft = {
-        message: editingState.messageBeforeEditRef.current ?? '',
-        attachments: editingState.attachmentsBeforeEditRef.current ?? [],
-        skills: editingState.skillsBeforeEditRef.current ?? [],
-        apps: editingState.appsBeforeEditRef.current ?? [],
-        quotes: editingState.quotesBeforeEditRef.current ?? []
-      }
+      const previousDraft = editingState.draftBeforeEditRef.current
       void Promise.resolve(
         onSend(
           outgoingMessage,
@@ -203,20 +182,7 @@ export function useComposerSubmission({
         )
       )
         .then((sent) => {
-          if (!sent) return
-
-          restoreLinkedChatsBeforeEdit()
-          setMessage(previousDraft.message)
-          setSelectedAttachments(previousDraft.attachments)
-          setSelectedSkills(previousDraft.skills)
-          setSelectedApps(previousDraft.apps)
-          setSelectedQuotes(previousDraft.quotes)
-          editSessionIdRef.current = null
-          editingState.messageBeforeEditRef.current = null
-          editingState.attachmentsBeforeEditRef.current = null
-          editingState.skillsBeforeEditRef.current = null
-          editingState.appsBeforeEditRef.current = null
-          editingState.quotesBeforeEditRef.current = null
+          if (sent) editingState.restoreDraftBeforeEdit(previousDraft)
         })
         .catch((error: unknown) => {
           console.error('Unable to persist the cleared composer draft.', error)

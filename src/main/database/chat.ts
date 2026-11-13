@@ -1,15 +1,32 @@
-import { sql } from 'kysely'
+import { sql, type Insertable, type Selectable } from 'kysely'
 import type { AppContainerTarget } from '../../shared/app'
 import type { ProviderChat, ProviderChatMetadata, ProviderChatPurpose } from '../../shared/provider'
 import { isProviderChatPurpose } from '../../shared/provider'
 import { isContainerTool, normalizeContainerTarget } from '../containerTarget'
-import { getDatabase } from './sqlite'
+import { getDatabase, type LocalDatabase } from './sqlite'
 import { DatabaseReadCache } from './readCache'
 import { publishChatMetadataChanged } from '../providers/chatMetadataEvents'
 
 const metadataCache = new DatabaseReadCache<ProviderChatMetadata>()
 
 const chatMetadataChunkSize = 200
+const chatMetadataColumns = [
+  'id',
+  'account_id',
+  'container_tool',
+  'container_name',
+  'container_runtime_tool',
+  'container_runtime_name',
+  'no_project',
+  'pinned',
+  'pinned_order',
+  'done',
+  'done_at',
+  'seen_updated_at',
+  'purpose'
+] as const
+
+type ChatRow = Selectable<LocalDatabase['chat']>
 
 const toBoolean = (value: unknown): boolean => value === true || value === 1
 const toNumberOrNull = (value: unknown): number | null =>
@@ -35,12 +52,15 @@ const getDefaultChatMetadata = (id: string): ProviderChatMetadata => ({
   container: null
 })
 
-const mapContainerTarget = (
-  tool: string | null,
-  name: string | null,
-  runtimeTool: string | null,
-  runtimeName: string | null
-): AppContainerTarget | null => {
+const mapContainerTarget = ({
+  container_tool: tool,
+  container_name: name,
+  container_runtime_tool: runtimeTool,
+  container_runtime_name: runtimeName
+}: Pick<
+  ChatRow,
+  'container_tool' | 'container_name' | 'container_runtime_tool' | 'container_runtime_name'
+>): AppContainerTarget | null => {
   if (!isContainerTool(tool) || !name?.trim()) return null
   if (tool !== 'ssh') return { kind: 'container', tool, name: name.trim() }
 
@@ -52,21 +72,7 @@ const mapContainerTarget = (
   return { kind: 'container', tool: 'ssh', name: name.trim(), runtime }
 }
 
-const mapChatMetadataRow = (row: {
-  account_id: string | null
-  container_name: string | null
-  container_runtime_name: string | null
-  container_runtime_tool: string | null
-  container_tool: string | null
-  id: string
-  no_project: number
-  pinned: number
-  pinned_order: number | null
-  done: number
-  done_at: number | null
-  seen_updated_at: number | null
-  purpose: ProviderChatPurpose | null
-}): ProviderChatMetadata => ({
+const mapChatMetadataRow = (row: ChatRow): ProviderChatMetadata => ({
   id: row.id,
   accountId: row.account_id,
   noProject: toBoolean(row.no_project),
@@ -76,12 +82,7 @@ const mapChatMetadataRow = (row: {
   doneAt: toNumberOrNull(row.done_at),
   seenUpdatedAt: toNumberOrNull(row.seen_updated_at),
   purpose: isProviderChatPurpose(row.purpose) ? row.purpose : null,
-  container: mapContainerTarget(
-    row.container_tool,
-    row.container_name,
-    row.container_runtime_tool,
-    row.container_runtime_name
-  )
+  container: mapContainerTarget(row)
 })
 
 const uniqueChatIds = (chatIds: string[]): string[] =>
@@ -92,21 +93,7 @@ export const getChatMetadata = async (chatId: string): Promise<ProviderChatMetad
   return metadataCache.read(db, chatId, async () => {
     const row = await db
       .selectFrom('chat')
-      .select([
-        'id',
-        'account_id',
-        'container_tool',
-        'container_name',
-        'container_runtime_tool',
-        'container_runtime_name',
-        'no_project',
-        'pinned',
-        'pinned_order',
-        'done',
-        'done_at',
-        'seen_updated_at',
-        'purpose'
-      ])
+      .select(chatMetadataColumns)
       .where('id', '=', chatId)
       .executeTakeFirst()
 
@@ -127,21 +114,7 @@ export const getChatMetadataByIds = async (
     const chunk = ids.slice(index, index + chatMetadataChunkSize)
     const rows = await db
       .selectFrom('chat')
-      .select([
-        'id',
-        'account_id',
-        'container_tool',
-        'container_name',
-        'container_runtime_tool',
-        'container_runtime_name',
-        'no_project',
-        'pinned',
-        'pinned_order',
-        'done',
-        'done_at',
-        'seen_updated_at',
-        'purpose'
-      ])
+      .select(chatMetadataColumns)
       .where('id', 'in', chunk)
       .execute()
 
@@ -165,32 +138,49 @@ export const getChatContainers = async (): Promise<AppContainerTarget[]> => {
     .execute()
 
   return rows.flatMap((row) => {
-    const container = mapContainerTarget(
-      row.container_tool,
-      row.container_name,
-      row.container_runtime_tool,
-      row.container_runtime_name
-    )
+    const container = mapContainerTarget(row)
     return container ? [container] : []
   })
 }
 
 const getChangedChatMetadata = async (chatId: string): Promise<ProviderChatMetadata> => {
+  metadataCache.invalidate(chatId)
   const metadata = await getChatMetadata(chatId)
   publishChatMetadataChanged([metadata])
   return metadata
 }
 
-export const setChatNoProject = async (chatId: string): Promise<ProviderChatMetadata> => {
+const saveChatColumns = async (
+  chatId: string,
+  columns: Omit<Insertable<LocalDatabase['chat']>, 'id'>
+): Promise<ProviderChatMetadata> => {
   const db = await getDatabase()
   await db
     .insertInto('chat')
-    .values({ id: chatId, pinned: 0, done: 0, no_project: 1 })
-    .onConflict((conflict) => conflict.column('id').doUpdateSet({ no_project: 1 }))
+    .values({ id: chatId, pinned: 0, done: 0, ...columns })
+    .onConflict((conflict) => conflict.column('id').doUpdateSet(columns))
     .execute()
-  metadataCache.invalidate(chatId)
   return getChangedChatMetadata(chatId)
 }
+
+const getContainerColumns = (target: AppContainerTarget | null | undefined) => {
+  const container = normalizeContainerTarget(target)
+  const runtime =
+    container.kind === 'container' &&
+    container.tool === 'ssh' &&
+    container.runtime?.kind === 'container'
+      ? container.runtime
+      : null
+  return {
+    container_tool: container.kind === 'container' ? container.tool : null,
+    container_name: container.kind === 'container' ? container.name : null,
+    container_runtime_tool: runtime?.tool ?? null,
+    container_runtime_name: runtime?.name ?? null
+  }
+}
+
+export const setChatNoProject = (chatId: string): Promise<ProviderChatMetadata> =>
+  saveChatColumns(chatId, { no_project: 1 })
 
 export const setChatDone = async (chatId: string, done = true): Promise<ProviderChatMetadata> => {
   const db = await getDatabase()
@@ -209,7 +199,6 @@ export const setChatDone = async (chatId: string, done = true): Promise<Provider
     )
     .execute()
 
-  metadataCache.invalidate(chatId)
   return getChangedChatMetadata(chatId)
 }
 
@@ -231,7 +220,6 @@ export const setChatPinned = async (
     )
     .execute()
 
-  metadataCache.invalidate(chatId)
   return getChangedChatMetadata(chatId)
 }
 
@@ -251,8 +239,7 @@ export const setChatOrder = async (chatIds: string[]): Promise<ProviderChatMetad
   })
 
   ids.forEach((id) => metadataCache.invalidate(id))
-  const metadataById = await getChatMetadataByIds(ids)
-  const metadata = ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
+  const metadata = [...(await getChatMetadataByIds(ids)).values()]
   publishChatMetadataChanged(metadata)
   return metadata
 }
@@ -279,69 +266,18 @@ export const setChatSeen = async (
     )
     .execute()
 
-  metadataCache.invalidate(chatId)
   return getChangedChatMetadata(chatId)
 }
 
-export const setChatPurpose = async (
+export const setChatPurpose = (
   chatId: string,
   purpose: ProviderChatPurpose
-): Promise<ProviderChatMetadata> => {
-  const db = await getDatabase()
+): Promise<ProviderChatMetadata> => saveChatColumns(chatId, { purpose })
 
-  await db
-    .insertInto('chat')
-    .values({ id: chatId, pinned: 0, done: 0, purpose })
-    .onConflict((conflict) =>
-      conflict.column('id').doUpdateSet({
-        purpose
-      })
-    )
-    .execute()
-
-  metadataCache.invalidate(chatId)
-  return getChangedChatMetadata(chatId)
-}
-
-export const setChatContainer = async (
+export const setChatContainer = (
   chatId: string,
   container: AppContainerTarget | null | undefined
-): Promise<ProviderChatMetadata> => {
-  const db = await getDatabase()
-  const normalizedContainer = normalizeContainerTarget(container)
-  const containerTool = normalizedContainer.kind === 'container' ? normalizedContainer.tool : null
-  const containerName = normalizedContainer.kind === 'container' ? normalizedContainer.name : null
-  const containerRuntime =
-    normalizedContainer.kind === 'container' &&
-    normalizedContainer.tool === 'ssh' &&
-    normalizedContainer.runtime?.kind === 'container'
-      ? normalizedContainer.runtime
-      : null
-
-  await db
-    .insertInto('chat')
-    .values({
-      id: chatId,
-      pinned: 0,
-      done: 0,
-      container_tool: containerTool,
-      container_name: containerName,
-      container_runtime_tool: containerRuntime?.tool ?? null,
-      container_runtime_name: containerRuntime?.name ?? null
-    })
-    .onConflict((conflict) =>
-      conflict.column('id').doUpdateSet({
-        container_tool: containerTool,
-        container_name: containerName,
-        container_runtime_tool: containerRuntime?.tool ?? null,
-        container_runtime_name: containerRuntime?.name ?? null
-      })
-    )
-    .execute()
-
-  metadataCache.invalidate(chatId)
-  return getChangedChatMetadata(chatId)
-}
+): Promise<ProviderChatMetadata> => saveChatColumns(chatId, getContainerColumns(container))
 
 export const setChatsDone = async (
   chatIds: string[],
@@ -374,8 +310,7 @@ export const setChatsDone = async (
   }
 
   ids.forEach((id) => metadataCache.invalidate(id))
-  const metadataById = await getChatMetadataByIds(ids)
-  const metadata = ids.map((id) => metadataById.get(id) ?? getDefaultChatMetadata(id))
+  const metadata = [...(await getChatMetadataByIds(ids)).values()]
   publishChatMetadataChanged(metadata)
   return metadata
 }
@@ -418,24 +353,13 @@ export const bindChatAccounts = async (
     await db
       .insertInto('chat')
       .values(
-        unbound.slice(index, index + chatMetadataChunkSize).map((id) => {
-          const target = normalizeContainerTarget(byId.get(id)?.container)
-          const container = target.kind === 'container' ? target : null
-          const runtime =
-            container?.tool === 'ssh' && container.runtime?.kind === 'container'
-              ? container.runtime
-              : null
-          return {
-            id,
-            pinned: 0,
-            done: 0,
-            account_id: accountId,
-            container_tool: container?.tool ?? null,
-            container_name: container?.name ?? null,
-            container_runtime_tool: runtime?.tool ?? null,
-            container_runtime_name: runtime?.name ?? null
-          }
-        })
+        unbound.slice(index, index + chatMetadataChunkSize).map((id) => ({
+          id,
+          pinned: 0,
+          done: 0,
+          account_id: accountId,
+          ...getContainerColumns(byId.get(id)?.container)
+        }))
       )
       .onConflict((conflict) =>
         conflict.column('id').doUpdateSet({

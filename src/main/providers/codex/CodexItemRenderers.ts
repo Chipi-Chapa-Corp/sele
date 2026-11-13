@@ -7,6 +7,8 @@ import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChan
 import { getBrowserToolLabel } from '../BrowserToolPresentation.ts'
 import { getAppToolPresentation } from '../AppToolPresentation.ts'
 import { getTimeToolPresentation } from '../TimeToolPresentation.ts'
+import type { ToolPresentation } from '../ToolPresentation.ts'
+import { getBoundedRawToolValue, truncatedToolValueMarker } from '../providerValues.ts'
 import type {
   ProviderChatItem,
   ProviderFileDiff,
@@ -192,16 +194,6 @@ export const createCodexFileAttachmentInput = (path: string): CodexUserInput => 
   })}${codexFileAttachmentCloseTag}`,
   text_elements: []
 })
-
-export const hasCodexUserInputAttachments = (inputs: CodexUserInput[] | undefined): boolean =>
-  Boolean(
-    inputs?.some(
-      (input) =>
-        input.type === 'image' ||
-        input.type === 'localImage' ||
-        (input.type === 'text' && getCodexFileAttachmentsFromText(input.text).length > 0)
-    )
-  )
 
 const tokenizeShellCommand = (command: string): ShellToken[] => {
   const tokens: ShellToken[] = []
@@ -839,84 +831,10 @@ const getRawToolInput = (item: CodexThreadItem): unknown => {
 const maxToolCommandLength = 80_000
 const maxToolOutputLength = 160_000
 const maxToolDiffLength = 400_000
-const maxRawToolValueLength = 80_000
-const maxRawToolCollectionEntries = 200
-const maxRawToolDepth = 8
-const truncatedToolValueMarker = '… [truncated to keep the app responsive]'
 
 const truncateToolText = (value: string | null, limit: number): string | null => {
   if (value == null || value.length <= limit) return value
   return `${value.slice(0, limit)}\n${truncatedToolValueMarker}`
-}
-
-type RawToolValueBudget = {
-  remaining: number
-  seen: WeakSet<object>
-}
-
-const getBoundedRawToolValue = (
-  value: unknown,
-  budget: RawToolValueBudget = {
-    remaining: maxRawToolValueLength,
-    seen: new WeakSet<object>()
-  },
-  depth = 0
-): unknown => {
-  if (typeof value === 'string') {
-    if (value.length <= budget.remaining) {
-      budget.remaining -= value.length
-      return value
-    }
-
-    const visibleValue = value.slice(0, Math.max(0, budget.remaining))
-    budget.remaining = 0
-    return `${visibleValue}\n${truncatedToolValueMarker}`
-  }
-  if (
-    value == null ||
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    typeof value === 'undefined'
-  ) {
-    return value
-  }
-  if (typeof value === 'bigint' || typeof value === 'symbol' || typeof value === 'function') {
-    return String(value)
-  }
-  if (depth >= maxRawToolDepth || budget.remaining <= 0) return truncatedToolValueMarker
-  if (budget.seen.has(value)) return '[Circular]'
-
-  budget.seen.add(value)
-
-  if (Array.isArray(value)) {
-    const boundedValue: unknown[] = []
-    const entryLimit = Math.min(value.length, maxRawToolCollectionEntries)
-
-    for (let index = 0; index < entryLimit && budget.remaining > 0; index += 1) {
-      budget.remaining -= 1
-      boundedValue.push(getBoundedRawToolValue(value[index], budget, depth + 1))
-    }
-    if (entryLimit < value.length || budget.remaining <= 0) {
-      boundedValue.push(truncatedToolValueMarker)
-    }
-
-    return boundedValue
-  }
-
-  const boundedValue: Record<string, unknown> = {}
-  const entries = Object.entries(value as Record<string, unknown>)
-  const entryLimit = Math.min(entries.length, maxRawToolCollectionEntries)
-
-  for (let index = 0; index < entryLimit && budget.remaining > 0; index += 1) {
-    const [key, entryValue] = entries[index]
-    budget.remaining -= key.length + 1
-    boundedValue[key] = getBoundedRawToolValue(entryValue, budget, depth + 1)
-  }
-  if (entryLimit < entries.length || budget.remaining <= 0) {
-    boundedValue.__truncated__ = truncatedToolValueMarker
-  }
-
-  return boundedValue
 }
 
 const getToolId = (item: CodexThreadItem): string =>
@@ -1103,14 +1021,25 @@ const renderTool = (
   item: CodexThreadItem,
   activity: ProviderToolActivity,
   label: string,
-  command: string | null = null,
-  stdout: string | null = null,
-  diffs: ProviderFileDiff[] = [],
-  toolId = getToolId(item),
-  rawOutput: unknown | typeof defaultRawToolOutput = defaultRawToolOutput,
-  images: ProviderToolImage[] = [],
-  icon: ProviderToolIcon | null = null,
-  compact = false
+  {
+    command = null,
+    stdout = null,
+    diffs = [],
+    toolId = getToolId(item),
+    rawOutput = defaultRawToolOutput,
+    images = [],
+    icon = null,
+    compact = false
+  }: {
+    command?: string | null
+    stdout?: string | null
+    diffs?: ProviderFileDiff[]
+    toolId?: string
+    rawOutput?: unknown
+    images?: ProviderToolImage[]
+    icon?: ProviderToolIcon | null
+    compact?: boolean
+  } = {}
 ): WorkingItemRenderResult => {
   const showRawValues = (activity === 'other' || activity === 'image-view') && !compact
 
@@ -1164,22 +1093,8 @@ const renderQuestionTool = (item: CodexThreadItem): WorkingItemRenderResult =>
     item,
     'other',
     getWorkingToolStatus(item.status) === 'running' ? 'Asking question' : 'Asked a question',
-    null,
-    null,
-    [],
-    getToolId(item),
-    null,
-    [],
-    'question',
-    true
+    { rawOutput: null, icon: 'question', compact: true }
   )
-
-type ToolPresentation = {
-  activity: ProviderToolActivity
-  icon?: ProviderToolIcon
-  label: string
-  compact?: boolean
-}
 
 const openAiDeveloperDocsLabels = new Map([
   ['search_openai_docs', 'Searched OpenAI docs'],
@@ -1341,18 +1256,16 @@ const getMappedToolPresentation = (item: CodexThreadItem): ToolPresentation | nu
       ? getJsonToolArgument(item.customToolInput, item.customToolName)
       : null) ?? getRawToolInput(item)
   // Keep the server scope: an unrelated server may expose a similarly named tool.
-  const appPresentation = getAppToolPresentation(
-    names.filter((name) => name !== item.tool || (!item.server && !item.namespace)),
-    input
+  const scopedNames = names.filter(
+    (name) => name !== item.tool || (!item.server && !item.namespace)
   )
+  const appPresentation = getAppToolPresentation(scopedNames, input)
   if (appPresentation) return appPresentation
 
   const browserLabel = getBrowserToolLabel(names, input)
   if (browserLabel) return { activity: 'other', icon: 'browser', label: browserLabel }
 
-  const time = getTimeToolPresentation(
-    names.filter((name) => name !== item.tool || (!item.server && !item.namespace))
-  )
+  const time = getTimeToolPresentation(scopedNames)
   if (time) return time
 
   if (
@@ -1382,29 +1295,20 @@ const renderMappedTool = (
   const presentation = getMappedToolPresentation(item)
   if (!presentation) return null
 
-  const isGeneratedImage = getToolNameCandidates(item).some((name) =>
-    generatedImageToolNames.has(name)
-  )
-  const isViewedImage = getToolNameCandidates(item).some((name) => viewedImageToolNames.has(name))
-  const images = isGeneratedImage
+  const names = getToolNameCandidates(item)
+  const images = names.some((name) => generatedImageToolNames.has(name))
     ? getGeneratedImagePaths(item)
-    : isViewedImage
+    : names.some((name) => viewedImageToolNames.has(name))
       ? getViewedImages(item)
       : []
 
-  return renderTool(
-    item,
-    presentation.activity,
-    presentation.label,
-    null,
-    null,
-    [],
+  return renderTool(item, presentation.activity, presentation.label, {
     toolId,
-    images.length > 0 ? null : defaultRawToolOutput,
+    rawOutput: images.length > 0 ? null : defaultRawToolOutput,
     images,
-    presentation.icon ?? null,
-    presentation.compact ?? presentation.icon === 'browser'
-  )
+    icon: presentation.icon ?? null,
+    compact: presentation.compact ?? presentation.icon === 'browser'
+  })
 }
 
 const getCustomToolArgument = (item: CodexThreadItem, key: string): string | null =>
@@ -1423,38 +1327,27 @@ const renderKnownCustomTool = (item: CodexThreadItem): WorkingItemRenderResult |
       item,
       'search',
       query ? `Searched tools for ${truncate(query, 80)}` : 'Searched tools',
-      item.customToolInput ?? null,
-      getToolStdout(item.customToolOutput),
-      [],
-      name
+      {
+        command: item.customToolInput ?? null,
+        stdout: getToolStdout(item.customToolOutput),
+        toolId: name
+      }
     )
   }
 
   if (name === 'apply_patch') {
-    return renderTool(
-      item,
-      'edit',
-      'Applied patch',
-      null,
-      getToolStdout(item.customToolOutput),
-      [],
-      name
-    )
+    return renderTool(item, 'edit', 'Applied patch', {
+      stdout: getToolStdout(item.customToolOutput),
+      toolId: name
+    })
   }
 
   if (name === 'update_plan') {
-    return renderTool(
-      item,
-      'other',
-      'Updated plan',
-      null,
-      null,
-      [],
-      name,
-      getToolStdout(item.customToolOutput) ?? getRawToolOutput(item),
-      [],
-      'plan'
-    )
+    return renderTool(item, 'other', 'Updated plan', {
+      toolId: name,
+      rawOutput: getToolStdout(item.customToolOutput) ?? getRawToolOutput(item),
+      icon: 'plan'
+    })
   }
 
   return renderMappedTool(item, name)
@@ -1468,15 +1361,10 @@ const renderNestedToolCommand = (item: CodexThreadItem): WorkingItemRenderResult
     if ((item.changes?.length ?? 0) > 0) return renderFileChanges(item)
 
     return [
-      renderTool(
-        item,
-        'edit',
-        'Applied patch',
-        null,
-        getToolStdout(item.aggregatedOutput),
-        [],
-        'apply_patch'
-      )
+      renderTool(item, 'edit', 'Applied patch', {
+        stdout: getToolStdout(item.aggregatedOutput),
+        toolId: 'apply_patch'
+      })
     ]
   }
 
@@ -1493,7 +1381,7 @@ const renderNestedToolCommand = (item: CodexThreadItem): WorkingItemRenderResult
     }
     return (
       renderKnownCustomTool(toolItem) ??
-      renderTool(toolItem, 'other', call.name, null, null, [], call.name)
+      renderTool(toolItem, 'other', call.name, { toolId: call.name })
     )
   })
 }
@@ -1509,9 +1397,22 @@ const renderFileChanges = (item: CodexThreadItem): WorkingItemRenderResult[] => 
           ? `Deleted ${file}`
           : `Changed ${file}`
 
-    return renderTool(item, diff.kind, label, null, null, [diff])
+    return renderTool(item, diff.kind, label, { diffs: [diff] })
   })
 }
+
+const renderClassifiedCommands = (
+  item: CodexThreadItem,
+  classifications: CommandClassification[],
+  output: unknown
+): WorkingItemRenderResult[] =>
+  classifications.map((classification) =>
+    renderTool(item, classification.activity, classification.label, {
+      command: classification.activity === 'script' ? null : classification.command || null,
+      stdout: getToolStdout(output),
+      icon: classification.icon ?? null
+    })
+  )
 
 const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
   {
@@ -1540,78 +1441,37 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
 
       if (name === 'exec_command') {
         const command = getToolStringArgument(item.customToolInput ?? '', name, 'cmd')
-        const classifications: CommandClassification[] = command
-          ? classifyCommand(command)
-          : [
-              {
-                activity: 'command',
-                label: 'Ran a command',
-                command: ''
-              } satisfies CommandClassification
-            ]
-        return classifications.map((classification) =>
-          renderTool(
-            item,
-            classification.activity,
-            classification.label,
-            shouldShowCommandText(classification.activity) ? classification.command || null : null,
-            getToolStdout(item.customToolOutput),
-            [],
-            getToolId(item),
-            defaultRawToolOutput,
-            [],
-            classification.icon ?? null
-          )
+        return renderClassifiedCommands(
+          item,
+          command
+            ? classifyCommand(command)
+            : [{ activity: 'command', label: 'Ran a command', command: '' }],
+          item.customToolOutput
         )
       }
 
-      return renderTool(item, 'other', name, null, null, [], name)
+      return renderTool(item, 'other', name, { toolId: name })
     }
   },
   {
     matches: (item) => item.type === 'commandExecution',
-    render: (item) => {
-      const nestedToolCommand = renderNestedToolCommand(item)
-      if (nestedToolCommand) return nestedToolCommand
-
-      return item.command
-        ? classifyCommand(item.command).map((classification) =>
-            renderTool(
-              item,
-              classification.activity,
-              classification.label,
-              shouldShowCommandText(classification.activity)
-                ? classification.command || null
-                : null,
-              getToolStdout(item.aggregatedOutput),
-              [],
-              getToolId(item),
-              defaultRawToolOutput,
-              [],
-              classification.icon ?? null
-            )
-          )
-        : null
-    }
+    render: (item) =>
+      renderNestedToolCommand(item) ??
+      (item.command
+        ? renderClassifiedCommands(item, classifyCommand(item.command), item.aggregatedOutput)
+        : null)
   },
   {
     matches: (item) => item.type === 'fileChange',
     render: renderFileChanges
   },
   {
-    matches: (item) => item.type === 'mcpToolCall',
+    matches: (item) => item.type === 'mcpToolCall' || item.type === 'dynamicToolCall',
     render: (item) => {
       if (!item.tool) return null
-      const name = item.server ? `${item.server}/${item.tool}` : item.tool
-      return renderMappedTool(item, name) ?? renderTool(item, 'other', name, null, null, [], name)
-    }
-  },
-  {
-    matches: (item) => item.type === 'dynamicToolCall',
-    render: (item) => {
-      if (!item.tool) return null
-      const name = item.namespace ? `${item.namespace}/${item.tool}` : item.tool
-      return renderMappedTool(item, name) ?? renderTool(item, 'other', name, null, null, [], name)
+      const scope = item.type === 'mcpToolCall' ? item.server : item.namespace
+      const toolId = scope ? `${scope}/${item.tool}` : item.tool
+      return renderMappedTool(item, toolId) ?? renderTool(item, 'other', toolId, { toolId })
     }
   },
   {
@@ -1621,37 +1481,22 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
         typeof item.durationMs === 'number' && Number.isFinite(item.durationMs)
           ? ` ${Math.max(0, item.durationMs) / 1_000}s`
           : ''
-      return renderTool(
-        item,
-        'other',
-        `Waited${duration}`,
-        null,
-        null,
-        [],
-        'sleep',
-        null,
-        [],
-        'time',
-        true
-      )
+      return renderTool(item, 'other', `Waited${duration}`, {
+        toolId: 'sleep',
+        rawOutput: null,
+        icon: 'time',
+        compact: true
+      })
     }
   },
   {
     matches: (item) => item.type === 'subAgentActivity' && item.kind === 'started',
     render: (item) =>
-      renderTool(
-        item,
-        'other',
-        getSubagentStartLabel(item),
-        null,
-        null,
-        [],
-        getToolId(item),
-        null,
-        [],
-        'subagent',
-        true
-      )
+      renderTool(item, 'other', getSubagentStartLabel(item), {
+        rawOutput: null,
+        icon: 'subagent',
+        compact: true
+      })
   },
   {
     // Spawning and waiting are compact rows; the subagent's prompt and work are in its own chat,
@@ -1665,19 +1510,12 @@ const workingItemRenderMatchers: WorkingItemRenderMatcher[] = [
             ? getSubagentStartLabel(item)
             : null
       return label
-        ? renderTool(
-            item,
-            'other',
-            label,
-            null,
-            null,
-            [],
-            item.tool === 'wait' ? 'wait' : getToolId(item),
-            null,
-            [],
-            item.tool === 'wait' ? 'time' : 'subagent',
-            true
-          )
+        ? renderTool(item, 'other', label, {
+            toolId: item.tool === 'wait' ? 'wait' : getToolId(item),
+            rawOutput: null,
+            icon: item.tool === 'wait' ? 'time' : 'subagent',
+            compact: true
+          })
         : null
     }
   },
@@ -1781,8 +1619,6 @@ const getUserInputAttachments = (input: CodexUserInput): ProviderMessageAttachme
 export const collectUserInputAttachments = (
   inputs: CodexUserInput[]
 ): ProviderMessageAttachment[] => inputs.flatMap(getUserInputAttachments)
-
-const shouldShowCommandText = (activity: ProviderToolActivity): boolean => activity !== 'script'
 
 const getFinalMessageIndex = (items: CodexThreadItem[]): number => {
   const explicitFinalIndex = items.findLastIndex(

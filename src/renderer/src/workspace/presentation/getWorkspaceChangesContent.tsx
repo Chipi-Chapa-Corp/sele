@@ -1,33 +1,5 @@
 import { getChatKey } from '../chatControllerUtils'
-import { useWorkspaceBrowser } from '../features/useWorkspaceBrowser'
-import { useWorkspacePanes } from '../features/useWorkspacePanes'
-import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceDialogState } from '../state/useWorkspaceDialogState'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useGitHubPullRequests } from '../useGitHubPullRequests'
-import { useWorkspaceChanges } from '../wiring/useWorkspaceChanges'
-import { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import { useWorkspaceGitPresentation } from '../wiring/useWorkspaceGitPresentation'
-import { useWorkspaceGitSync } from '../wiring/useWorkspaceGitSync'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-
-type WorkspaceChangesContentDependencies = {
-  gitHubPullRequests: ReturnType<typeof useGitHubPullRequests>
-  panes: ReturnType<typeof useWorkspacePanes>
-  browser: ReturnType<typeof useWorkspaceBrowser>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  dialogState: ReturnType<typeof useWorkspaceDialogState>
-  session: ReturnType<typeof useWorkspaceSession>
-  gitPresentation: ReturnType<typeof useWorkspaceGitPresentation>
-  changes: ReturnType<typeof useWorkspaceChanges>
-  conversation: ReturnType<typeof useWorkspaceConversation>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  gitSync: ReturnType<typeof useWorkspaceGitSync>
-  files: ReturnType<typeof useWorkspaceFiles>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceChangesContent({
   gitHubPullRequests,
@@ -43,7 +15,7 @@ export function getWorkspaceChangesContent({
   gitState,
   gitSync,
   files
-}: WorkspaceChangesContentDependencies) {
+}: WorkspaceChanges) {
   return {
     gitHubPullRequests,
     gitPaneView: panes.gitPaneView,

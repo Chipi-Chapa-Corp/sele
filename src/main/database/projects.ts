@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path'
-import { getDatabase } from './sqlite'
+import type { Selectable } from 'kysely'
+import { getDatabase, type LocalDatabase } from './sqlite'
 import { isAppProjectIconKind, type AppProjectIconKind } from '../../shared/app'
 
 export type ProjectRecord = {
@@ -20,16 +21,18 @@ export type AddProjectRecordOptions = {
   additionalCwds?: string[]
 }
 
-const mapProjectRow = (row: {
-  cwd: string
-  name: string
-  icon: string | null
-  additional_cwds_json: string
-  sidebar_order: number | null
-  order_only: number
-  added_at: number
-  updated_at: number
-}): ProjectRecord => {
+const projectColumns = [
+  'cwd',
+  'name',
+  'icon',
+  'additional_cwds_json',
+  'sidebar_order',
+  'order_only',
+  'added_at',
+  'updated_at'
+] as const
+
+const mapProjectRow = (row: Selectable<LocalDatabase['projects']>): ProjectRecord => {
   let additionalCwds: string[] = []
   try {
     const value: unknown = JSON.parse(row.additional_cwds_json)
@@ -72,16 +75,7 @@ export const getProjects = async (): Promise<ProjectRecord[]> => {
   const db = await getDatabase()
   const rows = await db
     .selectFrom('projects')
-    .select([
-      'cwd',
-      'name',
-      'icon',
-      'additional_cwds_json',
-      'sidebar_order',
-      'order_only',
-      'added_at',
-      'updated_at'
-    ])
+    .select(projectColumns)
     .orderBy('updated_at', 'desc')
     .orderBy('cwd', 'asc')
     .execute()
@@ -147,16 +141,7 @@ export const addProject = async (options: AddProjectRecordOptions): Promise<Proj
 
   const row = await db
     .selectFrom('projects')
-    .select([
-      'cwd',
-      'name',
-      'icon',
-      'additional_cwds_json',
-      'sidebar_order',
-      'order_only',
-      'added_at',
-      'updated_at'
-    ])
+    .select(projectColumns)
     .where('cwd', '=', normalizedCwd)
     .executeTakeFirst()
 

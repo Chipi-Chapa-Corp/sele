@@ -28,23 +28,20 @@ export function registerBrowserUseSession(
     }
     return
   }
+  const scope: BrowserAutomationScope = {
+    providerId: 'codex',
+    sessionId,
+    cwd: cwd ?? '',
+    containerKey: getContainerTargetKey(container)
+  }
   if (
     existing &&
     (existing.owner !== owner ||
-      existing.scope.cwd !== (cwd ?? '') ||
-      existing.scope.containerKey !== getContainerTargetKey(container))
-  ) {
+      existing.scope.cwd !== scope.cwd ||
+      existing.scope.containerKey !== scope.containerKey)
+  )
     for (const listener of removedListeners) listener(sessionId)
-  }
-  sessions.set(sessionId, {
-    owner,
-    scope: {
-      providerId: 'codex',
-      sessionId,
-      cwd: cwd ?? '',
-      containerKey: getContainerTargetKey(container)
-    }
-  })
+  sessions.set(sessionId, { owner, scope })
 }
 
 export function getBrowserUseSession(sessionId: string): BrowserAutomationScope | undefined {
@@ -58,8 +55,5 @@ export function removeBrowserUseSession(owner: object, sessionId: string): void 
 }
 
 export function removeBrowserUseSessions(owner: object): void {
-  for (const [id, session] of sessions) {
-    if (session.owner !== owner) continue
-    removeBrowserUseSession(owner, id)
-  }
+  for (const id of sessions.keys()) removeBrowserUseSession(owner, id)
 }

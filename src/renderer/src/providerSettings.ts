@@ -55,7 +55,7 @@ export const providerLabels = {
   'opencode-v2': 'OpenCode'
 } satisfies Record<ProviderId, string>
 
-const getFirstSentence = (value: string): string => {
+export const getFirstSentence = (value: string): string => {
   const normalizedValue = value.replace(/\s+/g, ' ').trim()
   if (!normalizedValue) return ''
 

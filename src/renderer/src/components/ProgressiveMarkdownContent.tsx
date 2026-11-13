@@ -28,8 +28,7 @@ type PartProps = {
   container?: AppContainerTarget | null
   cwd?: string | null
   onCommit: () => void
-  eager: boolean
-  sanitized: boolean
+  synchronous: boolean
   renderDiagrams: boolean
 }
 
@@ -39,12 +38,12 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
   container,
   cwd,
   onCommit,
-  sanitized,
+  synchronous,
   renderDiagrams
 }: Omit<PartProps, 'node' | 'priority'> & { html: string }) {
   const fragment = useMemo(
-    () => sanitizedFragment(html, parent, sanitized),
-    [html, parent, sanitized]
+    () => sanitizedFragment(html, parent, synchronous),
+    [html, parent, synchronous]
   )
   const committedFragment = useRef<DocumentFragment | null>(null)
   // Flow content can share a DOM-owned boundary. Tables/lists retain their
@@ -71,26 +70,24 @@ const MarkdownLeaf = memo(function MarkdownLeaf({
 })
 
 const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
-  const { node, parent, priority, container, cwd, onCommit, eager, sanitized, renderDiagrams } =
-    props
+  const { node, parent, priority, container, cwd, onCommit, synchronous, renderDiagrams } = props
   const tag = 'tag' in node ? node.tag : null
   const opening = 'tag' in node ? node.opening : null
   const shell = useMemo(
     () =>
-      tag ? sanitizedFragment(`${opening}</${tag}>`, parent, sanitized).firstElementChild : null,
-    [opening, tag, parent, sanitized]
+      tag ? sanitizedFragment(`${opening}</${tag}>`, parent, synchronous).firstElementChild : null,
+    [opening, tag, parent, synchronous]
   )
   if ('html' in node)
     return (
-      <DeferredChatTurn eager={eager} priority={priority}>
+      <DeferredChatTurn eager={synchronous} priority={priority}>
         <MarkdownLeaf
           html={node.html}
           parent={parent}
           container={container}
           cwd={cwd}
           onCommit={onCommit}
-          eager={eager}
-          sanitized={sanitized}
+          synchronous={synchronous}
           renderDiagrams={renderDiagrams}
         />
       </DeferredChatTurn>
@@ -107,8 +104,7 @@ const MarkdownPart = memo(function MarkdownPart(props: PartProps) {
           container={container}
           cwd={cwd}
           onCommit={onCommit}
-          eager={eager}
-          sanitized={sanitized}
+          synchronous={synchronous}
           renderDiagrams={renderDiagrams}
         />
       ))}
@@ -236,8 +232,7 @@ export function ProgressiveMarkdownContent({
               container={container}
               cwd={cwd}
               onCommit={html === undefined ? onCommit : noop}
-              eager={html !== undefined}
-              sanitized={html !== undefined}
+              synchronous={html !== undefined}
               renderDiagrams={!streaming}
             />
           )

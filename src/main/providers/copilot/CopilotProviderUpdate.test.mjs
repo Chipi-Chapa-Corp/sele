@@ -4,14 +4,16 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 
-const code = ts.transpile(
-  readFileSync(new URL('./CopilotProviderUpdate.ts', import.meta.url), 'utf8'),
-  { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+const [code, sharedCode] = ['./CopilotProviderUpdate.ts', '../providerUpdate.ts'].map((file) =>
+  ts.transpile(readFileSync(new URL(file, import.meta.url), 'utf8'), {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022
+  })
 )
 function fixture(version = '1.0.20') {
   const exports = {}
   const commands = []
-  vm.runInNewContext(code, {
+  const context = {
     exports,
     console,
     AbortController,
@@ -22,6 +24,11 @@ function fixture(version = '1.0.20') {
       return { ok: true, json: async () => ({ version: '1.0.26' }) }
     },
     require: (name) => {
+      if (name.includes('providerUpdate')) {
+        const shared = {}
+        vm.runInNewContext(sharedCode, { ...context, exports: shared })
+        return shared
+      }
       if (name.includes('CopilotExecutable'))
         return { getCopilotExecutable: () => '/fixture/copilot' }
       if (name.includes('hostProcess'))
@@ -38,7 +45,8 @@ function fixture(version = '1.0.20') {
         }
       throw Error(name)
     }
-  })
+  }
+  vm.runInNewContext(code, context)
   return { ...exports, commands }
 }
 test('Copilot checks for updates without downloading anything', async () => {

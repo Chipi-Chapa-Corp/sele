@@ -19,15 +19,10 @@ export const isContainerTool = (value: unknown): value is AppContainerTargetTool
 
 const normalizeLocalContainerTarget = (
   container: AppLocalContainerTarget | null | undefined
-): AppLocalContainerTarget => {
-  if (!container || container.kind === 'host') return hostContainerTarget
-
-  return {
-    kind: 'container',
-    tool: container.tool,
-    name: container.name
-  }
-}
+): AppLocalContainerTarget =>
+  !container || container.kind === 'host'
+    ? hostContainerTarget
+    : { kind: 'container', tool: container.tool, name: container.name }
 
 export const getContainerTargetKey = (container: AppContainerTarget | null | undefined): string => {
   const normalizedContainer = normalizeContainerTarget(container)
@@ -43,41 +38,24 @@ export const getContainerTargetKey = (container: AppContainerTarget | null | und
 
 export const normalizeContainerTarget = (
   container: AppContainerTarget | null | undefined
-): AppContainerTarget => {
-  if (!container || container.kind === 'host') return hostContainerTarget
+): AppContainerTarget =>
+  !container || container.kind === 'host' || container.tool !== 'ssh'
+    ? normalizeLocalContainerTarget(container)
+    : {
+        kind: 'container',
+        tool: 'ssh',
+        name: container.name,
+        runtime: normalizeLocalContainerTarget(container.runtime)
+      }
 
-  if (container.tool === 'ssh') {
-    return {
-      kind: 'container',
-      tool: 'ssh',
-      name: container.name,
-      runtime: normalizeLocalContainerTarget(container.runtime)
-    }
-  }
-
-  return {
-    kind: 'container',
-    tool: container.tool,
-    name: container.name
-  }
-}
-
-export const requireContainerTarget = (
+const parseContainerTarget = (
   value: unknown,
-  options: { optional?: boolean } = {}
-): AppContainerTarget | null => {
-  if (value == null) return options.optional ? null : hostContainerTarget
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid container target')
-  }
+  invalidMessage: string
+): { tool: AppContainerTargetTool; name: string; runtime: unknown } | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(invalidMessage)
 
-  const container = value as {
-    kind?: unknown
-    tool?: unknown
-    name?: unknown
-    runtime?: unknown
-  }
-  if (container.kind === 'host') return hostContainerTarget
+  const container = value as { kind?: unknown; tool?: unknown; name?: unknown; runtime?: unknown }
+  if (container.kind === 'host') return null
   if (
     container.kind !== 'container' ||
     !isContainerTool(container.tool) ||
@@ -86,60 +64,34 @@ export const requireContainerTarget = (
     container.name.includes('\0') ||
     container.name.includes('\n')
   ) {
-    throw new Error('Invalid container target')
+    throw new Error(invalidMessage)
   }
 
-  const normalizedName = container.name.trim()
-  if (container.tool !== 'ssh') {
-    return {
-      kind: 'container',
-      tool: container.tool,
-      name: normalizedName
-    }
-  }
+  return { tool: container.tool, name: container.name.trim(), runtime: container.runtime }
+}
 
-  const runtime = container.runtime
-  if (runtime == null) {
-    return {
-      kind: 'container',
-      tool: 'ssh',
-      name: normalizedName,
-      runtime: hostContainerTarget
-    }
-  }
-  if (!runtime || typeof runtime !== 'object' || Array.isArray(runtime)) {
-    throw new Error('Invalid remote runtime target')
-  }
+export const requireContainerTarget = (
+  value: unknown,
+  options: { optional?: boolean } = {}
+): AppContainerTarget | null => {
+  if (value == null) return options.optional ? null : hostContainerTarget
 
-  const remoteRuntime = runtime as { kind?: unknown; tool?: unknown; name?: unknown }
-  if (remoteRuntime.kind === 'host') {
-    return {
-      kind: 'container',
-      tool: 'ssh',
-      name: normalizedName,
-      runtime: hostContainerTarget
-    }
-  }
-  if (
-    remoteRuntime.kind !== 'container' ||
-    !isContainerTool(remoteRuntime.tool) ||
-    remoteRuntime.tool === 'ssh' ||
-    typeof remoteRuntime.name !== 'string' ||
-    remoteRuntime.name.trim().length === 0 ||
-    remoteRuntime.name.includes('\0') ||
-    remoteRuntime.name.includes('\n')
-  ) {
-    throw new Error('Invalid remote runtime target')
-  }
+  const container = parseContainerTarget(value, 'Invalid container target')
+  if (!container) return hostContainerTarget
+  const { tool, name } = container
+  if (tool !== 'ssh') return { kind: 'container', tool, name }
 
+  const runtime =
+    container.runtime == null
+      ? null
+      : parseContainerTarget(container.runtime, 'Invalid remote runtime target')
+  if (runtime?.tool === 'ssh') throw new Error('Invalid remote runtime target')
   return {
     kind: 'container',
-    tool: 'ssh',
-    name: normalizedName,
-    runtime: {
-      kind: 'container',
-      tool: remoteRuntime.tool,
-      name: remoteRuntime.name.trim()
-    }
+    tool,
+    name,
+    runtime: runtime
+      ? { kind: 'container', tool: runtime.tool, name: runtime.name }
+      : hostContainerTarget
   }
 }

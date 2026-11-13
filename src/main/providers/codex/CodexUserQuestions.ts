@@ -85,10 +85,7 @@ export class CodexUserQuestions {
       elicitation = {
         mode: 'unsupported',
         serverName,
-        reason:
-          params?.mode === 'openai/userVerification'
-            ? 'This service requires device verification. Sele cannot produce a device verification proof.'
-            : 'This service requested an interaction that Sele does not support.'
+        reason: 'This service requested an interaction that Sele does not support.'
       }
     }
     const pending: Question = {
@@ -282,7 +279,7 @@ export class CodexUserQuestions {
             }
       ) => void
       asynchronous: (question: ProviderPendingUserInput, answer: string) => Promise<void>
-      verification?: (
+      verification: (
         request: ServerQuestions,
         signal: AbortSignal
       ) => Promise<Record<string, unknown>>
@@ -319,7 +316,7 @@ export class CodexUserQuestions {
             if (error) throw new Error(error)
           }
           if (request.elicitation.mode === 'verification') {
-            if (request.elicitation.availability !== 'available' || !handlers.verification)
+            if (request.elicitation.availability !== 'available')
               throw new Error(request.elicitation.reason ?? 'Device verification is unavailable.')
             request.verificationAbort = new AbortController()
             content = await handlers.verification(request, request.verificationAbort.signal)
@@ -418,8 +415,7 @@ export class CodexUserQuestions {
       resolve(request)
     }
     this.server.delete(threadId)
-    const state = this.asynchronous.get(threadId)
-    state?.pending.clear()
+    this.asynchronous.get(threadId)?.pending.clear()
     this.expectedReplies.delete(threadId)
   }
 

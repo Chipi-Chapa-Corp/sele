@@ -79,21 +79,15 @@ export const setCwdNotes = async (
     return []
   }
 
+  const columns = {
+    provider_id: providerId,
+    cwd_key: getCwdKey(cwd),
+    notes_json: JSON.stringify(normalizedNotes)
+  }
   await db
     .insertInto('cwd_notes')
-    .values({
-      id,
-      provider_id: providerId,
-      cwd_key: getCwdKey(cwd),
-      notes_json: JSON.stringify(normalizedNotes)
-    })
-    .onConflict((conflict) =>
-      conflict.column('id').doUpdateSet({
-        provider_id: providerId,
-        cwd_key: getCwdKey(cwd),
-        notes_json: JSON.stringify(normalizedNotes)
-      })
-    )
+    .values({ id, ...columns })
+    .onConflict((conflict) => conflict.column('id').doUpdateSet(columns))
     .execute()
 
   return normalizedNotes

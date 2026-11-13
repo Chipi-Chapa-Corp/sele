@@ -482,12 +482,34 @@ const isAppExternalLinkBehavior = (value: unknown): value is AppExternalLinkBeha
 const isAppBrowserView = (value: unknown): value is AppBrowserView =>
   value === 'chat' || value === 'project' || value === 'global'
 
-const getStoredChatUsageDisplay = (value: unknown): AppChatUsageDisplay | null => {
+type StoredRecord = Record<string, unknown>
+type StoredReader<Value> = (value: unknown) => Value | undefined
+type StoredReaders<Group> = { [Key in keyof Group]-?: StoredReader<Group[Key]> }
+
+const readStoredRecord = (value: unknown): StoredRecord =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as StoredRecord) : {}
+
+const readStoredWhen =
+  <Value>(isValue: (value: unknown) => value is Value): StoredReader<Value> =>
+  (value) =>
+    isValue(value) ? value : undefined
+
+const readStoredBoolean = readStoredWhen((value): value is boolean => typeof value === 'boolean')
+const readStoredString = readStoredWhen((value): value is string => typeof value === 'string')
+
+const readStoredStrings = <Group extends Record<string, string>>(
+  defaults: Group
+): StoredReaders<Group> =>
+  Object.fromEntries(
+    Object.keys(defaults).map((key) => [key, readStoredString])
+  ) as StoredReaders<Group>
+
+const readStoredChatUsageDisplay: StoredReader<AppChatUsageDisplay> = (value) => {
   if (value === 'global' || value === 'short') return { context: false, short: true, long: true }
   if (value === 'chatContext') return { context: true, short: false, long: false }
   if (value === 'weekly') return { context: false, short: false, long: true }
-  if (!value || typeof value !== 'object') return null
-  const display = value as Record<string, unknown>
+  if (!value || typeof value !== 'object') return undefined
+  const display = value as StoredRecord
   return {
     context: typeof display.context === 'boolean' ? display.context : false,
     short: typeof display.short === 'boolean' ? display.short : true,
@@ -511,381 +533,226 @@ const getStoredFontFamily = (value: unknown, fallback: string): string => {
   return family && family.length <= 256 && !hasControlCharacter ? family : fallback
 }
 
-const getStoredFontSetting = (value: unknown, fallback: AppFontSetting): AppFontSetting => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback
+const readStoredFontSetting =
+  (fallback: AppFontSetting): StoredReader<AppFontSetting> =>
+  (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback
 
-  const setting = value as Record<string, unknown>
-  const storedSize = setting.size
-  const remSize = typeof storedSize === 'number' && storedSize >= 8 ? storedSize / 16 : storedSize
-  return {
-    family: getStoredFontFamily(setting.family, fallback.family),
-    size: normalizeAppFontSize(remSize, fallback.size)
+    const setting = value as StoredRecord
+    const storedSize = setting.size
+    const remSize = typeof storedSize === 'number' && storedSize >= 8 ? storedSize / 16 : storedSize
+    return {
+      family: getStoredFontFamily(setting.family, fallback.family),
+      size: normalizeAppFontSize(remSize, fallback.size)
+    }
   }
-}
 
 const hasOwnProperty = <Key extends PropertyKey>(
   value: object,
   key: Key
 ): value is object & Record<Key, unknown> => Object.prototype.hasOwnProperty.call(value, key)
 
-const getStoredGitCommitModels = (value: unknown): AppGitCommitModels => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-
-  return Object.fromEntries(
-    Object.entries(value).filter(
+const readStoredGitCommitModels: StoredReader<AppGitCommitModels> = (value) => {
+  const commitModels = Object.fromEntries(
+    Object.entries(readStoredRecord(value)).filter(
       ([key, model]) =>
         (key === appGitLegacyCommitModelKey || (key.includes('\0') && key.length <= 1024)) &&
         (model === null || isStoredModel(model))
     )
   ) as AppGitCommitModels
+  return Object.keys(commitModels).length > 0 ? commitModels : undefined
 }
 
-const getStoredForcedDropdown = <TValue extends string>(
-  value: unknown,
-  isValue: (candidate: unknown) => candidate is TValue
-): typeof appChatManualDropdownValue | TValue =>
-  value === appChatManualDropdownValue || isValue(value) ? value : appChatManualDropdownValue
+const readStoredForcedDropdown =
+  <TValue extends string>(
+    isValue: (candidate: unknown) => candidate is TValue
+  ): StoredReader<typeof appChatManualDropdownValue | TValue> =>
+  (value) =>
+    value === appChatManualDropdownValue || isValue(value) ? value : appChatManualDropdownValue
 
 const getStoredActionId = (value: unknown, actions: AppAction[]): string | null =>
   typeof value === 'string' && actions.some((action) => action.id === value) ? value : null
 
-const getStoredRecentChatCacheLimit = (value: unknown): number => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return defaultAppSettings.chat.recentChatCacheLimit
-  }
-
-  return Math.min(Math.max(Math.floor(value), 0), 50)
+const appearanceReaders: StoredReaders<AppSettings['appearance']> = {
+  theme: readStoredWhen(isAppThemePreference),
+  zoomLevel: (value) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? normalizeAppAppearanceZoomLevel(value)
+      : undefined,
+  position: readStoredWhen(isAppAppearancePositionPreference),
+  style: readStoredWhen(isAppAppearanceStylePreference),
+  controlStyle: readStoredWhen(isAppAppearanceControlStylePreference),
+  applicationFont: readStoredFontSetting(defaultAppAppearanceSettings.applicationFont),
+  chatFont: readStoredFontSetting(defaultAppAppearanceSettings.chatFont),
+  codeFont: readStoredFontSetting(defaultAppAppearanceSettings.codeFont)
 }
 
-const getStoredChatBoolean = (
-  chat: Record<string, unknown>,
-  key:
-    | keyof AppChatProgressSettings
-    | 'continueOnUsageReset'
-    | 'presets'
-    | 'promptSuggestions'
-    | 'enableActions'
-    | 'enableNotesButton'
-    | 'hidePlans'
-    | 'updateExistingChats'
-    | 'updateNewChats'
-): boolean => (typeof chat[key] === 'boolean' ? chat[key] : defaultAppSettings.chat[key])
-
-const getStoredChatBooleanWithLegacyKey = (
-  chat: Record<string, unknown>,
-  key: keyof AppChatProgressSettings,
-  legacyKey: string
-): boolean => {
-  if (typeof chat[key] === 'boolean') return chat[key]
-  return typeof chat[legacyKey] === 'boolean' ? chat[legacyKey] : defaultAppSettings.chat[key]
+const chatReaders: StoredReaders<AppSettings['chat']> = {
+  continueOnUsageReset: readStoredBoolean,
+  networkRetryCount: normalizeNetworkRetryCount,
+  networkRetryDelaySeconds: normalizeNetworkRetryDelaySeconds,
+  continuePrompt: readStoredString,
+  linkedChatSummaryPrompt: readStoredString,
+  recentChatCacheLimit: (value) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? Math.min(Math.max(Math.floor(value), 0), 50)
+      : defaultAppSettings.chat.recentChatCacheLimit,
+  displayUsage: readStoredChatUsageDisplay,
+  promptSuggestions: readStoredBoolean,
+  presets: readStoredBoolean,
+  selectionAction: readStoredWhen(isAppChatDropdownSelectionAction),
+  defaultActiveAction: readStoredWhen(
+    (value): value is AppChatDropdownSettings['defaultActiveAction'] =>
+      value === 'queue' || value === 'steer'
+  ),
+  hidePlans: readStoredBoolean,
+  enableActions: readStoredBoolean,
+  enableNotesButton: readStoredBoolean,
+  updateExistingChats: readStoredBoolean,
+  updateNewChats: readStoredBoolean,
+  forceAccess: readStoredForcedDropdown(isProviderSandboxMode),
+  forceReview: readStoredForcedDropdown(isProviderApprovalMode),
+  forceModel: readStoredForcedDropdown(isStoredModel),
+  forceReasoning: readStoredForcedDropdown(isStoredReasoningEffort),
+  forceSpeed: readStoredForcedDropdown(isProviderServiceTier),
+  expandProgressOnStart: readStoredBoolean,
+  collapseProgressOnFinish: readStoredBoolean,
+  collapseProgressOnNextTurn: readStoredBoolean,
+  collapseStoppedSteeredFailedProgressOnFinish: readStoredBoolean,
+  collapseStoppedSteeredFailedProgressOnNextTurn: readStoredBoolean
 }
 
-const getStoredPerformanceBoolean = (
-  performance: Record<string, unknown>,
-  key: 'disableShadows'
-): boolean =>
-  typeof performance[key] === 'boolean' ? performance[key] : defaultAppSettings.performance[key]
+const legacyChatProgressKeys = [
+  ['expandProgressOnStart', 'expandThoughtsOnStart'],
+  ['collapseProgressOnFinish', 'collapseThoughtsOnFinish'],
+  ['collapseProgressOnNextTurn', 'collapseThoughtsOnNextTurn'],
+  ['collapseStoppedSteeredFailedProgressOnNextTurn', 'collapseStoppedOnNextTurn']
+] as const
 
-const getStoredMaxChatsRendered = (value: unknown): number => normalizeAppMaxChatsRendered(value)
-
-const getStoredRecentsMessageLimit = (value: unknown): number =>
-  normalizeAppRecentsMessageLimit(value)
-
-const getStoredRecentlyOpenedFilesLimit = (value: unknown): number =>
-  normalizeAppRecentlyOpenedFilesLimit(value)
-
-const readProjectAppearanceOverrides = (
-  appearance: Record<string, unknown>
-): Partial<AppSettings['appearance']> => {
-  const overrides: Partial<AppSettings['appearance']> = {}
-
-  if (hasOwnProperty(appearance, 'theme') && isAppThemePreference(appearance.theme)) {
-    overrides.theme = appearance.theme
-  }
-  if (
-    hasOwnProperty(appearance, 'zoomLevel') &&
-    typeof appearance.zoomLevel === 'number' &&
-    Number.isFinite(appearance.zoomLevel)
-  ) {
-    overrides.zoomLevel = normalizeAppAppearanceZoomLevel(appearance.zoomLevel)
-  }
-  if (
-    hasOwnProperty(appearance, 'position') &&
-    isAppAppearancePositionPreference(appearance.position)
-  ) {
-    overrides.position = appearance.position
-  }
-  if (hasOwnProperty(appearance, 'style') && isAppAppearanceStylePreference(appearance.style)) {
-    overrides.style = appearance.style
-  }
-  if (
-    hasOwnProperty(appearance, 'controlStyle') &&
-    isAppAppearanceControlStylePreference(appearance.controlStyle)
-  ) {
-    overrides.controlStyle = appearance.controlStyle
-  }
-  for (const key of ['applicationFont', 'chatFont', 'codeFont'] as const) {
-    if (hasOwnProperty(appearance, key)) {
-      overrides[key] = getStoredFontSetting(appearance[key], defaultAppSettings.appearance[key])
+const readLegacyChatProgress = (chat: StoredRecord): Partial<AppChatProgressSettings> => {
+  const progress: Partial<AppChatProgressSettings> = {}
+  for (const [key, legacyKey] of legacyChatProgressKeys) {
+    const legacyValue = chat[legacyKey]
+    if (typeof chat[key] !== 'boolean' && typeof legacyValue === 'boolean') {
+      progress[key] = legacyValue
     }
   }
+  return progress
+}
 
+const browserReaders: StoredReaders<AppBrowserSettings> = {
+  defaultScale: (value) =>
+    typeof value === 'number' ? normalizeAppBrowserDefaultScale(value) : undefined,
+  enabled: readStoredBoolean,
+  view: readStoredWhen(isAppBrowserView)
+}
+
+const linkReaders: StoredReaders<AppExternalLinkSettings> = {
+  behavior: readStoredWhen(isAppExternalLinkBehavior)
+}
+
+const performanceReaders: StoredReaders<AppPerformanceSettings> = {
+  disableShadows: readStoredBoolean,
+  maxChatsRendered: normalizeAppMaxChatsRendered,
+  recentsMessageLimit: normalizeAppRecentsMessageLimit,
+  recentlyOpenedFilesLimit: normalizeAppRecentlyOpenedFilesLimit
+}
+
+const codexProviderReaders: StoredReaders<AppCodexProviderSettings> = {
+  showRecommendedPlugins: readStoredBoolean,
+  nativeChrome: readStoredBoolean
+}
+
+const gitReaders: StoredReaders<
+  Pick<
+    AppSettings['git'],
+    | 'enablePullRequests'
+    | 'commitModels'
+    | 'errorResolutionPrompt'
+    | 'permanentErrorResolutionPrompt'
+    | 'untrackedFilesPrompt'
+  >
+> = {
+  enablePullRequests: readStoredBoolean,
+  commitModels: readStoredGitCommitModels,
+  errorResolutionPrompt: readStoredString,
+  permanentErrorResolutionPrompt: readStoredString,
+  untrackedFilesPrompt: readStoredString
+}
+
+const gitQuickActionReaders: StoredReaders<AppGitQuickActionsSettings> = {
+  showManualCommit: readStoredBoolean,
+  showAiInstructionsInput: readStoredBoolean
+}
+const gitCommitPromptReaders = readStoredStrings(defaultAppGitCommitPromptSettings)
+const gitCommitMessageGenerationReaders = readStoredStrings(
+  defaultAppGitCommitMessageGenerationSettings
+)
+const gitWorktreeReaders = readStoredStrings(defaultAppGitWorktreeSettings)
+
+const storedKeys = <Group>(readers: StoredReaders<Group>): (keyof Group & string)[] =>
+  Object.keys(readers) as (keyof Group & string)[]
+
+const readStoredGroup = <Group>(
+  value: unknown,
+  readers: StoredReaders<Group>,
+  defaults: NoInfer<Group>
+): Group => {
+  const stored = readStoredRecord(value)
+  return Object.fromEntries(
+    storedKeys(readers).map((key) => [key, readers[key](stored[key]) ?? defaults[key]])
+  ) as Group
+}
+
+const readStoredOverrides = <Group>(
+  value: unknown,
+  readers: StoredReaders<Group>
+): Partial<Group> => {
+  const stored = readStoredRecord(value)
+  const overrides: Partial<Group> = {}
+  for (const key of storedKeys(readers)) {
+    const override = hasOwnProperty(stored, key) ? readers[key](stored[key]) : undefined
+    if (override !== undefined) overrides[key] = override
+  }
   return overrides
 }
 
-const readProjectChatOverrides = (chat: Record<string, unknown>): Partial<AppSettings['chat']> => {
-  const overrides: Partial<AppSettings['chat']> = {}
+const getStoredChanges = <Group>(
+  group: NoInfer<Group>,
+  readers: StoredReaders<Group>,
+  defaults: NoInfer<Group>
+): Partial<Group> => {
+  const changes: Partial<Group> = {}
+  for (const key of storedKeys(readers)) {
+    const value = readers[key](group[key])
+    if (value !== undefined && JSON.stringify(value) !== JSON.stringify(defaults[key])) {
+      changes[key] = value
+    }
+  }
+  return changes
+}
 
-  if (hasOwnProperty(chat, 'continuePrompt') && typeof chat.continuePrompt === 'string') {
-    overrides.continuePrompt = chat.continuePrompt
-  }
-  if (
-    hasOwnProperty(chat, 'linkedChatSummaryPrompt') &&
-    typeof chat.linkedChatSummaryPrompt === 'string'
-  ) {
-    overrides.linkedChatSummaryPrompt = chat.linkedChatSummaryPrompt
-  }
-  if (hasOwnProperty(chat, 'recentChatCacheLimit')) {
-    overrides.recentChatCacheLimit = getStoredRecentChatCacheLimit(chat.recentChatCacheLimit)
-  }
-  if (hasOwnProperty(chat, 'networkRetryCount')) {
-    overrides.networkRetryCount = normalizeNetworkRetryCount(chat.networkRetryCount)
-  }
-  if (hasOwnProperty(chat, 'networkRetryDelaySeconds')) {
-    overrides.networkRetryDelaySeconds = normalizeNetworkRetryDelaySeconds(
-      chat.networkRetryDelaySeconds
+const appGroupKeys = ['appearance', 'chat', 'browser', 'links', 'performance', 'providers', 'git']
+const gitGroupKeys = [
+  'commitModels',
+  'quickActions',
+  'commitPrompt',
+  'commitMessageGeneration',
+  'worktree'
+]
+
+const omitEmptyGroups = <Value extends object>(
+  value: Value,
+  groupKeys: readonly string[]
+): Partial<Value> =>
+  Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, group]) => !groupKeys.includes(key) || (group && Object.keys(group).length > 0)
     )
-  }
-  const displayUsage = getStoredChatUsageDisplay(chat.displayUsage)
-  if (hasOwnProperty(chat, 'displayUsage') && displayUsage) {
-    overrides.displayUsage = displayUsage
-  }
-  if (isAppChatDropdownSelectionAction(chat.selectionAction)) {
-    overrides.selectionAction = chat.selectionAction
-  }
-  if (chat.defaultActiveAction === 'queue' || chat.defaultActiveAction === 'steer') {
-    overrides.defaultActiveAction = chat.defaultActiveAction
-  }
-
-  const booleanKeys = [
-    'continueOnUsageReset',
-    'presets',
-    'promptSuggestions',
-    'hidePlans',
-    'enableActions',
-    'enableNotesButton',
-    'updateExistingChats',
-    'updateNewChats',
-    'expandProgressOnStart',
-    'collapseProgressOnFinish',
-    'collapseProgressOnNextTurn',
-    'collapseStoppedSteeredFailedProgressOnFinish',
-    'collapseStoppedSteeredFailedProgressOnNextTurn'
-  ] satisfies readonly (keyof AppSettings['chat'])[]
-
-  for (const key of booleanKeys) {
-    if (hasOwnProperty(chat, key) && typeof chat[key] === 'boolean') {
-      overrides[key] = chat[key]
-    }
-  }
-
-  const legacyBooleanKeys = [
-    ['expandProgressOnStart', 'expandThoughtsOnStart'],
-    ['collapseProgressOnFinish', 'collapseThoughtsOnFinish'],
-    ['collapseProgressOnNextTurn', 'collapseThoughtsOnNextTurn'],
-    ['collapseStoppedSteeredFailedProgressOnNextTurn', 'collapseStoppedOnNextTurn']
-  ] as const
-  for (const [key, legacyKey] of legacyBooleanKeys) {
-    if (!hasOwnProperty(overrides, key) && typeof chat[legacyKey] === 'boolean') {
-      overrides[key] = chat[legacyKey]
-    }
-  }
-  if (hasOwnProperty(chat, 'forceAccess')) {
-    overrides.forceAccess = getStoredForcedDropdown(chat.forceAccess, isProviderSandboxMode)
-  }
-  if (hasOwnProperty(chat, 'forceReview')) {
-    overrides.forceReview = getStoredForcedDropdown(chat.forceReview, isProviderApprovalMode)
-  }
-  if (hasOwnProperty(chat, 'forceModel')) {
-    overrides.forceModel = getStoredForcedDropdown(chat.forceModel, isStoredModel)
-  }
-  if (hasOwnProperty(chat, 'forceReasoning')) {
-    overrides.forceReasoning = getStoredForcedDropdown(chat.forceReasoning, isStoredReasoningEffort)
-  }
-  if (hasOwnProperty(chat, 'forceSpeed')) {
-    overrides.forceSpeed = getStoredForcedDropdown(chat.forceSpeed, isProviderServiceTier)
-  }
-
-  return overrides
-}
-
-const readProjectLinkOverrides = (
-  links: Record<string, unknown>
-): Partial<AppExternalLinkSettings> => {
-  const overrides: Partial<AppExternalLinkSettings> = {}
-
-  if (hasOwnProperty(links, 'behavior') && isAppExternalLinkBehavior(links.behavior)) {
-    overrides.behavior = links.behavior
-  }
-
-  return overrides
-}
-
-const readProjectBrowserOverrides = (
-  browser: Record<string, unknown>
-): Partial<AppBrowserSettings> => {
-  const overrides: Partial<AppBrowserSettings> = {}
-
-  if (hasOwnProperty(browser, 'enabled') && typeof browser.enabled === 'boolean') {
-    overrides.enabled = browser.enabled
-  }
-  if (hasOwnProperty(browser, 'defaultScale') && typeof browser.defaultScale === 'number') {
-    overrides.defaultScale = normalizeAppBrowserDefaultScale(browser.defaultScale)
-  }
-  if (hasOwnProperty(browser, 'view') && isAppBrowserView(browser.view)) {
-    overrides.view = browser.view
-  }
-
-  return overrides
-}
-
-const readProjectPerformanceOverrides = (
-  performance: Record<string, unknown>
-): Partial<AppPerformanceSettings> => {
-  const overrides: Partial<AppPerformanceSettings> = {}
-
-  if (
-    hasOwnProperty(performance, 'disableShadows') &&
-    typeof performance.disableShadows === 'boolean'
-  ) {
-    overrides.disableShadows = performance.disableShadows
-  }
-  if (hasOwnProperty(performance, 'maxChatsRendered')) {
-    overrides.maxChatsRendered = getStoredMaxChatsRendered(performance.maxChatsRendered)
-  }
-  if (hasOwnProperty(performance, 'recentsMessageLimit')) {
-    overrides.recentsMessageLimit = getStoredRecentsMessageLimit(performance.recentsMessageLimit)
-  }
-  if (hasOwnProperty(performance, 'recentlyOpenedFilesLimit')) {
-    overrides.recentlyOpenedFilesLimit = getStoredRecentlyOpenedFilesLimit(
-      performance.recentlyOpenedFilesLimit
-    )
-  }
-
-  return overrides
-}
-
-const readProjectGitOverrides = (
-  git: Record<string, unknown>
-): AppProjectSettingsOverrides['git'] => {
-  const overrides: NonNullable<AppProjectSettingsOverrides['git']> = {}
-
-  if (typeof git.enablePullRequests === 'boolean') {
-    overrides.enablePullRequests = git.enablePullRequests
-  }
-  if (hasOwnProperty(git, 'commitModels')) {
-    const commitModels = getStoredGitCommitModels(git.commitModels)
-    if (Object.keys(commitModels).length > 0) overrides.commitModels = commitModels
-  } else if (hasOwnProperty(git, 'commitModel')) {
-    if (git.commitModel == null || isStoredModel(git.commitModel)) {
-      overrides.commitModels = { [appGitLegacyCommitModelKey]: git.commitModel ?? null }
-    }
-  }
-  if (hasOwnProperty(git, 'untrackedFilesPrompt') && typeof git.untrackedFilesPrompt === 'string') {
-    overrides.untrackedFilesPrompt = git.untrackedFilesPrompt
-  }
-  if (
-    hasOwnProperty(git, 'errorResolutionPrompt') &&
-    typeof git.errorResolutionPrompt === 'string'
-  ) {
-    overrides.errorResolutionPrompt = git.errorResolutionPrompt
-  }
-  if (
-    hasOwnProperty(git, 'permanentErrorResolutionPrompt') &&
-    typeof git.permanentErrorResolutionPrompt === 'string'
-  ) {
-    overrides.permanentErrorResolutionPrompt = git.permanentErrorResolutionPrompt
-  }
-
-  const quickActions =
-    git.quickActions && typeof git.quickActions === 'object' && !Array.isArray(git.quickActions)
-      ? (git.quickActions as Record<string, unknown>)
-      : {}
-  const storedQuickActions: Partial<AppGitQuickActionsSettings> = {}
-  if (
-    hasOwnProperty(quickActions, 'showManualCommit') &&
-    typeof quickActions.showManualCommit === 'boolean'
-  ) {
-    storedQuickActions.showManualCommit = quickActions.showManualCommit
-  }
-  if (
-    hasOwnProperty(quickActions, 'showAiInstructionsInput') &&
-    typeof quickActions.showAiInstructionsInput === 'boolean'
-  ) {
-    storedQuickActions.showAiInstructionsInput = quickActions.showAiInstructionsInput
-  }
-  if (Object.keys(storedQuickActions).length > 0) {
-    overrides.quickActions = storedQuickActions
-  }
-
-  const commitPrompt =
-    git.commitPrompt && typeof git.commitPrompt === 'object' && !Array.isArray(git.commitPrompt)
-      ? (git.commitPrompt as Record<string, unknown>)
-      : {}
-  const storedCommitPrompt: Partial<AppGitCommitPromptSettings> = {}
-  for (const key of Object.keys(
-    defaultAppGitCommitPromptSettings
-  ) as (keyof AppGitCommitPromptSettings)[]) {
-    if (hasOwnProperty(commitPrompt, key) && typeof commitPrompt[key] === 'string') {
-      storedCommitPrompt[key] = commitPrompt[key]
-    }
-  }
-  if (Object.keys(storedCommitPrompt).length > 0) {
-    overrides.commitPrompt = storedCommitPrompt
-  }
-
-  const commitMessageGeneration =
-    git.commitMessageGeneration &&
-    typeof git.commitMessageGeneration === 'object' &&
-    !Array.isArray(git.commitMessageGeneration)
-      ? (git.commitMessageGeneration as Record<string, unknown>)
-      : {}
-  const storedCommitMessageGeneration: Partial<AppGitCommitMessageGenerationSettings> = {}
-  for (const key of Object.keys(
-    defaultAppGitCommitMessageGenerationSettings
-  ) as (keyof AppGitCommitMessageGenerationSettings)[]) {
-    if (
-      hasOwnProperty(commitMessageGeneration, key) &&
-      typeof commitMessageGeneration[key] === 'string'
-    ) {
-      storedCommitMessageGeneration[key] = commitMessageGeneration[key]
-    }
-  }
-  if (Object.keys(storedCommitMessageGeneration).length > 0) {
-    overrides.commitMessageGeneration = storedCommitMessageGeneration
-  }
-
-  const worktree =
-    git.worktree && typeof git.worktree === 'object' && !Array.isArray(git.worktree)
-      ? (git.worktree as Record<string, unknown>)
-      : {}
-  const storedWorktree: Partial<AppGitWorktreeSettings> = {}
-  for (const key of Object.keys(
-    defaultAppGitWorktreeSettings
-  ) as (keyof AppGitWorktreeSettings)[]) {
-    if (hasOwnProperty(worktree, key) && typeof worktree[key] === 'string') {
-      storedWorktree[key] = worktree[key]
-    }
-  }
-  if (Object.keys(storedWorktree).length > 0) {
-    overrides.worktree = storedWorktree
-  }
-
-  return overrides
-}
+  ) as Partial<Value>
 
 const readPromptField = (
-  storedPrompt: Record<string, unknown>,
+  storedPrompt: StoredRecord,
   key: keyof AppGitCommitPromptSettings
 ): string => {
   const storedValue = storedPrompt[key]
@@ -898,86 +765,13 @@ const readPromptField = (
   return storedValue
 }
 
-const readCommitMessageGenerationField = (
-  storedSettings: Record<string, unknown>,
-  key: keyof AppGitCommitMessageGenerationSettings
-): string => {
-  const storedValue = storedSettings[key]
-  return typeof storedValue === 'string'
-    ? storedValue
-    : defaultAppGitCommitMessageGenerationSettings[key]
-}
-
-const readWorktreeField = (
-  storedSettings: Record<string, unknown>,
-  key: keyof AppGitWorktreeSettings
-): string => {
-  const storedValue = storedSettings[key]
-  return typeof storedValue === 'string' ? storedValue : defaultAppGitWorktreeSettings[key]
-}
-
 const pruneAppProjectSettingsOverrides = (
   overrides: AppProjectSettingsOverrides
-): AppProjectSettingsOverrides => {
-  const prunedOverrides: AppProjectSettingsOverrides = {}
-
-  if (overrides.appearance && Object.keys(overrides.appearance).length > 0) {
-    prunedOverrides.appearance = { ...overrides.appearance }
-  }
-  if (overrides.chat && Object.keys(overrides.chat).length > 0) {
-    prunedOverrides.chat = { ...overrides.chat }
-  }
-  if (overrides.links && Object.keys(overrides.links).length > 0) {
-    prunedOverrides.links = { ...overrides.links }
-  }
-  if (overrides.browser && Object.keys(overrides.browser).length > 0) {
-    prunedOverrides.browser = { ...overrides.browser }
-  }
-  if (overrides.performance && Object.keys(overrides.performance).length > 0) {
-    prunedOverrides.performance = { ...overrides.performance }
-  }
-
-  if (overrides.git) {
-    const gitOverrides: NonNullable<AppProjectSettingsOverrides['git']> = {}
-
-    if (hasOwnProperty(overrides.git, 'enablePullRequests')) {
-      gitOverrides.enablePullRequests = overrides.git.enablePullRequests
-    }
-    if (overrides.git.commitModels && Object.keys(overrides.git.commitModels).length > 0) {
-      gitOverrides.commitModels = { ...overrides.git.commitModels }
-    }
-    if (hasOwnProperty(overrides.git, 'untrackedFilesPrompt')) {
-      gitOverrides.untrackedFilesPrompt = overrides.git.untrackedFilesPrompt
-    }
-    if (hasOwnProperty(overrides.git, 'errorResolutionPrompt')) {
-      gitOverrides.errorResolutionPrompt = overrides.git.errorResolutionPrompt
-    }
-    if (hasOwnProperty(overrides.git, 'permanentErrorResolutionPrompt')) {
-      gitOverrides.permanentErrorResolutionPrompt = overrides.git.permanentErrorResolutionPrompt
-    }
-    if (overrides.git.quickActions && Object.keys(overrides.git.quickActions).length > 0) {
-      gitOverrides.quickActions = { ...overrides.git.quickActions }
-    }
-    if (overrides.git.commitPrompt && Object.keys(overrides.git.commitPrompt).length > 0) {
-      gitOverrides.commitPrompt = { ...overrides.git.commitPrompt }
-    }
-    if (
-      overrides.git.commitMessageGeneration &&
-      Object.keys(overrides.git.commitMessageGeneration).length > 0
-    ) {
-      gitOverrides.commitMessageGeneration = { ...overrides.git.commitMessageGeneration }
-    }
-    if (overrides.git.worktree && Object.keys(overrides.git.worktree).length > 0) {
-      gitOverrides.worktree = { ...overrides.git.worktree }
-    }
-
-    if (Object.keys(gitOverrides).length > 0) {
-      prunedOverrides.git = gitOverrides
-    }
-  }
-
-  return prunedOverrides
-}
+): AppProjectSettingsOverrides =>
+  omitEmptyGroups(
+    { ...overrides, git: overrides.git && omitEmptyGroups(overrides.git, gitGroupKeys) },
+    appGroupKeys
+  )
 
 export const isAppProjectSettingsOverridesEmpty = (
   overrides: AppProjectSettingsOverrides | null | undefined
@@ -992,9 +786,9 @@ export const resolveAppSettings = (
   settings: AppSettings,
   overrides: AppProjectSettingsOverrides | null | undefined
 ): AppSettings => {
-  if (isAppProjectSettingsOverridesEmpty(overrides)) return settings
+  if (!overrides || isAppProjectSettingsOverridesEmpty(overrides)) return settings
 
-  const gitOverrides = overrides?.git
+  const gitOverrides = overrides.git
   const projectCommitModels = gitOverrides?.commitModels
   const commitModels =
     projectCommitModels && hasOwnProperty(projectCommitModels, appGitLegacyCommitModelKey)
@@ -1003,48 +797,38 @@ export const resolveAppSettings = (
           ...settings.git.commitModels,
           ...projectCommitModels
         }
-  const untrackedFilesPrompt =
-    gitOverrides && hasOwnProperty(gitOverrides, 'untrackedFilesPrompt')
-      ? (gitOverrides.untrackedFilesPrompt ?? settings.git.untrackedFilesPrompt)
-      : settings.git.untrackedFilesPrompt
-  const errorResolutionPrompt =
-    gitOverrides && hasOwnProperty(gitOverrides, 'errorResolutionPrompt')
-      ? (gitOverrides.errorResolutionPrompt ?? settings.git.errorResolutionPrompt)
-      : settings.git.errorResolutionPrompt
-  const permanentErrorResolutionPrompt =
-    gitOverrides && hasOwnProperty(gitOverrides, 'permanentErrorResolutionPrompt')
-      ? (gitOverrides.permanentErrorResolutionPrompt ?? settings.git.permanentErrorResolutionPrompt)
-      : settings.git.permanentErrorResolutionPrompt
 
   return {
     ...settings,
     appearance: {
       ...settings.appearance,
-      ...overrides?.appearance
+      ...overrides.appearance
     },
     chat: {
       ...settings.chat,
-      ...overrides?.chat
+      ...overrides.chat
     },
     browser: {
       ...settings.browser,
-      ...overrides?.browser
+      ...overrides.browser
     },
     links: {
       ...settings.links,
-      ...overrides?.links
+      ...overrides.links
     },
     performance: {
       ...settings.performance,
-      ...overrides?.performance
+      ...overrides.performance
     },
     git: {
       ...settings.git,
       enablePullRequests: gitOverrides?.enablePullRequests ?? settings.git.enablePullRequests,
       commitModels,
-      errorResolutionPrompt,
-      permanentErrorResolutionPrompt,
-      untrackedFilesPrompt,
+      errorResolutionPrompt:
+        gitOverrides?.errorResolutionPrompt ?? settings.git.errorResolutionPrompt,
+      permanentErrorResolutionPrompt:
+        gitOverrides?.permanentErrorResolutionPrompt ?? settings.git.permanentErrorResolutionPrompt,
+      untrackedFilesPrompt: gitOverrides?.untrackedFilesPrompt ?? settings.git.untrackedFilesPrompt,
       quickActions: {
         ...settings.git.quickActions,
         ...gitOverrides?.quickActions
@@ -1070,160 +854,26 @@ export const readStoredAppSettings = (): AppSettings => {
     const storedValue = preferenceStorage.getItem(appSettingsStorageKey)
     if (!storedValue) return defaultAppSettings
 
-    const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
+    const parsedValue = JSON.parse(storedValue) as StoredRecord | null
     if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
       return defaultAppSettings
     }
 
-    const appearance =
-      parsedValue.appearance &&
-      typeof parsedValue.appearance === 'object' &&
-      !Array.isArray(parsedValue.appearance)
-        ? (parsedValue.appearance as Record<string, unknown>)
-        : {}
-    const chat =
-      parsedValue.chat && typeof parsedValue.chat === 'object' && !Array.isArray(parsedValue.chat)
-        ? (parsedValue.chat as Record<string, unknown>)
-        : {}
-    const links =
-      parsedValue.links &&
-      typeof parsedValue.links === 'object' &&
-      !Array.isArray(parsedValue.links)
-        ? (parsedValue.links as Record<string, unknown>)
-        : {}
-    const browser =
-      parsedValue.browser &&
-      typeof parsedValue.browser === 'object' &&
-      !Array.isArray(parsedValue.browser)
-        ? (parsedValue.browser as Record<string, unknown>)
-        : {}
-    const performance =
-      parsedValue.performance &&
-      typeof parsedValue.performance === 'object' &&
-      !Array.isArray(parsedValue.performance)
-        ? (parsedValue.performance as Record<string, unknown>)
-        : {}
-    const providers =
-      parsedValue.providers &&
-      typeof parsedValue.providers === 'object' &&
-      !Array.isArray(parsedValue.providers)
-        ? (parsedValue.providers as Record<string, unknown>)
-        : {}
-    const codexProvider =
-      providers.codex && typeof providers.codex === 'object' && !Array.isArray(providers.codex)
-        ? (providers.codex as Record<string, unknown>)
-        : {}
-    const claudeProvider =
-      providers.claude && typeof providers.claude === 'object' && !Array.isArray(providers.claude)
-        ? (providers.claude as Record<string, unknown>)
-        : {}
-    const git =
-      parsedValue.git && typeof parsedValue.git === 'object' && !Array.isArray(parsedValue.git)
-        ? (parsedValue.git as Record<string, unknown>)
-        : {}
-    const commitPrompt =
-      git.commitPrompt && typeof git.commitPrompt === 'object' && !Array.isArray(git.commitPrompt)
-        ? (git.commitPrompt as Record<string, unknown>)
-        : {}
-    const commitMessageGeneration =
-      git.commitMessageGeneration &&
-      typeof git.commitMessageGeneration === 'object' &&
-      !Array.isArray(git.commitMessageGeneration)
-        ? (git.commitMessageGeneration as Record<string, unknown>)
-        : {}
-    const quickActions =
-      git.quickActions && typeof git.quickActions === 'object' && !Array.isArray(git.quickActions)
-        ? (git.quickActions as Record<string, unknown>)
-        : {}
-    const worktree =
-      git.worktree && typeof git.worktree === 'object' && !Array.isArray(git.worktree)
-        ? (git.worktree as Record<string, unknown>)
-        : {}
-
+    const appearance = readStoredRecord(parsedValue.appearance)
+    const chat = readStoredRecord(parsedValue.chat)
+    const links = readStoredRecord(parsedValue.links)
+    const providers = readStoredRecord(parsedValue.providers)
+    const git = readStoredRecord(parsedValue.git)
+    const commitPrompt = readStoredRecord(git.commitPrompt)
     const actions = normalizeAppActions(parsedValue.actions)
 
     return {
       actions,
       lastActionId: getStoredActionId(parsedValue.lastActionId, actions),
-      appearance: {
-        theme: isAppThemePreference(appearance.theme)
-          ? appearance.theme
-          : defaultAppSettings.appearance.theme,
-        zoomLevel: normalizeAppAppearanceZoomLevel(appearance.zoomLevel),
-        position: isAppAppearancePositionPreference(appearance.position)
-          ? appearance.position
-          : defaultAppSettings.appearance.position,
-        style: isAppAppearanceStylePreference(appearance.style)
-          ? appearance.style
-          : defaultAppSettings.appearance.style,
-        controlStyle: isAppAppearanceControlStylePreference(appearance.controlStyle)
-          ? appearance.controlStyle
-          : defaultAppSettings.appearance.controlStyle,
-        applicationFont: getStoredFontSetting(
-          appearance.applicationFont,
-          defaultAppSettings.appearance.applicationFont
-        ),
-        chatFont: getStoredFontSetting(appearance.chatFont, defaultAppSettings.appearance.chatFont),
-        codeFont: getStoredFontSetting(appearance.codeFont, defaultAppSettings.appearance.codeFont)
-      },
+      appearance: readStoredGroup(appearance, appearanceReaders, defaultAppSettings.appearance),
       chat: {
-        continuePrompt:
-          typeof chat.continuePrompt === 'string'
-            ? chat.continuePrompt
-            : defaultAppSettings.chat.continuePrompt,
-        linkedChatSummaryPrompt:
-          typeof chat.linkedChatSummaryPrompt === 'string'
-            ? chat.linkedChatSummaryPrompt
-            : defaultAppSettings.chat.linkedChatSummaryPrompt,
-        continueOnUsageReset: getStoredChatBoolean(chat, 'continueOnUsageReset'),
-        networkRetryCount: normalizeNetworkRetryCount(chat.networkRetryCount),
-        networkRetryDelaySeconds: normalizeNetworkRetryDelaySeconds(chat.networkRetryDelaySeconds),
-        recentChatCacheLimit: getStoredRecentChatCacheLimit(chat.recentChatCacheLimit),
-        displayUsage:
-          getStoredChatUsageDisplay(chat.displayUsage) ?? defaultAppSettings.chat.displayUsage,
-        presets: getStoredChatBoolean(chat, 'presets'),
-        promptSuggestions: getStoredChatBoolean(chat, 'promptSuggestions'),
-        defaultActiveAction:
-          chat.defaultActiveAction === 'steer'
-            ? 'steer'
-            : defaultAppSettings.chat.defaultActiveAction,
-        selectionAction: isAppChatDropdownSelectionAction(chat.selectionAction)
-          ? chat.selectionAction
-          : defaultAppChatDropdownSettings.selectionAction,
-        hidePlans: getStoredChatBoolean(chat, 'hidePlans'),
-        enableActions: getStoredChatBoolean(chat, 'enableActions'),
-        enableNotesButton: getStoredChatBoolean(chat, 'enableNotesButton'),
-        updateExistingChats: getStoredChatBoolean(chat, 'updateExistingChats'),
-        updateNewChats: getStoredChatBoolean(chat, 'updateNewChats'),
-        forceAccess: getStoredForcedDropdown(chat.forceAccess, isProviderSandboxMode),
-        forceReview: getStoredForcedDropdown(chat.forceReview, isProviderApprovalMode),
-        forceModel: getStoredForcedDropdown(chat.forceModel, isStoredModel),
-        forceReasoning: getStoredForcedDropdown(chat.forceReasoning, isStoredReasoningEffort),
-        forceSpeed: getStoredForcedDropdown(chat.forceSpeed, isProviderServiceTier),
-        expandProgressOnStart: getStoredChatBooleanWithLegacyKey(
-          chat,
-          'expandProgressOnStart',
-          'expandThoughtsOnStart'
-        ),
-        collapseProgressOnFinish: getStoredChatBooleanWithLegacyKey(
-          chat,
-          'collapseProgressOnFinish',
-          'collapseThoughtsOnFinish'
-        ),
-        collapseProgressOnNextTurn: getStoredChatBooleanWithLegacyKey(
-          chat,
-          'collapseProgressOnNextTurn',
-          'collapseThoughtsOnNextTurn'
-        ),
-        collapseStoppedSteeredFailedProgressOnFinish: getStoredChatBoolean(
-          chat,
-          'collapseStoppedSteeredFailedProgressOnFinish'
-        ),
-        collapseStoppedSteeredFailedProgressOnNextTurn: getStoredChatBooleanWithLegacyKey(
-          chat,
-          'collapseStoppedSteeredFailedProgressOnNextTurn',
-          'collapseStoppedOnNextTurn'
-        )
+        ...readStoredGroup(chat, chatReaders, defaultAppSettings.chat),
+        ...readLegacyChatProgress(chat)
       },
       links: {
         behavior: isAppExternalLinkBehavior(links.behavior)
@@ -1234,64 +884,31 @@ export const readStoredAppSettings = (): AppSettings => {
               ? appearance.externalLinks
               : defaultAppSettings.links.behavior
       },
-      browser: {
-        defaultScale: normalizeAppBrowserDefaultScale(browser.defaultScale),
-        enabled:
-          typeof browser.enabled === 'boolean'
-            ? browser.enabled
-            : defaultAppSettings.browser.enabled,
-        view: isAppBrowserView(browser.view) ? browser.view : defaultAppSettings.browser.view
-      },
-      performance: {
-        disableShadows: getStoredPerformanceBoolean(performance, 'disableShadows'),
-        maxChatsRendered: getStoredMaxChatsRendered(performance.maxChatsRendered),
-        recentlyOpenedFilesLimit: getStoredRecentlyOpenedFilesLimit(
-          performance.recentlyOpenedFilesLimit
-        ),
-        recentsMessageLimit: getStoredRecentsMessageLimit(performance.recentsMessageLimit)
-      },
+      browser: readStoredGroup(parsedValue.browser, browserReaders, defaultAppSettings.browser),
+      performance: readStoredGroup(
+        parsedValue.performance,
+        performanceReaders,
+        defaultAppSettings.performance
+      ),
       providers: {
-        codex: {
-          nativeChrome: codexProvider.nativeChrome === true,
-          showRecommendedPlugins:
-            typeof codexProvider.showRecommendedPlugins === 'boolean'
-              ? codexProvider.showRecommendedPlugins
-              : defaultAppSettings.providers.codex.showRecommendedPlugins
-        },
-        claude: { nativeChrome: claudeProvider.nativeChrome === true }
+        codex: readStoredGroup(
+          providers.codex,
+          codexProviderReaders,
+          defaultAppSettings.providers.codex
+        ),
+        claude: { nativeChrome: readStoredRecord(providers.claude).nativeChrome === true }
       },
       git: {
-        enablePullRequests:
-          typeof git.enablePullRequests === 'boolean'
-            ? git.enablePullRequests
-            : defaultAppSettings.git.enablePullRequests,
-        commitModels: hasOwnProperty(git, 'commitModels')
-          ? getStoredGitCommitModels(git.commitModels)
-          : hasOwnProperty(git, 'commitModel') && isStoredModel(git.commitModel)
-            ? { [appGitLegacyCommitModelKey]: git.commitModel }
-            : defaultAppSettings.git.commitModels,
-        errorResolutionPrompt:
-          typeof git.errorResolutionPrompt === 'string'
-            ? git.errorResolutionPrompt
-            : defaultAppSettings.git.errorResolutionPrompt,
-        permanentErrorResolutionPrompt:
-          typeof git.permanentErrorResolutionPrompt === 'string'
-            ? git.permanentErrorResolutionPrompt
-            : defaultAppSettings.git.permanentErrorResolutionPrompt,
-        untrackedFilesPrompt:
-          typeof git.untrackedFilesPrompt === 'string'
-            ? git.untrackedFilesPrompt
-            : defaultAppSettings.git.untrackedFilesPrompt,
-        quickActions: {
-          showManualCommit:
-            typeof quickActions.showManualCommit === 'boolean'
-              ? quickActions.showManualCommit
-              : defaultAppSettings.git.quickActions.showManualCommit,
-          showAiInstructionsInput:
-            typeof quickActions.showAiInstructionsInput === 'boolean'
-              ? quickActions.showAiInstructionsInput
-              : defaultAppSettings.git.quickActions.showAiInstructionsInput
-        },
+        ...readStoredGroup(git, gitReaders, defaultAppSettings.git),
+        ...(!hasOwnProperty(git, 'commitModels') &&
+          isStoredModel(git.commitModel) && {
+            commitModels: { [appGitLegacyCommitModelKey]: git.commitModel }
+          }),
+        quickActions: readStoredGroup(
+          git.quickActions,
+          gitQuickActionReaders,
+          defaultAppGitQuickActionsSettings
+        ),
         commitPrompt: {
           instructions: readPromptField(commitPrompt, 'instructions'),
           workflow: readPromptField(commitPrompt, 'workflow'),
@@ -1299,20 +916,12 @@ export const readStoredAppSettings = (): AppSettings => {
           amendStep: readPromptField(commitPrompt, 'amendStep'),
           extraInstructionsPrefix: readPromptField(commitPrompt, 'extraInstructionsPrefix')
         },
-        commitMessageGeneration: {
-          prompt: readCommitMessageGenerationField(commitMessageGeneration, 'prompt'),
-          largeChangePrompt: readCommitMessageGenerationField(
-            commitMessageGeneration,
-            'largeChangePrompt'
-          ),
-          aiInstructionsPrefix: readCommitMessageGenerationField(
-            commitMessageGeneration,
-            'aiInstructionsPrefix'
-          )
-        },
-        worktree: {
-          branchNamePrompt: readWorktreeField(worktree, 'branchNamePrompt')
-        }
+        commitMessageGeneration: readStoredGroup(
+          git.commitMessageGeneration,
+          gitCommitMessageGenerationReaders,
+          defaultAppGitCommitMessageGenerationSettings
+        ),
+        worktree: readStoredGroup(git.worktree, gitWorktreeReaders, defaultAppGitWorktreeSettings)
       }
     }
   } catch (error) {
@@ -1324,60 +933,32 @@ export const readStoredAppSettings = (): AppSettings => {
 const readStoredAppProjectSettingsOverride = (
   value: unknown
 ): AppProjectSettingsOverrides | null => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const stored = readStoredRecord(value)
+  const chat = readStoredRecord(stored.chat)
+  const git = readStoredRecord(stored.git)
+  const overrides = pruneAppProjectSettingsOverrides({
+    appearance: readStoredOverrides(stored.appearance, appearanceReaders),
+    chat: { ...readStoredOverrides(chat, chatReaders), ...readLegacyChatProgress(chat) },
+    links: readStoredOverrides(stored.links, linkReaders),
+    browser: readStoredOverrides(stored.browser, browserReaders),
+    performance: readStoredOverrides(stored.performance, performanceReaders),
+    git: {
+      ...readStoredOverrides(git, gitReaders),
+      ...(!hasOwnProperty(git, 'commitModels') &&
+        (git.commitModel === null || isStoredModel(git.commitModel)) && {
+          commitModels: { [appGitLegacyCommitModelKey]: git.commitModel }
+        }),
+      quickActions: readStoredOverrides(git.quickActions, gitQuickActionReaders),
+      commitPrompt: readStoredOverrides(git.commitPrompt, gitCommitPromptReaders),
+      commitMessageGeneration: readStoredOverrides(
+        git.commitMessageGeneration,
+        gitCommitMessageGenerationReaders
+      ),
+      worktree: readStoredOverrides(git.worktree, gitWorktreeReaders)
+    }
+  })
 
-  const storedOverrides = value as Record<string, unknown>
-  const overrides: AppProjectSettingsOverrides = {}
-
-  const appearance =
-    storedOverrides.appearance &&
-    typeof storedOverrides.appearance === 'object' &&
-    !Array.isArray(storedOverrides.appearance)
-      ? readProjectAppearanceOverrides(storedOverrides.appearance as Record<string, unknown>)
-      : null
-  if (appearance && Object.keys(appearance).length > 0) overrides.appearance = appearance
-
-  const chat =
-    storedOverrides.chat &&
-    typeof storedOverrides.chat === 'object' &&
-    !Array.isArray(storedOverrides.chat)
-      ? readProjectChatOverrides(storedOverrides.chat as Record<string, unknown>)
-      : null
-  if (chat && Object.keys(chat).length > 0) overrides.chat = chat
-
-  const links =
-    storedOverrides.links &&
-    typeof storedOverrides.links === 'object' &&
-    !Array.isArray(storedOverrides.links)
-      ? readProjectLinkOverrides(storedOverrides.links as Record<string, unknown>)
-      : null
-  if (links && Object.keys(links).length > 0) overrides.links = links
-
-  const browser =
-    storedOverrides.browser &&
-    typeof storedOverrides.browser === 'object' &&
-    !Array.isArray(storedOverrides.browser)
-      ? readProjectBrowserOverrides(storedOverrides.browser as Record<string, unknown>)
-      : null
-  if (browser && Object.keys(browser).length > 0) overrides.browser = browser
-
-  const performance =
-    storedOverrides.performance &&
-    typeof storedOverrides.performance === 'object' &&
-    !Array.isArray(storedOverrides.performance)
-      ? readProjectPerformanceOverrides(storedOverrides.performance as Record<string, unknown>)
-      : null
-  if (performance && Object.keys(performance).length > 0) overrides.performance = performance
-
-  const git =
-    storedOverrides.git &&
-    typeof storedOverrides.git === 'object' &&
-    !Array.isArray(storedOverrides.git)
-      ? readProjectGitOverrides(storedOverrides.git as Record<string, unknown>)
-      : null
-  if (git && Object.keys(git).length > 0) overrides.git = git
-
-  return isAppProjectSettingsOverridesEmpty(overrides) ? null : overrides
+  return Object.keys(overrides).length > 0 ? overrides : null
 }
 
 export const readStoredAppProjectSettings = (): AppProjectSettingsByCwd => {
@@ -1385,11 +966,10 @@ export const readStoredAppProjectSettings = (): AppProjectSettingsByCwd => {
     const storedValue = preferenceStorage.getItem(appProjectSettingsStorageKey)
     if (!storedValue) return {}
 
-    const parsedValue = JSON.parse(storedValue) as Record<string, unknown> | null
-    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) return {}
-
     const projectSettings: AppProjectSettingsByCwd = {}
-    for (const [cwd, storedOverrides] of Object.entries(parsedValue)) {
+    for (const [cwd, storedOverrides] of Object.entries(
+      readStoredRecord(JSON.parse(storedValue))
+    )) {
       const normalizedCwd = normalizeAppProjectSettingsCwd(cwd)
       if (!normalizedCwd) continue
 
@@ -1413,7 +993,7 @@ export const writeStoredAppProjectSettings = (projectSettings: AppProjectSetting
       if (!normalizedCwd) continue
 
       const prunedOverrides = pruneAppProjectSettingsOverrides(overrides)
-      if (!isAppProjectSettingsOverridesEmpty(prunedOverrides)) {
+      if (Object.keys(prunedOverrides).length > 0) {
         storedProjectSettings[normalizedCwd] = prunedOverrides
       }
     }
@@ -1432,313 +1012,63 @@ export const writeStoredAppProjectSettings = (projectSettings: AppProjectSetting
 
 export const writeStoredAppSettings = (settings: AppSettings): void => {
   try {
-    const storedSettings: {
-      actions?: AppAction[]
-      lastActionId?: string
-      appearance?: Partial<AppSettings['appearance']>
-      chat?: Partial<AppSettings['chat']>
-      browser?: Partial<AppBrowserSettings>
-      links?: Partial<AppExternalLinkSettings>
-      performance?: Partial<AppPerformanceSettings>
-      providers?: {
-        codex?: Partial<AppCodexProviderSettings>
-        claude?: { nativeChrome: boolean }
-      }
-      git?: {
-        enablePullRequests?: boolean
-        commitModels?: AppGitCommitModels
-        errorResolutionPrompt?: string
-        permanentErrorResolutionPrompt?: string
-        untrackedFilesPrompt?: string
-        quickActions?: Partial<AppGitQuickActionsSettings>
-        commitPrompt?: Partial<AppGitCommitPromptSettings>
-        commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
-        worktree?: Partial<AppGitWorktreeSettings>
-      }
-    } = {}
-
-    if (settings.actions.length > 0) {
-      storedSettings.actions = normalizeAppActions(settings.actions)
-    }
-    const storedLastActionId = getStoredActionId(settings.lastActionId, settings.actions)
-    if (storedLastActionId) {
-      storedSettings.lastActionId = storedLastActionId
-    }
-
-    const storedAppearance: Partial<AppSettings['appearance']> = {}
-    if (settings.appearance.theme !== defaultAppSettings.appearance.theme) {
-      storedAppearance.theme = settings.appearance.theme
-    }
-    const zoomLevel = normalizeAppAppearanceZoomLevel(settings.appearance.zoomLevel)
-    if (zoomLevel !== defaultAppSettings.appearance.zoomLevel) {
-      storedAppearance.zoomLevel = zoomLevel
-    }
-    if (settings.appearance.position !== defaultAppSettings.appearance.position) {
-      storedAppearance.position = settings.appearance.position
-    }
-    if (settings.appearance.style !== defaultAppSettings.appearance.style) {
-      storedAppearance.style = settings.appearance.style
-    }
-    if (settings.appearance.controlStyle !== defaultAppSettings.appearance.controlStyle) {
-      storedAppearance.controlStyle = settings.appearance.controlStyle
-    }
-    for (const key of ['applicationFont', 'chatFont', 'codeFont'] as const) {
-      const font = settings.appearance[key]
-      const defaultFont = defaultAppSettings.appearance[key]
-      if (font.family !== defaultFont.family || font.size !== defaultFont.size) {
-        storedAppearance[key] = {
-          family: getStoredFontFamily(font.family, defaultFont.family),
-          size: normalizeAppFontSize(font.size, defaultFont.size)
-        }
-      }
-    }
-    if (Object.keys(storedAppearance).length > 0) storedSettings.appearance = storedAppearance
-
-    const storedChat: Partial<AppSettings['chat']> = {}
-    if (settings.chat.continueOnUsageReset !== defaultAppSettings.chat.continueOnUsageReset)
-      storedChat.continueOnUsageReset = settings.chat.continueOnUsageReset
-    const networkRetryCount = normalizeNetworkRetryCount(settings.chat.networkRetryCount)
-    const networkRetryDelaySeconds = normalizeNetworkRetryDelaySeconds(
-      settings.chat.networkRetryDelaySeconds
+    const lastActionId = getStoredActionId(settings.lastActionId, settings.actions)
+    const { appearance, chat, browser, links, performance, providers, git } = settings
+    const storedSettings = omitEmptyGroups(
+      {
+        ...(settings.actions.length > 0 && { actions: normalizeAppActions(settings.actions) }),
+        ...(lastActionId && { lastActionId }),
+        appearance: getStoredChanges(appearance, appearanceReaders, defaultAppSettings.appearance),
+        chat: getStoredChanges(chat, chatReaders, defaultAppSettings.chat),
+        browser: getStoredChanges(browser, browserReaders, defaultAppSettings.browser),
+        links: getStoredChanges(links, linkReaders, defaultAppSettings.links),
+        performance: getStoredChanges(
+          performance,
+          performanceReaders,
+          defaultAppSettings.performance
+        ),
+        providers:
+          providers.codex.showRecommendedPlugins !==
+            defaultAppSettings.providers.codex.showRecommendedPlugins ||
+          providers.codex.nativeChrome ||
+          providers.claude.nativeChrome
+            ? {
+                codex: {
+                  showRecommendedPlugins: providers.codex.showRecommendedPlugins,
+                  nativeChrome: providers.codex.nativeChrome
+                },
+                claude: { nativeChrome: providers.claude.nativeChrome }
+              }
+            : {},
+        git: omitEmptyGroups(
+          {
+            ...getStoredChanges(git, gitReaders, defaultAppSettings.git),
+            quickActions: getStoredChanges(
+              git.quickActions,
+              gitQuickActionReaders,
+              defaultAppGitQuickActionsSettings
+            ),
+            commitPrompt: getStoredChanges(
+              git.commitPrompt,
+              gitCommitPromptReaders,
+              defaultAppGitCommitPromptSettings
+            ),
+            commitMessageGeneration: getStoredChanges(
+              git.commitMessageGeneration,
+              gitCommitMessageGenerationReaders,
+              defaultAppGitCommitMessageGenerationSettings
+            ),
+            worktree: getStoredChanges(
+              git.worktree,
+              gitWorktreeReaders,
+              defaultAppGitWorktreeSettings
+            )
+          },
+          gitGroupKeys
+        )
+      },
+      appGroupKeys
     )
-    if (networkRetryCount !== defaultNetworkRetrySettings.count)
-      storedChat.networkRetryCount = networkRetryCount
-    if (networkRetryDelaySeconds !== defaultNetworkRetrySettings.delaySeconds)
-      storedChat.networkRetryDelaySeconds = networkRetryDelaySeconds
-    if (settings.chat.continuePrompt !== defaultAppSettings.chat.continuePrompt) {
-      storedChat.continuePrompt = settings.chat.continuePrompt
-    }
-    if (settings.chat.linkedChatSummaryPrompt !== defaultAppSettings.chat.linkedChatSummaryPrompt) {
-      storedChat.linkedChatSummaryPrompt = settings.chat.linkedChatSummaryPrompt
-    }
-    if (settings.chat.recentChatCacheLimit !== defaultAppSettings.chat.recentChatCacheLimit) {
-      storedChat.recentChatCacheLimit = settings.chat.recentChatCacheLimit
-    }
-    if (
-      Object.keys(defaultAppSettings.chat.displayUsage).some(
-        (key) =>
-          settings.chat.displayUsage[key as keyof AppChatUsageDisplay] !==
-          defaultAppSettings.chat.displayUsage[key as keyof AppChatUsageDisplay]
-      )
-    ) {
-      storedChat.displayUsage = settings.chat.displayUsage
-    }
-    if (settings.chat.promptSuggestions !== defaultAppSettings.chat.promptSuggestions) {
-      storedChat.promptSuggestions = settings.chat.promptSuggestions
-    }
-    if (settings.chat.presets !== defaultAppSettings.chat.presets) {
-      storedChat.presets = settings.chat.presets
-    }
-    if (settings.chat.selectionAction !== defaultAppSettings.chat.selectionAction) {
-      storedChat.selectionAction = settings.chat.selectionAction
-    }
-    if (settings.chat.defaultActiveAction !== defaultAppSettings.chat.defaultActiveAction) {
-      storedChat.defaultActiveAction = settings.chat.defaultActiveAction
-    }
-    if (settings.chat.hidePlans !== defaultAppSettings.chat.hidePlans) {
-      storedChat.hidePlans = settings.chat.hidePlans
-    }
-    if (settings.chat.enableActions !== defaultAppSettings.chat.enableActions) {
-      storedChat.enableActions = settings.chat.enableActions
-    }
-    if (settings.chat.enableNotesButton !== defaultAppSettings.chat.enableNotesButton) {
-      storedChat.enableNotesButton = settings.chat.enableNotesButton
-    }
-    if (settings.chat.updateExistingChats !== defaultAppSettings.chat.updateExistingChats) {
-      storedChat.updateExistingChats = settings.chat.updateExistingChats
-    }
-    if (settings.chat.updateNewChats !== defaultAppSettings.chat.updateNewChats) {
-      storedChat.updateNewChats = settings.chat.updateNewChats
-    }
-    if (settings.chat.forceAccess !== defaultAppSettings.chat.forceAccess) {
-      storedChat.forceAccess = settings.chat.forceAccess
-    }
-    if (settings.chat.forceReview !== defaultAppSettings.chat.forceReview) {
-      storedChat.forceReview = settings.chat.forceReview
-    }
-    if (settings.chat.forceModel !== defaultAppSettings.chat.forceModel) {
-      storedChat.forceModel = settings.chat.forceModel
-    }
-    if (settings.chat.forceReasoning !== defaultAppSettings.chat.forceReasoning) {
-      storedChat.forceReasoning = settings.chat.forceReasoning
-    }
-    if (settings.chat.forceSpeed !== defaultAppSettings.chat.forceSpeed) {
-      storedChat.forceSpeed = settings.chat.forceSpeed
-    }
-    if (settings.chat.expandProgressOnStart !== defaultAppSettings.chat.expandProgressOnStart) {
-      storedChat.expandProgressOnStart = settings.chat.expandProgressOnStart
-    }
-    if (
-      settings.chat.collapseProgressOnFinish !== defaultAppSettings.chat.collapseProgressOnFinish
-    ) {
-      storedChat.collapseProgressOnFinish = settings.chat.collapseProgressOnFinish
-    }
-    if (
-      settings.chat.collapseProgressOnNextTurn !==
-      defaultAppSettings.chat.collapseProgressOnNextTurn
-    ) {
-      storedChat.collapseProgressOnNextTurn = settings.chat.collapseProgressOnNextTurn
-    }
-    if (
-      settings.chat.collapseStoppedSteeredFailedProgressOnFinish !==
-      defaultAppSettings.chat.collapseStoppedSteeredFailedProgressOnFinish
-    ) {
-      storedChat.collapseStoppedSteeredFailedProgressOnFinish =
-        settings.chat.collapseStoppedSteeredFailedProgressOnFinish
-    }
-    if (
-      settings.chat.collapseStoppedSteeredFailedProgressOnNextTurn !==
-      defaultAppSettings.chat.collapseStoppedSteeredFailedProgressOnNextTurn
-    ) {
-      storedChat.collapseStoppedSteeredFailedProgressOnNextTurn =
-        settings.chat.collapseStoppedSteeredFailedProgressOnNextTurn
-    }
-    if (Object.keys(storedChat).length > 0) storedSettings.chat = storedChat
-
-    const storedBrowser: Partial<AppBrowserSettings> = {}
-    const defaultScale = normalizeAppBrowserDefaultScale(settings.browser.defaultScale)
-    if (defaultScale !== defaultAppSettings.browser.defaultScale) {
-      storedBrowser.defaultScale = defaultScale
-    }
-    if (settings.browser.enabled !== defaultAppSettings.browser.enabled) {
-      storedBrowser.enabled = settings.browser.enabled
-    }
-    if (settings.browser.view !== defaultAppSettings.browser.view) {
-      storedBrowser.view = settings.browser.view
-    }
-    if (Object.keys(storedBrowser).length > 0) storedSettings.browser = storedBrowser
-
-    const storedLinks: Partial<AppExternalLinkSettings> = {}
-    if (settings.links.behavior !== defaultAppSettings.links.behavior) {
-      storedLinks.behavior = settings.links.behavior
-    }
-    if (Object.keys(storedLinks).length > 0) storedSettings.links = storedLinks
-
-    const storedPerformance: Partial<AppPerformanceSettings> = {}
-    if (settings.performance.disableShadows !== defaultAppSettings.performance.disableShadows) {
-      storedPerformance.disableShadows = settings.performance.disableShadows
-    }
-    if (settings.performance.maxChatsRendered !== defaultAppSettings.performance.maxChatsRendered) {
-      storedPerformance.maxChatsRendered = getStoredMaxChatsRendered(
-        settings.performance.maxChatsRendered
-      )
-    }
-    if (
-      settings.performance.recentsMessageLimit !==
-      defaultAppSettings.performance.recentsMessageLimit
-    ) {
-      storedPerformance.recentsMessageLimit = getStoredRecentsMessageLimit(
-        settings.performance.recentsMessageLimit
-      )
-    }
-    if (
-      settings.performance.recentlyOpenedFilesLimit !==
-      defaultAppSettings.performance.recentlyOpenedFilesLimit
-    ) {
-      storedPerformance.recentlyOpenedFilesLimit = getStoredRecentlyOpenedFilesLimit(
-        settings.performance.recentlyOpenedFilesLimit
-      )
-    }
-    if (Object.keys(storedPerformance).length > 0) {
-      storedSettings.performance = storedPerformance
-    }
-
-    if (
-      settings.providers.codex.showRecommendedPlugins !==
-        defaultAppSettings.providers.codex.showRecommendedPlugins ||
-      settings.providers.codex.nativeChrome ||
-      settings.providers.claude.nativeChrome
-    ) {
-      storedSettings.providers = {
-        codex: {
-          showRecommendedPlugins: settings.providers.codex.showRecommendedPlugins,
-          nativeChrome: settings.providers.codex.nativeChrome
-        },
-        claude: { nativeChrome: settings.providers.claude.nativeChrome }
-      }
-    }
-
-    const storedGit: {
-      enablePullRequests?: boolean
-      commitModels?: AppGitCommitModels
-      errorResolutionPrompt?: string
-      permanentErrorResolutionPrompt?: string
-      untrackedFilesPrompt?: string
-      quickActions?: Partial<AppGitQuickActionsSettings>
-      commitPrompt?: Partial<AppGitCommitPromptSettings>
-      commitMessageGeneration?: Partial<AppGitCommitMessageGenerationSettings>
-      worktree?: Partial<AppGitWorktreeSettings>
-    } = {}
-    if (settings.git.enablePullRequests !== defaultAppSettings.git.enablePullRequests) {
-      storedGit.enablePullRequests = settings.git.enablePullRequests
-    }
-    if (Object.keys(settings.git.commitModels).length > 0) {
-      storedGit.commitModels = getStoredGitCommitModels(settings.git.commitModels)
-    }
-    if (settings.git.errorResolutionPrompt !== defaultAppSettings.git.errorResolutionPrompt) {
-      storedGit.errorResolutionPrompt = settings.git.errorResolutionPrompt
-    }
-    if (
-      settings.git.permanentErrorResolutionPrompt !==
-      defaultAppSettings.git.permanentErrorResolutionPrompt
-    ) {
-      storedGit.permanentErrorResolutionPrompt = settings.git.permanentErrorResolutionPrompt
-    }
-    if (settings.git.untrackedFilesPrompt !== defaultAppSettings.git.untrackedFilesPrompt) {
-      storedGit.untrackedFilesPrompt = settings.git.untrackedFilesPrompt
-    }
-
-    const storedQuickActions: Partial<AppGitQuickActionsSettings> = {}
-    for (const key of Object.keys(
-      defaultAppGitQuickActionsSettings
-    ) as (keyof AppGitQuickActionsSettings)[]) {
-      if (settings.git.quickActions[key] !== defaultAppGitQuickActionsSettings[key]) {
-        Object.assign(storedQuickActions, { [key]: settings.git.quickActions[key] })
-      }
-    }
-    if (Object.keys(storedQuickActions).length > 0) {
-      storedGit.quickActions = storedQuickActions
-    }
-
-    const storedCommitPrompt: Partial<AppGitCommitPromptSettings> = {}
-    for (const key of Object.keys(
-      defaultAppGitCommitPromptSettings
-    ) as (keyof AppGitCommitPromptSettings)[]) {
-      if (settings.git.commitPrompt[key] !== defaultAppGitCommitPromptSettings[key]) {
-        storedCommitPrompt[key] = settings.git.commitPrompt[key]
-      }
-    }
-    if (Object.keys(storedCommitPrompt).length > 0) {
-      storedGit.commitPrompt = storedCommitPrompt
-    }
-
-    const storedCommitMessageGeneration: Partial<AppGitCommitMessageGenerationSettings> = {}
-    for (const key of Object.keys(
-      defaultAppGitCommitMessageGenerationSettings
-    ) as (keyof AppGitCommitMessageGenerationSettings)[]) {
-      if (
-        settings.git.commitMessageGeneration[key] !==
-        defaultAppGitCommitMessageGenerationSettings[key]
-      ) {
-        storedCommitMessageGeneration[key] = settings.git.commitMessageGeneration[key]
-      }
-    }
-    if (Object.keys(storedCommitMessageGeneration).length > 0) {
-      storedGit.commitMessageGeneration = storedCommitMessageGeneration
-    }
-
-    const storedWorktree: Partial<AppGitWorktreeSettings> = {}
-    for (const key of Object.keys(
-      defaultAppGitWorktreeSettings
-    ) as (keyof AppGitWorktreeSettings)[]) {
-      if (settings.git.worktree[key] !== defaultAppGitWorktreeSettings[key]) {
-        storedWorktree[key] = settings.git.worktree[key]
-      }
-    }
-    if (Object.keys(storedWorktree).length > 0) {
-      storedGit.worktree = storedWorktree
-    }
-    if (Object.keys(storedGit).length > 0) storedSettings.git = storedGit
 
     if (Object.keys(storedSettings).length === 0) {
       preferenceStorage.removeItem(appSettingsStorageKey)

@@ -1,5 +1,4 @@
 import { Spinner } from './Spinner'
-import { ChatListGroupPagination } from './ChatListGroupPagination'
 import {
   Bed,
   CheckCheck,
@@ -11,10 +10,7 @@ import {
 } from 'lucide-react'
 import {
   memo,
-  forwardRef,
-  useDeferredValue,
   useContext,
-  useMemo,
   useRef,
   type DragEvent,
   type DragEventHandler,
@@ -22,7 +18,6 @@ import {
 } from 'react'
 import type { ProviderApprovalDecision, ProviderChat } from '../../../shared/provider'
 import { noProjectGroupKey } from '../../../shared/noProject'
-import { appMaxChatsRenderedDefault } from '../performanceSettings'
 import { formatProjectLabel } from '../projectPresentation'
 import { ChatSleepActionsContext, getChatSleepKey, sleepChats, wakeChats } from '../chatSleep'
 import { useCompactLayout } from '../useCompactLayout'
@@ -30,8 +25,6 @@ import { useHoldActions } from '../useHoldActions'
 import { Button } from './Button'
 import { BedOff } from './BedOffIcon'
 import { ChatSleepPanel } from './ChatSleepPanel'
-import { ChatList } from './ChatList'
-import { MotionListItem } from '../motion/MotionListItem'
 import { DisclosureToggle } from './DisclosureToggle'
 import './ChatListGroup.css'
 
@@ -46,8 +39,6 @@ export type ChatListGroupData = {
 }
 
 export type ChatListGroupProps = {
-  headerOnly?: boolean
-  contentId: string
   group: ChatListGroupData
   open: boolean
   selectedChatKey: string | null
@@ -60,7 +51,6 @@ export type ChatListGroupProps = {
   projectDropPosition?: 'before' | 'after' | null
   visibleChatCount?: number
   chatPageSize?: number
-  deferItems?: boolean
   emptyContent?: ReactNode
   headerAction?: ReactNode
   projectIcon?: ReactNode
@@ -165,44 +155,20 @@ function ProjectWorkingIndicator() {
 }
 
 export const ChatListGroup = memo(function ChatListGroup({
-  headerOnly = false,
-  contentId,
   group,
   open,
-  selectedChatKey,
-  workingSubagentChatKeys,
-  committingChatKeys,
-  latestCommitFinishedAtByChatKey,
-  canReorderChats = true,
   projectDraggable = false,
   projectDragging = false,
   projectDropPosition = null,
-  visibleChatCount = group.chats.length,
-  chatPageSize = appMaxChatsRenderedDefault,
-  deferItems = false,
-  emptyContent = null,
   headerAction = null,
   projectIcon = null,
-  projectNamesByCwd,
-  projectIconsByCwd,
-  onLoadMoreChats,
-  onShowLessChats,
-  onMarkChatDone,
   onProjectDragEnd,
   onProjectDragStart,
   onMarkCwdChatsDone,
   onNewChatInCwd,
-  onRenameChat,
   onSelectProjectIcon,
-  onResolveApproval,
-  onReorderChats,
-  onSelectChat,
   onToggle,
-  onToggleChatPinned,
-  onUnpinPinnedChats,
-  resolvingApprovalId = null,
-  selectedChatChildren = null,
-  selectedChatChildOpen = false
+  onUnpinPinnedChats
 }: ChatListGroupProps) {
   const compact = useCompactLayout()
   const headerRef = useRef<HTMLDivElement>(null)
@@ -221,12 +187,6 @@ export const ChatListGroup = memo(function ChatListGroup({
       ? group.projectName?.trim() || formatProjectLabel(group.label)
       : group.label
   const sleepActionLabel = `${sleepAction === 'wake' ? 'Wake' : 'Sleep'} all chats in project ${groupLabel}`
-  const visibleChats = useMemo(
-    () => group.chats.slice(0, visibleChatCount),
-    [group.chats, visibleChatCount]
-  )
-  const deferredOpen = useDeferredValue(open)
-  const renderItems = !deferItems || deferredOpen
   const toggleContent = (
     <>
       <ChevronRight
@@ -246,7 +206,6 @@ export const ChatListGroup = memo(function ChatListGroup({
       className={`ui-disclosure-toggle chat-list-group__toggle${open ? ' ui-disclosure-toggle--open' : ''}`}
       role="button"
       tabIndex={0}
-      aria-controls={headerOnly ? undefined : contentId}
       aria-expanded={open}
       draggable={projectDraggable}
       title={group.cwd ?? groupLabel}
@@ -265,7 +224,6 @@ export const ChatListGroup = memo(function ChatListGroup({
     <DisclosureToggle
       className="chat-list-group__toggle"
       chevronClassName="chat-list-group__chevron"
-      aria-controls={headerOnly ? undefined : contentId}
       open={open}
       title={group.cwd ?? groupLabel}
       onClick={() => onToggle(group.key)}
@@ -404,68 +362,6 @@ export const ChatListGroup = memo(function ChatListGroup({
         ) : null}
         {headerAction}
       </div>
-      {open && !headerOnly && (
-        <blockquote
-          className="chat-list-group__items"
-          id={contentId}
-          aria-busy={!renderItems || undefined}
-        >
-          {renderItems && (
-            <>
-              {visibleChats.length === 0 && emptyContent ? (
-                emptyContent
-              ) : (
-                <ChatList
-                  ariaLabel={`${groupLabel} chats`}
-                  chats={visibleChats}
-                  selectedChatKey={selectedChatKey}
-                  workingSubagentChatKeys={workingSubagentChatKeys}
-                  committingChatKeys={committingChatKeys}
-                  latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
-                  canMarkDone={group.kind !== 'done'}
-                  canMarkUndone={group.kind === 'done' || group.kind === 'imported'}
-                  reorderable={canReorderChats}
-                  projectNamesByCwd={projectNamesByCwd}
-                  projectIconsByCwd={projectIconsByCwd}
-                  onMarkDone={onMarkChatDone}
-                  onRename={onRenameChat}
-                  onResolveApproval={onResolveApproval}
-                  onReorder={(nextVisibleChats) =>
-                    onReorderChats(group, [
-                      ...nextVisibleChats,
-                      ...group.chats.slice(nextVisibleChats.length)
-                    ])
-                  }
-                  onSelect={onSelectChat}
-                  onTogglePinned={onToggleChatPinned}
-                  resolvingApprovalId={resolvingApprovalId}
-                  selectedChatChildren={selectedChatChildren}
-                  selectedChatChildOpen={selectedChatChildOpen}
-                />
-              )}
-              <ChatListGroupPagination
-                group={group}
-                visibleChatCount={visibleChatCount}
-                chatPageSize={chatPageSize}
-                onLoadMoreChats={onLoadMoreChats}
-                onShowLessChats={onShowLessChats}
-              />
-            </>
-          )}
-        </blockquote>
-      )}
     </section>
   )
 }, areChatListGroupPropsEqual)
-
-// Keep the animation boundary memoized so unrelated workspace updates can bail out.
-export const AnimatedChatListGroup = memo(
-  forwardRef<HTMLDivElement, ChatListGroupProps>(function AnimatedChatListGroup(props, ref) {
-    return (
-      <MotionListItem ref={ref} popLayout>
-        <ChatListGroup {...props} />
-      </MotionListItem>
-    )
-  }),
-  areChatListGroupPropsEqual
-)

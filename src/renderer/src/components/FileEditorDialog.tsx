@@ -44,6 +44,7 @@ import type {
 } from '../../../shared/app'
 import type { ProviderFileDiff, ProviderReviewComment } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { clamp } from '../chatLayout'
 import { toCssRem } from '../cssUnits'
 import { hydrateFileMarkdownImages, renderFileMarkdown } from '../fileMarkdown'
 import { getFileDisplayParts } from '../fileDisplayPath'
@@ -63,6 +64,7 @@ import { EditableUnifiedDiff } from './EditableUnifiedDiff'
 import { isRemoteClient } from '../runtimeCapabilities'
 import { MobileCodeEditor } from './MobileCodeEditor'
 import { useCompactLayout } from '../useCompactLayout'
+import { getErrorMessage } from '../workspace/chatControllerUtils'
 import './FileEditorDialog.css'
 
 export type FileEditorTarget = {
@@ -95,12 +97,6 @@ type CopyState = 'idle' | 'copying' | 'copied' | 'error'
 type DownloadState = 'idle' | 'downloading' | 'downloaded' | 'error'
 type MarkdownViewMode = 'code' | 'split' | 'preview'
 type FileViewMode = 'diff' | 'contents'
-type LoadDiffOptions = {
-  background?: boolean
-}
-type LoadFileTreeOptions = {
-  background?: boolean
-}
 type FileTreeScope = {
   containerKey: string
   repositoryRoot: string
@@ -181,9 +177,6 @@ const expectedFileOpenErrors = [
   'Choose a regular file to open.',
   'Choose an image smaller than 32 MB.'
 ] as const
-
-const clamp = (value: number, minimum: number, maximum: number): number =>
-  Math.min(Math.max(value, minimum), maximum)
 
 const normalizeLexicalPath = (path: string): string => {
   const normalizedPath = path.replace(/\\/g, '/')
@@ -334,9 +327,8 @@ const getActiveFileTreePath = (
     return targetPath.slice(repositoryRoot.length + 1)
   }
 
-  const normalizedDisplayPath = displayPath.replace(/\\/g, '/')
-  if (result.files.some((file) => file.path.replace(/\\/g, '/') === normalizedDisplayPath)) {
-    return normalizedDisplayPath
+  if (result.files.some((file) => file.path.replace(/\\/g, '/') === displayPath)) {
+    return displayPath
   }
 
   return targetPath
@@ -360,12 +352,40 @@ const isFileTreeCwdInRepository = (cwd: string, repositoryRoot: string): boolean
   return normalizedCwd === normalizedRoot || normalizedCwd.startsWith(`${normalizedRoot}/`)
 }
 
-const getErrorMessage = (error: unknown, fallback: string): string => {
-  if (!(error instanceof Error)) return fallback
+const startPointerResize = (
+  cleanupRef: { current: (() => void) | null },
+  cursor: string,
+  handlePointerMove: (event: PointerEvent) => void
+): void => {
+  cleanupRef.current?.()
 
-  const message = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
-  return message || fallback
+  const previousCursor = document.body.style.cursor
+  const previousUserSelect = document.body.style.userSelect
+
+  document.body.style.cursor = cursor
+  document.body.style.userSelect = 'none'
+
+  const stopResize = (): void => {
+    document.body.style.cursor = previousCursor
+    document.body.style.userSelect = previousUserSelect
+    window.removeEventListener('pointermove', handlePointerMove)
+    window.removeEventListener('pointerup', stopResize)
+    window.removeEventListener('pointercancel', stopResize)
+    cleanupRef.current = null
+  }
+
+  cleanupRef.current = stopResize
+  window.addEventListener('pointermove', handlePointerMove)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
 }
+
+const toggleFolder =
+  (folderPath: string) =>
+  (folders: Record<string, boolean>): Record<string, boolean> => ({
+    ...folders,
+    [folderPath]: !folders[folderPath]
+  })
 
 const getDiffKind = (kind: AppGitChangeKind): ProviderFileDiff['kind'] => {
   if (kind === 'delete') return 'delete'
@@ -476,6 +496,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   const useDiffTree = fileView === 'diff' && hasGitDiff && !canShowImage
   const showFileViewSwitch = canShowContents && hasGitDiff
   const showTreeSidebar = hasGitDiff && !diffTreeCollapsed
+  const canReview = isFileDiff && Boolean(onContinueReview)
   const displayPath = useMemo(() => target.displayPath.replace(/\\/g, '/'), [target.displayPath])
   const { directoryName, fileName } = useMemo(() => getFileDisplayParts(displayPath), [displayPath])
   const dirty = visibleLoadState === 'ready' && contents !== savedContents
@@ -548,7 +569,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   )
   const isProjectFile = Boolean(
     visibleFileTreeResult?.files.some(
-      (file) => file.path.replace(/\\/g, '/') === activeFileTreePath.replace(/\\/g, '/')
+      (file) => file.path.replace(/\\/g, '/') === activeFileTreePath
     )
   )
   const showDownload =
@@ -593,15 +614,6 @@ export const FileEditorDialog = memo(function FileEditorDialog({
         : null,
     [canShowDiff, diff, target.kind, target.path]
   )
-  const editableFileDiff = useMemo<ProviderFileDiff>(
-    () =>
-      renderedFileDiff ?? {
-        path: target.path,
-        kind: 'edit',
-        diff: ''
-      },
-    [renderedFileDiff, target.path]
-  )
   const regularFileContents = useMemo<ProviderFileDiff>(
     () => ({
       path: target.path,
@@ -610,7 +622,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     }),
     [target.path]
   )
-  const displayedFileDiff = showFileDiff ? editableFileDiff : regularFileContents
+  const displayedFileDiff = (showFileDiff && renderedFileDiff) || regularFileContents
   const renderedMarkdown = useMemo(
     () => (isMarkdown ? renderFileMarkdown(contents) : ''),
     [contents, isMarkdown]
@@ -641,9 +653,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
 
   useEffect(() => {
     const markdownPreview = markdownPreviewRef.current
-    if (!markdownPreview || markdownView === 'code') return undefined
+    if (!markdownPreview || markdownView === 'code') return
     hydrateMermaidDiagrams(markdownPreview)
-    return undefined
   })
 
   useEffect(
@@ -723,10 +734,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   }, [fileContainer, target.cwd, target.path])
 
   const loadDiff = useCallback(
-    async (options: LoadDiffOptions = {}): Promise<void> => {
+    async (background = false): Promise<void> => {
       if (!target.kind && !gitRepositoryRoot) return
 
-      const background = options.background === true
       const request = diffLoadRequestRef.current + 1
       diffLoadRequestRef.current = request
       setDiffLoadStatePath(target.path)
@@ -761,13 +771,10 @@ export const FileEditorDialog = memo(function FileEditorDialog({
   )
 
   const loadFileTree = useCallback(
-    async (options: LoadFileTreeOptions = {}): Promise<void> => {
-      const background = options.background === true
+    async (background = false): Promise<void> => {
       const request = fileTreeLoadRequestRef.current + 1
       fileTreeLoadRequestRef.current = request
-      if (!background) {
-        setFileTreeLoadState('loading')
-      }
+      if (!background) setFileTreeLoadState('loading')
       setFileTreeError(null)
 
       try {
@@ -956,31 +963,19 @@ export const FileEditorDialog = memo(function FileEditorDialog({
     },
     [requestLeave, onSelectTarget, target.path, compact]
   )
-  const toggleDiffFolder = useCallback((folderPath: string): void => {
-    setCollapsedDiffFolders((currentFolders) => ({
-      ...currentFolders,
-      [folderPath]: !currentFolders[folderPath]
-    }))
-  }, [])
-  const toggleFileFolder = useCallback((folderPath: string): void => {
-    setCollapsedFileFolders((currentFolders) => ({
-      ...currentFolders,
-      [folderPath]: !currentFolders[folderPath]
-    }))
-  }, [])
   const addReviewComment = useCallback(
     (comment: string, location: DiffReviewLocation): void => {
       setReviewComments((comments) => [
         ...comments,
         {
           id: crypto.randomUUID(),
-          path: target.displayPath.replace(/\\/g, '/'),
+          path: displayPath,
           comment,
           ...location
         }
       ])
     },
-    [target.displayPath]
+    [displayPath]
   )
   const changeReviewComment = useCallback((id: string, comment: string): void => {
     setReviewComments((comments) =>
@@ -1003,34 +998,14 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       if (!body) return
 
       event.preventDefault()
-      resizeCleanupRef.current?.()
 
       const startX = event.clientX
       const startWidth = diffTreeWidth
       const maxWidth = getDiffTreeMaxWidth(body.getBoundingClientRect().width)
-      const previousCursor = document.body.style.cursor
-      const previousUserSelect = document.body.style.userSelect
 
-      document.body.style.cursor = 'col-resize'
-      document.body.style.userSelect = 'none'
-
-      const handlePointerMove = (moveEvent: PointerEvent): void => {
+      startPointerResize(resizeCleanupRef, 'col-resize', (moveEvent) => {
         setDiffTreeWidth(clamp(startWidth + moveEvent.clientX - startX, diffTreeMinWidth, maxWidth))
-      }
-
-      const stopResize = (): void => {
-        document.body.style.cursor = previousCursor
-        document.body.style.userSelect = previousUserSelect
-        window.removeEventListener('pointermove', handlePointerMove)
-        window.removeEventListener('pointerup', stopResize)
-        window.removeEventListener('pointercancel', stopResize)
-        resizeCleanupRef.current = null
-      }
-
-      resizeCleanupRef.current = stopResize
-      window.addEventListener('pointermove', handlePointerMove)
-      window.addEventListener('pointerup', stopResize)
-      window.addEventListener('pointercancel', stopResize)
+      })
     },
     [diffTreeWidth]
   )
@@ -1051,41 +1026,25 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       if (splitSize <= 0) return
 
       event.preventDefault()
-      resizeCleanupRef.current?.()
 
       const startPosition = markdownSplitStacked ? event.clientY : event.clientX
       const startPercentage = markdownSplitPercentage
-      const previousCursor = document.body.style.cursor
-      const previousUserSelect = document.body.style.userSelect
 
-      document.body.style.cursor = markdownSplitStacked ? 'row-resize' : 'col-resize'
-      document.body.style.userSelect = 'none'
-
-      const handlePointerMove = (moveEvent: PointerEvent): void => {
-        const position = markdownSplitStacked ? moveEvent.clientY : moveEvent.clientX
-        const deltaPercentage = ((position - startPosition) / splitSize) * 100
-        setMarkdownSplitPercentage(
-          clamp(
-            startPercentage + deltaPercentage,
-            markdownSplitMinPercentage,
-            markdownSplitMaxPercentage
+      startPointerResize(
+        resizeCleanupRef,
+        markdownSplitStacked ? 'row-resize' : 'col-resize',
+        (moveEvent) => {
+          const position = markdownSplitStacked ? moveEvent.clientY : moveEvent.clientX
+          const deltaPercentage = ((position - startPosition) / splitSize) * 100
+          setMarkdownSplitPercentage(
+            clamp(
+              startPercentage + deltaPercentage,
+              markdownSplitMinPercentage,
+              markdownSplitMaxPercentage
+            )
           )
-        )
-      }
-
-      const stopResize = (): void => {
-        document.body.style.cursor = previousCursor
-        document.body.style.userSelect = previousUserSelect
-        window.removeEventListener('pointermove', handlePointerMove)
-        window.removeEventListener('pointerup', stopResize)
-        window.removeEventListener('pointercancel', stopResize)
-        resizeCleanupRef.current = null
-      }
-
-      resizeCleanupRef.current = stopResize
-      window.addEventListener('pointermove', handlePointerMove)
-      window.addEventListener('pointerup', stopResize)
-      window.addEventListener('pointercancel', stopResize)
+        }
+      )
     },
     [markdownSplitPercentage, markdownSplitStacked]
   )
@@ -1109,7 +1068,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
             title={node.path}
             style={{ '--file-diff-tree-depth': depth } as React.CSSProperties}
             onClick={() =>
-              useDiffTree ? toggleDiffFolder(node.path) : toggleFileFolder(node.path)
+              (useDiffTree ? setCollapsedDiffFolders : setCollapsedFileFolders)(
+                toggleFolder(node.path)
+              )
             }
           >
             <span className="file-editor-dialog__tree-chevron" aria-hidden="true">
@@ -1135,7 +1096,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       nodeDisplayPath === displayPath ||
       nodeDisplayPath === activeFileTreePath
     const reviewCommentCount = reviewCommentCountByPath.get(nodeDisplayPath) ?? 0
-    const changeKind = node.target.kind ?? null
+    const changeKind = node.target.kind
     const itemClassName = [
       'file-editor-dialog__tree-item',
       changeKind ? 'file-editor-dialog__tree-item--changed' : null,
@@ -1222,8 +1183,8 @@ export const FileEditorDialog = memo(function FileEditorDialog({
       setSavedContents(contentsToSave)
       setVersion(result.version)
       setSaveState('saved')
-      if (canShowDiff) void loadDiff({ background: true })
-      void loadFileTree({ background: true })
+      if (canShowDiff) void loadDiff(true)
+      void loadFileTree(true)
       return true
     } catch (saveError) {
       console.error('[caught:FileEditorDialog:FileEditorDialog]', saveError)
@@ -1416,7 +1377,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   onChange={setMarkdownView}
                 />
               )}
-              {isFileDiff && onContinueReview && (!isMarkdown || markdownView !== 'preview') && (
+              {canReview && (!isMarkdown || markdownView !== 'preview') && (
                 <Button
                   aria-label="Comment on selection"
                   callback={() => openSelectionComment?.()}
@@ -1430,7 +1391,7 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                   title={openSelectionComment ? 'Comment on selection' : 'Select text to comment'}
                 />
               )}
-              {isFileDiff && reviewComments.length > 0 && onContinueReview && (
+              {canReview && reviewComments.length > 0 && (
                 <Button
                   callback={continueReview}
                   icon={<MessageSquare aria-hidden="true" />}
@@ -1612,15 +1573,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                           endLine={target.endLine}
                           fileDiff={renderedFileDiff}
                           line={target.line}
-                          onAddComment={
-                            isFileDiff && onContinueReview ? addReviewComment : undefined
-                          }
-                          onChangeComment={
-                            isFileDiff && onContinueReview ? changeReviewComment : undefined
-                          }
-                          onDeleteComment={
-                            isFileDiff && onContinueReview ? deleteReviewComment : undefined
-                          }
+                          onAddComment={canReview ? addReviewComment : undefined}
+                          onChangeComment={canReview ? changeReviewComment : undefined}
+                          onDeleteComment={canReview ? deleteReviewComment : undefined}
                         />
                       </div>
                     ) : (
@@ -1757,13 +1712,9 @@ export const FileEditorDialog = memo(function FileEditorDialog({
                           setSaveState('idle')
                           setEditorError(null)
                         }}
-                        onAddComment={isFileDiff && onContinueReview ? addReviewComment : undefined}
-                        onChangeComment={
-                          isFileDiff && onContinueReview ? changeReviewComment : undefined
-                        }
-                        onDeleteComment={
-                          isFileDiff && onContinueReview ? deleteReviewComment : undefined
-                        }
+                        onAddComment={canReview ? addReviewComment : undefined}
+                        onChangeComment={canReview ? changeReviewComment : undefined}
+                        onDeleteComment={canReview ? deleteReviewComment : undefined}
                         onSave={() => void handleSave()}
                         onToggleWordWrap={toggleWordWrap}
                         readOnly={!canEdit}

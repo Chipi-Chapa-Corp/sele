@@ -218,7 +218,6 @@ const writeObservation = async (
     // Codex counters are thread-wide even when the current turn uses a different model.
     if (providerId === 'codex' && models?.length === 1)
       models = [{ ...models[0], usage: increment }]
-    if (models) usage = { ...usage, cost: priceModelUsage(models).cost }
     await trx
       .insertInto('token_usage_checkpoint')
       .values({
@@ -235,7 +234,6 @@ const writeObservation = async (
         })
       )
       .execute()
-    if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return change
   }
   if (models) usage = { ...usage, cost: priceModelUsage(models).cost }
   if (totalTokenUsage(usage) === 0 && !(usage.cost?.total && usage.cost.total > 0)) return change

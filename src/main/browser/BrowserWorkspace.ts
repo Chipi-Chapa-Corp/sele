@@ -58,12 +58,12 @@ export type BrowserComputerAction = {
     | 'left_click_drag'
     | 'zoom'
   coordinate?: BrowserPoint
-  startCoordinate?: BrowserPoint
+  start_coordinate?: BrowserPoint
   ref?: string
   text?: string
   duration?: number
-  scrollDirection?: 'up' | 'down' | 'left' | 'right'
-  scrollAmount?: number
+  scroll_direction?: 'up' | 'down' | 'left' | 'right'
+  scroll_amount?: number
   scale?: number
   region?: [number, number, number, number]
 }
@@ -318,7 +318,7 @@ export class BrowserWorkspace {
     return this.evaluateOn((await this.page(id)).page, expression)
   }
 
-  async readPage(options: BrowserTreeOptions = {}, id?: number): Promise<string> {
+  async readPage(options: BrowserTreeOptions, id?: number): Promise<string> {
     return (await this.page(id)).page.accessibility.read(options)
   }
 
@@ -393,10 +393,7 @@ export class BrowserWorkspace {
       return { allowed: true }
     }
     if (options.action === 'list') return this.client.listDownloads(tab.id)
-    const timeout = options.timeoutMs ?? 30000
-    if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 120000)
-      throw new Error('Download timeout must be between 1 and 120000 milliseconds')
-    const deadline = Date.now() + timeout
+    const deadline = Date.now() + (options.timeoutMs ?? 30000)
     do {
       const downloads = await this.client.listDownloads(tab.id)
       const download = options.downloadId
@@ -433,8 +430,6 @@ export class BrowserWorkspace {
     let shot: { data: string }
     if (options.fullPage) {
       const scale = options.scale ?? 1
-      if (!Number.isFinite(scale) || scale < 0.1 || scale > 1)
-        throw new Error('Invalid screenshot scale')
       const { cssContentSize } = await page.cdp<{
         cssContentSize: { x: number; y: number; width: number; height: number }
       }>('Page.getLayoutMetrics')
@@ -514,8 +509,6 @@ export class BrowserWorkspace {
     const { page } = await this.page(id)
     const { width, height } = await this.viewport(page)
     const offset = await this.evaluateOn<{ x: number; y: number }>(page, '({x:scrollX,y:scrollY})')
-    if (!Number.isFinite(scale) || scale < 0.1 || scale > 1)
-      throw new Error('Invalid screenshot scale')
     const [x, y, right, bottom] = region ?? [0, 0, width, height]
     if (
       ![x, y, right, bottom].every(Number.isFinite) ||
@@ -557,12 +550,7 @@ export class BrowserWorkspace {
       return this.screenshot(id, action.scale, action.region)
     }
     if (action.action === 'wait') {
-      if (
-        action.duration === undefined ||
-        !Number.isFinite(action.duration) ||
-        action.duration < 0 ||
-        action.duration > 10
-      )
+      if (action.duration === undefined)
         throw new Error('Wait duration must be between 0 and 10 seconds')
       await this.delay(action.duration * 1000)
       return
@@ -582,16 +570,16 @@ export class BrowserWorkspace {
         await page.accessibility.point(action.ref)
         return
       case 'scroll': {
-        if (!action.scrollDirection) throw new Error('Scroll requires scroll_direction')
+        if (!action.scroll_direction) throw new Error('Scroll requires scroll_direction')
         const [x, y] = await this.point(page, action)
-        const amount = (action.scrollAmount ?? 3) * 100
-        const sign = ['up', 'left'].includes(action.scrollDirection) ? -1 : 1
+        const amount = (action.scroll_amount ?? 3) * 100
+        const sign = ['up', 'left'].includes(action.scroll_direction) ? -1 : 1
         await page.cdp('Input.dispatchMouseEvent', {
           type: 'mouseWheel',
           x,
           y,
-          deltaX: ['left', 'right'].includes(action.scrollDirection) ? amount * sign : 0,
-          deltaY: ['up', 'down'].includes(action.scrollDirection) ? amount * sign : 0
+          deltaX: ['left', 'right'].includes(action.scroll_direction) ? amount * sign : 0,
+          deltaY: ['up', 'down'].includes(action.scroll_direction) ? amount * sign : 0
         })
         return
       }
@@ -601,9 +589,9 @@ export class BrowserWorkspace {
         return
       }
       case 'left_click_drag': {
-        if (!action.startCoordinate) throw new Error('Drag requires start_coordinate')
+        if (!action.start_coordinate) throw new Error('Drag requires start_coordinate')
         const [x, y] = await this.point(page, action)
-        const [startX, startY] = await this.point(page, { coordinate: action.startCoordinate })
+        const [startX, startY] = await this.point(page, { coordinate: action.start_coordinate })
         await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: startX, y: startY })
         await page.cdp('Input.dispatchMouseEvent', {
           type: 'mousePressed',
@@ -647,9 +635,6 @@ export class BrowserWorkspace {
               : 'left',
           action.action === 'double_click' ? 2 : action.action === 'triple_click' ? 3 : 1
         )
-        return
-      default:
-        throw new Error('Unsupported browser input action')
     }
   }
 
@@ -671,17 +656,7 @@ export class BrowserWorkspace {
           : options.preset === 'tablet'
             ? [768, 1024]
             : [options.width, options.height]
-      if (
-        !width ||
-        !height ||
-        !Number.isInteger(width) ||
-        !Number.isInteger(height) ||
-        width < 1 ||
-        height < 1 ||
-        width > 4096 ||
-        height > 4096
-      )
-        throw new Error('Provide width and height between 1 and 4096')
+      if (!width || !height) throw new Error('Provide width and height between 1 and 4096')
       await page.cdp('Emulation.setDeviceMetricsOverride', {
         width,
         height,

@@ -16,15 +16,8 @@ export type BrowserDownload = {
 /** One client's downloads; authorizations are single-use and never shared across tabs. */
 export class BrowserDownloads {
   private readonly downloads = new Map<string, BrowserDownload>()
-  private readonly allowed = new Map<number, { url?: string; expires: number }>()
+  private readonly allowed = new Map<number, { url: string; expires: number }>()
   private readonly active = new Map<string, DownloadItem>()
-  private readonly waiters = new Set<{
-    tabId: number
-    id?: string
-    resolve: (download: BrowserDownload) => void
-    reject: (error: Error) => void
-    timer: ReturnType<typeof setTimeout>
-  }>()
   private directory: string | undefined
   private closed = false
 
@@ -36,53 +29,21 @@ export class BrowserDownloads {
     session.on('will-download', this.onDownload)
   }
 
-  async allow(tabId: number, url?: string, timeoutMs = 30000): Promise<void> {
+  async allow(tabId: number, url: string): Promise<void> {
     if (this.closed) throw new Error('Browser session closed')
-    if (url !== undefined && !['http:', 'https:', 'blob:'].includes(new URL(url).protocol))
+    if (!['http:', 'https:', 'blob:'].includes(new URL(url).protocol))
       throw new Error('Unsupported browser download URL')
     const directory = join(app.getPath('downloads'), 'Sele')
     await mkdir(directory, { recursive: true })
     if (this.closed) throw new Error('Browser session closed')
     this.directory = directory
-    this.allowed.set(tabId, { url, expires: Date.now() + timeoutMs })
+    this.allowed.set(tabId, { url, expires: Date.now() + 30000 })
   }
 
   list(tabId: number): BrowserDownload[] {
     return [...this.downloads.values()]
       .filter((download) => download.tabId === tabId)
       .map((d) => ({ ...d }))
-  }
-
-  async wait(tabId: number, timeoutMs = 30000): Promise<BrowserDownload> {
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000)
-      throw new Error('Download timeout must be between 1 and 120000 milliseconds')
-    await this.allow(tabId, undefined, timeoutMs)
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        tabId,
-        resolve,
-        reject,
-        timer: setTimeout(() => {
-          this.waiters.delete(waiter)
-          this.allowed.delete(tabId)
-          reject(new Error('Timed out waiting for download'))
-        }, timeoutMs)
-      }
-      this.waiters.add(waiter)
-    })
-  }
-
-  private publish(download: BrowserDownload): void {
-    this.emit({ ...download })
-    for (const waiter of this.waiters) {
-      if (waiter.tabId !== download.tabId || (waiter.id && waiter.id !== download.id)) continue
-      waiter.id ??= download.id
-      if (download.status === 'started' || download.status === 'in_progress') continue
-      clearTimeout(waiter.timer)
-      this.waiters.delete(waiter)
-      if (download.status === 'complete') waiter.resolve({ ...download })
-      else waiter.reject(new Error(`Download ${download.status}`))
-    }
   }
 
   private readonly onDownload = (
@@ -96,7 +57,7 @@ export class BrowserDownloads {
     if (
       !grant ||
       grant.expires < Date.now() ||
-      (grant.url !== undefined && grant.url !== url && grant.url !== item.getURLChain()[0])
+      (grant.url !== url && grant.url !== item.getURLChain()[0])
     )
       return
     this.allowed.delete(guest.id)
@@ -122,32 +83,26 @@ export class BrowserDownloads {
       const oldest = [...this.downloads.values()].find((d) => !this.active.has(d.id))
       if (oldest) this.downloads.delete(oldest.id)
     }
-    this.publish(download)
+    this.emit({ ...download })
     item.on('updated', () => {
       // Interrupted transfers may resume; only the done event is terminal.
       download.status = 'in_progress'
       download.receivedBytes = item.getReceivedBytes()
       download.totalBytes = item.getTotalBytes()
-      this.publish(download)
+      this.emit({ ...download })
     })
     item.once('done', (_event, state) => {
       this.active.delete(id)
       download.status =
         state === 'completed' ? 'complete' : state === 'cancelled' ? 'canceled' : 'failed'
       download.receivedBytes = item.getReceivedBytes()
-      this.publish(download)
+      this.emit({ ...download })
     })
   }
 
   revoke(tabId: number): void {
     this.allowed.delete(tabId)
     for (const [id, item] of this.active) if (this.downloads.get(id)?.tabId === tabId) item.cancel()
-    for (const waiter of this.waiters) {
-      if (waiter.tabId !== tabId) continue
-      clearTimeout(waiter.timer)
-      this.waiters.delete(waiter)
-      waiter.reject(new Error('Browser tab detached'))
-    }
   }
 
   close(): void {
@@ -157,10 +112,5 @@ export class BrowserDownloads {
     this.allowed.clear()
     for (const item of this.active.values()) item.cancel()
     this.active.clear()
-    for (const waiter of this.waiters) {
-      clearTimeout(waiter.timer)
-      waiter.reject(new Error('Browser session closed'))
-    }
-    this.waiters.clear()
   }
 }

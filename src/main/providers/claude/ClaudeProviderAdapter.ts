@@ -16,7 +16,7 @@ import { normalizeTokenUsage, addTokenUsage, emptyTokenUsage } from '../../../sh
 import { ClaudeSessionDiscovery } from './ClaudeSessionDiscovery'
 import { getClaudeSessionTitle } from './ClaudeSessionTitle'
 import { getClaudeGoalCommand, mapClaudeActiveGoal } from './ClaudeGoals.ts'
-import { ClaudeRemoteSessionStore as RemoteSessionStore } from './ClaudeRemoteSessionStore'
+import { ClaudeRemoteSessionStore } from './ClaudeRemoteSessionStore'
 import { isCurrentContainerTarget } from '../../currentContainer'
 import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChanges.ts'
 import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
@@ -158,7 +158,9 @@ import { isExpectedClaudeQueryShutdownError } from './ClaudeExpectedErrors'
 import { mapClaudeRateLimits } from './ClaudeUsage'
 import { mapClaudeResetCredits } from './ClaudeResetCredits'
 import { getClaudeUserQuestions } from './ClaudeUserQuestions'
-import { parseClaudeVersion, supportsClaudeResumeDropsTurn } from './ClaudeVersion'
+import { supportsClaudeResumeDropsTurn } from './ClaudeVersion'
+import { parseProviderVersion } from '../providerUpdate'
+import { emptyUsageSummary, getRuntimeEnvironment, getString, isRecord } from '../providerValues.ts'
 
 type ClaudePendingApproval = {
   id: string
@@ -171,15 +173,10 @@ type ClaudePendingApproval = {
   resolve: (result: PermissionResult) => void
 }
 
-type ClaudePendingUserInput = {
-  id: string
-  question: string
-  choices: ProviderPendingUserInput['choices']
-  allowFreeform: boolean
-  startedAt: number
-  elicitation?: ProviderPendingUserInput['elicitation']
-  resolve: (response: ProviderUserInputResponse) => void
-}
+type ClaudePendingUserInput = Pick<
+  ProviderPendingUserInput,
+  'id' | 'question' | 'choices' | 'allowFreeform' | 'startedAt' | 'elicitation'
+> & { resolve: (response: ProviderUserInputResponse) => void }
 
 type QueuedClaudeMessage = {
   kind?: 'queued' | 'steering'
@@ -278,7 +275,7 @@ type StartQueryOptions = {
 
 type ClaudeQueryRuntime = {
   command: HostCommand
-  container: Extract<AppContainerTarget, { kind: 'container' }> | null
+  container: StoredClaudeContainer | null
   accountRevision: number
 }
 
@@ -361,14 +358,6 @@ const claudeSandboxModes: ProviderSandboxModeOption[] = [
   }
 ]
 
-const emptyUsageSummary = {
-  lifetimeTokens: null,
-  peakDailyTokens: null,
-  longestRunningTurnSec: null,
-  currentStreakDays: null,
-  longestStreakDays: null
-}
-
 const updateDelayMs = 35
 const contextUsageCloseGraceMs = 1_000
 // Time for the last background task's notification to start its main-thread turn.
@@ -415,9 +404,6 @@ const runRemoteTranscriptCommand = async <Result>(run: () => Promise<Result>): P
     pendingRemoteTranscriptCommands.shift()?.()
   }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const runHostCommand = (command: HostCommand): Promise<string> =>
   runRemoteTranscriptCommand(
@@ -471,18 +457,12 @@ const awaitClaudeTurnOptions = (promise: Promise<unknown>): Promise<void> =>
     )
   })
 
-class ClaudeRemoteSessionStore extends RemoteSessionStore {
-  constructor(container: StoredClaudeContainer) {
-    super(async (script, args = []) =>
-      runHostCommand(
-        await getHostCommand('sh', ['-lc', script, 'sele-claude-session-store', ...args], {
-          container,
-          env: process.env
-        })
-      )
+const remoteShell =
+  (container: StoredClaudeContainer, label: string) =>
+  async (script: string, args: string[] = []): Promise<string> =>
+    runHostCommand(
+      await getHostCommand('sh', ['-lc', script, label, ...args], { container, env: process.env })
     )
-  }
-}
 
 /**
  * A chat bound to the container Sele itself runs in shares this filesystem. Read its
@@ -497,18 +477,10 @@ const getClaudeSessionStore = async (
   container: StoredClaudeContainer | null
 ): Promise<ClaudeRemoteSessionStore | undefined> => {
   const remote = await getRemoteClaudeContainer(container)
-  return remote ? new ClaudeRemoteSessionStore(remote) : undefined
+  return remote
+    ? new ClaudeRemoteSessionStore(remoteShell(remote, 'sele-claude-session-store'))
+    : undefined
 }
-
-const getClaudeSessionStoreOption = async (
-  container: StoredClaudeContainer | null
-): Promise<{ sessionStore?: ClaudeRemoteSessionStore }> => {
-  const sessionStore = await getClaudeSessionStore(container)
-  return sessionStore ? { sessionStore } : {}
-}
-
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
 
 const isExpectedClaudeSessionMetadataAbsenceError = (error: unknown): boolean =>
   isExpectedFileAbsenceError(error) || isExpectedCommandAbsenceError(error, [4])
@@ -523,17 +495,9 @@ const getClaudeModel = (
   options: ProviderTurnOptions | ProviderOneShotOptions | undefined
 ): string | undefined => (options?.model === 'default' ? undefined : options?.model)
 
-const getRuntimeEnvironment = (env: NodeJS.ProcessEnv | undefined): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(env ?? process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  )
-
 const isStoredContainer = (
   container: AppContainerTarget | null | undefined
-): container is Extract<AppContainerTarget, { kind: 'container' }> =>
-  container?.kind === 'container'
+): container is StoredClaudeContainer => container?.kind === 'container'
 
 const getSandbox = (
   options: ProviderTurnOptions | ProviderOneShotOptions | undefined
@@ -987,6 +951,19 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     options = { ...options, accountId: this.accountId }
     const sourceKey = getContainerTargetKey(options.container)
     const accountRevision = this.accountRevisions.get(sourceKey) ?? 0
+    const createUsage = (
+      limits: Parameters<typeof mapClaudeRateLimits>[0],
+      errors: string[]
+    ): ProviderAccountUsage => ({
+      updatedAt: Date.now(),
+      statisticsLoaded: false,
+      summary: emptyUsageSummary,
+      dailyUsageBuckets: null,
+      rateLimits: mapClaudeRateLimits(limits),
+      rateLimitResetCredits: mapClaudeResetCredits(limits),
+      errors,
+      authenticationRequired: this.authenticationFailures.has(sourceKey)
+    })
     try {
       return await this.withControlQuery(options, 'usage', async (control) => {
         const usage = await control.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
@@ -1007,17 +984,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
                 return usage.rate_limits
               })
             : null) ?? usage.rate_limits
-        const limits = enrichedLimits ? { ...usage.rate_limits, ...enrichedLimits } : null
-        return {
-          updatedAt: Date.now(),
-          statisticsLoaded: false,
-          summary: emptyUsageSummary,
-          dailyUsageBuckets: null,
-          rateLimits: mapClaudeRateLimits(limits),
-          rateLimitResetCredits: mapClaudeResetCredits(limits),
-          errors: [],
-          authenticationRequired: this.authenticationFailures.has(sourceKey)
-        }
+        return createUsage(enrichedLimits ? { ...usage.rate_limits, ...enrichedLimits } : null, [])
       })
     } catch (error) {
       console.error('Unable to load Claude usage.', error)
@@ -1038,16 +1005,9 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       const lastLimits = isClaudeAuthenticationError(error)
         ? null
         : await claudeAccounts.getLastUsage(options).catch(() => null)
-      return {
-        authenticationRequired: this.authenticationFailures.has(sourceKey),
-        updatedAt: Date.now(),
-        statisticsLoaded: false,
-        summary: emptyUsageSummary,
-        dailyUsageBuckets: null,
-        rateLimits: mapClaudeRateLimits(lastLimits),
-        rateLimitResetCredits: mapClaudeResetCredits(lastLimits),
-        errors: [error instanceof Error ? error.message : 'Claude usage is unavailable.']
-      }
+      return createUsage(lastLimits, [
+        error instanceof Error ? error.message : 'Claude usage is unavailable.'
+      ])
     }
   }
 
@@ -1365,15 +1325,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const remote = await getRemoteClaudeContainer(state.container)
     return openClaudeHistorySource(
       state.id,
-      remote
-        ? async (script, args = []) =>
-            runHostCommand(
-              await getHostCommand('sh', ['-lc', script, 'sele-claude-subagent-history', ...args], {
-                container: remote,
-                env: process.env
-              })
-            )
-        : undefined,
+      remote ? remoteShell(remote, 'sele-claude-subagent-history') : undefined,
       agentId
     )
   }
@@ -1396,9 +1348,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const state = await this.ensureState(chatId)
     this.pinState(state)
     try {
+      const sessionStore = await getClaudeSessionStore(state.container)
       await renameSession(chatId, title, {
         ...(state.cwd ? { dir: state.cwd } : {}),
-        ...(await getClaudeSessionStoreOption(state.container))
+        ...(sessionStore ? { sessionStore } : {})
       })
       state.metadata = state.metadata
         ? { ...state.metadata, customTitle: title, summary: title }
@@ -1484,13 +1437,20 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   cancelOneShot = async (generationId: string): Promise<void> => {
     const generation = this.oneShotGenerations.get(generationId)
-    if (!generation) {
-      this.rememberCanceledOneShotGeneration(generationId)
+    if (generation) {
+      generation.canceled = true
+      generation.input?.close()
+      generation.query?.close()
       return
     }
-    generation.canceled = true
-    generation.input?.close()
-    generation.query?.close()
+    this.canceledOneShotGenerationIds.add(generationId)
+    const current = this.canceledOneShotGenerationTimers.get(generationId)
+    if (current) clearTimeout(current)
+    const timer = setTimeout(() => {
+      this.canceledOneShotGenerationIds.delete(generationId)
+      this.canceledOneShotGenerationTimers.delete(generationId)
+    }, oneShotCancellationRetentionMs)
+    this.canceledOneShotGenerationTimers.set(generationId, timer)
   }
 
   importHistory: NonNullable<ProviderAdapter['importHistory']> = async (
@@ -1842,31 +1802,16 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     return this.createChatDetail(state)
   }
 
-  steerPendingMessage = async (chatId: string, messageId: string): Promise<ProviderChatDetail> => {
-    const state = await this.ensureState(chatId)
-    this.requireAuthentication(state)
-    this.pendingMessageEdits.assert(chatId, messageId)
-    const index = state.queuedMessages.findIndex((item) => item.id === messageId)
-    const pending = state.queuedMessages[index]
-    if (!pending) throw new Error('The Claude message is no longer queued.')
-    if (state.active && !state.input) throw new Error('Claude session is not connected')
-    state.queuedMessages.splice(index, 1)
-    state.queuedMessagesPaused = false
+  steerPendingMessage = (chatId: string, messageId: string): Promise<ProviderChatDetail> =>
+    this.sendPendingMessage(chatId, messageId, true)
 
-    if (!state.active) {
-      state.queuedMessages.unshift(pending)
-      await this.drainNextQueuedMessage(state)
-      return this.createChatDetail(state)
-    }
+  interruptPendingMessage = (chatId: string, messageId: string): Promise<ProviderChatDetail> =>
+    this.sendPendingMessage(chatId, messageId, false)
 
-    this.steerWithMessage(state, pending)
-    this.emitUpdate(state)
-    return this.createChatDetail(state)
-  }
-
-  interruptPendingMessage = async (
+  private sendPendingMessage = async (
     chatId: string,
-    messageId: string
+    messageId: string,
+    steer: boolean
   ): Promise<ProviderChatDetail> => {
     const state = await this.ensureState(chatId)
     this.requireAuthentication(state)
@@ -1874,15 +1819,18 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     const index = state.queuedMessages.findIndex((item) => item.id === messageId)
     const pending = state.queuedMessages[index]
     if (!pending) throw new Error('The Claude message is no longer queued.')
+    if (steer && state.active && !state.input) throw new Error('Claude session is not connected')
     state.queuedMessages.splice(index, 1)
     state.queuedMessagesPaused = false
     if (!state.active) {
       state.queuedMessages.unshift(pending)
       await this.drainNextQueuedMessage(state)
-      return this.createChatDetail(state)
+    } else if (steer) {
+      this.steerWithMessage(state, pending)
+      this.emitUpdate(state)
+    } else {
+      await this.interruptWithMessage(state, pending)
     }
-
-    await this.interruptWithMessage(state, pending)
     return this.createChatDetail(state)
   }
 
@@ -2180,21 +2128,15 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     }
   }
 
-  private getControlQueryEntry = (
-    options: ProviderSourceOptions,
-    profile: ClaudeControlQueryProfile
-  ): Promise<ClaudeControlQueryEntry> =>
-    this.controlQueries.get(`${profile}:${getContainerTargetKey(options.container)}`, () =>
-      this.createControlQueryEntry(options, profile)
-    )
-
   private withControlQuery = async <T>(
     options: ProviderSourceOptions,
     profile: ClaudeControlQueryProfile,
     run: (control: Query) => Promise<T>
   ): Promise<T> => {
     const key = `${profile}:${getContainerTargetKey(options.container)}`
-    const entry = await this.getControlQueryEntry(options, profile)
+    const entry = await this.controlQueries.get(key, () =>
+      this.createControlQueryEntry(options, profile)
+    )
     try {
       return await run(entry.query)
     } catch (error) {
@@ -2243,7 +2185,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   private getBaseQueryOptions = (
     options: ProviderTurnOptions | ProviderOneShotOptions | undefined,
-    runtime: Awaited<ReturnType<ClaudeProviderAdapter['getQueryRuntime']>>
+    runtime: ClaudeQueryRuntime
   ): ClaudeQueryOptions => {
     const permissionMode = getClaudePermissionMode(options)
     return {
@@ -2471,7 +2413,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
     const support = runHostCommand(command).then(
       (output) => {
-        const version = parseClaudeVersion(output)
+        const version = parseProviderVersion(output)
         return version ? supportsClaudeResumeDropsTurn(version) : false
       },
       (error: unknown) => {
@@ -2555,11 +2497,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         throw new Error('Claude provider was disposed.')
       const current = this.states.get(chatId)
       if (current) return current
-      if (!metadata && messages.length === 0) throw new Error('Claude session was not found.')
-      state.metadata = missingScheduledHistory ? null : (metadata ?? null)
-      state.createdAt = metadata?.createdAt ?? state.createdAt
-      state.updatedAt = metadata?.lastModified ?? state.updatedAt
-      state.cwd = metadata?.cwd ?? rememberedOptions?.cwd ?? null
+      state.metadata = missingScheduledHistory ? null : metadata
+      state.createdAt = metadata.createdAt ?? state.createdAt
+      state.updatedAt = metadata.lastModified ?? state.updatedAt
+      state.cwd = metadata.cwd ?? rememberedOptions?.cwd ?? null
       state.messages = messages
       state.historyPagination = missingScheduledHistory ? undefined : page.pagination
       state.goal = page.goal ?? null
@@ -2610,15 +2551,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       getRemoteClaudeContainer(container).then((remote) =>
         openClaudeHistorySource(
           chatId,
-          remote
-            ? async (script, args = []) =>
-                runHostCommand(
-                  await getHostCommand('sh', ['-lc', script, 'sele-claude-history-page', ...args], {
-                    container: remote,
-                    env: process.env
-                  })
-                )
-            : undefined
+          remote ? remoteShell(remote, 'sele-claude-history-page') : undefined
         )
       )
     )
@@ -3176,36 +3109,25 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         )
       })?.uuid ??
       null
-    const usage = Object.values(event.modelUsage ?? {}).reduce(
-      (total, model) =>
-        addTokenUsage(
-          total,
-          normalizeTokenUsage(
-            model.inputTokens + model.cacheCreationInputTokens,
-            model.cacheReadInputTokens,
-            model.outputTokens
-          )
-        ),
-      emptyTokenUsage()
-    )
+    const models = Object.entries(event.modelUsage ?? {}).map(([id, model]) => ({
+      modelId: model.canonicalModel ?? id,
+      pricingProvider: 'anthropic' as const,
+      usage: normalizeTokenUsage(
+        model.inputTokens + model.cacheCreationInputTokens,
+        model.cacheReadInputTokens,
+        model.outputTokens
+      ),
+      cacheWriteTokens: model.cacheCreationInputTokens,
+      totalUSD: model.costUSD
+    }))
     this.tokenUsageReporter.report({
       chatId: state.id,
       sourceKey: getContainerTargetKey(state.container),
       turnId,
       recordId: `query:${usageQueryId}`,
       timestamp: Date.now(),
-      usage,
-      models: Object.entries(event.modelUsage ?? {}).map(([id, model]) => ({
-        modelId: model.canonicalModel ?? id,
-        pricingProvider: 'anthropic' as const,
-        usage: normalizeTokenUsage(
-          model.inputTokens + model.cacheCreationInputTokens,
-          model.cacheReadInputTokens,
-          model.outputTokens
-        ),
-        cacheWriteTokens: model.cacheCreationInputTokens,
-        totalUSD: model.costUSD
-      })),
+      usage: models.reduce((total, model) => addTokenUsage(total, model.usage), emptyTokenUsage()),
+      models,
       cumulative: true,
       replaceProvisionalGroup: usageQueryId
     })
@@ -3332,7 +3254,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         clearClaudeStreamMessages(state.partialMessages, event)
       }
       this.addTranscriptMessage(state, message)
-      if (isClaudeAuthenticationFailure(message)) {
+      const authenticationFailed = isClaudeAuthenticationFailure(message)
+      if (authenticationFailed) {
         const sourceKey = getContainerTargetKey(state.container)
         this.authenticationFailures.add(sourceKey)
         this.authenticatedSources.delete(sourceKey)
@@ -3342,13 +3265,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
             this.queueUpdate(other, false)
           }
         }
-        state.failed = true
-        state.active = false
-        state.queuedMessagesPaused = true
-        this.emitUpdate(state, true)
-        return true
       }
-      if (message.type === 'assistant' && !message.parent_tool_use_id && message.error) {
+      if (
+        authenticationFailed ||
+        (message.type === 'assistant' && !message.parent_tool_use_id && message.error)
+      ) {
         state.failed = true
         state.active = false
         state.queuedMessagesPaused = true
@@ -3527,8 +3448,6 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       state.active = true
       state.waitingForSessionIdle = false
       this.emitUpdate(state)
-      void refreshContextUsage
-      void refreshMetadata
       return false
     }
 
@@ -3541,8 +3460,6 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (this.getQueueDrainDecision(state) === 'start') {
       this.emitUpdate(state, true)
       state.waitingForSessionIdle = false
-      void refreshContextUsage
-      void refreshMetadata
       await this.drainNextQueuedMessage(state)
       return false
     } else {
@@ -4000,10 +3917,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     ]
     let projected: ReturnType<ClaudeTranscriptProjection['read']> | null = null
     if (windowed === true) {
-      let projection = this.transcriptProjections.get(state)
-      if (!projection) {
-        projection = new ClaudeTranscriptProjection()
-      }
+      const projection = this.transcriptProjections.get(state) ?? new ClaudeTranscriptProjection()
       this.transcriptProjections.delete(state)
       this.transcriptProjections.set(state, projection)
       while (this.transcriptProjections.size > 8) {
@@ -4236,17 +4150,6 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     if (this.hiddenSessionIds.has(state.id)) return
     const detail = this.createChatDetail(state, true)
     this.chatUpdatedListeners.forEach((listener) => listener(detail, { turnCompleted }))
-  }
-
-  private rememberCanceledOneShotGeneration = (generationId: string): void => {
-    this.canceledOneShotGenerationIds.add(generationId)
-    const current = this.canceledOneShotGenerationTimers.get(generationId)
-    if (current) clearTimeout(current)
-    const timer = setTimeout(() => {
-      this.canceledOneShotGenerationIds.delete(generationId)
-      this.canceledOneShotGenerationTimers.delete(generationId)
-    }, oneShotCancellationRetentionMs)
-    this.canceledOneShotGenerationTimers.set(generationId, timer)
   }
 
   private takeCanceledOneShotGeneration = (generationId: string): boolean => {

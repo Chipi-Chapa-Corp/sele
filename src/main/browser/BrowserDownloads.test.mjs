@@ -100,7 +100,7 @@ test('downloads authorize one exact URL on an owned tab and emit terminal state'
   }
 })
 
-test('download waiters finish on completion, reject on revocation and clean up on close', async () => {
+test('downloads clean up on close', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'sele-download-unit-'))
   process.env.SELE_DOWNLOAD_TEST_DIRECTORY = directory
   const session = new EventEmitter()
@@ -110,16 +110,6 @@ test('download waiters finish on completion, reject on revocation and clean up o
     () => {}
   )
   try {
-    const waiting = downloads.wait(7, 1000)
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    const item = new Item('https://example.test/file')
-    session.emit('will-download', {}, item, { id: 7 })
-    item.emit('done', {}, 'completed')
-    assert.equal((await waiting).status, 'complete')
-    const pending = downloads.wait(7, 1000)
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    downloads.revoke(7)
-    await assert.rejects(pending, /detached/)
     await downloads.allow(7, 'https://example.test/file')
     const active = new Item('https://example.test/file')
     session.emit('will-download', {}, active, { id: 7 })

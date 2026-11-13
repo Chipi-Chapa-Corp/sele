@@ -1,30 +1,5 @@
-import { useWorkspaceProviderAccounts } from '../features/useWorkspaceProviderAccounts'
-import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
-import { useWorkspaceSourceControls } from '../features/useWorkspaceSourceControls'
-import { useWorkspaceDialogState } from '../state/useWorkspaceDialogState'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceChanges } from '../wiring/useWorkspaceChanges'
-import { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import { useWorkspaceSettingsActions } from '../wiring/useWorkspaceSettingsActions'
 import { getWorkspaceSettingsPanel } from './getWorkspaceSettingsPanel'
-
-type WorkspaceDialogsDependencies = {
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  settingsPanel: ReturnType<typeof getWorkspaceSettingsPanel>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  accountActions: ReturnType<typeof useWorkspaceProviderAccounts>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  settingsActions: ReturnType<typeof useWorkspaceSettingsActions>
-  sourceControls: ReturnType<typeof useWorkspaceSourceControls>
-  dialogState: ReturnType<typeof useWorkspaceDialogState>
-  changes: ReturnType<typeof useWorkspaceChanges>
-  files: ReturnType<typeof useWorkspaceFiles>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceDialogs({
   preferences,
@@ -39,7 +14,9 @@ export function getWorkspaceDialogs({
   dialogState,
   changes,
   files
-}: WorkspaceDialogsDependencies) {
+}: WorkspaceChanges & {
+  settingsPanel: ReturnType<typeof getWorkspaceSettingsPanel>
+}) {
   return {
     settingsCloseButtonRef: preferences.settingsCloseButtonRef,
     settingsOpen: preferences.settingsOpen,

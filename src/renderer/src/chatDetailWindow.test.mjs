@@ -6,8 +6,7 @@ import {
   mergeChatDetailTurnPage,
   mergeWorkingStepPage,
   preserveOptimisticChatDetail,
-  refreshRetainedChatDetailTurnWindow,
-  shouldPreserveOptimisticTurnUntilUserMessage
+  refreshRetainedChatDetailTurnWindow
 } from './chatDetailWindow.ts'
 import { shiftChatTurnWindow } from './chatTurnWindow.ts'
 
@@ -64,10 +63,6 @@ test('an activity page can still report completion for an active working step', 
 })
 
 test('preserves optimistic turns for every provider until its user message arrives', () => {
-  for (const providerId of ['codex', 'claude', 'copilot', 'opencode-v2']) {
-    assert.equal(shouldPreserveOptimisticTurnUntilUserMessage(providerId), true)
-  }
-
   const optimistic = detail([
     user('previous'),
     user('optimistic:submitted:user'),

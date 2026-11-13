@@ -272,7 +272,6 @@
   padding-top: 0.35rem;
 }
 
-.message-box__chat-config-sections,
 .message-box__chat-config-option-groups {
   display: flex;
   min-width: 0;

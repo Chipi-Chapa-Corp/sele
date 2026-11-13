@@ -1,5 +1,5 @@
 import { getContainerTargetKey } from '../containerTarget.ts'
-import type { ProviderChatMetadata } from '../../shared/provider'
+import type { ProviderChatDetail, ProviderChatMetadata } from '../../shared/provider'
 import type { ProviderAdapter } from './ProviderAdapter'
 import type { ProviderProcessScope, ProviderProcessStore } from '../ProviderProcessStore.ts'
 import { providerProcessContext } from '../providerProcessContext.ts'
@@ -65,20 +65,14 @@ export const withChatProcessRuntimes = <T extends ProviderAdapter>(
   const usageListeners = new Set<Parameters<NonNullable<ProviderAdapter['onTokenUsage']>>[0]>()
   const latest = new Map<
     string,
-    Pick<
-      Parameters<Parameters<ProviderAdapter['onChatUpdated']>[0]>[0],
-      'status' | 'pendingApproval' | 'lastTurnOutcome'
-    >
+    Pick<ProviderChatDetail, 'status' | 'pendingApproval' | 'lastTurnOutcome'>
   >()
   const owners = new Map<string, string>()
   const revisions = new Map<
     string,
     { owner: string; native: number; offset: number; latest: number }
   >()
-  const present = (
-    owner: string,
-    detail: Parameters<Parameters<ProviderAdapter['onChatUpdated']>[0]>[0]
-  ) => {
+  const present = (owner: string, detail: ProviderChatDetail) => {
     const previous = revisions.get(detail.id)
     const offset =
       previous?.owner === owner
@@ -303,10 +297,7 @@ export const withChatProcessRuntimes = <T extends ProviderAdapter>(
         if (!scope) owners.set(id, 'base')
         const result = await call(id, ...args)
         return result && typeof result === 'object' && 'revision' in result && 'items' in result
-          ? present(
-              scope?.record.id ?? 'base',
-              result as Parameters<Parameters<ProviderAdapter['onChatUpdated']>[0]>[0]
-            )
+          ? present(scope?.record.id ?? 'base', result as ProviderChatDetail)
           : result
       }
     })

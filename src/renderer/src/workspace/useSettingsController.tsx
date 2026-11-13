@@ -65,38 +65,43 @@ import {
   modelSupportsReasoningEffort,
   trimRecentChatCache
 } from './chatControllerUtils'
-import type { SettingsControllerDependencies } from './featureControllerDependencies'
+import type { WorkspaceSession } from './useWorkspaceSelection'
 
 // Return shape is inferred from the controller declarations below.
-export function useSettingsController(dependencies: SettingsControllerDependencies) {
+export function useSettingsController({
+  preferences,
+  settings,
+  chatCache,
+  chatState,
+  sourceState,
+  projectState,
+  providerState,
+  provider
+}: WorkspaceSession) {
   const {
     setAppSettings,
-    settingsProjectCwd,
     setProjectSettingsByCwd,
-    settingsViewIsProject,
-    effectiveAppSettings,
     setAppearanceZoomLevelInputDraft,
     setBrowserDefaultScaleInputDraft,
-    setAppearanceFontSizeInputDraft,
+    setAppearanceFontSizeInputDraft
+  } = preferences
+  const {
+    settingsProjectCwd,
+    settingsViewIsProject,
+    effectiveAppSettings,
     settingsProjectOverrides,
     settingsScopeKey,
     updateAppearanceZoomLevel,
-    settingsPanelSettings,
-    recentChatCacheLimitRef,
-    recentChatCacheRef,
-    selectedChat,
-    chatDetail,
-    cacheRecentChatDetail,
-    newSessionProvider,
-    newSessionContainerKey,
-    setProjects,
-    setDeletedProjectCwds,
-    setNewSessionCwd,
-    setProjectDialogOpen,
-    setProjectIconsByGroup,
+    settingsPanelSettings
+  } = settings
+  const { recentChatCacheLimitRef, recentChatCacheRef, cacheRecentChatDetail } = chatCache
+  const { selectedChat, chatDetail } = chatState
+  const { newSessionProvider, newSessionContainerKey, setNewSessionCwd } = sourceState
+  const { setProjects, setDeletedProjectCwds, setProjectDialogOpen, setProjectIconsByGroup } =
+    projectState
+  const {
     modelManuallySelectedRef,
     setModel,
-    models,
     setReasoningEffort,
     reasoningManuallySelectedRef,
     sandboxMode,
@@ -106,7 +111,8 @@ export function useSettingsController(dependencies: SettingsControllerDependenci
     approvalModeBeforeFullAccessRef,
     approvalMode,
     setSandboxMode
-  } = dependencies
+  } = providerState
+  const { models } = provider
 
   const updateAppSettings = (update: (settings: AppSettings) => AppSettings): void => {
     setAppSettings((currentSettings) => update(currentSettings))

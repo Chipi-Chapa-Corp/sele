@@ -2,31 +2,16 @@ import { appApi } from '../../appApi'
 import { getContainerTargetKey } from '../../containerSelection'
 import { useProviderUpdates } from '../../useProviderUpdates'
 import { useWorkspaceProviderContext } from '../features/useWorkspaceProviderContext'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-
-type WorkspaceProviderUpdatesDependencies = {
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceProviderUpdates({
   sourceState,
   providerState,
   provider
-}: WorkspaceProviderUpdatesDependencies) {
-  const {
-    providerUpdateSuggestions,
-    providerUpdateErrors,
-    updatingProviderUpdateKey,
-    providerUpdateInProgress: anyProviderUpdateInProgress,
-    isProviderUpdating,
-    handleSkipProviderUpdate,
-    handleNeverSuggestProviderUpdate,
-    handleNeverSuggestProviderUpdateVersion,
-    handleUpdateProvider
-  } = useProviderUpdates({
+}: WorkspaceState & {
+  provider: ReturnType<typeof useWorkspaceProviderContext>
+}) {
+  const updates = useProviderUpdates({
     providerIds: sourceState.newSessionAvailableProviderIds,
     container: sourceState.newSessionContainer,
     onUpdated: async (_result, container) => {
@@ -43,21 +28,13 @@ export function useWorkspaceProviderUpdates({
     }
   })
 
-  // Chat operations depend only on the provider and runtime they will use.
-  const providerUpdateInProgress = isProviderUpdating(
-    provider.configProviderId,
-    provider.configProviderContainer
-  )
   return {
-    providerUpdateSuggestions,
-    providerUpdateErrors,
-    updatingProviderUpdateKey,
-    anyProviderUpdateInProgress,
-    isProviderUpdating,
-    handleSkipProviderUpdate,
-    handleNeverSuggestProviderUpdate,
-    handleNeverSuggestProviderUpdateVersion,
-    handleUpdateProvider,
-    providerUpdateInProgress
+    ...updates,
+    anyProviderUpdateInProgress: updates.providerUpdateInProgress,
+    // Chat operations depend only on the provider and runtime they will use.
+    providerUpdateInProgress: updates.isProviderUpdating(
+      provider.configProviderId,
+      provider.configProviderContainer
+    )
   }
 }

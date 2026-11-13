@@ -140,11 +140,3 @@
   justify-content: flex-end;
   gap: 0.4rem;
 }
-
-.changes-sidebar__commit-error {
-  margin: 0;
-  color: var(--error);
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}

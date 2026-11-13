@@ -11,21 +11,9 @@ import {
 } from '../../containerSelection'
 import { providerApi } from '../../providerApi'
 import { getErrorMessage, mergeProjects } from '../chatControllerUtils'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
-type WorkspaceSourcesDependencies = {
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-}
-
-export function useWorkspaceSources({
-  sourceState,
-  projectState,
-  providerState
-}: WorkspaceSourcesDependencies) {
+export function useWorkspaceSources({ sourceState, projectState, providerState }: WorkspaceState) {
   // Asynchronous catalogs can settle while a large chat is visible. Let input
   // and the next animation frame interrupt the resulting workspace render.
   useEffect(() => {

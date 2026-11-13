@@ -132,7 +132,7 @@ export const getFirefoxCookieExpirationDate = (expiry: number, schemaVersion: nu
     : expiry
 }
 
-const getFirefoxCookieSameSite = (
+export const getCookieSameSite = (
   sameSite: number,
   secure: boolean
 ): BrowserCookieDetails['sameSite'] => {
@@ -142,7 +142,7 @@ const getFirefoxCookieSameSite = (
   return 'unspecified'
 }
 
-const getUrlHost = (host: string): string =>
+export const getUrlHost = (host: string): string =>
   host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
 
 export const convertFirefoxCookie = (
@@ -182,7 +182,7 @@ export const convertFirefoxCookie = (
       secure,
       httpOnly: Boolean(row.isHttpOnly),
       expirationDate,
-      sameSite: getFirefoxCookieSameSite(Number(row.sameSite), secure)
+      sameSite: getCookieSameSite(Number(row.sameSite), secure)
     },
     skipReason: null
   }

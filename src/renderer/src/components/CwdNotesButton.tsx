@@ -32,18 +32,13 @@ const getNotesMenuStyle = (buttonRect: DOMRect): CSSProperties => {
   const menuWidth = Math.min(288, window.innerWidth - viewportInset * 2)
   const bottomSpace = window.innerHeight - buttonRect.bottom
   const openUp = bottomSpace < 208 && buttonRect.top > bottomSpace
-  const nextMenuStyle: CSSProperties = {
+  return {
     width: toCssRem(menuWidth),
-    right: toCssRem(Math.max(viewportInset, window.innerWidth - buttonRect.right))
+    right: toCssRem(Math.max(viewportInset, window.innerWidth - buttonRect.right)),
+    ...(openUp
+      ? { bottom: toCssRem(window.innerHeight - buttonRect.top + menuOffset) }
+      : { top: toCssRem(buttonRect.bottom + menuOffset) })
   }
-
-  if (openUp) {
-    nextMenuStyle.bottom = toCssRem(window.innerHeight - buttonRect.top + menuOffset)
-  } else {
-    nextMenuStyle.top = toCssRem(buttonRect.bottom + menuOffset)
-  }
-
-  return nextMenuStyle
 }
 
 export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({
@@ -102,7 +97,6 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({
       }
     }
 
-    const handleResize = (): void => updateMenuPosition()
     const handleScroll = (event: Event): void => {
       const target = event.target
       if (target instanceof Node && menuRef.current?.contains(target)) return
@@ -111,12 +105,12 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({
     }
 
     document.addEventListener('pointerdown', handlePointerDown)
-    window.addEventListener('resize', handleResize)
+    window.addEventListener('resize', updateMenuPosition)
     window.addEventListener('scroll', handleScroll, true)
 
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown)
-      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('resize', updateMenuPosition)
       window.removeEventListener('scroll', handleScroll, true)
     }
   }, [closeMenu, open, updateMenuPosition])
@@ -134,14 +128,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({
     if (!text) return
 
     scrollAfterAddRef.current = true
-    onNotesChange([
-      ...notes,
-      {
-        id: crypto.randomUUID(),
-        text,
-        createdAt: Date.now()
-      }
-    ])
+    onNotesChange([...notes, { id: crypto.randomUUID(), text, createdAt: Date.now() }])
     setDraft('')
     inputRef.current?.focus({ preventScroll: true })
   }
@@ -150,10 +137,6 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({
     event.preventDefault()
     event.stopPropagation()
     handleAddNote()
-  }
-
-  const handleRemoveNote = (noteId: string): void => {
-    onNotesChange(notes.filter((note) => note.id !== noteId))
   }
 
   const menu = open ? (
@@ -183,7 +166,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({
                   id: `remove-${note.id}`,
                   ariaLabel: 'Remove note',
                   title: 'Remove note',
-                  callback: () => handleRemoveNote(note.id),
+                  callback: () => onNotesChange(notes.filter(({ id }) => id !== note.id)),
                   icon: <Trash2 aria-hidden="true" />
                 }
               ]}
@@ -226,10 +209,7 @@ export const CwdNotesButton: React.FC<CwdNotesButtonProps> = ({
           aria-label={`${label} notes`}
           label={triggerLabel}
           title={notes.length > 0 ? `${notes.length} notes` : 'Notes'}
-          callback={() => {
-            if (open) closeMenu()
-            else openMenu()
-          }}
+          callback={open ? closeMenu : openMenu}
           icon={<StickyNote aria-hidden="true" />}
         />
       </span>

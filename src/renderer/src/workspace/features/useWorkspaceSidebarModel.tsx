@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import type { AppContainerTarget, AppProject } from '../../../../shared/app'
+import type { AppContainerTarget } from '../../../../shared/app'
 import { isNoProjectChat, noProjectGroupKey } from '../../../../shared/noProject'
 import type { ProviderChat } from '../../../../shared/provider'
 import { matchesChatSidebarFilter } from '../../chatSidebarFilter'
@@ -22,28 +22,8 @@ import {
   doneGroupKey,
   newSessionNoProjectValue
 } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
 import { useSidebarSearch } from '../useSidebarSearch'
-import { useWorkspaceChatReadState } from './useWorkspaceChatReadState'
-
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-type WorkspaceSidebarModelDependencies = {
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  chatRead: ReturnType<typeof useWorkspaceChatReadState>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  projectRecordsByCwd: Map<string, AppProject>
-  session: Pick<
-    ReturnType<typeof useWorkspaceSession>,
-    'latestCommitFinishedAtByChatKey' | 'committingChatKeys'
-  >
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceSidebarModel({
   searchState,
@@ -54,7 +34,7 @@ export function useWorkspaceSidebarModel({
   projectState,
   projectRecordsByCwd,
   session
-}: WorkspaceSidebarModelDependencies) {
+}: WorkspaceSession) {
   const { latestCommitFinishedAtByChatKey, committingChatKeys } = session
 
   const searchTerms = useMemo(
@@ -253,11 +233,10 @@ export function useWorkspaceSidebarModel({
             cwd: null,
             label: 'Done',
             kind: 'done' as const,
-            chats: (unfilteredDoneChatGroup?.chats ?? []).filter(
-              (chat) =>
-                projectState.doneProjectFilterValue === newSessionNoProjectValue
-                  ? isNoProjectChat(chat)
-                  : getChatProjectCwd(chat) === projectState.doneProjectFilterValue
+            chats: (unfilteredDoneChatGroup?.chats ?? []).filter((chat) =>
+              projectState.doneProjectFilterValue === newSessionNoProjectValue
+                ? isNoProjectChat(chat)
+                : getChatProjectCwd(chat) === projectState.doneProjectFilterValue
             )
           },
     [projectState.doneProjectFilterValue, unfilteredDoneChatGroup]
@@ -283,12 +262,7 @@ export function useWorkspaceSidebarModel({
     searchTerms,
     sidebarSearch,
     chatReadState,
-    filteredChats,
     projectNamesByCwd,
-    importedChatGroup,
-    pinnedChatGroup,
-    activeChatGroups,
-    displayedActiveChatGroups,
-    doneChatGroup
+    activeChatGroups
   }
 }

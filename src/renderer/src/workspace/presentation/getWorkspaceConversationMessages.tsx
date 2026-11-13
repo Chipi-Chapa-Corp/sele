@@ -1,33 +1,6 @@
 import { conversationViews } from '../../conversationViews'
-import { useWorkspaceChatCache } from '../features/useWorkspaceChatCache'
-import { useWorkspaceScroll } from '../features/useWorkspaceScroll'
 import { useWorkspaceTurnRendering } from '../features/useWorkspaceTurnRendering'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
-import { useWorkspaceViewportState } from '../state/useWorkspaceViewportState'
-import { useWorkspaceCommits } from '../wiring/useWorkspaceCommits'
-import { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import { useWorkspaceInteractions } from '../wiring/useWorkspaceInteractions'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import { useWorkspaceSubagents } from '../wiring/useWorkspaceSubagents'
-
-type WorkspaceConversationMessagesDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  chatCache: ReturnType<typeof useWorkspaceChatCache>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  scroll: ReturnType<typeof useWorkspaceScroll>
-  session: ReturnType<typeof useWorkspaceSession>
-  interactions: ReturnType<typeof useWorkspaceInteractions>
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  conversation: ReturnType<typeof useWorkspaceConversation>
-  commits: ReturnType<typeof useWorkspaceCommits>
-  subagents: ReturnType<typeof useWorkspaceSubagents>
-  turnRendering: ReturnType<typeof useWorkspaceTurnRendering>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceConversationMessages({
   chatState,
@@ -43,7 +16,9 @@ export function getWorkspaceConversationMessages({
   subagents,
   turnRendering,
   subagentState
-}: WorkspaceConversationMessagesDependencies) {
+}: WorkspaceChanges & {
+  turnRendering: ReturnType<typeof useWorkspaceTurnRendering>
+}) {
   return {
     visible: Boolean(chatState.selectedChat),
     chatKnown: Boolean(chatState.selectedChat && conversationViews.has(chatState.selectedChat)),
@@ -70,7 +45,7 @@ export function getWorkspaceConversationMessages({
     handleNativeChatContentScroll: conversation.handleNativeChatContentScroll,
     handleNativeChatContentWheel: conversation.handleNativeChatContentWheel,
     handleReturnFromAiCommitChat: commits.handleReturnFromAiCommitChat,
-    handleReturnFromSubagentChat: () => subagents.handleReturnFromSubagentChat(),
+    handleReturnFromSubagentChat: subagents.handleReturnFromSubagentChat,
     handleNavigateSubagentTurns: subagents.handleNavigateSubagentTurns,
     loadChatTurnPage: conversation.loadChatTurnPage,
     renderChatTurn: turnRendering.renderChatTurn,

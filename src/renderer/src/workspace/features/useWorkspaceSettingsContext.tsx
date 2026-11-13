@@ -13,21 +13,13 @@ import {
   normalizeAppProjectSettingsCwd,
   resolveAppSettings
 } from '../../settings'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-
-type WorkspaceSettingsContextDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceSettingsContext({
   chatState,
   sourceState,
   preferences
-}: WorkspaceSettingsContextDependencies) {
+}: WorkspaceState) {
   const selectedChatDetail =
     chatState.chatDetail?.id === chatState.selectedChat?.id ? chatState.chatDetail : null
 

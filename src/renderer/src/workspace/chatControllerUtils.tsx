@@ -48,8 +48,6 @@ import {
 
 import { type AppGitCommitPromptSettings, type AppGitWorktreeSettings } from '../settings'
 
-import { type ChangeSource, type GitChangeSource } from '../changeTree'
-
 import { getContainerTargetKey } from '../containerSelection'
 
 import { type ChatCommitMarker } from '../components/AppStatusStates'
@@ -63,7 +61,6 @@ import {
 } from '../chatDetailWindow'
 
 import {
-  changeSourceLabels,
   commitActionLabels,
   doneGroupKey,
   pinnedGroupKey,
@@ -1087,53 +1084,19 @@ export const getScopedChatCommitPrompt = (
     .join('\n')
 }
 
-export const getErrorMessage = (error: unknown, fallback: string): string => {
-  if (!(error instanceof Error)) return fallback
-
-  const message = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
-
-  return message || fallback
-}
+export const getErrorMessage = (error: unknown, fallback: string): string =>
+  (error instanceof Error &&
+    error.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').trim()) ||
+  fallback
 
 export const isGitChangesScope = (
   scope: GitChangesScope | null,
   sourceKey: string,
-  cwd: string | null,
-  source: GitChangeSource | null
-): boolean =>
-  Boolean(
-    scope &&
-      cwd &&
-      source &&
-      scope.sourceKey === sourceKey &&
-      scope.cwd === cwd &&
-      scope.source === source
-  )
+  cwd: string | null
+): boolean => Boolean(scope && cwd && scope.sourceKey === sourceKey && scope.cwd === cwd)
 
 export const isFileTreeScope = (
   scope: FileTreeScope | null,
   containerKey: string,
   cwd: string | null
 ): boolean => Boolean(scope && cwd && scope.containerKey === containerKey && scope.cwd === cwd)
-
-export const getChangesEmptyMessage = (
-  source: ChangeSource,
-  cwd: string | null,
-  options: { hasNonReadOnlyTools?: boolean; hasUncommittedChanges?: boolean } = {}
-): string => {
-  if (source === 'lastTurn') {
-    if (options.hasNonReadOnlyTools && options.hasUncommittedChanges) {
-      return 'Command changes will be scoped by the chat when committed.'
-    }
-    return 'No files changed in the last turn.'
-  }
-  if (source === 'chat') {
-    if (options.hasNonReadOnlyTools && options.hasUncommittedChanges) {
-      return 'Command changes will be scoped by the chat when committed.'
-    }
-    return 'No files changed in this chat.'
-  }
-  if (!cwd) return 'Choose a folder to see changes.'
-
-  return `No ${changeSourceLabels[source].toLocaleLowerCase()} changes.`
-}

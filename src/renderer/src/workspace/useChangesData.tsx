@@ -1,187 +1,83 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import type { FileEditorTarget } from '../components/FileEditorDialog'
 import {
-  filterChangedFilesByPatches,
   getChangedFileDisplayPath,
-  getChatChangedFiles,
-  getCommitPatches,
   getGitChangedFiles,
-  getLastTurnChangedFiles,
-  getPatchFilterSignature,
-  getTreeFilesWithDisplayPaths,
-  isPatchChangeSource,
-  isPatchFilterScope,
-  type GitChangeSource
+  getTreeFilesWithDisplayPaths
 } from '../changeTree'
 import { type GitSyncAction } from './controllerTypes'
 import { isFileTreeScope, isGitChangesScope } from './chatControllerUtils'
-import type { ChangesDataDependencies } from './viewModelDependencies'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the derived change data below.
-export function useChangesData(dependencies: ChangesDataDependencies) {
+export function useChangesData({ panes, gitState, session, chatState }: WorkspaceChat) {
+  const { changesPaneView } = panes
   const {
-    changeSource,
-    visibleChatItems,
-    uncommittedPatchFilter,
-    changesContainerKey,
-    changesCwd,
-    uncommittedPatchFilterError,
-    setCachedPatchChangedFiles,
     gitChangesScope,
-    gitAvailabilityScopeKey,
     gitChanges,
     fileTreeScope,
     fileTree,
-    changesProjectCwd,
     gitChangeLoadScope,
     gitChangeLoadError,
-    uncommittedPatchFilterState,
     gitChangeLoadState,
     gitChangeLoadErrorDismissed,
     fileTreeLoadScope,
     fileTreeLoadState,
-    cachedPatchChangedFiles,
-    changesContainer,
     gitBranchesScope,
-    gitBranches,
-    changesPaneView,
-    selectedChat
-  } = dependencies
-
-  const patchChangeSourceSelected = isPatchChangeSource(changeSource)
-  const patchSourceChangedFiles = useMemo(() => {
-    if (changeSource === 'chat') return getChatChangedFiles(visibleChatItems)
-    if (changeSource === 'lastTurn') return getLastTurnChangedFiles(visibleChatItems)
-
-    return []
-  }, [changeSource, visibleChatItems])
-  const patchSourcePatches = useMemo(
-    () => getCommitPatches(patchSourceChangedFiles),
-    [patchSourceChangedFiles]
-  )
-  const patchFilterSignature = useMemo(
-    () => getPatchFilterSignature(patchSourcePatches),
-    [patchSourcePatches]
-  )
-  const patchFilterMatches = isPatchFilterScope(
-    uncommittedPatchFilter?.scope ?? null,
+    gitBranches
+  } = gitState
+  const {
     changesContainerKey,
     changesCwd,
-    changeSource,
-    patchFilterSignature
-  )
-  const patchFilterErrorMatches = isPatchFilterScope(
-    uncommittedPatchFilterError?.scope ?? null,
-    changesContainerKey,
-    changesCwd,
-    changeSource,
-    patchFilterSignature
-  )
-  const patchChangedFiles = useMemo(
-    () =>
-      patchFilterMatches
-        ? filterChangedFilesByPatches(
-            patchSourceChangedFiles,
-            uncommittedPatchFilter?.patches ?? []
-          )
-        : [],
-    [patchFilterMatches, patchSourceChangedFiles, uncommittedPatchFilter?.patches]
-  )
-  useEffect(() => {
-    if (!changesCwd || !isPatchChangeSource(changeSource) || !patchFilterMatches) return
+    gitAvailabilityScopeKey,
+    changesProjectCwd,
+    changesContainer
+  } = session
+  const { selectedChat } = chatState
 
-    let active = true
-    queueMicrotask(() => {
-      if (!active) return
-      setCachedPatchChangedFiles({
-        containerKey: changesContainerKey,
-        cwd: changesCwd,
-        source: changeSource,
-        files: patchChangedFiles
-      })
-    })
-
-    return () => {
-      active = false
-    }
-  }, [changeSource, changesContainerKey, changesCwd, patchChangedFiles, patchFilterMatches])
-  const currentGitChangeSource: GitChangeSource | null =
-    changeSource === 'uncommitted' ? 'uncommitted' : null
-  const gitChangesMatchCurrentSource = isGitChangesScope(
+  const displayedGitChanges = isGitChangesScope(
     gitChangesScope,
     gitAvailabilityScopeKey,
-    changesCwd,
-    currentGitChangeSource
+    changesCwd
   )
-  const displayedGitChanges = gitChangesMatchCurrentSource ? gitChanges : null
+    ? gitChanges
+    : null
   const untrackedFilesHiddenForPerformance = Boolean(
-    changeSource === 'uncommitted' && displayedGitChanges?.untrackedFilesHiddenForPerformance
-  )
-  const gitChangedFiles = useMemo(
-    () => (changesCwd ? getGitChangedFiles(displayedGitChanges) : []),
-    [changesCwd, displayedGitChanges]
-  )
-  const uncommittedGitChangesMatchCurrentCwd = isGitChangesScope(
-    gitChangesScope,
-    gitAvailabilityScopeKey,
-    changesCwd,
-    'uncommitted'
+    displayedGitChanges?.untrackedFilesHiddenForPerformance
   )
   const uncommittedChangedFiles = useMemo(
-    () =>
-      changesCwd && uncommittedGitChangesMatchCurrentCwd ? getGitChangedFiles(gitChanges) : [],
-    [changesCwd, gitChanges, uncommittedGitChangesMatchCurrentCwd]
+    () => (changesCwd ? getGitChangedFiles(displayedGitChanges) : []),
+    [changesCwd, displayedGitChanges]
   )
   const fileTreeMatchesCurrentCwd = isFileTreeScope(fileTreeScope, changesContainerKey, changesCwd)
   const repositoryFileIndex = fileTreeMatchesCurrentCwd && changesCwd ? fileTree : null
   const repositoryFileCount = repositoryFileIndex?.fileCount ?? 0
-  const gitChangeLoadMatchesCurrentSource = isGitChangesScope(
-    gitChangeLoadScope,
-    gitAvailabilityScopeKey,
-    changesCwd,
-    currentGitChangeSource
-  )
-  const gitChangeLoadErrorMatchesCurrentSource = isGitChangesScope(
+  const changesLoadState = !changesCwd
+    ? 'ready'
+    : isGitChangesScope(gitChangeLoadScope, gitAvailabilityScopeKey, changesCwd)
+      ? gitChangeLoadState
+      : 'loading'
+  const gitChangeLoadErrorMatchesCurrentCwd = isGitChangesScope(
     gitChangeLoadError?.scope ?? null,
     gitAvailabilityScopeKey,
-    changesCwd,
-    currentGitChangeSource
+    changesCwd
   )
-  const changesLoadState =
-    patchChangeSourceSelected && patchSourcePatches.length > 0
-      ? patchFilterMatches || patchFilterErrorMatches
-        ? uncommittedPatchFilterState
-        : 'loading'
-      : patchChangeSourceSelected || !changesCwd
-        ? 'ready'
-        : gitChangeLoadMatchesCurrentSource
-          ? gitChangeLoadState
-          : 'loading'
   const visibleGitChangeLoadError =
     changesCwd &&
     gitChangeLoadError?.operation === 'Fetch Git remote' &&
-    isGitChangesScope(gitChangeLoadError.scope, gitAvailabilityScopeKey, changesCwd, 'uncommitted')
+    gitChangeLoadErrorMatchesCurrentCwd
       ? gitChangeLoadError
       : changesLoadState !== 'error' || !changesCwd
         ? null
-        : patchChangeSourceSelected && patchSourcePatches.length > 0
-          ? patchFilterErrorMatches
-            ? uncommittedPatchFilterError
-            : {
-                scope: null,
-                cwd: changesCwd,
-                error: 'Unable to filter Git changes.',
-                operation: 'Filter Git changes'
-              }
-          : gitChangeLoadErrorMatchesCurrentSource
-            ? gitChangeLoadError
-            : {
-                scope: null,
-                cwd: changesCwd,
-                error: 'Unable to load changes.',
-                operation: 'Load Git changes'
-              }
+        : gitChangeLoadErrorMatchesCurrentCwd
+          ? gitChangeLoadError
+          : {
+              scope: null,
+              cwd: changesCwd,
+              error: 'Unable to load changes.',
+              operation: 'Load Git changes'
+            }
   const displayedGitChangeLoadError = gitChangeLoadErrorDismissed ? null : visibleGitChangeLoadError
   const fileTreeLoadMatchesCurrentCwd = isFileTreeScope(
     fileTreeLoadScope,
@@ -195,38 +91,13 @@ export function useChangesData(dependencies: ChangesDataDependencies) {
       : 'loading'
   const visibleFilesLoadState =
     filesLoadState === 'loading' && repositoryFileIndex ? 'ready' : filesLoadState
-  const cachedPatchChangedFilesMatch = Boolean(
-    cachedPatchChangedFiles &&
-    changesCwd &&
-    isPatchChangeSource(changeSource) &&
-    cachedPatchChangedFiles.containerKey === changesContainerKey &&
-    cachedPatchChangedFiles.cwd === changesCwd &&
-    cachedPatchChangedFiles.source === changeSource
-  )
-  const displayedPatchChangedFiles =
-    changesLoadState === 'loading' && cachedPatchChangedFilesMatch
-      ? (cachedPatchChangedFiles?.files ?? [])
-      : patchChangedFiles
-  const preserveDisplayedGitChanges =
-    changeSource === 'uncommitted' && displayedGitChanges !== null && changesLoadState !== 'ready'
   const visibleChangesLoadState =
-    preserveDisplayedGitChanges ||
-    (changesLoadState === 'loading' &&
-      patchChangeSourceSelected &&
-      displayedPatchChangedFiles.length > 0)
-      ? 'ready'
-      : changesLoadState
-  const rawChangedFiles =
-    changeSource === 'chat'
-      ? displayedPatchChangedFiles
-      : changeSource === 'lastTurn'
-        ? displayedPatchChangedFiles
-        : gitChangedFiles
+    displayedGitChanges !== null && changesLoadState !== 'ready' ? 'ready' : changesLoadState
   const changedFilesDisplayRoot =
     displayedGitChanges?.repositoryRoot ?? changesProjectCwd ?? changesCwd ?? null
   const changedFiles = useMemo(
-    () => getTreeFilesWithDisplayPaths(rawChangedFiles, changedFilesDisplayRoot),
-    [changedFilesDisplayRoot, rawChangedFiles]
+    () => getTreeFilesWithDisplayPaths(uncommittedChangedFiles, changedFilesDisplayRoot),
+    [changedFilesDisplayRoot, uncommittedChangedFiles]
   )
   const fileEditorDiffTargets = useMemo<FileEditorTarget[]>(
     () =>
@@ -256,13 +127,12 @@ export function useChangesData(dependencies: ChangesDataDependencies) {
   ]
     .filter(Boolean)
     .join(', ')
-  const changesGitMetadata = changesCwd && gitChangesScope?.cwd === changesCwd ? gitChanges : null
   const filesMetadata = changesCwd && fileTreeScope?.cwd === changesCwd ? fileTree : null
   const branchMetadata = changesCwd && gitBranchesScope?.cwd === changesCwd ? gitBranches : null
   const currentBranchName =
     branchMetadata?.currentBranch ??
-    (changesPaneView === 'files' ? filesMetadata?.branchName : changesGitMetadata?.branchName) ??
-    changesGitMetadata?.branchName ??
+    (changesPaneView === 'files' ? filesMetadata?.branchName : gitSyncMetadata?.branchName) ??
+    gitSyncMetadata?.branchName ??
     selectedChat?.branchName ??
     null
   const branchNames = branchMetadata?.branches ?? (currentBranchName ? [currentBranchName] : [])
@@ -278,7 +148,6 @@ export function useChangesData(dependencies: ChangesDataDependencies) {
     hasSyncChanges,
     hasUnpulledChanges,
     hasUnpushedChanges,
-    patchChangeSourceSelected,
     primarySyncAction,
     repositoryFileCount,
     repositoryFileIndex,

@@ -3,12 +3,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { ProviderSubagent } from '../../../shared/provider'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
+import { getString, isRecord } from '../providerValues.ts'
 
 const truncate = (value: string, limit: number): string => {
   const normalized = value.replace(/\s+/g, ' ').trim()

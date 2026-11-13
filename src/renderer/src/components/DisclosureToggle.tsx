@@ -10,7 +10,6 @@ type DisclosureToggleProps = Omit<
   open: boolean
   className?: string
   chevronClassName?: string
-  contentClassName?: string
 }
 
 const joinClassNames = (...classNames: Array<string | null | undefined | false>): string =>
@@ -20,7 +19,6 @@ export const DisclosureToggle: React.FC<DisclosureToggleProps> = ({
   children,
   className,
   chevronClassName,
-  contentClassName,
   open,
   ...buttonProps
 }) => (
@@ -38,8 +36,6 @@ export const DisclosureToggle: React.FC<DisclosureToggleProps> = ({
       className={joinClassNames('ui-disclosure-toggle__chevron', chevronClassName)}
       aria-hidden="true"
     />
-    <span className={joinClassNames('ui-disclosure-toggle__content', contentClassName)}>
-      {children}
-    </span>
+    <span className="ui-disclosure-toggle__content">{children}</span>
   </button>
 )

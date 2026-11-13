@@ -19,24 +19,14 @@ import { useWorkspaceSelectionPreferences } from '../features/useWorkspaceSelect
 import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
 import { useWorkspaceSources } from '../features/useWorkspaceSources'
 import { useWorkspaceProviderUpdates } from '../wiring/useWorkspaceProviderUpdates'
-import { useWorkspaceState } from './useWorkspaceState'
+import type { WorkspaceState } from './useWorkspaceState'
 
-type WorkspaceRuntimeDependencies = {
-  state: ReturnType<typeof useWorkspaceState>
-}
+export type WorkspaceRuntime = WorkspaceState & ReturnType<typeof useWorkspaceRuntime>
 
-export function useWorkspaceRuntime({ state }: WorkspaceRuntimeDependencies) {
-  const settings = useWorkspaceSettingsContext({
-    chatState: state.chatState,
-    sourceState: state.sourceState,
-    preferences: state.preferences
-  })
+export function useWorkspaceRuntime({ state }: { state: WorkspaceState }) {
+  const settings = useWorkspaceSettingsContext(state)
 
-  const provider = useWorkspaceProviderContext({
-    chatState: state.chatState,
-    sourceState: state.sourceState,
-    providerState: state.providerState
-  })
+  const provider = useWorkspaceProviderContext(state)
 
   const panes = useWorkspacePanes({ settings })
 
@@ -45,103 +35,39 @@ export function useWorkspaceRuntime({ state }: WorkspaceRuntimeDependencies) {
     [state.projectState.projects]
   )
 
-  useWorkspaceSelectionPreferences({
-    providerState: state.providerState,
-    chatState: state.chatState,
-    provider,
-    settings,
-    projectRecordsByCwd
-  })
+  useWorkspaceSelectionPreferences({ ...state, provider, settings, projectRecordsByCwd })
 
-  const resourceRefresh = useWorkspaceResourceRefresh({
-    providerState: state.providerState,
-    preferences: state.preferences
-  })
+  const resourceRefresh = useWorkspaceResourceRefresh(state)
 
-  const scroll = useWorkspaceScroll({
-    chatState: state.chatState,
-    viewportState: state.viewportState
-  })
+  const scroll = useWorkspaceScroll(state)
 
-  useWorkspacePersistence({
-    chatState: state.chatState,
-    sourceState: state.sourceState,
-    gitState: state.gitState,
-    preferences: state.preferences
-  })
+  useWorkspacePersistence(state)
 
-  useWorkspaceChatDiscovery({
-    chatState: state.chatState,
-    searchState: state.searchState,
-    sourceState: state.sourceState
-  })
+  useWorkspaceChatDiscovery(state)
 
-  const chatCache = useWorkspaceChatCache({
-    settings,
-    providerState: state.providerState,
-    chatState: state.chatState
-  })
+  const chatCache = useWorkspaceChatCache({ ...state, settings })
 
-  const chrome = useWorkspaceChrome({
-    dialogState: state.dialogState,
-    settings,
-    preferences: state.preferences
-  })
+  const chrome = useWorkspaceChrome({ ...state, settings })
 
-  useWorkspaceAppearance({ settings, preferences: state.preferences })
+  useWorkspaceAppearance({ ...state, settings })
 
-  const browser = useWorkspaceBrowser({ settings, dialogState: state.dialogState, panes })
+  const browser = useWorkspaceBrowser({ ...state, settings, panes })
 
-  useWorkspaceSources({
-    sourceState: state.sourceState,
-    projectState: state.projectState,
-    providerState: state.providerState
-  })
+  useWorkspaceSources(state)
 
-  useWorkspaceProviderSettings({
-    preferences: state.preferences,
-    sourceState: state.sourceState,
-    providerState: state.providerState,
-    settings
-  })
+  useWorkspaceProviderSettings({ ...state, settings })
 
-  const providerUpdates = useWorkspaceProviderUpdates({
-    sourceState: state.sourceState,
-    providerState: state.providerState,
-    provider
-  })
+  const providerUpdates = useWorkspaceProviderUpdates({ ...state, provider })
 
-  useWorkspaceProviderModes({ provider, providerState: state.providerState })
+  useWorkspaceProviderModes({ ...state, provider })
 
-  const catalogs = useWorkspaceModelCatalogs({
-    provider,
-    providerState: state.providerState,
-    chatState: state.chatState,
-    preferences: state.preferences,
-    sourceState: state.sourceState
-  })
+  const catalogs = useWorkspaceModelCatalogs({ ...state, provider })
 
-  const chatProjection = useWorkspaceChatProjection({
-    chatState: state.chatState,
-    chatCache,
-    searchState: state.searchState,
-    sourceState: state.sourceState,
-    gitState: state.gitState
-  })
+  const chatProjection = useWorkspaceChatProjection({ ...state, chatCache })
 
-  const chatRead = useWorkspaceChatReadState({
-    chatCache,
-    chatState: state.chatState,
-    chatProjection
-  })
+  const chatRead = useWorkspaceChatReadState({ ...state, chatCache, chatProjection })
 
-  useWorkspaceChatUpdates({
-    subagentState: state.subagentState,
-    chatState: state.chatState,
-    viewportState: state.viewportState,
-    chatProjection,
-    gitState: state.gitState
-  })
+  useWorkspaceChatUpdates({ ...state, chatProjection })
   return {
     settings,
     provider,

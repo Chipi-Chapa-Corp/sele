@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom'
 import type { ProviderReviewComment } from '../../../shared/provider'
 import { toCssRem } from '../cssUnits'
 import { AttachmentChip } from './AttachmentChip'
+import { getProjectRelativePath } from './ToolDiff'
 import './ReviewCommentsButton.css'
 
 type ReviewCommentsButtonProps = {
@@ -22,35 +23,6 @@ type ReviewCommentGroup = {
   comments: ProviderReviewComment[]
   displayPath: string
   path: string
-}
-
-const getProjectRelativePath = (path: string, projectCwd: string | null | undefined): string => {
-  const normalizedPath = path.replace(/\\/g, '/')
-  const rawProjectCwd = projectCwd?.trim().replace(/\\/g, '/')
-  const normalizedProjectCwd =
-    rawProjectCwd === '/' || /^[A-Za-z]:\/$/.test(rawProjectCwd ?? '')
-      ? rawProjectCwd
-      : rawProjectCwd?.replace(/\/+$/, '')
-
-  if (!normalizedProjectCwd) return normalizedPath.replace(/^\.\//, '')
-
-  const caseInsensitive = /^(?:[A-Za-z]:\/|\/\/)/.test(normalizedProjectCwd)
-  const comparisonPath = caseInsensitive ? normalizedPath.toLocaleLowerCase() : normalizedPath
-  const comparisonProjectCwd = caseInsensitive
-    ? normalizedProjectCwd.toLocaleLowerCase()
-    : normalizedProjectCwd
-
-  if (comparisonPath === comparisonProjectCwd) {
-    return normalizedPath.split('/').filter(Boolean).at(-1) ?? normalizedPath
-  }
-
-  const projectPrefix = comparisonProjectCwd.endsWith('/')
-    ? comparisonProjectCwd
-    : `${comparisonProjectCwd}/`
-
-  if (!comparisonPath.startsWith(projectPrefix)) return normalizedPath.replace(/^\.\//, '')
-
-  return normalizedPath.slice(projectPrefix.length)
 }
 
 const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
@@ -112,7 +84,7 @@ export const ReviewCommentsButton: React.FC<ReviewCommentsButtonProps> = ({
 
       commentsByPath.set(normalizedPath, {
         comments: [comment],
-        displayPath: getProjectRelativePath(normalizedPath, projectCwd),
+        displayPath: getProjectRelativePath(normalizedPath, projectCwd, true),
         path: comment.path
       })
     })

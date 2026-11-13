@@ -112,25 +112,11 @@ export class SqliteConversationViews {
     const summary = JSON.stringify(getConversationViewSummary(view))
     const db = await this.database()
     if (!current()) return false
+    const row = { format_version: 1, payload, summary, opening: null, updated_at: Date.now() }
     await db
       .insertInto('conversation_view')
-      .values({
-        scope_key: scope.key,
-        format_version: 1,
-        payload,
-        summary,
-        opening: null,
-        updated_at: Date.now()
-      })
-      .onConflict((c) =>
-        c.column('scope_key').doUpdateSet({
-          format_version: 1,
-          payload,
-          summary,
-          opening: null,
-          updated_at: Date.now()
-        })
-      )
+      .values({ scope_key: scope.key, ...row })
+      .onConflict((c) => c.column('scope_key').doUpdateSet(row))
       .execute()
     return current()
   }

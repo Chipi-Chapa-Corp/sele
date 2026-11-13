@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import 'react-diff-view/style/index.css'
-import type { ProviderChatItem, ProviderPendingMessage } from '../../../shared/provider'
+import type { ProviderChatItem } from '../../../shared/provider'
 import { getChatMessagePresentation } from '../chatMessageResources'
 import { getMessageModelLabel } from '../messageModelLabel'
 import { useMessageArrival } from '../motion/messageFlight'
@@ -89,38 +89,9 @@ const MessageDate: React.FC<{
   )
 }
 
-const getPendingMessageLabel = (message: ProviderPendingMessage): string =>
-  message.kind === 'steering' ? 'Steering' : 'Queue'
-
-const getPendingMessageActionLabel = (message: ProviderPendingMessage): string =>
-  message.kind === 'steering' ? 'steering' : 'queued'
-type ChatMessageProps = Pick<
-  ChatDetailItemProps,
-  | 'motionChatKey'
-  | 'canEditOwnMessages'
-  | 'markdownBaseUrl'
-  | 'messageBubble'
-  | 'container'
-  | 'messagePinned'
-  | 'pendingMessageLabel'
-  | 'pendingMessageDeleteDisabled'
-  | 'modelLabelsById'
-  | 'resolvedModelIdsById'
-  | 'onDeletePendingMessage'
-  | 'onEditPendingMessage'
-  | 'onSteerPendingMessage'
-  | 'onInterruptPendingMessage'
-  | 'onEditMessage'
-  | 'onForkMessage'
-  | 'onOpenFileLink'
-  | 'onToggleMessagePinned'
-  | 'previousItem'
-  | 'cwd'
-  | 'projectCwd'
-  | 'selectedModelId'
-  | 'streaming'
-  | 'turnIndex'
-> & { item: Extract<ProviderChatItem, { type: 'message' | 'pendingMessage' }> }
+type ChatMessageProps = Omit<ChatDetailItemProps, 'item'> & {
+  item: Extract<ProviderChatItem, { type: 'message' | 'pendingMessage' }>
+}
 
 export const ChatMessage = ({
   motionChatKey,
@@ -178,10 +149,12 @@ export const ChatMessage = ({
       : pending && item.kind === 'queued' && isQueuedPendingMessage(previousItem)
         ? null
         : pending
-          ? getPendingMessageLabel(item)
+          ? item.kind === 'steering'
+            ? 'Steering'
+            : 'Queue'
           : (item.label ?? null)
 
-  const pendingActionLabel = pending ? getPendingMessageActionLabel(item) : 'pending'
+  const pendingActionLabel = pending && item.kind === 'steering' ? 'steering' : 'queued'
 
   const canEdit =
     !pending &&
@@ -206,8 +179,6 @@ export const ChatMessage = ({
     (role === 'user' || !streaming)
 
   const canForkMessage = !pending && role === 'assistant' && !streaming && Boolean(onForkMessage)
-
-  const timestamp = item.createdAt
 
   const modelLabel = pending
     ? null
@@ -318,7 +289,7 @@ export const ChatMessage = ({
     <MessageDate
       markerSide={role === 'user' ? 'right' : 'left'}
       modelLabel={modelLabel}
-      timestamp={timestamp}
+      timestamp={item.createdAt}
     />
   )
 

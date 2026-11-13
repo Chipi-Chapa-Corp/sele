@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import type { CSSProperties, RefObject } from 'react'
 import type { AppFileTreeFile } from '../../../shared/app'
 import type {
   ProviderApp,
@@ -6,22 +6,11 @@ import type {
   ProviderSkill,
   ProviderSkillInput
 } from '../../../shared/provider'
-import { getComposerMentionAtCaret } from '../composerMention'
+import type { ComposerMention } from '../composerMention'
 import { toCssRem } from '../cssUnits'
+import { getFirstSentence } from '../providerSettings'
 import { maxSelectedSkillCount } from './composerLimits'
 const maxFileMentionResultCount = 50
-export type FileMention = {
-  start: number
-  end: number
-  query: string
-}
-
-export type SkillMention = {
-  start: number
-  end: number
-  query: string
-}
-
 export type ProjectFileCache = {
   cwd: string
   files: AppFileTreeFile[]
@@ -85,12 +74,32 @@ export const getMentionMenuStyle = (anchorRect: DOMRect): MentionMenuStyle => {
   return menuStyle
 }
 
-export const getFileMentionAtCaret = (message: string, caret: number): FileMention | null => {
-  return getComposerMentionAtCaret(message, caret, '@')
+export const removeComposerMention = (
+  message: string,
+  mention: ComposerMention
+): { message: string; caret: number } => {
+  const prefix = message.slice(0, mention.start)
+  const suffix = message.slice(mention.end)
+  const removeLeadingSuffixSpace =
+    suffix.startsWith(' ') && (prefix.length === 0 || prefix.endsWith(' '))
+  return {
+    message: prefix + (removeLeadingSuffixSpace ? suffix.slice(1) : suffix),
+    caret: prefix.length
+  }
 }
 
-export const getSkillMentionAtCaret = (message: string, caret: number): SkillMention | null => {
-  return getComposerMentionAtCaret(message, caret, '$')
+export const applyMentionReplacement = (
+  replacement: { message: string; caret: number },
+  setMessage: (message: string) => void,
+  textareaRef: RefObject<HTMLTextAreaElement | null>
+): void => {
+  setMessage(replacement.message)
+  window.requestAnimationFrame(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.focus({ preventScroll: true })
+    textarea.setSelectionRange(replacement.caret, replacement.caret)
+  })
 }
 
 export const getMentionFileName = (path: string): string => path.split('/').pop() || path
@@ -136,13 +145,6 @@ export const getFileMentionResults = (
 
 export const getComposerResultLabel = (result: ComposerResult): string =>
   result.kind === 'skill' ? result.skill.displayName || result.skill.name : result.app.name
-
-export const getFirstSentence = (value: string): string => {
-  const normalizedValue = value.replace(/\s+/g, ' ').trim()
-  if (!normalizedValue) return ''
-
-  return /^.*?[.!?](?=\s|$)/.exec(normalizedValue)?.[0] ?? normalizedValue
-}
 
 export const getSkillSummary = (skill: ProviderSkill): string =>
   getFirstSentence(skill.description || skill.shortDescription || '')

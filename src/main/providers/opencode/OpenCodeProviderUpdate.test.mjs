@@ -4,11 +4,12 @@ import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
 
-const source = readFileSync(new URL('./OpenCodeProviderUpdate.ts', import.meta.url), 'utf8')
-const code = ts.transpile(source, {
-  module: ts.ModuleKind.CommonJS,
-  target: ts.ScriptTarget.ES2022
-})
+const [code, sharedCode] = ['./OpenCodeProviderUpdate.ts', '../providerUpdate.ts'].map((file) =>
+  ts.transpile(readFileSync(new URL(file, import.meta.url), 'utf8'), {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022
+  })
+)
 function fixture(currentVersion, versions = { 1: '1.19.5', 2: '2.2.0' }) {
   const requests = []
   const commands = []
@@ -20,6 +21,11 @@ function fixture(currentVersion, versions = { 1: '1.19.5', 2: '2.2.0' }) {
     setTimeout,
     clearTimeout,
     require: (name) => {
+      if (name.includes('providerUpdate')) {
+        const shared = {}
+        vm.runInContext(`((exports) => {${sharedCode}})`, context)(shared)
+        return shared
+      }
       if (name === 'node:child_process')
         return {
           execFile: (file, args, options, callback) => {

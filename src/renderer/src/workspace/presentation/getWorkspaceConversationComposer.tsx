@@ -1,57 +1,7 @@
 import type { DropdownOption } from '../../components/Dropdown'
-import { approvalTypeLabels } from '../appearanceControllerUtils'
 import { type NewSessionLocation } from '../controllerTypes'
-import { useWorkspaceChatErrors } from '../features/useWorkspaceChatErrors'
-import { useWorkspaceChatPreset } from '../features/useWorkspaceChatPreset'
-import { useWorkspaceEffectiveSelection } from '../features/useWorkspaceEffectiveSelection'
-import { useWorkspaceProjectCatalog } from '../features/useWorkspaceProjectCatalog'
-import { useWorkspaceProjectResources } from '../features/useWorkspaceProjectResources'
-import { useWorkspaceProviderContext } from '../features/useWorkspaceProviderContext'
-import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
-import { useWorkspaceSidebarActions } from '../features/useWorkspaceSidebarActions'
-import { useWorkspaceSourceControls } from '../features/useWorkspaceSourceControls'
 import { useWorkspaceTurnRendering } from '../features/useWorkspaceTurnRendering'
-import { getApprovalSummary } from '../gitControllerUtils'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceDialogState } from '../state/useWorkspaceDialogState'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import { useWorkspaceInteractions } from '../wiring/useWorkspaceInteractions'
-import { useWorkspaceMessaging } from '../wiring/useWorkspaceMessaging'
-import { useWorkspaceProviderUpdates } from '../wiring/useWorkspaceProviderUpdates'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import { useWorkspaceSettingsActions } from '../wiring/useWorkspaceSettingsActions'
-
-type WorkspaceConversationComposerDependencies = {
-  chatPreset: ReturnType<typeof useWorkspaceChatPreset>
-  chatErrors: ReturnType<typeof useWorkspaceChatErrors>
-  session: ReturnType<typeof useWorkspaceSession>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  interactions: ReturnType<typeof useWorkspaceInteractions>
-  sourceControls: ReturnType<typeof useWorkspaceSourceControls>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-  settingsActions: ReturnType<typeof useWorkspaceSettingsActions>
-  messaging: ReturnType<typeof useWorkspaceMessaging>
-  sidebarActions: ReturnType<typeof useWorkspaceSidebarActions>
-  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
-  files: ReturnType<typeof useWorkspaceFiles>
-  conversation: ReturnType<typeof useWorkspaceConversation>
-  projectResources: ReturnType<typeof useWorkspaceProjectResources>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  turnRendering: ReturnType<typeof useWorkspaceTurnRendering>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  newSessionLocationOptions: DropdownOption<NewSessionLocation>[]
-  projectCatalog: ReturnType<typeof useWorkspaceProjectCatalog>
-  dialogState: ReturnType<typeof useWorkspaceDialogState>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceConversationComposer({
   chatPreset,
@@ -78,7 +28,10 @@ export function getWorkspaceConversationComposer({
   newSessionLocationOptions,
   projectCatalog,
   dialogState
-}: WorkspaceConversationComposerDependencies) {
+}: WorkspaceChanges & {
+  turnRendering: ReturnType<typeof useWorkspaceTurnRendering>
+  newSessionLocationOptions: DropdownOption<NewSessionLocation>[]
+}) {
   return {
     handleChatPresetChange: chatPreset.handleChatPresetChange,
     openCodeConnectionFailure: chatErrors.openCodeConnectionFailure,
@@ -103,7 +56,6 @@ export function getWorkspaceConversationComposer({
     approvalDecisionInFlight: session.approvalDecisionInFlight,
     approvalError: session.approvalError,
     approvalModes: providerState.approvalModes,
-    approvalTypeLabels,
     changesContainer: session.changesContainer,
     changesCwd: session.changesCwd,
     changesProjectCwd: session.changesProjectCwd,
@@ -119,7 +71,6 @@ export function getWorkspaceConversationComposer({
     effectiveReasoningEffort: effectiveSelection.effectiveReasoningEffort,
     effectiveSandboxMode: effectiveSelection.effectiveSandboxMode,
     effectiveServiceTier: effectiveSelection.effectiveServiceTier,
-    getApprovalSummary,
     handleActionsChange: settingsActions.handleActionsChange,
     handleApprovalModeChange: settingsActions.handleApprovalModeChange,
     handleCancelEditMessage: messaging.handleCancelEditMessage,

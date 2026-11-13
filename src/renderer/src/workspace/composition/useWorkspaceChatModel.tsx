@@ -12,23 +12,25 @@ import { useWorkspaceSidebarActions } from '../features/useWorkspaceSidebarActio
 import { useWorkspaceSidebarModel } from '../features/useWorkspaceSidebarModel'
 import { useWorkspaceSourceControls } from '../features/useWorkspaceSourceControls'
 import { useGitHubPullRequests } from '../useGitHubPullRequests'
-import { useWorkspaceChatListActions } from '../wiring/useWorkspaceChatListActions'
-import { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import { useWorkspaceInteractions } from '../wiring/useWorkspaceInteractions'
-import { useWorkspaceMessaging } from '../wiring/useWorkspaceMessaging'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import { useWorkspaceSettingsActions } from '../wiring/useWorkspaceSettingsActions'
+import { useConversationViewModel } from '../useConversationViewModel'
+import { useChatInteractionController } from '../useChatInteractionController'
+import { useChatListController } from '../useChatListController'
+import { useChatMessagingController } from '../useChatMessagingController'
+import { useWorkspaceSelection, type WorkspaceSession } from '../useWorkspaceSelection'
+import { useSettingsController } from '../useSettingsController'
 import { useWorkspaceRuntime } from './useWorkspaceRuntime'
 import { useWorkspaceState } from './useWorkspaceState'
 
 type WorkspaceChatModelDependencies = {
   state: ReturnType<typeof useWorkspaceState>
   runtime: ReturnType<typeof useWorkspaceRuntime>
-  session: ReturnType<typeof useWorkspaceSession>
+  session: ReturnType<typeof useWorkspaceSelection>
   onConversationRequested: (() => void) | undefined
   returnToRootChat: () => void
   returnFromSubagentChat: () => void
 }
+
+export type WorkspaceChat = WorkspaceSession & ReturnType<typeof useWorkspaceChatModel>
 
 export function useWorkspaceChatModel({
   state,
@@ -38,16 +40,9 @@ export function useWorkspaceChatModel({
   returnToRootChat,
   returnFromSubagentChat
 }: WorkspaceChatModelDependencies) {
-  const sidebarModel = useWorkspaceSidebarModel({
-    searchState: state.searchState,
-    sourceState: state.sourceState,
-    chatState: state.chatState,
-    chatRead: runtime.chatRead,
-    subagentState: state.subagentState,
-    projectState: state.projectState,
-    projectRecordsByCwd: runtime.projectRecordsByCwd,
-    session
-  })
+  const workspace = { ...state, ...runtime, session }
+
+  const sidebarModel = useWorkspaceSidebarModel(workspace)
 
   const gitHubPullRequests = useGitHubPullRequests({
     active:
@@ -56,165 +51,57 @@ export function useWorkspaceChatModel({
     container: session.changesContainer
   })
 
-  const projectResources = useWorkspaceProjectResources({
-    chatState: state.chatState,
-    session,
-    sourceState: state.sourceState,
-    sidebarModel,
-    projectState: state.projectState
-  })
+  const projectResources = useWorkspaceProjectResources({ ...workspace, sidebarModel })
 
-  const projectCatalog = useWorkspaceProjectCatalog({
-    chatState: state.chatState,
-    projectState: state.projectState,
-    sourceState: state.sourceState
-  })
+  const projectCatalog = useWorkspaceProjectCatalog(workspace)
 
-  const sourceControls = useWorkspaceSourceControls({
-    sourceState: state.sourceState,
-    providerUpdates: runtime.providerUpdates
-  })
+  const sourceControls = useWorkspaceSourceControls(workspace)
 
-  const accountActions = useWorkspaceProviderAccounts({
-    sourceState: state.sourceState,
-    providerState: state.providerState,
-    chatState: state.chatState,
-    session
-  })
+  const accountActions = useWorkspaceProviderAccounts(workspace)
 
-  const resourceActions = useWorkspaceResourceActions({
-    providerState: state.providerState,
-    sourceState: state.sourceState,
-    settings: runtime.settings,
-    resourceRefresh: runtime.resourceRefresh
-  })
+  const resourceActions = useWorkspaceResourceActions(workspace)
 
-  const gitModels = useWorkspaceGitModels({
-    provider: runtime.provider,
-    providerState: state.providerState,
-    settings: runtime.settings,
-    sourceState: state.sourceState
-  })
+  const gitModels = useWorkspaceGitModels(workspace)
 
-  const effectiveSelection = useWorkspaceEffectiveSelection({
-    provider: runtime.provider,
-    settings: runtime.settings,
-    providerState: state.providerState,
-    catalogs: runtime.catalogs
-  })
+  const effectiveSelection = useWorkspaceEffectiveSelection(workspace)
 
-  const settingsOptions = useWorkspaceSettingsOptions({
-    settings: runtime.settings,
-    providerState: state.providerState,
-    provider: runtime.provider
-  })
+  const settingsOptions = useWorkspaceSettingsOptions(workspace)
 
-  const sidebarActions = useWorkspaceSidebarActions({ projectState: state.projectState })
+  const sidebarActions = useWorkspaceSidebarActions(workspace)
 
   const navigation = useWorkspaceNavigation({
-    onConversationRequested: onConversationRequested,
-    chatState: state.chatState,
+    ...workspace,
+    onConversationRequested,
     handleReturnToRootChat: returnToRootChat,
-    chatCache: runtime.chatCache,
-    searchState: state.searchState,
-    gitState: state.gitState,
-    subagentState: state.subagentState,
-    sourceState: state.sourceState,
-    chatRead: runtime.chatRead,
-    handleReturnFromSubagentChat: returnFromSubagentChat,
-    chatProjection: runtime.chatProjection,
-    viewportState: state.viewportState,
-    session
+    handleReturnFromSubagentChat: returnFromSubagentChat
   })
 
-  const chatPreset = useWorkspaceChatPreset({
-    providerState: state.providerState,
-    provider: runtime.provider,
-    effectiveSelection
-  })
+  const chatPreset = useWorkspaceChatPreset({ ...workspace, effectiveSelection })
 
-  const settingsActions = useWorkspaceSettingsActions({
-    preferences: state.preferences,
-    settings: runtime.settings,
-    chatCache: runtime.chatCache,
-    chatState: state.chatState,
-    sourceState: state.sourceState,
-    projectState: state.projectState,
-    providerState: state.providerState,
-    provider: runtime.provider
-  })
+  const settingsActions = useSettingsController(workspace)
 
-  const chatErrors = useWorkspaceChatErrors({
-    chatState: state.chatState,
-    sourceState: state.sourceState,
-    effectiveSelection: effectiveSelection,
-    providerState: state.providerState,
-    preferences: state.preferences,
-    provider: runtime.provider,
-    session
-  })
+  const chatErrors = useWorkspaceChatErrors({ ...workspace, effectiveSelection })
 
-  const listActions = useWorkspaceChatListActions({
-    chatRead: runtime.chatRead,
-    chatCache: runtime.chatCache,
-    chatState: state.chatState,
-    chatProjection: runtime.chatProjection,
-    sourceState: state.sourceState,
-    projectState: state.projectState,
-    sidebarModel
-  })
+  const listActions = useChatListController({ ...workspace, sidebarModel })
 
-  const messaging = useWorkspaceMessaging({
-    chatErrors,
-    providerState: state.providerState,
-    chatState: state.chatState,
-    session,
-    provider: runtime.provider,
-    projectRecordsByCwd: runtime.projectRecordsByCwd,
-    effectiveSelection,
-    settings: runtime.settings,
-    sourceState: state.sourceState,
-    providerUpdates: runtime.providerUpdates,
-    subagentState: state.subagentState,
-    viewportState: state.viewportState,
-    chatRead: runtime.chatRead,
-    chatProjection: runtime.chatProjection,
-    gitState: state.gitState
-  })
+  const messaging = useChatMessagingController({ ...workspace, chatErrors, effectiveSelection })
 
-  const interactions = useWorkspaceInteractions({
-    viewportState: state.viewportState,
-    chatState: state.chatState,
-    scroll: runtime.scroll,
+  const interactions = useChatInteractionController({
+    ...workspace,
     sidebarModel,
-    projectState: state.projectState,
-    settings: runtime.settings,
-    projectRecordsByCwd: runtime.projectRecordsByCwd,
     projectCatalog,
-    session,
     sidebarActions,
     listActions,
     navigation,
     messaging,
-    chatRead: runtime.chatRead,
     chatErrors
   })
 
-  const conversation = useWorkspaceConversation({
-    provider: runtime.provider,
+  const conversation = useConversationViewModel({
+    ...workspace,
     effectiveSelection,
     chatErrors,
-    chatState: state.chatState,
-    sourceState: state.sourceState,
-    providerUpdates: runtime.providerUpdates,
-    session,
-    interactions,
-    settings: runtime.settings,
-    panes: runtime.panes,
-    viewportState: state.viewportState,
-    scroll: runtime.scroll,
-    chatRead: runtime.chatRead,
-    gitState: state.gitState
+    interactions
   })
   return {
     sidebarModel,

@@ -27,11 +27,6 @@ type ContainerEntry = {
 const containerCommandMaxBuffer = 512 * 1024
 const containerCommandTimeoutMs = 5_000
 
-type HostTextCommandOptions = {
-  required?: boolean
-  timeout?: number
-}
-
 const containerToolLabels = {
   distrobox: 'Distrobox',
   toolbox: 'Toolbox',
@@ -56,22 +51,23 @@ const runHostTextCommand = async (
   file: string,
   args: string[],
   container?: AppContainerTarget | null,
-  options: HostTextCommandOptions = {}
+  {
+    required = false,
+    timeout = containerCommandTimeoutMs
+  }: { required?: boolean; timeout?: number } = {}
 ): Promise<string | null> => {
-  const required = options.required ?? false
-  const timeout = options.timeout ?? containerCommandTimeoutMs
+  const failure = (error: unknown, stdout = '', stderr = ''): Error =>
+    new Error(
+      getProcessFailureMessage(error, stdout, stderr, {
+        label: 'SSH container discovery',
+        timeoutMs: timeout
+      })
+    )
   let hostCommand
   try {
     hostCommand = await getHostCommand(file, args, { container })
   } catch (error) {
-    if (required) {
-      throw new Error(
-        getProcessFailureMessage(error, '', '', {
-          label: 'SSH container discovery',
-          timeoutMs: timeout
-        })
-      )
-    }
+    if (required) throw failure(error)
     if (!isExpectedCommandAbsenceError(error)) {
       console.error(
         '[containerSuggestions:runHostTextCommand] Unable to resolve host command',
@@ -82,21 +78,8 @@ const runHostTextCommand = async (
   }
 
   return new Promise((resolve, reject) => {
-    const handleFailure = (error: unknown, stdout = '', stderr = ''): void => {
-      if (!required) {
-        resolve(null)
-        return
-      }
-
-      reject(
-        new Error(
-          getProcessFailureMessage(error, stdout, stderr, {
-            label: 'SSH container discovery',
-            timeoutMs: timeout
-          })
-        )
-      )
-    }
+    const handleFailure = (error: unknown, stdout?: string, stderr?: string): void =>
+      required ? reject(failure(error, stdout, stderr)) : resolve(null)
 
     try {
       const child = execFile(
@@ -167,12 +150,8 @@ const normalizeRuntimeId = (value: string | null): string | null => {
   return id && /^[a-f0-9]{12,64}$/.test(id) ? id : null
 }
 
-const parseContainerTable = (
-  output: string,
-  tool: AppContainerTool,
-  names: readonly string[],
-  fallbackNameIndex: (fields: string[]) => number
-): ContainerEntry[] => {
+const parseDistroboxContainers = (output: string): ContainerEntry[] => {
+  const names = ['name']
   const rows = output
     .split('\n')
     .map(splitTableLine)
@@ -190,13 +169,13 @@ const parseContainerTable = (
     if (getColumnIndex(fields, names) >= 0) return []
 
     const resolvedNameIndex =
-      nameIndex >= 0 && nameIndex < fields.length ? nameIndex : fallbackNameIndex(fields)
+      nameIndex >= 0 && nameIndex < fields.length ? nameIndex : fields.length >= 4 ? 1 : 0
     const name = getField(fields, resolvedNameIndex)
     if (!name) return []
 
     return [
       {
-        tool,
+        tool: 'distrobox',
         runtimeId:
           runtimeIdIndex >= 0 ? normalizeRuntimeId(getField(fields, runtimeIdIndex)) : null,
         name,
@@ -207,7 +186,7 @@ const parseContainerTable = (
   })
 }
 
-const parseFormattedContainers = (output: string, tool: AppContainerTool): ContainerEntry[] =>
+const parseDockerContainers = (output: string): ContainerEntry[] =>
   output
     .split('\n')
     .map((line) => stripAnsi(line).trim())
@@ -219,7 +198,7 @@ const parseFormattedContainers = (output: string, tool: AppContainerTool): Conta
 
       return [
         {
-          tool,
+          tool: 'docker',
           runtimeId: normalizeRuntimeId(runtimeIdField?.trim() || null),
           name,
           image: imageField?.trim() || null,
@@ -230,16 +209,12 @@ const parseFormattedContainers = (output: string, tool: AppContainerTool): Conta
 
 const getDistroboxContainers = async (
   container?: AppContainerTarget | null
-): Promise<ContainerEntry[]> => {
-  const output =
+): Promise<ContainerEntry[]> =>
+  parseDistroboxContainers(
     (await runHostTextCommand('distrobox', ['list', '--no-color'], container)) ??
-    (await runHostTextCommand('distrobox', ['list'], container))
-  if (!output) return []
-
-  return parseContainerTable(output, 'distrobox', ['name'], (fields) =>
-    fields.length >= 4 ? 1 : 0
+      (await runHostTextCommand('distrobox', ['list'], container)) ??
+      ''
   )
-}
 
 const parsePodmanContainers = (output: string): ContainerEntry[] => {
   // Even `toolbox list` can run `podman system migrate` and stop running containers.
@@ -292,19 +267,17 @@ const getPodmanContainers = async (
 
 const getDockerContainers = async (
   container?: AppContainerTarget | null
-): Promise<ContainerEntry[]> => {
-  const output = await runHostTextCommand(
-    'docker',
-    ['ps', '--format', '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'],
-    container
+): Promise<ContainerEntry[]> =>
+  parseDockerContainers(
+    (await runHostTextCommand(
+      'docker',
+      ['ps', '--format', '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'],
+      container
+    )) ?? ''
   )
-  if (!output) return []
-
-  return parseFormattedContainers(output, 'docker')
-}
 
 const isCurrentContainer = (
-  entry: Pick<ContainerEntry, 'tool' | 'name'>,
+  entry: ContainerEntry,
   currentContainer: AppContainerTarget | null
 ): boolean =>
   currentContainer?.kind === 'container' &&
@@ -351,16 +324,8 @@ const getContainerEntryDedupeKey = (entry: ContainerEntry): string => {
 const getContainerEntryPriority = (
   entry: ContainerEntry,
   currentContainer: AppContainerTarget | null
-): number => {
-  const currentToolPriority =
-    currentContainer?.kind === 'container' &&
-    entry.name === currentContainer.name &&
-    entry.tool === currentContainer.tool
-      ? -10
-      : 0
-
-  return currentToolPriority + containerToolPriority[entry.tool]
-}
+): number =>
+  (isCurrentContainer(entry, currentContainer) ? -10 : 0) + containerToolPriority[entry.tool]
 
 const mergeContainerEntries = (
   preferredEntry: ContainerEntry,
@@ -404,6 +369,32 @@ const dedupeContainerEntries = (
   return [...entriesByKey.values()]
 }
 
+const combineContainerEntries = (
+  distroboxContainers: ContainerEntry[],
+  podmanContainers: ContainerEntry[],
+  dockerContainers: ContainerEntry[],
+  currentContainer: AppContainerTarget | null
+): ContainerEntry[] => {
+  const wrappedContainers = dedupeContainerEntries(
+    [...distroboxContainers, ...podmanContainers.filter(({ tool }) => tool !== 'podman')],
+    currentContainer
+  )
+  const wrappedContainerNames = new Set(wrappedContainers.map(({ name }) => name))
+
+  return dedupeContainerEntries(
+    withCurrentContainer(
+      [
+        ...wrappedContainers,
+        ...[...podmanContainers, ...dockerContainers].filter(
+          ({ name }) => !wrappedContainerNames.has(name)
+        )
+      ],
+      currentContainer
+    ),
+    currentContainer
+  )
+}
+
 const getRemoteContainers = async (container: AppContainerTarget): Promise<ContainerEntry[]> => {
   const output = await runHostTextCommand(
     'sh',
@@ -416,40 +407,12 @@ const getRemoteContainers = async (container: AppContainerTarget): Promise<Conta
   }
 
   const toolOutputs = parseRemoteContainerDiscoveryOutput(output)
-  const distroboxContainers = parseContainerTable(
-    toolOutputs.distrobox ?? '',
-    'distrobox',
-    ['name'],
-    (fields) => (fields.length >= 4 ? 1 : 0)
-  )
-  const podmanContainers = parsePodmanContainers(toolOutputs.podman || '[]')
-  const wrappedContainers = dedupeContainerEntries(
-    [...distroboxContainers, ...podmanContainers.filter(({ tool }) => tool !== 'podman')],
+  return combineContainerEntries(
+    parseDistroboxContainers(toolOutputs.distrobox ?? ''),
+    parsePodmanContainers(toolOutputs.podman || '[]'),
+    parseDockerContainers(toolOutputs.docker ?? ''),
     null
   )
-  const wrappedContainerNames = new Set(wrappedContainers.map(({ name }) => name))
-
-  return dedupeContainerEntries(
-    [
-      ...wrappedContainers,
-      ...podmanContainers.filter(({ name }) => !wrappedContainerNames.has(name)),
-      ...parseFormattedContainers(toolOutputs.docker ?? '', 'docker').filter(
-        ({ name }) => !wrappedContainerNames.has(name)
-      )
-    ],
-    null
-  )
-}
-
-const getSuggestionDescription = (entry: ContainerEntry): string | null => {
-  const parts = [
-    entry.current ? 'Current' : null,
-    containerToolLabels[entry.tool],
-    entry.status,
-    entry.image
-  ].filter((part): part is string => Boolean(part))
-
-  return parts.length > 0 ? parts.join(' - ') : null
 }
 
 const toSuggestion = (entry: ContainerEntry): AppContainerSuggestion => ({
@@ -457,7 +420,14 @@ const toSuggestion = (entry: ContainerEntry): AppContainerSuggestion => ({
   tool: entry.tool,
   name: entry.name,
   label: entry.name,
-  description: getSuggestionDescription(entry),
+  description: [
+    entry.current ? 'Current' : null,
+    containerToolLabels[entry.tool],
+    entry.status,
+    entry.image
+  ]
+    .filter(Boolean)
+    .join(' - '),
   status: entry.status,
   current: entry.current || undefined
 })
@@ -480,20 +450,10 @@ export const getContainerSuggestions = async (
       getPodmanContainers(container),
       getDockerContainers(container)
     ])
-  const wrappedContainers = dedupeContainerEntries(
-    [...distroboxContainers, ...podmanContainers.filter(({ tool }) => tool !== 'podman')],
-    currentContainer
-  )
-  const wrappedContainerNames = new Set(wrappedContainers.map((container) => container.name))
-  const entries = dedupeContainerEntries(
-    withCurrentContainer(
-      [
-        ...wrappedContainers,
-        ...podmanContainers.filter((container) => !wrappedContainerNames.has(container.name)),
-        ...dockerContainers.filter((container) => !wrappedContainerNames.has(container.name))
-      ],
-      currentContainer
-    ),
+  const entries = combineContainerEntries(
+    distroboxContainers,
+    podmanContainers,
+    dockerContainers,
     currentContainer
   )
   const seenIds = new Set<string>()

@@ -5,15 +5,9 @@ import {
   getScrollBottomTop,
   readChatScrollAnchor
 } from '../../chatLayout'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceViewportState } from '../state/useWorkspaceViewportState'
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
-type WorkspaceScrollDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-}
-
-export function useWorkspaceScroll({ chatState, viewportState }: WorkspaceScrollDependencies) {
+export function useWorkspaceScroll({ chatState, viewportState }: WorkspaceState) {
   const scrollChatContentToBottom = useCallback((contentElement: HTMLElement): void => {
     alignChatContentToBottom(contentElement)
     // Skips the update itself when already at the bottom.

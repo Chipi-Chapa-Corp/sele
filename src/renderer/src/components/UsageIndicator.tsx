@@ -263,9 +263,6 @@ function BalanceBadge({
 
 const formatWindowLabel = (windowMinutes: number | null): string => {
   if (windowMinutes == null) return 'current window'
-  if (windowMinutes === 60) return 'hourly'
-  if (windowMinutes === 1_440) return 'daily'
-  if (windowMinutes === 10_080) return 'weekly'
 
   if (windowMinutes % 10_080 === 0) {
     const weeks = windowMinutes / 10_080
@@ -574,6 +571,11 @@ export function UsageIndicator({
   }, [onUsageRefresh, rateLimitRefreshBaseline, rateLimitUsageFingerprint, sourceKey])
 
   const accountUsageErrors = accountUsage?.errors ?? []
+  const usageErrorMessages = accountUsageErrors.map((usageError, index) => (
+    <p className="message-box__usage-status" key={`${usageError}:${index}`}>
+      {usageError}
+    </p>
+  ))
   const tokenUsageSupported = providerId !== 'opencode-v2'
   const statisticsSupported = providerId === 'codex'
   const statisticsReported = Boolean(
@@ -621,13 +623,6 @@ export function UsageIndicator({
     if (nextView === 'statistics' && !accountUsage?.statisticsLoaded) {
       void onUsageRefresh?.({ includeStatistics: true })
     }
-  }
-
-  const handleRateLimitReset = (
-    creditId?: string
-  ): Promise<ProviderAccountRateLimitResetOutcome> => {
-    rateLimitResetBaselineRef.current = getRateLimitUsageFingerprint(accountUsage)
-    return onUsageReset?.(creditId) ?? Promise.resolve('nothingToReset')
   }
 
   const handleRateLimitResetResult = async (
@@ -707,10 +702,7 @@ export function UsageIndicator({
             triggerLabel={queueTriggerLabel}
             key={sourceKey}
             onQueue={onQueueLimitReset}
-            resetsAt={
-              nextLimitReset(accountUsage?.rateLimits ?? [], Date.now(), modelUsageScope)
-                ?.resetsAt ?? null
-            }
+            resetsAt={nextLimitReset(rateLimits, Date.now(), modelUsageScope)?.resetsAt ?? null}
             onOpen={() => {
               void Promise.resolve(onUsageRefresh?.({ forceRefresh: true })).catch((error) =>
                 console.error('Unable to refresh the reset time.', error)
@@ -755,11 +747,9 @@ export function UsageIndicator({
                             value: 'statistics' as const,
                             label: triggerLabel
                               ? 'Stats'
-                              : statisticsLoading
+                              : statisticsLoading || statisticsReported
                                 ? 'Statistics'
-                                : statisticsReported
-                                  ? 'Statistics'
-                                  : 'No statistics',
+                                : 'No statistics',
                             ariaLabel: statisticsLoading
                               ? 'Statistics loading'
                               : statisticsReported
@@ -916,7 +906,11 @@ export function UsageIndicator({
                             availableCount={availableRateLimitResets}
                             options={accountUsage?.rateLimitResetCredits?.options}
                             disabled={rateLimitResetDisabled}
-                            onReset={handleRateLimitReset}
+                            onReset={(creditId) => {
+                              rateLimitResetBaselineRef.current =
+                                getRateLimitUsageFingerprint(accountUsage)
+                              return onUsageReset(creditId)
+                            }}
                             onResetError={(message) => {
                               if (currentSource.current === sourceKey)
                                 setRateLimitResetMessage(message)
@@ -979,11 +973,7 @@ export function UsageIndicator({
                       accountUsageErrors.length === 0 && (
                         <p className="message-box__usage-status">Usage unavailable.</p>
                       )}
-                    {accountUsageErrors.map((usageError, index) => (
-                      <p className="message-box__usage-status" key={`${usageError}:${index}`}>
-                        {usageError}
-                      </p>
-                    ))}
+                    {usageErrorMessages}
                   </section>
                 </div>
               ) : visibleUsageView === 'usage' ? (
@@ -1038,11 +1028,7 @@ export function UsageIndicator({
                     {accountUsage?.statisticsLoaded && !accountUsage.summary && (
                       <p className="message-box__usage-status">Statistics unavailable.</p>
                     )}
-                    {accountUsageErrors.map((usageError, index) => (
-                      <p className="message-box__usage-status" key={`${usageError}:${index}`}>
-                        {usageError}
-                      </p>
-                    ))}
+                    {usageErrorMessages}
                   </section>
                 </div>
               )}

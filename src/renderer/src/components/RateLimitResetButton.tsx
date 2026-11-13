@@ -13,18 +13,18 @@ const numberFormatter = new Intl.NumberFormat()
 type RateLimitResetButtonProps = {
   availableCount: number
   options?: ProviderAccountRateLimitResetOption[]
-  disabled?: boolean
+  disabled: boolean
   onReset: (creditId?: string) => Promise<ProviderAccountRateLimitResetOutcome>
-  onResetError?: (message: string) => void
-  onResetResult?: (outcome: ProviderAccountRateLimitResetOutcome) => Promise<void> | void
-  onResetStart?: () => void
+  onResetError: (message: string) => void
+  onResetResult: (outcome: ProviderAccountRateLimitResetOutcome) => Promise<void> | void
+  onResetStart: () => void
   pendingLabel?: string
 }
 
 export const RateLimitResetButton: React.FC<RateLimitResetButtonProps> = ({
   availableCount,
   options,
-  disabled = false,
+  disabled,
   onReset,
   onResetError,
   onResetResult,
@@ -53,14 +53,14 @@ export const RateLimitResetButton: React.FC<RateLimitResetButtonProps> = ({
     if (!window.confirm(confirmation)) return
 
     setPending(true)
-    onResetStart?.()
+    onResetStart()
 
     try {
       const outcome = await onReset(selected?.id)
-      await onResetResult?.(outcome)
+      await onResetResult(outcome)
     } catch (error) {
       console.error('[caught:RateLimitResetButton:handleReset]', error)
-      onResetError?.(error instanceof Error ? error.message : 'Unable to reset rate limits.')
+      onResetError(error instanceof Error ? error.message : 'Unable to reset rate limits.')
     } finally {
       setPending(false)
     }

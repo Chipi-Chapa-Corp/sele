@@ -4,7 +4,7 @@ import { useWorkspacePresentation } from './workspace/composition/useWorkspacePr
 import { useWorkspaceRuntime } from './workspace/composition/useWorkspaceRuntime'
 import { useWorkspaceState } from './workspace/composition/useWorkspaceState'
 import { useLatestHandler } from './workspace/stableProps'
-import { useWorkspaceSession } from './workspace/wiring/useWorkspaceSession'
+import { useWorkspaceSelection } from './workspace/useWorkspaceSelection'
 
 // The return type intentionally stays inferred so every view slice remains exact.
 export const useWorkspaceController = ({
@@ -15,22 +15,7 @@ export const useWorkspaceController = ({
   const state = useWorkspaceState()
   const runtime = useWorkspaceRuntime({ state })
 
-  const session = useWorkspaceSession({
-    chatState: state.chatState,
-    subagentState: state.subagentState,
-    gitState: state.gitState,
-    settings: runtime.settings,
-    sourceState: state.sourceState,
-    panes: runtime.panes,
-    dialogState: state.dialogState,
-    preferences: state.preferences,
-    providerState: state.providerState,
-    chatCache: runtime.chatCache,
-    chatRead: runtime.chatRead,
-    viewportState: state.viewportState,
-    scroll: runtime.scroll,
-    searchState: state.searchState
-  })
+  const session = useWorkspaceSelection({ ...state, ...runtime })
   // Navigation can request subagent actions after render; the handlers use the latest workspace.
   const returnToRootChat = useLatestHandler(() => changesModel.subagents.handleReturnToRootChat())
   const returnFromSubagentChat = useLatestHandler(() =>

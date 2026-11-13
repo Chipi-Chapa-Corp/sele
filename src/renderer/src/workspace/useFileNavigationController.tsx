@@ -29,20 +29,31 @@ import { getContainerTargetKey } from '../containerSelection'
 import { getChatDetailTurnCount, mergeChatDetailTurnPage } from '../chatDetailWindow'
 import { chatTurnWindowSize } from './controllerTypes'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
-import type { FileNavigationDependencies } from './controllerDependencies'
+import type { useChangesData } from './useChangesData'
+import type { useGitViewModel } from './useGitViewModel'
 import { useLatestHandler } from './stableProps'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the controller declarations below.
-export function useFileNavigationController(dependencies: FileNavigationDependencies) {
+export function useFileNavigationController({
+  gitState,
+  session,
+  changes,
+  gitPresentation,
+  panes,
+  dialogState,
+  chatState,
+  viewportState,
+  scroll
+}: WorkspaceChat & {
+  changes: ReturnType<typeof useChangesData>
+  gitPresentation: ReturnType<typeof useGitViewModel>
+}) {
   const {
     setCollapsedChangeTreeFolders,
     collapsedFileTreeFolders,
     setCollapsedFileTreeFolders,
-    changesCwd,
     collapsedFileTreeFoldersByCwdRef,
-    repositoryFileIndex,
-    branchSwitchDisabled,
-    currentProjectKey,
     branchActionProjectKeysRef,
     setBranchActionProjectKeys,
     gitBranchRequestIdRef,
@@ -50,45 +61,55 @@ export function useFileNavigationController(dependencies: FileNavigationDependen
     setGitBranchError,
     setGitBranchDeleteRetry,
     setGitBranchWorktreeDeleteRetry,
-    changesContainer,
     setGitBranches,
     setGitBranchesScope,
-    gitAvailabilityScopeKey,
     setGitBranchLoadState,
     setGitChangeLoadRequest,
     setFileTreeLoadRequest,
     gitBranchDeleteRetry,
     gitBranchWorktreeDeleteRetry,
     gitBranchActionState,
-    activeTreeFolderPaths,
-    hasCollapsedActiveTreeFolders,
-    changesPaneView,
-    setFileEditorTarget,
-    setRecentlyOpenedFilesByWorkspace,
+    collapsedChangeTreeFolders
+  } = gitState
+  const {
+    changesCwd,
+    changesContainer,
+    gitAvailabilityScopeKey,
     selectedChatKey,
+    handleChangesPaneViewChange
+  } = session
+  const { repositoryFileIndex } = changes
+  const {
+    branchSwitchDisabled,
+    currentProjectKey,
+    activeTreeFolderPaths,
+    hasCollapsedActiveTreeFolders
+  } = gitPresentation
+  const { changesPaneView } = panes
+  const { setFileEditorTarget, setReviewCommentsDraft, setSelectedReview } = dialogState
+  const {
+    setRecentlyOpenedFilesByWorkspace,
     setPinnedRecentChatReferences,
     selectedChatRef,
-    handleChangesPaneViewChange,
     selectedChatKeyRef,
-    pendingPinnedMessageNavigationRef,
-    scrollPinnedChatMessageIntoView,
     chatDetailRef,
+    chatTurnWindowRef,
+    setChatTurnPageLoadDirection,
+    setChatAtConversationBottom,
+    setChatDetail,
+    setChatTurnWindow
+  } = chatState
+  const {
+    pendingPinnedMessageNavigationRef,
     chatTurnPageLoadRequestRef,
     chatTurnPageLoadInFlightRef,
     chatTurnScrollDirectionRef,
     pendingChatScrollAnchorRef,
     chatViewportAnchorRef,
     chatAutoScrollEnabledRef,
-    chatAutoScrollTargetRef,
-    chatTurnWindowRef,
-    setChatTurnPageLoadDirection,
-    setChatAtConversationBottom,
-    setChatDetail,
-    setChatTurnWindow,
-    setReviewCommentsDraft,
-    setSelectedReview,
-    collapsedChangeTreeFolders
-  } = dependencies
+    chatAutoScrollTargetRef
+  } = viewportState
+  const { scrollPinnedChatMessageIntoView } = scroll
 
   const handleToggleChangeTreeFolder = (folderPath: string): void => {
     setCollapsedChangeTreeFolders((currentFolders) => ({

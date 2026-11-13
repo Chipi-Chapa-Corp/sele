@@ -1,5 +1,6 @@
 import type { CodexUserInput } from '../providers/codex/CodexItemRenderers'
-import { getDatabase } from './sqlite'
+import type { Selectable } from 'kysely'
+import { getDatabase, type LocalDatabase } from './sqlite'
 
 export type CodexSubmittedMessage = {
   chatId: string
@@ -9,13 +10,9 @@ export type CodexSubmittedMessage = {
   createdAt: number
 }
 
-const mapSubmittedMessage = (row: {
-  chat_id: string
-  client_message_id: string
-  turn_id: string | null
-  input_json: string
-  created_at: number
-}): CodexSubmittedMessage => ({
+const mapSubmittedMessage = (
+  row: Selectable<LocalDatabase['codex_submitted_messages']>
+): CodexSubmittedMessage => ({
   chatId: row.chat_id,
   clientMessageId: row.client_message_id,
   turnId: row.turn_id,

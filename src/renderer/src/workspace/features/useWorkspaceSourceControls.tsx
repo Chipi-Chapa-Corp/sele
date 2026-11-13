@@ -17,18 +17,9 @@ import {
 } from '../../containerSelection'
 import { providerOptions } from '../../messageBoxPreferences'
 import { getErrorMessage } from '../chatControllerUtils'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
-import type { useWorkspaceProviderUpdates } from '../wiring/useWorkspaceProviderUpdates'
-type WorkspaceSourceControlsDependencies = {
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerUpdates: Pick<ReturnType<typeof useWorkspaceProviderUpdates>, 'isProviderUpdating'>
-}
-
-export function useWorkspaceSourceControls({
-  sourceState,
-  providerUpdates
-}: WorkspaceSourceControlsDependencies) {
+export function useWorkspaceSourceControls({ sourceState, providerUpdates }: WorkspaceSession) {
   const { isProviderUpdating } = providerUpdates
 
   const handleDeleteSshEnvironment = useCallback(

@@ -28,21 +28,14 @@ export const isWorkingItemPayloadLoaded = (item: ProviderWorkingItem): boolean =
 const Activity: React.FC<{
   label: string
   tools: ProviderWorkingTool[]
+  activity: ProviderToolActivity
   active: boolean
   expanded: boolean
   onDisclosureToggle?: () => void
   projectCwd?: string | null
-}> = ({ label, tools, active, expanded, onDisclosureToggle, projectCwd }) => {
+}> = ({ label, tools, activity, active, expanded, onDisclosureToggle, projectCwd }) => {
   const [open, setOpen] = useWorkingDisclosure(`tool:${tools[0]?.id}`, expanded)
-  const activity = tools[0]?.activity ?? 'other'
   const detailKind = getToolDetailKind(activity, tools)
-
-  const detailLabel = getToolDisplayLabel(
-    label || tools[0]?.toolId || 'Tool use',
-    activity,
-    active,
-    tools[0]?.icon
-  )
 
   return (
     <details
@@ -59,7 +52,7 @@ const Activity: React.FC<{
         <span className="chat-detail__tool-icon">
           <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
         </span>
-        <span className="chat-detail__tool-label">{detailLabel}</span>
+        <span className="chat-detail__tool-label">{label}</span>
         <ChevronRight className="chat-detail__summary-chevron" aria-hidden="true" />
       </summary>
       {open && (
@@ -170,18 +163,31 @@ export const ToolItem: React.FC<{
       : baseLabel
   const label = getToolDisplayLabel(rawLabel, activity, active, tools[0]?.icon)
 
+  const disclosure = (
+    <Activity
+      label={label}
+      tools={tools}
+      activity={activity}
+      active={active}
+      expanded={expanded}
+      onDisclosureToggle={onDisclosureToggle}
+      projectCwd={projectCwd}
+    />
+  )
+  const statusRow = (
+    <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>
+      <span className="chat-detail__tool-icon">
+        <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
+      </span>
+      <span className="chat-detail__tool-label">{label}</span>
+    </div>
+  )
+
   const apps = tools.filter((tool) => tool.status === 'finished' && tool.mcpApp?.resourceUri)
   if (apps.length)
     return (
       <div>
-        <Activity
-          label={rawLabel}
-          tools={tools}
-          active={active}
-          expanded={expanded}
-          onDisclosureToggle={onDisclosureToggle}
-          projectCwd={projectCwd}
-        />
+        {disclosure}
         {apps.map((tool) => (
           <McpApp key={tool.mcpApp!.callId} callId={tool.mcpApp!.callId} />
         ))}
@@ -194,14 +200,7 @@ export const ToolItem: React.FC<{
     activity === 'delete' ||
     tools.every((tool) => tool.icon === 'browser')
   ) {
-    return (
-      <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>
-        <span className="chat-detail__tool-icon">
-          <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
-        </span>
-        <span className="chat-detail__tool-label">{label}</span>
-      </div>
-    )
+    return statusRow
   }
 
   if (!isWorkingItemPayloadLoaded(item)) {
@@ -255,24 +254,8 @@ export const ToolItem: React.FC<{
     tools.every((tool) => tool.icon === 'plan') ||
     !tools.some((tool) => hasToolDetails(tool, activity))
   ) {
-    return (
-      <div className={`chat-detail__tool-read${active ? ' chat-detail__tool-read--active' : ''}`}>
-        <span className="chat-detail__tool-icon">
-          <ToolStatusIcon activity={activity} active={active} icon={tools[0]?.icon} />
-        </span>
-        <span className="chat-detail__tool-label">{label}</span>
-      </div>
-    )
+    return statusRow
   }
 
-  return (
-    <Activity
-      label={rawLabel}
-      tools={tools}
-      active={active}
-      expanded={expanded}
-      onDisclosureToggle={onDisclosureToggle}
-      projectCwd={projectCwd}
-    />
-  )
+  return disclosure
 }

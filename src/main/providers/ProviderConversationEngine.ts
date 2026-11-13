@@ -5,7 +5,8 @@ import type {
   ProviderChatItem,
   ProviderMessage,
   ProviderWorkingItem,
-  ProviderWorkingStep
+  ProviderWorkingStep,
+  ProviderWorkingTool
 } from '../../shared/provider'
 
 export type ProviderConversationEntry =
@@ -72,6 +73,30 @@ const toWorkingItem = (entry: ProviderConversationEntry): ProviderWorkingItem =>
  * native records map to entries; ordering, final-message placement, and lifecycle presentation
  * are shared here.
  */
+export const updateConversationTool = (
+  entries: ProviderConversationEntry[],
+  toolId: string,
+  update: (tool: ProviderWorkingTool) => ProviderWorkingTool
+): void => {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry?.kind !== 'working') continue
+    const item = entry.item
+    if (item?.type === 'tool' && item.toolId === toolId) {
+      entries[index] = { kind: 'working', item: update(item) }
+      return
+    }
+    if (item?.type === 'toolGroup') {
+      const toolIndex = item.tools.findIndex((tool) => tool.toolId === toolId)
+      const tool = item.tools[toolIndex]
+      if (toolIndex >= 0 && tool) {
+        item.tools[toolIndex] = update(tool)
+        return
+      }
+    }
+  }
+}
+
 export const appendProviderConversationSegment = (
   target: ProviderChatItem[],
   segment: ProviderConversationSegment

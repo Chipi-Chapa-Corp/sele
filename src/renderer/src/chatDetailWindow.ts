@@ -2,7 +2,6 @@ import type {
   ProviderChatDetail,
   ProviderChatItem,
   ProviderChatTurnPage,
-  ProviderId,
   ProviderWorkingItem,
   ProviderWorkingItemSegment,
   ProviderWorkingStepPage,
@@ -17,12 +16,6 @@ export const optimisticChatItemIdPrefix = 'optimistic:'
 
 export const hasProviderUserMessage = (items: ProviderChatItem[]): boolean =>
   items.some((item) => item.type === 'message' && item.role === 'user')
-
-export const shouldPreserveOptimisticTurnUntilUserMessage = (providerId: ProviderId): boolean =>
-  providerId === 'codex' ||
-  providerId === 'claude' ||
-  providerId === 'copilot' ||
-  providerId === 'opencode-v2'
 
 export const hasProviderUserMessageAfterOptimisticTurn = (
   currentItems: ProviderChatItem[],
@@ -229,16 +222,13 @@ export const retainLoadedChatDetailTurnWindow = (
         retainedWindow
       )
 
-const getWorkingItemSegmentEndIndex = (segment: ProviderWorkingItemSegment): number =>
-  segment.startIndex + segment.items.length
-
 const getWorkingItemsByIndex = (
   segments: ProviderWorkingItemSegment[],
-  kind?: ProviderWorkingItemSegment['kind']
+  kind: ProviderWorkingItemSegment['kind']
 ): Map<number, ProviderWorkingItem> => {
   const itemsByIndex = new Map<number, ProviderWorkingItem>()
   segments.forEach((segment) => {
-    if (kind && segment.kind !== kind) return
+    if (segment.kind !== kind) return
     segment.items.forEach((item, index) => itemsByIndex.set(segment.startIndex + index, item))
   })
   return itemsByIndex
@@ -248,19 +238,14 @@ const getSegmentsFromIndexedItems = (
   itemsByIndex: ReadonlyMap<number, ProviderWorkingItem>,
   kind: ProviderWorkingItemSegment['kind']
 ): ProviderWorkingItemSegment[] => {
-  const indexes = [...itemsByIndex.keys()].sort((first, second) => first - second)
   const segments: ProviderWorkingItemSegment[] = []
 
-  indexes.forEach((index) => {
-    const item = itemsByIndex.get(index)
-    if (!item) return
+  for (const [index, item] of [...itemsByIndex].sort(([first], [second]) => first - second)) {
     const previousSegment = segments.at(-1)
-    if (previousSegment && getWorkingItemSegmentEndIndex(previousSegment) === index) {
+    if (previousSegment && previousSegment.startIndex + previousSegment.items.length === index) {
       previousSegment.items.push(item)
-      return
-    }
-    segments.push({ kind, startIndex: index, items: [item] })
-  })
+    } else segments.push({ kind, startIndex: index, items: [item] })
+  }
   return segments
 }
 
@@ -292,35 +277,6 @@ export const getWorkingStepItemSegments = (
   return [{ kind: 'history', startIndex: sourceStartIndex, items: step.items }]
 }
 
-const createSegmentedWorkingStep = (
-  step: Omit<ProviderWorkingStep, 'items'>,
-  segments: ProviderWorkingItemSegment[],
-  totalCount: number
-): ProviderWorkingStep => {
-  const boundedSegments = segments
-    .filter((segment) => segment.items.length > 0)
-    .sort((first, second) => first.startIndex - second.startIndex)
-  return {
-    ...step,
-    items: boundedSegments.flatMap((segment) => segment.items),
-    itemsLoaded: true,
-    itemCount: totalCount,
-    itemsStartIndex: boundedSegments[0]?.startIndex ?? 0,
-    itemSegments: boundedSegments.length > 0 ? boundedSegments : undefined
-  }
-}
-
-const retainBoundedHistoryItems = (
-  itemsByIndex: Map<number, ProviderWorkingItem>,
-  itemLimit: number,
-  loadingOlder: boolean
-): Map<number, ProviderWorkingItem> => {
-  if (itemsByIndex.size <= itemLimit) return itemsByIndex
-  const indexes = [...itemsByIndex.keys()].sort((first, second) => first - second)
-  const retainedIndexes = loadingOlder ? indexes.slice(0, itemLimit) : indexes.slice(-itemLimit)
-  return new Map(retainedIndexes.map((index) => [index, itemsByIndex.get(index)!]))
-}
-
 export const mergeWorkingStepPage = (
   currentStep: ProviderWorkingStep,
   page: ProviderWorkingStepPage,
@@ -348,11 +304,11 @@ export const mergeWorkingStepPage = (
 
   const historyItems = new Map([...currentHistoryItems].filter(([index]) => index < tailStartIndex))
   incomingHistoryItems.forEach((item, index) => historyItems.set(index, item))
-  const loadingOlder = page.startIndex < currentHistoryStartIndex
-  const boundedHistoryItems = retainBoundedHistoryItems(
-    historyItems,
-    boundedHistoryItemLimit,
-    loadingOlder
+  const sortedHistoryItems = [...historyItems].sort(([first], [second]) => first - second)
+  const boundedHistoryItems = new Map(
+    page.startIndex < currentHistoryStartIndex
+      ? sortedHistoryItems.slice(0, boundedHistoryItemLimit)
+      : sortedHistoryItems.slice(-boundedHistoryItemLimit)
   )
   const boundedTailItems = new Map(
     [...tailItems].filter(([index]) => index >= tailStartIndex && index < totalCount)
@@ -364,14 +320,19 @@ export const mergeWorkingStepPage = (
     currentStep.status === 'working' || currentStep.status === 'queued'
       ? page.status
       : currentStep.status
-  return createSegmentedWorkingStep(
-    { ...currentStep, status },
-    [
-      ...getSegmentsFromIndexedItems(boundedHistoryItems, 'history'),
-      ...getSegmentsFromIndexedItems(boundedTailItems, 'tail')
-    ],
-    totalCount
-  )
+  const segments = [
+    ...getSegmentsFromIndexedItems(boundedHistoryItems, 'history'),
+    ...getSegmentsFromIndexedItems(boundedTailItems, 'tail')
+  ]
+  return {
+    ...currentStep,
+    status,
+    items: segments.flatMap((segment) => segment.items),
+    itemsLoaded: true,
+    itemCount: totalCount,
+    itemsStartIndex: segments[0]?.startIndex ?? 0,
+    itemSegments: segments.length > 0 ? segments : undefined
+  }
 }
 
 export const mergeWorkingToolPage = (

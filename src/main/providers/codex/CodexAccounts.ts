@@ -212,11 +212,6 @@ if [ "$active" = "$account_id" ]; then
 fi
 `.trim()
 
-const getLocalUnavailableMessage = (): string | null => {
-  if (['linux', 'darwin', 'win32'].includes(process.platform)) return null
-  return 'Accounts configuration is not available on this operating system'
-}
-
 const requireAccountId = (value: string): string => {
   if (!isCodexAccountId(value)) throw new Error('Invalid Codex account ID')
   return value
@@ -249,8 +244,12 @@ const runAccountCommand = async (
 export const getCodexAccounts = async (
   container?: AppContainerTarget | null
 ): Promise<ProviderAccountConfiguration> => {
-  const unavailableMessage = container?.kind === 'container' ? null : getLocalUnavailableMessage()
-  if (unavailableMessage) return { available: false, unavailableMessage, accounts: [] }
+  if (container?.kind !== 'container' && !['linux', 'darwin', 'win32'].includes(process.platform))
+    return {
+      available: false,
+      unavailableMessage: 'Accounts configuration is not available on this operating system',
+      accounts: []
+    }
 
   return parseCodexAccountsOutput(
     await runAccountCommand(inspectAccountsScript, [codexAccountSessionId], container, 'inspect')
@@ -308,61 +307,39 @@ export const createCodexAccount = async (
   return { accountId }
 }
 
-export const useCodexAccount = async (
-  accountIdValue: string,
-  container?: AppContainerTarget | null
-): Promise<ProviderAccountConfiguration> => {
-  const accountId = requireSelectableAccountId(accountIdValue)
-  const configuration = await getCodexAccounts(container)
-  if (!configuration.available) throw new Error(configuration.unavailableMessage ?? 'Unavailable')
-  if (
-    accountId !== codexDefaultAccountId &&
-    !configuration.accounts.some((account) => account.id === accountId)
-  ) {
-    throw new Error('Codex account was not found.')
+const updateCodexAccount =
+  (
+    script: string,
+    operation: CodexAccountOperation,
+    mustBeListed: boolean,
+    requireId = requireAccountId
+  ) =>
+  async (
+    accountIdValue: string,
+    container?: AppContainerTarget | null
+  ): Promise<ProviderAccountConfiguration> => {
+    const accountId = requireId(accountIdValue)
+    if (mustBeListed) {
+      const configuration = await getCodexAccounts(container)
+      if (!configuration.available)
+        throw new Error(configuration.unavailableMessage ?? 'Unavailable')
+      if (!configuration.accounts.some((account) => account.id === accountId))
+        throw new Error('Codex account was not found.')
+    }
+    await runAccountCommand(script, [accountId], container, operation)
+    return getCodexAccounts(container)
   }
 
-  await runAccountCommand(useAccountScript, [accountId], container, 'use')
-  return getCodexAccounts(container)
-}
-
-export const finalizeCodexAccount = async (
-  accountIdValue: string,
-  container?: AppContainerTarget | null
-): Promise<ProviderAccountConfiguration> => {
-  await runAccountCommand(
-    finalizeAccountScript,
-    [requireAccountId(accountIdValue)],
-    container,
-    'finalize'
-  )
-  return getCodexAccounts(container)
-}
-
-export const cancelCodexAccountCreation = async (
-  accountIdValue: string,
-  container?: AppContainerTarget | null
-): Promise<ProviderAccountConfiguration> => {
-  await runAccountCommand(
-    cancelAccountCreationScript,
-    [requireAccountId(accountIdValue)],
-    container,
-    'cancel'
-  )
-  return getCodexAccounts(container)
-}
-
-export const deleteCodexAccount = async (
-  accountIdValue: string,
-  container?: AppContainerTarget | null
-): Promise<ProviderAccountConfiguration> => {
-  const accountId = requireAccountId(accountIdValue)
-  const configuration = await getCodexAccounts(container)
-  if (!configuration.available) throw new Error(configuration.unavailableMessage ?? 'Unavailable')
-  if (!configuration.accounts.some((account) => account.id === accountId)) {
-    throw new Error('Codex account was not found.')
-  }
-
-  await runAccountCommand(deleteAccountScript, [accountId], container, 'delete')
-  return getCodexAccounts(container)
-}
+export const useCodexAccount = updateCodexAccount(
+  useAccountScript,
+  'use',
+  true,
+  requireSelectableAccountId
+)
+export const finalizeCodexAccount = updateCodexAccount(finalizeAccountScript, 'finalize', false)
+export const cancelCodexAccountCreation = updateCodexAccount(
+  cancelAccountCreationScript,
+  'cancel',
+  false
+)
+export const deleteCodexAccount = updateCodexAccount(deleteAccountScript, 'delete', true)

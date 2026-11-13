@@ -112,11 +112,7 @@ export const getGitHubPullRequest = async (
   runGit: GitRunner,
   runGitHub: GitHubRunner
 ): Promise<AppGitHubPullRequestDetail> => {
-  if (!Number.isSafeInteger(options.number) || options.number < 1)
-    throw new Error('Invalid GitHub pull request number.')
-  const repository = resolveGitHubRepository((await runGit(cwd, ['remote', '-v'], true)) ?? '')
-  if (repository.toLowerCase() !== options.repository.toLowerCase())
-    throw new Error('The GitHub repository changed. Refresh the pull request list.')
+  const { repository } = await validatePullRequestRepository(cwd, options, runGit)
   const fields = Object.keys(detailSchema.shape).join(',')
   const [pullRequestJson, viewerJson, timelineJson, reviewCommentsJson] = await Promise.all([
     runGitHub([
@@ -129,22 +125,8 @@ export const getGitHubPullRequest = async (
       fields
     ]),
     runGitHub(['api', '--hostname', 'github.com', 'user']),
-    runGitHub([
-      'api',
-      '--hostname',
-      'github.com',
-      '--paginate',
-      '--slurp',
-      `repos/${repository}/issues/${options.number}/timeline?per_page=100`
-    ]),
-    runGitHub([
-      'api',
-      '--hostname',
-      'github.com',
-      '--paginate',
-      '--slurp',
-      `repos/${repository}/pulls/${options.number}/comments?per_page=100`
-    ])
+    readGitHubPages(runGitHub, `repos/${repository}/issues/${options.number}/timeline`),
+    readGitHubPages(runGitHub, `repos/${repository}/pulls/${options.number}/comments`)
   ])
   const parsed = detailSchema.safeParse(JSON.parse(pullRequestJson))
   const viewer = z.object({ login: z.string().min(1) }).safeParse(JSON.parse(viewerJson))
@@ -481,17 +463,20 @@ const toPullRequestFile = (
     : ''
 })
 
+const readGitHubPages = (runGitHub: GitHubRunner, path: string): Promise<string> =>
+  runGitHub(['api', '--hostname', 'github.com', '--paginate', '--slurp', `${path}?per_page=100`])
+
 const validatePullRequestRepository = async (
   cwd: string,
   options: Pick<AppGitHubPullRequestOptions, 'repository' | 'number'>,
   runGit: GitRunner
-): Promise<string> => {
+): Promise<{ endpoint: string; repository: string }> => {
   if (!Number.isSafeInteger(options.number) || options.number < 1)
     throw new Error('Invalid GitHub pull request number.')
   const repository = resolveGitHubRepository((await runGit(cwd, ['remote', '-v'], true)) ?? '')
   if (repository.toLowerCase() !== options.repository.toLowerCase())
     throw new Error('The GitHub repository changed. Refresh the pull request list.')
-  return `repos/${repository}/pulls/${options.number}`
+  return { endpoint: `repos/${repository}/pulls/${options.number}`, repository }
 }
 
 export const getGitHubPullRequestChanges = async (
@@ -500,24 +485,13 @@ export const getGitHubPullRequestChanges = async (
   runGit: GitRunner,
   runGitHub: GitHubRunner
 ): Promise<AppGitHubPullRequestChanges> => {
-  const endpoint = await validatePullRequestRepository(cwd, options, runGit)
+  const { endpoint } = await validatePullRequestRepository(cwd, options, runGit)
   const readHead = async () =>
     prHeadSchema.parse(JSON.parse(await runGitHub(['api', '--hostname', 'github.com', endpoint])))
   const before = await readHead()
   const pages = z
     .array(z.array(changedFileSchema))
-    .parse(
-      JSON.parse(
-        await runGitHub([
-          'api',
-          '--hostname',
-          'github.com',
-          '--paginate',
-          '--slurp',
-          `${endpoint}/files?per_page=100`
-        ])
-      )
-    )
+    .parse(JSON.parse(await readGitHubPages(runGitHub, `${endpoint}/files`)))
   const after = await readHead()
   if (before.head.sha !== after.head.sha || before.changed_files !== after.changed_files)
     throw new Error('The pull request changed while loading. Refresh its files.')
@@ -565,7 +539,7 @@ export const submitGitHubPullRequestReview = async (
   runGitHub: GitHubRunner
 ): Promise<void> => {
   const review = gitHubPullRequestReviewSchema.parse(options)
-  const endpoint = await validatePullRequestRepository(cwd, options, runGit)
+  const { endpoint } = await validatePullRequestRepository(cwd, options, runGit)
   const head = prHeadSchema.parse(
     JSON.parse(await runGitHub(['api', '--hostname', 'github.com', endpoint]))
   )
@@ -714,7 +688,7 @@ export const performGitHubPullRequestAction = async (
   runGitHub: GitHubRunner
 ): Promise<void> => {
   const action = gitHubPullRequestActionSchema.parse(options)
-  const endpoint = await validatePullRequestRepository(cwd, options, runGit)
+  const { endpoint } = await validatePullRequestRepository(cwd, options, runGit)
   const send = async (method: string, path: string, payload: unknown) =>
     runGitHub(
       ['api', '--hostname', 'github.com', '--method', method, path, '--input', '-'],
@@ -760,14 +734,10 @@ export const getGitHubPullRequestCommitChanges = async (
   await validatePullRequestRepository(cwd, options, runGit)
   const timeline = timelineSchema.parse(
     JSON.parse(
-      await runGitHub([
-        'api',
-        '--hostname',
-        'github.com',
-        '--paginate',
-        '--slurp',
-        `repos/${options.repository}/issues/${options.number}/timeline?per_page=100`
-      ])
+      await readGitHubPages(
+        runGitHub,
+        `repos/${options.repository}/issues/${options.number}/timeline`
+      )
     )
   )
   if (!timeline.flat().some((item) => item.event === 'committed' && item.sha === sha))
@@ -775,16 +745,7 @@ export const getGitHubPullRequestCommitChanges = async (
   const pages = z
     .array(z.object({ sha: shaSchema, files: z.array(changedFileSchema) }))
     .parse(
-      JSON.parse(
-        await runGitHub([
-          'api',
-          '--hostname',
-          'github.com',
-          '--paginate',
-          '--slurp',
-          `repos/${options.repository}/commits/${sha}?per_page=100`
-        ])
-      )
+      JSON.parse(await readGitHubPages(runGitHub, `repos/${options.repository}/commits/${sha}`))
     )
   if (!pages.length || pages.some((page) => page.sha !== sha))
     throw new Error('GitHub returned a different commit snapshot.')

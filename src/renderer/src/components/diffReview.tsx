@@ -57,16 +57,10 @@ export const groupReviewComments = (
 
   sortedComments.forEach((comment) => {
     const previousGroup = groups.at(-1)
-    const firstGroupLine = previousGroup?.comments[0]?.line
-    const previousCommentLine = previousGroup?.comments.at(-1)?.line
-
     if (
-      previousGroup &&
-      previousGroup.side === comment.side &&
-      firstGroupLine != null &&
-      previousCommentLine != null &&
-      comment.line - previousCommentLine <= 3 &&
-      comment.line - firstGroupLine <= 5
+      previousGroup?.side === comment.side &&
+      comment.line - previousGroup.comments[previousGroup.comments.length - 1].line <= 3 &&
+      comment.line - previousGroup.line <= 5
     ) {
       previousGroup.comments.push(comment)
       return

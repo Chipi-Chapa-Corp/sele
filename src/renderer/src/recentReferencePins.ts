@@ -5,7 +5,12 @@ import {
   type PinnedChatTextReference,
   type RecentChatReference
 } from './chatRecents.ts'
-import type { RecentlyOpenedFile } from './recentlyOpenedFiles.ts'
+import {
+  isNonEmptyString,
+  isRecentlyOpenedFile,
+  parseStoredReferences,
+  type RecentlyOpenedFile
+} from './recentlyOpenedFiles.ts'
 
 export type PinnedRecentReference =
   | RecentChatReference
@@ -22,12 +27,6 @@ export type DisplayedRecentChatReferences = {
 export const pinnedRecentChatReferencesStorageKey = 'sele:pinned-chat-references:v1'
 
 const externalLinkProtocols = new Set(['http:', 'https:', 'mailto:', 'tel:'])
-
-const isNonEmptyString = (value: unknown): value is string =>
-  typeof value === 'string' && value.trim().length > 0
-
-const isOptionalPositiveInteger = (value: unknown): value is number | undefined =>
-  value === undefined || (Number.isSafeInteger(value) && Number(value) > 0)
 
 const isNonNegativeInteger = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) >= 0
@@ -56,11 +55,9 @@ const isPinnedRecentReference = (value: unknown): value is PinnedRecentReference
     )
   }
 
-  const labeledReference = reference as Partial<RecentChatReference | RecentlyOpenedFile>
-  if (!isNonEmptyString(labeledReference.label)) return false
-
   if (reference.kind === 'link') {
     return (
+      isNonEmptyString(reference.label) &&
       isNonEmptyString(reference.messageId) &&
       (reference.role === 'user' || reference.role === 'assistant') &&
       isNonEmptyString(reference.href) &&
@@ -68,46 +65,15 @@ const isPinnedRecentReference = (value: unknown): value is PinnedRecentReference
     )
   }
 
-  return (
-    reference.kind === 'file' &&
-    isNonEmptyString(reference.path) &&
-    isNonEmptyString(reference.displayPath) &&
-    isOptionalPositiveInteger(reference.line) &&
-    isOptionalPositiveInteger(reference.endLine)
-  )
-}
-
-export const parsePinnedRecentChatReferences = (
-  value: unknown
-): PinnedRecentChatReferencesByChat => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-
-  const parsedReferences: PinnedRecentChatReferencesByChat = {}
-  Object.entries(value)
-    .slice(-200)
-    .forEach(([chatKey, references]) => {
-      if (!chatKey || !Array.isArray(references)) return
-
-      const seenReferences = new Set<string>()
-      const validReferences = references
-        .filter(isPinnedRecentReference)
-        .filter((reference) => {
-          const key = getRecentChatReferenceKey(reference)
-          if (seenReferences.has(key)) return false
-          seenReferences.add(key)
-          return true
-        })
-        .slice(0, 100)
-      if (validReferences.length > 0) parsedReferences[chatKey] = validReferences
-    })
-
-  return parsedReferences
+  return isRecentlyOpenedFile(value)
 }
 
 export const readStoredPinnedRecentChatReferences = (): PinnedRecentChatReferencesByChat => {
   try {
     const storedValue = preferenceStorage.getItem(pinnedRecentChatReferencesStorageKey)
-    return storedValue ? parsePinnedRecentChatReferences(JSON.parse(storedValue)) : {}
+    return storedValue
+      ? parseStoredReferences(JSON.parse(storedValue), isPinnedRecentReference, 100)
+      : {}
   } catch (error) {
     console.error('[caught:recentReferencePins:readStoredPinnedRecentChatReferences]', error)
     return {}

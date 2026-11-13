@@ -14,10 +14,7 @@ test('native v2 connection errors never expose submitted keys or SDK request bod
     connectOpenCode(client, { integrationId: 'fixture', method: 'key', key: secret }),
     (error) => !error.message.includes(secret) && /Unable to connect/.test(error.message)
   )
-  await assert.rejects(
-    listOpenCodeConnections(client, async () => ({})),
-    /Unable to load connections/
-  )
+  await assert.rejects(listOpenCodeConnections(client), /Unable to load connections/)
 })
 
 test('conditional provider prompts support eq and neq', () => {

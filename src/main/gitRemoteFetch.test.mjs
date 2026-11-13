@@ -155,19 +155,19 @@ test('changes refresh awaits fetching before counting and retains local status o
     console: { error: (...args) => errors.push(args) }
   })
   const readChanges = expression('getGitChanges', context)
-  let result = await readChanges('/repo', 'uncommitted', true)
+  let result = await readChanges('/repo', true)
   assert.deepEqual(events, ['fetch', 'counts'])
   assert.equal(result.unpulledCount, 2)
   assert.equal(result.remoteFetchError, undefined)
   events.length = 0
   fail = true
-  result = await readChanges('/repo', 'uncommitted', true)
+  result = await readChanges('/repo', true)
   assert.deepEqual(events, ['fetch', 'counts'])
   assert.equal(result.remoteFetchError, 'Cannot reach remote')
   assert.equal(result.files[0].path, 'local.txt')
   assert.equal(errors.length, 1)
   events.length = 0
-  await readChanges('/repo', 'uncommitted')
+  await readChanges('/repo')
   assert.deepEqual(events, ['counts'], 'Other local Git reads do not need a fetch')
 })
 
@@ -178,9 +178,9 @@ test('Git changes IPC validates and preserves the remote fetch request', () => {
   })
   const parseOptions = expression('getGitChangesOptions', context)
   const container = { kind: 'ssh', environmentId: 'host' }
-  const result = parseOptions({ container, cwd: '/repo', source: 'uncommitted', fetchRemote: true })
+  const result = parseOptions({ container, cwd: '/repo', fetchRemote: true })
   assert.equal(result.fetchRemote, true)
   assert.equal(result.container, container)
   assert.equal(result.cwd, '/repo')
-  assert.throws(() => parseOptions({ source: 'uncommitted', fetchRemote: 'yes' }), /fetch option/)
+  assert.throws(() => parseOptions({ fetchRemote: 'yes' }), /fetch option/)
 })

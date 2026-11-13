@@ -1,12 +1,11 @@
+import { getErrorMessage } from '../providerValues.ts'
+
 export const codexExecutablePathEnvKey = 'SELE_CODEX_PATH'
 
 export const getCodexExecutable = (): string => {
   const configuredExecutable = process.env[codexExecutablePathEnvKey]?.trim()
   return configuredExecutable || 'codex'
 }
-
-const getErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
 
 export const isCodexExecutableUnavailable = (error: unknown): boolean =>
   ['ENOENT', 'EACCES', 'ENOEXEC'].includes((error as NodeJS.ErrnoException)?.code ?? '') ||

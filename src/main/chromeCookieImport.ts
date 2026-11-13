@@ -1,5 +1,9 @@
 import { createDecipheriv, createHash, pbkdf2Sync } from 'node:crypto'
-import type { BrowserCookieDetails, BrowserCookieSkipReason } from './firefoxCookieImport'
+import {
+  getCookieSameSite,
+  getUrlHost,
+  type BrowserCookieConversionResult
+} from './firefoxCookieImport'
 
 export type ChromeProfileEntry = {
   default: boolean
@@ -36,19 +40,12 @@ export type ChromeCookieDecryptionResult =
   | { protection: null; value: string }
   | { protection: string; value: null }
 
-export type ChromeCookieConversionResult =
-  | { cookie: BrowserCookieDetails; skipReason: null }
-  | { cookie: null; skipReason: BrowserCookieSkipReason }
-
 export type ChromeUserDataRoot = {
   installation: string
   relativePath: string
 }
 
 const chromeWindowsEpochOffsetSeconds = 11_644_473_600n
-const chromeSameSiteNone = 0
-const chromeSameSiteLax = 1
-const chromeSameSiteStrict = 2
 const chromeSourceSchemeSecure = 2
 const chromeAesIv = Buffer.alloc(16, 0x20)
 
@@ -135,14 +132,11 @@ export const getChromeCookieExpirationDate = (expiresUtc: string): number => {
   }
 }
 
-const getUrlHost = (host: string): string =>
-  host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
-
 export const convertChromeCookie = (
   row: ChromeCookieRow,
   value: string,
   nowSeconds = Date.now() / 1_000
-): ChromeCookieConversionResult => {
+): BrowserCookieConversionResult => {
   if (row.topFrameSiteKey) return { cookie: null, skipReason: 'partitioned' }
 
   const domainCookie = row.host.startsWith('.')
@@ -158,14 +152,6 @@ export const convertChromeCookie = (
 
   const secure = Boolean(row.isSecure)
   const path = row.path?.startsWith('/') ? row.path : '/'
-  const sameSite: BrowserCookieDetails['sameSite'] =
-    row.sameSite === chromeSameSiteLax
-      ? 'lax'
-      : row.sameSite === chromeSameSiteStrict
-        ? 'strict'
-        : row.sameSite === chromeSameSiteNone && secure
-          ? 'no_restriction'
-          : 'unspecified'
 
   return {
     cookie: {
@@ -177,7 +163,7 @@ export const convertChromeCookie = (
       secure,
       httpOnly: Boolean(row.isHttpOnly),
       ...(expirationDate == null ? {} : { expirationDate }),
-      sameSite
+      sameSite: getCookieSameSite(row.sameSite, secure)
     },
     skipReason: null
   }

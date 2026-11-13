@@ -80,25 +80,17 @@ export const setMessageReview = async (
   review: ProviderReview
 ): Promise<void> => {
   const db = await getDatabase()
+  const columns = {
+    chat_id: chatId,
+    prompt,
+    serialized_content: serializedContent,
+    comments_json: JSON.stringify(review.comments)
+  }
 
   await db
     .insertInto('message_reviews')
-    .values({
-      id: review.id,
-      chat_id: chatId,
-      prompt,
-      serialized_content: serializedContent,
-      comments_json: JSON.stringify(review.comments),
-      created_at: Date.now()
-    })
-    .onConflict((conflict) =>
-      conflict.column('id').doUpdateSet({
-        chat_id: chatId,
-        prompt,
-        serialized_content: serializedContent,
-        comments_json: JSON.stringify(review.comments)
-      })
-    )
+    .values({ id: review.id, ...columns, created_at: Date.now() })
+    .onConflict((conflict) => conflict.column('id').doUpdateSet(columns))
     .execute()
   reviewCache.invalidate()
 }

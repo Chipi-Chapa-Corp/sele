@@ -4,10 +4,26 @@ import { browserToolInstructions, createBrowserTools } from '../../browser/Brows
 import type { CodexDynamicTools, CodexDynamicToolResult } from './CodexDynamicTools'
 import { getBrowserUseSession, onBrowserUseSessionRemoved } from './CodexBrowserSessions'
 
-/** Advertise the embedded browser independently of Codex's optional Browser Use plugin. */
-export function registerCodexBrowserTools(registry: CodexDynamicTools): { close(): void } | null {
-  const service = getBrowserAutomationService()
-  if (!service) return null
+type BrowserToolResult = Awaited<
+  ReturnType<ReturnType<typeof createBrowserTools>['tools'][number]['execute']>
+>
+
+export const toCodexToolResult = (result: BrowserToolResult): CodexDynamicToolResult => ({
+  success: !result.isError,
+  contentItems: result.content.map((item) =>
+    item.type === 'image'
+      ? { type: 'inputImage', imageUrl: `data:${item.mimeType};base64,${item.data}` }
+      : { type: 'inputText', text: item.text }
+  )
+})
+
+export function registerCodexBrowserToolSet(
+  registry: CodexDynamicTools,
+  service: Parameters<typeof createBrowserTools>[0],
+  namespace: string,
+  sessionLabel: string,
+  describe: (description: string) => string
+): { close(): void } {
   const workspaces = new Map<string, ReturnType<typeof createBrowserTools>>()
   const revoke = (sessionId: string): void => {
     workspaces.get(sessionId)?.close()
@@ -29,13 +45,13 @@ export function registerCodexBrowserTools(registry: CodexDynamicTools): { close(
       {
         type: 'function',
         name: definition.name,
-        description: `${definition.description} ${browserToolInstructions}`,
+        description: describe(definition.description),
         inputSchema: z.toJSONSchema(definition.schema)
       },
-      async (args, context): Promise<CodexDynamicToolResult> => {
+      async (args, context) => {
         if (context.signal.aborted) throw new Error('Tool canceled.')
         const scope = getBrowserUseSession(context.threadId)
-        if (!scope) throw new Error('Browser session is not owned by Sele.')
+        if (!scope) throw new Error(`${sessionLabel} session is not owned by Sele.`)
         subscribe()
         let workspace = workspaces.get(context.threadId)
         if (!workspace) {
@@ -43,17 +59,9 @@ export function registerCodexBrowserTools(registry: CodexDynamicTools): { close(
           workspaces.set(context.threadId, workspace)
         }
         const tool = workspace.tools.find((tool) => tool.name === definition.name)!
-        const result = await tool.execute(args)
-        return {
-          success: !result.isError,
-          contentItems: result.content.map((item) =>
-            item.type === 'image'
-              ? { type: 'inputImage', imageUrl: `data:${item.mimeType};base64,${item.data}` }
-              : { type: 'inputText', text: item.text }
-          )
-        }
+        return toCodexToolResult(await tool.execute(args))
       },
-      'sele_browser'
+      namespace
     )
   definitions.close()
   return {
@@ -64,4 +72,18 @@ export function registerCodexBrowserTools(registry: CodexDynamicTools): { close(
       unsubscribe = undefined
     }
   }
+}
+
+/** Advertise the embedded browser independently of Codex's optional Browser Use plugin. */
+export function registerCodexBrowserTools(registry: CodexDynamicTools): { close(): void } | null {
+  const service = getBrowserAutomationService()
+  return service
+    ? registerCodexBrowserToolSet(
+        registry,
+        service,
+        'sele_browser',
+        'Browser',
+        (description) => `${description} ${browserToolInstructions}`
+      )
+    : null
 }

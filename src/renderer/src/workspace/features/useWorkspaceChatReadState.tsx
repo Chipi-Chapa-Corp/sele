@@ -9,23 +9,20 @@ import { createChatSeenWriter } from '../../chatSeenWriter'
 import { providerApi } from '../../providerApi'
 import { getChatKey, getProviderChatKey } from '../chatControllerUtils'
 import { type ApplyChatDetailOptions } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
 import { useWorkspaceChatCache } from './useWorkspaceChatCache'
 import { useWorkspaceChatProjection } from './useWorkspaceChatProjection'
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 const persistChatSeen = createChatSeenWriter((...args) => providerApi.markChatSeen(...args))
-
-type WorkspaceChatReadStateDependencies = {
-  chatCache: ReturnType<typeof useWorkspaceChatCache>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
-}
 
 export function useWorkspaceChatReadState({
   chatCache,
   chatState,
   chatProjection
-}: WorkspaceChatReadStateDependencies) {
+}: WorkspaceState & {
+  chatCache: ReturnType<typeof useWorkspaceChatCache>
+  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
+}) {
   const applyChatMetadata = useCallback((metadataList: ProviderChatMetadata[]): void => {
     const metadataById = new Map(metadataList.map((metadata) => [metadata.id, metadata]))
     const recentChatCache = chatCache.recentChatCacheRef.current

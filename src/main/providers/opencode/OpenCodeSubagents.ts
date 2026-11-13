@@ -4,7 +4,7 @@ import type { OpenCodeMessageWithParts } from './OpenCodeItemRenderers.ts'
 
 type OpenCodeSubagentStatus = { type?: string } | undefined
 
-const truncate = (value: string, limit: number): string => {
+export const truncate = (value: string, limit: number): string => {
   const normalized = value.replace(/\s+/g, ' ').trim()
   return normalized.length <= limit ? normalized : `${normalized.slice(0, limit - 1)}…`
 }
