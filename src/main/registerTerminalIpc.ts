@@ -291,6 +291,25 @@ const normalizeProcessName = (value: string): string =>
     .replace(/\.exe$/i, '')
     .toLocaleLowerCase()
 
+// Host/container launchers and shell startup files can leave a different shell
+// at the prompt than the configured one. An idle shell is not an active task.
+const shellProcessNames = new Set([
+  'sh',
+  'bash',
+  'dash',
+  'ash',
+  'zsh',
+  'fish',
+  'ksh',
+  'mksh',
+  'csh',
+  'tcsh',
+  'nu',
+  'pwsh',
+  'powershell',
+  'cmd'
+])
+
 const getProcessStatus = (session: ManagedTerminalSession): TerminalProcessStatus => {
   let processName: string | null = null
 
@@ -308,6 +327,7 @@ const getProcessStatus = (session: ManagedTerminalSession): TerminalProcessStatu
     hasActiveProcess:
       normalizedProcessName !== null &&
       normalizedProcessName !== normalizedShellName &&
+      !shellProcessNames.has(normalizedProcessName) &&
       normalizedProcessName !== 'xterm-256color',
     processName
   }

@@ -37,7 +37,10 @@ const load = (source, mocks, globals = {}) => {
   return context.exports
 }
 
-const harness = (now = Date.now, { persistent = new Map(), cleanup, discoveryError } = {}) => {
+const harness = (
+  now = Date.now,
+  { persistent = new Map(), cleanup, discoveryError, shell = '/bin/sh' } = {}
+) => {
   const handlers = new Map()
   const events = new Map()
   const agentSessions = createAgentTerminalSessions(now)
@@ -90,6 +93,7 @@ const harness = (now = Date.now, { persistent = new Map(), cleanup, discoveryErr
           const pty = {
             ...makePty(),
             metadata: launch.metadata,
+            refreshStatus: async () => {},
             attach: async () => {},
             stop: async () => {
               pty.killed = true
@@ -109,7 +113,7 @@ const harness = (now = Date.now, { persistent = new Map(), cleanup, discoveryErr
         }
       },
       '../shared/provider': { providerIds: ['codex', 'claude', 'copilot', 'opencode-v2'] },
-      'node:os': { userInfo: () => ({ shell: '/bin/sh' }) },
+      'node:os': { userInfo: () => ({ shell }) },
       './pty': {
         spawnPty: (file, args, options) => {
           const pty = makePty()
@@ -168,6 +172,51 @@ const harness = (now = Date.now, { persistent = new Map(), cleanup, discoveryErr
         }
       )
   }
+}
+
+for (const workspaceKey of [undefined, 'workspace']) {
+  test(`terminal activity ignores alternate idle shells, persistent=${!!workspaceKey}`, async () => {
+    const h = harness(Date.now, { shell: '/usr/bin/fish' })
+    try {
+      const session = await h.create({ workspaceKey })
+      const pty = workspaceKey ? h.persistent.get(session.id) : h.launches[0].pty
+      const status = () =>
+        h.handlers.get(terminalIpcChannels.getProcessStatus)({ sender: h.owner }, session.id)
+      for (const processName of [
+        '/usr/bin/sh',
+        ' /bin/bash ',
+        '-zsh',
+        '/bin/dash',
+        '/usr/bin/fish',
+        'pwsh.exe',
+        'xterm-256color',
+        ''
+      ]) {
+        pty.process = processName
+        assert.equal((await status()).hasActiveProcess, false, processName)
+      }
+      for (const processName of ['/usr/bin/sleep', 'node', 'python3', 'ssh', 'fish-helper']) {
+        pty.process = processName
+        const result = await status()
+        assert.equal(result.hasActiveProcess, true, processName)
+        assert.equal(result.processName, processName)
+      }
+      pty.process = '/usr/bin/sh'
+      assert.equal((await status()).hasActiveProcess, false, 'Completed commands return to idle')
+      assert.equal(
+        (
+          await h.handlers.get(terminalIpcChannels.getProcessStatus)(
+            { sender: { id: 2 } },
+            session.id
+          )
+        ).hasActiveProcess,
+        false,
+        'Foreign owners cannot inspect terminal processes'
+      )
+    } finally {
+      await h.dispose()
+    }
+  })
 }
 
 test('native terminal IPC attaches to the original process and restricts stream access to its owner', async () => {
