@@ -492,7 +492,7 @@ const readDirectFirefoxCookieDatabase = (cookiePath: string): CookieDatabase<Fir
     )
     const requiredColumns = ['name', 'value', 'host', 'path', 'expiry', 'isSecure', 'isHttpOnly']
     if (requiredColumns.some((column) => !columns.has(column))) {
-      throw new Error('Unsupported Firefox cookie database')
+      throw new Error('Unsupported cookie database')
     }
 
     const selectedColumns = [
@@ -587,7 +587,7 @@ const readDirectChromeCookieDatabase = (cookiePath: string): CookieDatabase<Chro
     )
     const requiredColumns = ['host_key', 'name', 'path', 'expires_utc', 'is_secure', 'is_httponly']
     if (requiredColumns.some((column) => !columns.has(column))) {
-      throw new Error('Unsupported Chrome cookie database')
+      throw new Error('Unsupported cookie database')
     }
 
     const selectedColumns = [

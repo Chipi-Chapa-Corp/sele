@@ -89,6 +89,7 @@ test('direct reads use a snapshot that includes the write-ahead log', async (t) 
 for (const [browser, detail, message] of [
   ['firefox', 'database is locked', 'Unable to read Firefox cookies. Close Firefox and try again.'],
   ['zen', 'no such table: moz_cookies', 'This Zen profile uses an unsupported cookie database.'],
+  ['chrome', 'Unsupported cookie database', 'This Chrome profile uses an unsupported cookie database.'],
   [
     'chrome',
     'EACCES: permission denied, open',
