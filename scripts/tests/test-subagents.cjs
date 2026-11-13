@@ -107,7 +107,8 @@ if (!process.versions.electron) {
           const api=new Proxy({}, {get:(_target,name)=>name==='onChatUpdated'?listener=>{window.chatListener=listener;return noop}:
             name.startsWith('on')?()=>noop:(...args)=>Promise.resolve(defaults[name]?.(...args)??null)})
           Object.assign(window,{appApi:api,providerApi:api,terminalApi:api,browserApi:api})
-          const stored=new Map([['sele:app-settings:v1',JSON.stringify({appearance:{position:'hidden'}})]])
+          const stored=new Map([['sele:app-settings:v1',JSON.stringify({appearance:{position:'hidden'}})],
+            ['sele:chat-sidebar-filter:v1','all']])
           window.preferencesApi={getItem:key=>({ok:true,value:stored.get(key)??null}),
             setItem:(key,value)=>{stored.set(key,value);return {ok:true,value:null}},
             removeItem:key=>{stored.delete(key);return {ok:true,value:null}}}
@@ -137,7 +138,7 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'index.html'),
-        '<html><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script></html>'
+        '<html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script></html>'
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE

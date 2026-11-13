@@ -123,10 +123,11 @@ if (!process.versions.electron) {
         )
       assert.deepEqual(
         await run(
-          "Array.from(document.querySelectorAll('.chat-home__actions-right button')).map(button => button.getAttribute('aria-label'))"
+          "Array.from(document.querySelectorAll('.chat-home__actions button')).map(button => button.getAttribute('aria-label'))"
         ),
-        ['New chat', 'Import chat', 'Search conversations']
+        ['Import chat', 'New chat', 'New chat without a project', 'Search conversations']
       )
+      await until('document.querySelector(\'[aria-label="Chat menu"]\')')
       await click('Chat menu')
       await until("document.querySelector('.ui-dropdown__action')")
       assert.deepEqual(

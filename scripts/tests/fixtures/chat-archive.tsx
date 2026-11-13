@@ -66,10 +66,9 @@ const transcript = [
   { type: 'message', id: 'response', role: 'assistant', content: 'The files have been inspected.' }
 ]
 fixture.preferencesApi = {
-  get: () => null,
-  getSnapshot: () => ({}),
-  set: () => {},
-  remove: () => {}
+  getItem: () => ({ ok: true, value: null }),
+  setItem: () => ({ ok: true, value: null }),
+  removeItem: () => ({ ok: true, value: null })
 }
 fixture.appApi = {
   getContainerSuggestions: async () => [{ id: 'podman:dev', tool: 'podman', name: 'dev' }],
@@ -126,16 +125,23 @@ function Fixture() {
   const [selected, setSelected] = useState(initial)
   const groups = groupChatsForSidebar(chats, new Map())
   const props = {
-    chats,
+    chatCount: chats.length,
     loadState: 'ready',
     chromeControlTheme: 'transparent',
-    displayedActiveChatGroups: groups.filter((group) => group.kind === 'cwd'),
-    pinnedChatGroup: groups.find((group) => group.kind === 'pinned'),
-    importedChatGroup: groups.find((group) => group.kind === 'imported'),
-    doneChatGroup: null,
+    sidebarGroups: new Map(
+      ['pinned', 'imported', 'cwd'].flatMap((kind) =>
+        groups.filter((group) => group.kind === kind).map((group) => [group.key, group])
+      )
+    ),
+    chatSidebarFilter: 'all',
+    chatSidebarTabs: { all: false, active: false, sleeping: false, working: false },
+    hasWorkingChats: false,
+    chatReadState: { manuallyUnreadChatKeys: new Set(), onMarkRead: null },
+    handleChatSidebarFilterChange: () => {},
     handleNewChat: () => {
       fixture.calls.push({ newChat: true })
     },
+    handleNewChatNoProject: () => {},
     handleImportedChat: (providerId, summary) => {
       const chat = getChatFromUpdateSummary(providerId, summary, null, false)
       setChats((current) => [...current, chat])
@@ -162,9 +168,18 @@ function Fixture() {
         onNewChatInCwd={() => {}}
       />
     ),
-    renderChatGroupingButton: () => null,
     renderSettingsButton: () => null,
     renderWindowControls: () => null,
+    providerAccount: { key: 'fixture', providerId: 'codex', available: false },
+    usageIndicator: {
+      providerId: 'codex',
+      accountUsage: null,
+      accountUsageError: null,
+      accountUsageState: 'idle',
+      contextUsage: { source: 'unavailable', usedTokens: null, maxTokens: null },
+      displayUsage: { context: false, short: false, long: false }
+    },
+    searchInputRef: { current: null },
     searchOpen: false,
     searchQuery: '',
     setSearchOpen: () => {},
