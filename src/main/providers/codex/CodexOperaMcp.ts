@@ -1,11 +1,12 @@
 import { createBrowserMcpServer, type BrowserMcpIntegration } from '../../browser/BrowserMcpServer'
-import { operaAutomation } from '../../desktop/ChromeAutomation'
+import { chromeAutomation } from '../../desktop/ChromeAutomation'
 import type { BrowserAutomationScope } from '../../../shared/browser'
 import { getBrowserUseSession, onBrowserUseSessionRemoved } from './CodexBrowserSessions'
 import type { ChromePairingStore } from '../../desktop/ChromePairingStore'
 
 /** Resumed Codex threads cannot replace their persisted dynamic-tool catalog.
- * HTTP MCP is a supported resume configuration, including for pre-Opera threads.
+ * HTTP MCP is a supported resume configuration. Always expose both paired browsers.
+ * The legacy class/config name remains stable to preserve retained client credentials.
  */
 export class CodexOperaMcp {
   private endpoints = new Map<
@@ -40,7 +41,7 @@ export class CodexOperaMcp {
     if (entry) {
       const closing = entry.server
         .close()
-        .catch((error) => console.error('Unable to close Opera MCP.', error))
+        .catch((error) => console.error('Unable to close attached-browser MCP.', error))
       this.closing.add(closing)
       void closing.finally(() => this.closing.delete(closing))
     }
@@ -62,9 +63,9 @@ export class CodexOperaMcp {
       const lifecycle = this.lifecycle
       const store = this.storeForScope?.(snapshot)
       const binding = await store?.load()
-      const server = await createBrowserMcpServer(operaAutomation, snapshot, {
+      const server = await createBrowserMcpServer(chromeAutomation, snapshot, {
         ...(binding ? { binding } : {}),
-        pairedBrowser: 'opera',
+        pairedBrowsers: ['chrome', 'opera'],
         authorizeTool: () => {
           const current = getBrowserUseSession(snapshot.sessionId)
           if (
@@ -72,7 +73,7 @@ export class CodexOperaMcp {
             current?.cwd !== snapshot.cwd ||
             current?.containerKey !== snapshot.containerKey
           )
-            throw new Error('Opera session is unavailable or read-only.')
+            throw new Error('Browser session is unavailable or read-only.')
         }
       })
       const current = getBrowserUseSession(snapshot.sessionId)
@@ -82,7 +83,7 @@ export class CodexOperaMcp {
         current?.containerKey !== snapshot.containerKey
       ) {
         await server.close()
-        throw new Error('Opera session changed during startup.')
+        throw new Error('Browser session changed during startup.')
       }
       try {
         await store?.save({ port: Number(new URL(server.url).port), token: server.token })

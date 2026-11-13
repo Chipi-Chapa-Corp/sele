@@ -414,7 +414,7 @@ test('Claude exposes Opera independently and refreshes its catalog when Opera pa
   assert.equal(paired.isCurrent(), false)
 })
 
-test('resumed Codex Opera MCP exposes only Opera and revokes execution with the chat scope', async (t) => {
+test('resumed Codex MCP exposes both paired browsers and revokes execution with the chat scope', async (t) => {
   const owner = {}
   const bound = {
     providerId: 'codex',
@@ -456,7 +456,8 @@ test('resumed Codex Opera MCP exposes only Opera and revokes execution with the 
   }
   const names = (await rpc('tools/list')).tools.map((tool) => tool.name)
   assert.ok(names.includes('opera_tabs_context'))
-  assert.ok(names.every((name) => name.startsWith('opera_')))
+  assert.ok(names.includes('chrome_tabs_context'))
+  assert.ok(names.every((name) => name.startsWith('chrome_') || name.startsWith('opera_')))
   const excluded = await rpc('tools/call', {
     name: 'native_computer',
     arguments: { action: 'screenshot' }

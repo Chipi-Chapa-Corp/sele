@@ -20,11 +20,11 @@ export const providerBrowserToolInstructions = `${browserToolInstructions}\n${br
 export function createProviderBrowserTools(
   service: BrowserAutomationService,
   scope: BrowserAutomationScope,
-  pairedBrowser?: PairedBrowserId
+  pairedBrowsers?: readonly PairedBrowserId[]
 ): { tools: BrowserTool[]; close(): void } {
-  const browser = pairedBrowser ? null : createBrowserTools(service, scope)
+  const browser = pairedBrowsers ? null : createBrowserTools(service, scope)
   const attached = Object.entries(pairedBrowserAutomations)
-    .filter(([id]) => !pairedBrowser || id === pairedBrowser)
+    .filter(([id]) => !pairedBrowsers || pairedBrowsers.includes(id as PairedBrowserId))
     .map(([id, automation]) => ({
       id: id as PairedBrowserId,
       browser: createBrowserTools(automation, scope)
@@ -39,7 +39,7 @@ export function createProviderBrowserTools(
           description: `Attached ${pairedBrowserNames[id]}: ${tool.description} Only ${pairedBrowserNames[id]} tabs shared using the Sele extension are available. Tab IDs belong to this browser only.`
         }))
       ),
-      ...(!pairedBrowser
+      ...(!pairedBrowsers
         ? [
             {
               name: 'native_computer',

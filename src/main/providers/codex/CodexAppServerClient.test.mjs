@@ -36,7 +36,9 @@ const fixture = (
     installedPlugins = [],
     pluginError = null,
     processScope = undefined,
-    resumedThread = null
+    resumedThread = null,
+    restoredOpera = false,
+    mcpTools = []
   } = {}
 ) => {
   const children = []
@@ -71,7 +73,7 @@ const fixture = (
     }),
     CodexOperaMcp: class {
       async restore() {
-        return false
+        return restoredOpera
       }
       hasScope() {
         return true
@@ -142,11 +144,22 @@ const fixture = (
                               }
                             ]
                           }
-                        : message.method === 'thread/unsubscribe' && resumedThread
-                          ? { status: 'notLoaded' }
-                          : message.method === 'thread/resume' && resumedThread
-                            ? { thread: resumedThread }
-                            : {}
+                        : message.method === 'mcpServerStatus/list'
+                          ? {
+                              data: [
+                                {
+                                  name: 'sele_opera',
+                                  tools: Object.fromEntries(
+                                    mcpTools.map((name) => [name, { name }])
+                                  )
+                                }
+                              ]
+                            }
+                          : message.method === 'thread/unsubscribe' && resumedThread
+                            ? { status: 'notLoaded' }
+                            : message.method === 'thread/resume' && resumedThread
+                              ? { thread: resumedThread }
+                              : {}
                 })}\n`
               )
             })
@@ -156,6 +169,10 @@ const fixture = (
       children.push(child)
       return child
     }
+  }
+  context.pairedBrowserAutomations = {
+    chrome: context.chromeAutomation,
+    opera: context.operaAutomation
   }
   context.connectCodexRuntime = async () => {
     const child = context.spawn()
@@ -397,6 +414,10 @@ for (const code of ['ENOENT', 'ECONNREFUSED', 'ESTALE']) {
 test('background recovery preserves real connection failures', async (t) => {
   const { client, children, context } = fixture(t)
   client.persistent = true
+  context.pairedBrowserAutomations = {
+    chrome: context.chromeAutomation,
+    opera: context.operaAutomation
+  }
   context.connectCodexRuntime = async () => {
     throw new Error('Process runtime rejected the connection.')
   }
@@ -867,4 +888,38 @@ test('retained chats without dynamic-tool snapshot metadata keep registered host
   await client.request('model/list')
   assert.equal(client.dynamicTools.bindings.get('old-running')[0]?.name, 'chrome')
   assert.equal(client.ownsThread('old-running'), true)
+})
+
+test('old chats with only Chrome paired receive the attached-browser MCP catalog', async (t) => {
+  const { client, context, children } = fixture(t, {
+    resumedThread: { id: 'chrome-only-old-chat', cwd: '/project' }
+  })
+  client.container = null
+  context.chromeAutomation.status.pairingUrl = 'saved-chrome-address'
+  await client.request('thread/resume', { threadId: 'chrome-only-old-chat' })
+  assert.ok(
+    children[0].requests.some(
+      (request) =>
+        request.method === 'thread/resume' && request.params.config?.['mcp_servers.sele_opera']
+    ),
+    'Chrome must remain available even if the old dynamic catalog has no Chrome tools'
+  )
+})
+
+test('reattachment refreshes an Opera-only cached catalog but preserves a current two-browser catalog', async (t) => {
+  for (const mcpTools of [['opera_tabs_context'], ['chrome_tabs_context', 'opera_tabs_context']]) {
+    const thread = { id: 'cached-browser-chat', cwd: '/project' }
+    const { client, context, children } = fixture(t, {
+      restoredOpera: true,
+      mcpTools,
+      resumedThread: thread,
+      initializeResult: { seleRuntime: { threads: [{ thread, readOnly: false }] } }
+    })
+    client.container = null
+    context.chromeAutomation.status.pairingUrl = 'saved-chrome'
+    await client.request('model/list')
+    await client.request('thread/resume', { threadId: thread.id })
+    const releases = children[0].requests.filter((r) => r.method === 'thread/unsubscribe')
+    assert.equal(releases.length, mcpTools.includes('chrome_tabs_context') ? 0 : 1)
+  }
 })
