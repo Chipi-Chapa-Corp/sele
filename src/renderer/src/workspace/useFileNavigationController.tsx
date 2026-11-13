@@ -29,16 +29,10 @@ import { getContainerTargetKey } from '../containerSelection'
 import { getChatDetailTurnCount, mergeChatDetailTurnPage } from '../chatDetailWindow'
 import { chatTurnWindowSize } from './controllerTypes'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
-import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
-import type { useWorkspaceSelection } from './useWorkspaceSelection'
 import type { useChangesData } from './useChangesData'
 import type { useGitViewModel } from './useGitViewModel'
-import type { useWorkspacePanes } from './features/useWorkspacePanes'
-import type { useWorkspaceDialogState } from './state/useWorkspaceDialogState'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
-import type { useWorkspaceScroll } from './features/useWorkspaceScroll'
 import { useLatestHandler } from './stableProps'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the controller declarations below.
 export function useFileNavigationController({
@@ -51,16 +45,9 @@ export function useFileNavigationController({
   chatState,
   viewportState,
   scroll
-}: {
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  session: ReturnType<typeof useWorkspaceSelection>
+}: WorkspaceChat & {
   changes: ReturnType<typeof useChangesData>
   gitPresentation: ReturnType<typeof useGitViewModel>
-  panes: ReturnType<typeof useWorkspacePanes>
-  dialogState: ReturnType<typeof useWorkspaceDialogState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  scroll: ReturnType<typeof useWorkspaceScroll>
 }) {
   const {
     setCollapsedChangeTreeFolders,

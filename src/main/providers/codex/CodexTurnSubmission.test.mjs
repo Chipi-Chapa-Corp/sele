@@ -102,7 +102,7 @@ const fixture = (globals = {}) => {
     isRolledBackTurn: () => false,
     refreshLatestThread: () => assert.fail('submission events must not trigger a history read'),
     scheduleChatUpdated() {},
-    commitThreadAction(id, action) {
+    patchThread(id, action) {
       const thread = { ...this.threads.get(id), turns: action.turns }
       this.threads.set(id, thread)
       return thread

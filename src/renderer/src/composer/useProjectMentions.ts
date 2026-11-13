@@ -2,8 +2,9 @@ import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import type { AppProject } from '../../../shared/app'
 import { appApi } from '../appApi'
+import type { ComposerMention } from '../composerMention'
 import { getProjectMentionResults, replaceProjectMention } from '../projectMention'
-import { FileMention } from './mentionResults'
+import { applyMentionReplacement } from './mentionResults'
 
 type ProjectMentionsDependencies = {
   message: string
@@ -16,7 +17,7 @@ export function useProjectMentions({
   setMessage,
   textareaRef
 }: ProjectMentionsDependencies) {
-  const [projectMention, setProjectMention] = useState<FileMention | null>(null)
+  const [projectMention, setProjectMention] = useState<ComposerMention | null>(null)
 
   const [mentionProjects, setMentionProjects] = useState<AppProject[] | null>(null)
 
@@ -52,15 +53,12 @@ export function useProjectMentions({
 
   const handleSelectProjectMention = (project: AppProject): void => {
     if (!projectMention) return
-    const replacement = replaceProjectMention(message, projectMention, project)
-    setMessage(replacement.message)
+    applyMentionReplacement(
+      replaceProjectMention(message, projectMention, project),
+      setMessage,
+      textareaRef
+    )
     setProjectMention(null)
-    window.requestAnimationFrame(() => {
-      const textarea = textareaRef.current
-      if (!textarea) return
-      textarea.focus({ preventScroll: true })
-      textarea.setSelectionRange(replacement.caret, replacement.caret)
-    })
   }
   return {
     projectMention,

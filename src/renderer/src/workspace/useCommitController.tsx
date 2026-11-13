@@ -22,21 +22,9 @@ import {
   getScopedChatCommitPrompt,
   isActiveChatStatus
 } from './chatControllerUtils'
-import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
-import type { useWorkspaceProviderUpdates } from './wiring/useWorkspaceProviderUpdates'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useWorkspaceSelection } from './useWorkspaceSelection'
-import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
 import type { useGitViewModel } from './useGitViewModel'
-import type { useChatMessagingController } from './useChatMessagingController'
-import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
-import type { useWorkspaceChatProjection } from './features/useWorkspaceChatProjection'
-import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
 import type { useGitSyncController } from './useGitSyncController'
-import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
-import type { useWorkspaceSearchState } from './state/useWorkspaceSearchState'
-import type { useWorkspaceSubagentState } from './state/useWorkspaceSubagentState'
-import type { useWorkspaceNavigation } from './features/useWorkspaceNavigation'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the controller declarations below.
 export function useCommitController({
@@ -55,22 +43,9 @@ export function useCommitController({
   searchState,
   subagentState,
   navigation
-}: {
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  session: ReturnType<typeof useWorkspaceSelection>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
+}: WorkspaceChat & {
   gitPresentation: ReturnType<typeof useGitViewModel>
-  messaging: ReturnType<typeof useChatMessagingController>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
   gitSync: ReturnType<typeof useGitSyncController>
-  chatRead: ReturnType<typeof useWorkspaceChatReadState>
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  navigation: ReturnType<typeof useWorkspaceNavigation>
 }) {
   const {
     startingScopedCommitActivitiesRef,

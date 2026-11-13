@@ -4,49 +4,8 @@ import { writeChatSidebarFilter, type ChatSidebarFilter } from '../../chatSideba
 import { normalizeContainerTarget } from '../../containerSelection'
 import { filterOpenCodeModels } from '../../openCodeProviderPreferences'
 import { getChatFromUpdateSummary, mergeChats } from '../chatControllerUtils'
-import { useWorkspaceChatErrors } from '../features/useWorkspaceChatErrors'
-import { useWorkspaceChrome } from '../features/useWorkspaceChrome'
-import { useWorkspaceEffectiveSelection } from '../features/useWorkspaceEffectiveSelection'
-import { useWorkspaceNavigation } from '../features/useWorkspaceNavigation'
-import { useWorkspaceProviderAccounts } from '../features/useWorkspaceProviderAccounts'
-import { useWorkspaceProviderContext } from '../features/useWorkspaceProviderContext'
-import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
-import { useWorkspaceSidebarModel } from '../features/useWorkspaceSidebarModel'
 import { useWorkspaceSidebarPresentation } from '../features/useWorkspaceSidebarPresentation'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceChatListActions } from '../wiring/useWorkspaceChatListActions'
-import { useConversationViewModel } from '../useConversationViewModel'
-import { useChatInteractionController } from '../useChatInteractionController'
-import { useChatMessagingController } from '../useChatMessagingController'
-import { useWorkspaceProviderUpdates } from '../wiring/useWorkspaceProviderUpdates'
-import { useWorkspaceSelection } from '../useWorkspaceSelection'
-
-type WorkspaceChatSidebarDependencies = {
-  session: ReturnType<typeof useWorkspaceSelection>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-  conversation: ReturnType<typeof useConversationViewModel>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
-  interactions: ReturnType<typeof useChatInteractionController>
-  messaging: ReturnType<typeof useChatMessagingController>
-  chatErrors: ReturnType<typeof useWorkspaceChatErrors>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  accountActions: ReturnType<typeof useWorkspaceProviderAccounts>
-  sidebarModel: ReturnType<typeof useWorkspaceSidebarModel>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  navigation: ReturnType<typeof useWorkspaceNavigation>
-  chrome: ReturnType<typeof useWorkspaceChrome>
-  listActions: ReturnType<typeof useWorkspaceChatListActions>
-  sidebarPresentation: ReturnType<typeof useWorkspaceSidebarPresentation>
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceChatSidebar({
   session,
@@ -69,7 +28,9 @@ export function getWorkspaceChatSidebar({
   listActions,
   sidebarPresentation,
   searchState
-}: WorkspaceChatSidebarDependencies) {
+}: WorkspaceChanges & {
+  sidebarPresentation: ReturnType<typeof useWorkspaceSidebarPresentation>
+}) {
   const providerId = session.selectedProviderId ?? sourceState.newSessionProvider
   const effectiveModel = provider.models.find(
     (candidate) => candidate.id === effectiveSelection.effectiveModel

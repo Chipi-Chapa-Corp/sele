@@ -9,6 +9,7 @@ import { DesktopAutomationSettings } from './DesktopAutomationSettings'
 import { type DropdownOption } from './Dropdown'
 import { Input } from './Input'
 import { SegmentedControl } from './SegmentedControl'
+import { createSettingsFields, SettingsSection } from './settingsFields'
 import type { SettingsPanelProps } from './SettingsPanel.types'
 import { Switch } from './Switch'
 
@@ -33,10 +34,6 @@ export function SettingsBrowserPanel(props: SettingsPanelProps): React.ReactNode
     setBrowserDefaultScaleInputDraft,
     settingsPanelSettings
   } = props
-  const browserEnabledPath = {
-    section: 'browser',
-    key: 'enabled'
-  } satisfies AppProjectSettingPath
   const browserDefaultScalePath = {
     section: 'browser',
     key: 'defaultScale'
@@ -46,89 +43,59 @@ export function SettingsBrowserPanel(props: SettingsPanelProps): React.ReactNode
     key: 'view'
   } satisfies AppProjectSettingPath
   return (
-    <section
-      className="settings-dialog__panel"
-      id="settings-panel-browser"
-      role="tabpanel"
-      aria-label="Browser settings"
-    >
-      <section className="settings-dialog__section" aria-labelledby="settings-browser-behavior">
-        <h2 className="settings-dialog__section-heading" id="settings-browser-behavior">
-          Browser
-        </h2>
-        <div className="settings-dialog__section-cards">
-          <div className={getSettingsFieldClassName()}>
-            <div className="settings-dialog__field-header">
-              <h3 id="settings-browser-enabled">Built-in browser</h3>
-              <p>
-                Open web links in Browser tabs inside Sele. When off, links open in your default
-                browser.
-              </p>
-            </div>
-            {renderProjectSettingAction(browserEnabledPath, 'Built-in browser')}
-            <Switch
-              className="settings-switch"
-              aria-labelledby="settings-browser-enabled"
-              checked={settingsPanelSettings.browser.enabled}
-              disabled={isScopedSettingControlDisabled(browserEnabledPath)}
-              onChange={(event) => handleBrowserEnabledChange(event.currentTarget.checked)}
-            />
+    <>
+      <SettingsSection id="settings-browser-behavior" title="Browser">
+        {createSettingsFields(props).switchField(
+          { section: 'browser', key: 'enabled' },
+          'settings-browser-enabled',
+          'Built-in browser',
+          'Open web links in Browser tabs inside Sele. When off, links open in your default browser.',
+          settingsPanelSettings.browser.enabled,
+          handleBrowserEnabledChange
+        )}
+        <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
+          <div className="settings-dialog__field-header">
+            <h3>View</h3>
+            <p>Choose which conversations share a set of Browser tabs.</p>
           </div>
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <div className="settings-dialog__field-header">
-              <h3>View</h3>
-              <p>Choose which conversations share a set of Browser tabs.</p>
-            </div>
-            {renderProjectSettingAction(browserViewPath, 'Browser view')}
-            <SegmentedControl<AppBrowserView>
-              aria-label="Browser view"
-              className="settings-dialog__appearance-toggle"
-              disabled={isScopedSettingControlDisabled(browserViewPath)}
-              options={browserViewOptions}
-              value={settingsPanelSettings.browser.view}
-              onChange={handleBrowserViewChange}
+          {renderProjectSettingAction(browserViewPath, 'Browser view')}
+          <SegmentedControl<AppBrowserView>
+            aria-label="Browser view"
+            className="settings-dialog__appearance-toggle"
+            disabled={isScopedSettingControlDisabled(browserViewPath)}
+            options={browserViewOptions}
+            value={settingsPanelSettings.browser.view}
+            onChange={handleBrowserViewChange}
+          />
+        </div>
+      </SettingsSection>
+      <SettingsSection id="settings-browser-accessibility" title="Accessibility">
+        <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
+          <label className="settings-dialog__field-header" htmlFor="settings-browser-default-scale">
+            <h3>Default Scale</h3>
+            <p>Set the default zoom for Browser pages.</p>
+          </label>
+          {renderProjectSettingAction(browserDefaultScalePath, 'Default Scale')}
+          <div className="settings-dialog__number-with-unit">
+            <Input
+              aria-label="Default browser scale percentage"
+              className="settings-dialog__number-input"
+              id="settings-browser-default-scale"
+              type="number"
+              min={appBrowserDefaultScaleMin}
+              max={appBrowserDefaultScaleMax}
+              step={5}
+              disabled={isScopedSettingControlDisabled(browserDefaultScalePath)}
+              value={browserDefaultScaleInput}
+              onBlur={() => setBrowserDefaultScaleInputDraft(null)}
+              onChange={(event) => handleBrowserDefaultScaleChange(event.currentTarget.value)}
             />
+            <span aria-hidden="true" className="settings-dialog__number-unit">
+              %
+            </span>
           </div>
         </div>
-      </section>
-      <section
-        className="settings-dialog__section"
-        aria-labelledby="settings-browser-accessibility"
-      >
-        <h2 className="settings-dialog__section-heading" id="settings-browser-accessibility">
-          Accessibility
-        </h2>
-        <div className="settings-dialog__section-cards">
-          <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-            <label
-              className="settings-dialog__field-header"
-              htmlFor="settings-browser-default-scale"
-            >
-              <h3>Default Scale</h3>
-              <p>Set the default zoom for Browser pages.</p>
-            </label>
-            {renderProjectSettingAction(browserDefaultScalePath, 'Default Scale')}
-            <div className="settings-dialog__number-with-unit">
-              <Input
-                aria-label="Default browser scale percentage"
-                className="settings-dialog__number-input"
-                id="settings-browser-default-scale"
-                type="number"
-                min={appBrowserDefaultScaleMin}
-                max={appBrowserDefaultScaleMax}
-                step={5}
-                disabled={isScopedSettingControlDisabled(browserDefaultScalePath)}
-                value={browserDefaultScaleInput}
-                onBlur={() => setBrowserDefaultScaleInputDraft(null)}
-                onChange={(event) => handleBrowserDefaultScaleChange(event.currentTarget.value)}
-              />
-              <span aria-hidden="true" className="settings-dialog__number-unit">
-                %
-              </span>
-            </div>
-          </div>
-        </div>
-      </section>
+      </SettingsSection>
       <section className="settings-dialog__section" aria-labelledby="settings-native-chrome">
         <h2 className="settings-dialog__section-heading" id="settings-native-chrome">
           Your Chrome
@@ -183,6 +150,6 @@ export function SettingsBrowserPanel(props: SettingsPanelProps): React.ReactNode
       </section>
       <BrowserImportSettings key={changesContainerKey} currentEnvironment={changesContainer} />
       <DesktopAutomationSettings />
-    </section>
+    </>
   )
 }

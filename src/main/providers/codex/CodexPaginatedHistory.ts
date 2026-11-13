@@ -8,12 +8,6 @@ type ThreadTurnsListResponse = {
   backwardsCursor?: string | null
 }
 
-export type CodexTurnCursorWindow = {
-  turns: CodexTurn[]
-  olderCursor: string | null
-  newerCursor: string | null
-}
-
 export const isSupportedCodexHistory = (historyMode: unknown): boolean =>
   historyMode === 'paginated'
 
@@ -52,13 +46,12 @@ export const isCodexEmptyRolloutInitializationError = (error: unknown): boolean 
 export const retryCodexEmptyRolloutRead = async <Result>(
   read: () => Promise<Result>,
   options: {
-    attempts?: number
     delay?: (attempt: number) => Promise<void>
     onRetry?: (error: unknown, attempt: number, attempts: number) => void
     onFinalFailure?: (error: unknown, attempts: number) => void
   } = {}
 ): Promise<Result> => {
-  const attempts = Math.max(1, Math.floor(options.attempts ?? 3))
+  const attempts = 3
 
   for (let attempt = 1; ; attempt += 1) {
     try {
@@ -162,12 +155,6 @@ const decodeCodexTurnCursor = (token: string | null): CodexTurnCursorToken | nul
   }
 }
 
-export type CodexEditHistoryPlan = {
-  retainedCatalog: CodexTurn[]
-  rolledBackTurnIds: Set<string>
-  targetTurnIndex: number
-}
-
 export class CodexTurnWindowMismatchError extends Error {
   readonly missingTurnIds: readonly string[]
 
@@ -211,7 +198,7 @@ export const planCodexHistoryEdit = (
   loadedTurns: readonly CodexTurn[],
   loadedTurnStartIndex: number,
   targetTurnId: string
-): CodexEditHistoryPlan => {
+) => {
   const persistedCatalog = turnCatalog.filter(isPersistedTurn)
   const persistedLoadedTurns = loadedTurns.filter(isPersistedTurn)
   const catalogTargetIndex = persistedCatalog.findIndex((turn) => turn.id === targetTurnId)
@@ -265,7 +252,7 @@ export const loadCodexTurnCursorWindow = async (
     direction: 'older' | 'newer'
     limit: number
   }
-): Promise<CodexTurnCursorWindow> => {
+) => {
   const sortDirection = options.direction === 'older' ? 'desc' : 'asc'
   const decodedCursor = decodeCodexTurnCursor(options.cursor)
   const limit = Math.max(1, Math.floor(options.limit))

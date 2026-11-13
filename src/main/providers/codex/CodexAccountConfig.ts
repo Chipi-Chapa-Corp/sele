@@ -21,7 +21,7 @@ export const isRecoverableCodexStopError = (error: unknown): boolean =>
 
 export const parseCodexAccountsOutput = (stdout: string): ProviderAccountConfiguration => {
   const fields = stdout.split('\0')
-  const platform = fields[0] ?? 'Unknown'
+  const platform = fields[0]
   if (!['Linux', 'Darwin', 'Windows'].includes(platform)) {
     return {
       available: false,
@@ -32,16 +32,9 @@ export const parseCodexAccountsOutput = (stdout: string): ProviderAccountConfigu
 
   const activeAccountId = fields[1] ?? ''
   const accounts: ProviderManagedAccount[] = []
-  for (let index = 2; index < fields.length; index += 1) {
-    const id = fields[index] ?? ''
-    if (!isCodexAccountId(id)) continue
-    accounts.push({ id, active: id === activeAccountId })
-  }
+  for (const id of fields.slice(2))
+    if (isCodexAccountId(id)) accounts.push({ id, active: id === activeAccountId })
 
-  const configuredAccountIsActive = accounts.some((account) => account.active)
-  accounts.unshift({
-    id: codexDefaultAccountId,
-    active: !configuredAccountIsActive
-  })
+  accounts.unshift({ id: codexDefaultAccountId, active: !accounts.some(({ active }) => active) })
   return { available: true, unavailableMessage: null, accounts }
 }

@@ -119,21 +119,8 @@ const getNaturalStreamBoundary = (content: string, afterIndex: number): number |
   return boundary
 }
 
-type StreamRenderState = {
-  animate: boolean
-  content: string
-  revision: number
-}
-
-const useStreamRenderedContent = (
-  content: string,
-  streaming: boolean
-): StreamRenderState & { visibleContent: string } => {
-  const [renderState, setRenderState] = useState<StreamRenderState>(() => ({
-    animate: false,
-    content,
-    revision: 0
-  }))
+const useStreamRenderedContent = (content: string, streaming: boolean): string => {
+  const [streamedContent, setStreamedContent] = useState(content)
   const latestContentRef = useRef(content)
   const renderedContentRef = useRef(content)
   const flushTimerRef = useRef<number | null>(null)
@@ -145,19 +132,9 @@ const useStreamRenderedContent = (
     flushTimerRef.current = null
   }, [])
 
-  const flushContent = useCallback((nextContent: string, animate: boolean): void => {
+  const flushContent = useCallback((nextContent: string): void => {
     renderedContentRef.current = nextContent
-    startTransition(() => {
-      setRenderState((currentState) =>
-        currentState.content === nextContent
-          ? currentState
-          : {
-              animate,
-              content: nextContent,
-              revision: currentState.revision + 1
-            }
-      )
-    })
+    startTransition(() => setStreamedContent(nextContent))
   }, [])
 
   const scheduleFlush = useCallback((): void => {
@@ -169,9 +146,9 @@ const useStreamRenderedContent = (
       const renderedLength = renderedContentRef.current.length
       if (latestContent.length <= renderedLength) return
 
-      const boundary = getNaturalStreamBoundary(latestContent, renderedLength)
-      const nextLength = boundary ?? latestContent.length
-      flushContent(latestContent.slice(0, nextLength), boundary !== null)
+      const nextLength =
+        getNaturalStreamBoundary(latestContent, renderedLength) ?? latestContent.length
+      flushContent(latestContent.slice(0, nextLength))
 
       if (nextLength < latestContent.length) scheduleFlushRef.current()
     }, streamRenderMaxDelayMs)
@@ -186,21 +163,16 @@ const useStreamRenderedContent = (
 
     if (!streaming) {
       clearFlushTimer()
-      const previousContent = renderedContentRef.current
       // Already rendered, e.g. on mount. A state update here, even an unchanged
       // one inside a transition, renders every newly mounted message twice.
-      if (content === previousContent) return
-      flushContent(
-        content,
-        content.startsWith(previousContent) && content.length > previousContent.length
-      )
+      if (content !== renderedContentRef.current) flushContent(content)
       return
     }
 
     const renderedContent = renderedContentRef.current
     if (!content.startsWith(renderedContent)) {
       clearFlushTimer()
-      flushContent(content, false)
+      flushContent(content)
       return
     }
     if (content.length === renderedContent.length) return
@@ -208,7 +180,7 @@ const useStreamRenderedContent = (
     const boundary = getNaturalStreamBoundary(content, renderedContent.length)
     if (boundary !== null) {
       clearFlushTimer()
-      flushContent(content.slice(0, boundary), true)
+      flushContent(content.slice(0, boundary))
     }
 
     if (renderedContentRef.current.length < content.length) scheduleFlush()
@@ -221,10 +193,7 @@ const useStreamRenderedContent = (
     [clearFlushTimer]
   )
 
-  return {
-    ...renderState,
-    visibleContent: streaming ? renderState.content : content
-  }
+  return streaming ? streamedContent : content
 }
 
 const messageMarkdownCache = createBoundedTextCache<string>(100, 4_000_000, (html) => html.length)
@@ -262,7 +231,7 @@ const MarkdownMessageComponent: React.FC<{
     mediaType: 'image' | 'video'
   } | null>(null)
   const [expandedTableHtml, setExpandedTableHtml] = useState<string | null>(null)
-  const { visibleContent } = useStreamRenderedContent(content, streaming)
+  const visibleContent = useStreamRenderedContent(content, streaming)
   const progressiveRef = useRef(false)
   if (visibleContent.length >= progressiveMarkdownThreshold) progressiveRef.current = true
   const progressive = progressiveRef.current

@@ -18,13 +18,9 @@ import {
 } from './controllerTypes'
 import { getGitRecoveryAiResolutionPrompt, getGitRecoveryPullStrategy } from './gitControllerUtils'
 import { getChatCwdGroupKey, getErrorMessage } from './chatControllerUtils'
-import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
-import type { useWorkspaceSelection } from './useWorkspaceSelection'
 import type { useGitViewModel } from './useGitViewModel'
 import type { useChangesData } from './useChangesData'
-import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
-import type { useChatMessagingController } from './useChatMessagingController'
-import type { useWorkspaceProviderContext } from './features/useWorkspaceProviderContext'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the controller declarations below.
 export function useGitSyncController({
@@ -35,14 +31,9 @@ export function useGitSyncController({
   settings,
   messaging,
   provider
-}: {
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  session: ReturnType<typeof useWorkspaceSelection>
+}: WorkspaceChat & {
   gitPresentation: ReturnType<typeof useGitViewModel>
   changes: ReturnType<typeof useChangesData>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  messaging: ReturnType<typeof useChatMessagingController>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
 }) {
   const {
     startingScopedCommitActivitiesRef,

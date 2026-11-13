@@ -3,7 +3,7 @@ import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useR
 import { FolderKanban, FolderTree } from 'lucide-react'
 import type { ProviderMessage } from '../../../shared/provider'
 import {
-  AnimatedChatListGroup,
+  ChatListGroup,
   type ChatListGroupData,
   type ChatListGroupProps
 } from '../components/ChatListGroup'
@@ -20,22 +20,17 @@ import {
   isActiveChatStatus
 } from './chatControllerUtils'
 import { allDoneProjectsValue } from './controllerTypes'
-import type { AppProject } from '../../../shared/app'
 import type { useWorkspaceChatErrors } from './features/useWorkspaceChatErrors'
-import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
 import type { useWorkspaceProjectCatalog } from './features/useWorkspaceProjectCatalog'
-import type { useWorkspaceScroll } from './features/useWorkspaceScroll'
-import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
 import type { useWorkspaceNavigation } from './features/useWorkspaceNavigation'
 import type { useWorkspaceSidebarActions } from './features/useWorkspaceSidebarActions'
 import type { useWorkspaceSidebarModel } from './features/useWorkspaceSidebarModel'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
 import type { useWorkspaceProjectState } from './state/useWorkspaceProjectState'
-import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
+import type { useChatListController } from './useChatListController'
 import type { useChatMessagingController } from './useChatMessagingController'
 import type { useWorkspaceSelection } from './useWorkspaceSelection'
-import type { useWorkspaceChatListActions } from './wiring/useWorkspaceChatListActions'
 import { useLatestHandler, useShallowStable } from './stableProps'
+import type { WorkspaceSession } from './useWorkspaceSelection'
 
 type ChatGroupRenderInputs = Pick<
   ReturnType<typeof useWorkspaceSidebarModel>,
@@ -73,7 +68,6 @@ type SidebarActions = Required<{
 const renderChatListGroup = (
   inputs: ChatGroupRenderInputs,
   group: ChatListGroupData,
-  contentId: string,
   selectedChatChildren: React.ReactNode = null,
   selectedChatChildOpen = false,
   workingSubagentChatKeys?: ReadonlySet<string>
@@ -158,8 +152,7 @@ const renderChatListGroup = (
     )
 
   return (
-    <AnimatedChatListGroup
-      contentId={contentId}
+    <ChatListGroup
       group={group}
       key={group.key}
       open={groupOpen}
@@ -177,7 +170,6 @@ const renderChatListGroup = (
       projectDropPosition={projectDropPosition}
       visibleChatCount={visibleChatCount}
       chatPageSize={chatPageSize}
-      deferItems={group.kind === 'done'}
       emptyContent={doneProjectFilterEmptyContent}
       headerAction={doneProjectFilter}
       projectNamesByCwd={projectNamesByCwd}
@@ -212,21 +204,13 @@ export function useChatInteractionController({
   messaging,
   chatRead,
   chatErrors
-}: {
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  scroll: ReturnType<typeof useWorkspaceScroll>
+}: WorkspaceSession & {
   sidebarModel: ReturnType<typeof useWorkspaceSidebarModel>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  projectRecordsByCwd: Map<string, AppProject>
   projectCatalog: ReturnType<typeof useWorkspaceProjectCatalog>
-  session: ReturnType<typeof useWorkspaceSelection>
   sidebarActions: ReturnType<typeof useWorkspaceSidebarActions>
-  listActions: ReturnType<typeof useWorkspaceChatListActions>
+  listActions: ReturnType<typeof useChatListController>
   navigation: ReturnType<typeof useWorkspaceNavigation>
   messaging: ReturnType<typeof useChatMessagingController>
-  chatRead: ReturnType<typeof useWorkspaceChatReadState>
   chatErrors: ReturnType<typeof useWorkspaceChatErrors>
 }) {
   const {
@@ -482,7 +466,6 @@ export function useChatInteractionController({
   const renderChatGroup = useCallback(
     (
       group: ChatListGroupData,
-      contentId: string,
       selectedChatChildren: React.ReactNode = null,
       selectedChatChildOpen = false,
       workingSubagentChatKeys?: ReadonlySet<string>
@@ -490,7 +473,6 @@ export function useChatInteractionController({
       renderChatListGroup(
         chatGroupRenderInputs,
         group,
-        contentId,
         selectedChatChildren,
         selectedChatChildOpen,
         workingSubagentChatKeys

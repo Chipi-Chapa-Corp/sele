@@ -70,7 +70,6 @@ export type OpenCodeCredentialCheckRequest = {
   directory: string
   providerId: string
   onSession?: (sessionId: string) => void
-  timeoutMs?: number
 }
 
 /** Sends one tiny prompt through OpenCode with the provider's stored credential. */
@@ -78,11 +77,10 @@ export const checkOpenCodeCredential = async ({
   client,
   directory,
   providerId,
-  onSession,
-  timeoutMs = 30_000
+  onSession
 }: OpenCodeCredentialCheckRequest): Promise<ProviderConnectionStatus> => {
   const checkedAt = Date.now()
-  const signal = AbortSignal.timeout(timeoutMs)
+  const signal = AbortSignal.timeout(30_000)
   let sessionId: string | null = null
   try {
     const catalog = (await client.provider.list({ directory }, { throwOnError: true, signal })).data

@@ -10,10 +10,10 @@ import {
 export type { WorkingMarkAnimation } from './workingMarkAnimation'
 
 export function WorkingMark({
-  animation = 'swap',
+  animation,
   speed = 1
 }: {
-  animation?: WorkingMarkAnimation
+  animation: WorkingMarkAnimation
   speed?: number
 }): ReactElement {
   const pathRef = useRef<SVGPathElement | null>(null)

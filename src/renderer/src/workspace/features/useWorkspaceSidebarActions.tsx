@@ -4,13 +4,9 @@ import { type ChatListGroupData } from '../../components/ChatListGroup'
 import { providerApi } from '../../providerApi'
 import { getCollapsedGroupState } from '../chatControllerUtils'
 import { allDoneProjectsValue, doneGroupKey } from '../controllerTypes'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
-type WorkspaceSidebarActionsDependencies = {
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-}
-
-export function useWorkspaceSidebarActions({ projectState }: WorkspaceSidebarActionsDependencies) {
+export function useWorkspaceSidebarActions({ projectState }: WorkspaceSession) {
   const resetDoneChatPagination = (): void => {
     projectState.setVisibleChatPageCountsByGroup((currentPageCounts) => {
       if (!(doneGroupKey in currentPageCounts)) return currentPageCounts

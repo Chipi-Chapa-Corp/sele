@@ -87,47 +87,32 @@ const isCommandAvailableInSource = (
   return runAvailabilityCommand(command, ['--version'], null).then(({ success }) => success)
 }
 
+const providerExecutables = {
+  codex: getCodexExecutable,
+  claude: getClaudeExecutable,
+  copilot: getCopilotExecutable
+}
+
 export const isProviderAvailableInSource = async (
   providerId: ProviderId,
   container: AppContainerTarget | null | undefined
 ): Promise<boolean> => {
-  if (providerId === 'codex') {
-    if (container?.kind === 'container') {
-      return isCommandAvailableInSource('codex', container)
-    }
-
-    return runAvailabilityCommand(getCodexExecutable(), ['--version'], null).then(
-      ({ success }) => success
-    )
-  }
-
-  if (providerId === 'copilot') {
-    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
-      return isCommandAvailableInSource('copilot', container)
-    }
-
-    return runAvailabilityCommand(getCopilotExecutable(), ['--version'], null).then(
-      ({ success }) => success
-    )
-  }
-
-  if (providerId === 'claude') {
-    if (container?.kind === 'container' || (await getCurrentContainerHostBridge())) {
-      return isCommandAvailableInSource('claude', container)
-    }
-
-    return runAvailabilityCommand(getClaudeExecutable(), ['--version'], null).then(
-      ({ success }) => success
-    )
-  }
-
   if (providerId === 'opencode-v2') {
     if (!(await supportsOpenCodeServerContainer(container))) return false
     const installations = await getOpenCodeInstallations(container)
     return installations.some((item) => item.major === 2)
   }
 
-  return false
+  if (
+    container?.kind === 'container' ||
+    (providerId !== 'codex' && (await getCurrentContainerHostBridge()))
+  ) {
+    return isCommandAvailableInSource(providerId, container)
+  }
+
+  return runAvailabilityCommand(providerExecutables[providerId](), ['--version'], null).then(
+    ({ success }) => success
+  )
 }
 
 export const getSourceAvailability = async (
@@ -174,8 +159,5 @@ export const getSourceAvailability = async (
     )
   ])
 
-  return {
-    gitAvailable,
-    providers
-  }
+  return { gitAvailable, providers }
 }

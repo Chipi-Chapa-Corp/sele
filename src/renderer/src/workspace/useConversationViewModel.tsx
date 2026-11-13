@@ -45,19 +45,9 @@ import {
   getProviderChatKey
 } from './chatControllerUtils'
 import type { useWorkspaceChatErrors } from './features/useWorkspaceChatErrors'
-import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
 import type { useWorkspaceEffectiveSelection } from './features/useWorkspaceEffectiveSelection'
-import type { useWorkspacePanes } from './features/useWorkspacePanes'
-import type { useWorkspaceProviderContext } from './features/useWorkspaceProviderContext'
-import type { useWorkspaceScroll } from './features/useWorkspaceScroll'
-import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
-import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
-import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
 import type { useChatInteractionController } from './useChatInteractionController'
-import type { useWorkspaceProviderUpdates } from './wiring/useWorkspaceProviderUpdates'
-import type { useWorkspaceSelection } from './useWorkspaceSelection'
+import type { WorkspaceSession } from './useWorkspaceSelection'
 
 // Return shape is inferred from the view-model declarations below.
 export function useConversationViewModel({
@@ -75,21 +65,10 @@ export function useConversationViewModel({
   scroll,
   chatRead,
   gitState
-}: {
-  provider: ReturnType<typeof useWorkspaceProviderContext>
+}: WorkspaceSession & {
   effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
   chatErrors: ReturnType<typeof useWorkspaceChatErrors>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
-  session: ReturnType<typeof useWorkspaceSelection>
   interactions: ReturnType<typeof useChatInteractionController>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  panes: ReturnType<typeof useWorkspacePanes>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  scroll: ReturnType<typeof useWorkspaceScroll>
-  chatRead: ReturnType<typeof useWorkspaceChatReadState>
-  gitState: ReturnType<typeof useWorkspaceGitState>
 }) {
   const { authenticationRequired } = chatErrors
   const {

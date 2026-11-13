@@ -33,10 +33,7 @@ import {
   restoreChatScrollAnchor
 } from '../chatLayout'
 import { getContainerTargetKey, normalizeContainerTarget } from '../containerSelection'
-import {
-  preserveOptimisticChatDetail,
-  shouldPreserveOptimisticTurnUntilUserMessage
-} from '../chatDetailWindow'
+import { preserveOptimisticChatDetail } from '../chatDetailWindow'
 import {
   type ChangesPaneView,
   type FileTreeScope,
@@ -53,20 +50,7 @@ import {
   isChatDetailSnapshotStale,
   mergeAccountUsage
 } from './chatControllerUtils'
-import type { useWorkspaceChatCache } from './features/useWorkspaceChatCache'
-import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
-import type { useWorkspacePanes } from './features/useWorkspacePanes'
-import type { useWorkspaceScroll } from './features/useWorkspaceScroll'
-import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useWorkspaceDialogState } from './state/useWorkspaceDialogState'
-import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
-import type { useWorkspacePreferenceState } from './state/useWorkspacePreferenceState'
-import type { useWorkspaceProviderState } from './state/useWorkspaceProviderState'
-import type { useWorkspaceSearchState } from './state/useWorkspaceSearchState'
-import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
-import type { useWorkspaceSubagentState } from './state/useWorkspaceSubagentState'
-import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
+import type { WorkspaceRuntime } from './composition/useWorkspaceRuntime'
 
 const areSubagentSummariesEqual = (first: ProviderSubagent, second: ProviderSubagent): boolean =>
   first.id === second.id &&
@@ -89,6 +73,10 @@ const areSubagentListsEqual = (first: ProviderSubagent[], second: ProviderSubage
   first.every((subagent, index) => areSubagentSummariesEqual(subagent, second[index]))
 
 // Return shape is inferred from the synchronized selection declarations below.
+export type WorkspaceSession = WorkspaceRuntime & {
+  session: ReturnType<typeof useWorkspaceSelection>
+}
+
 export function useWorkspaceSelection({
   chatState,
   subagentState,
@@ -104,22 +92,7 @@ export function useWorkspaceSelection({
   viewportState,
   scroll,
   searchState
-}: {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  panes: ReturnType<typeof useWorkspacePanes>
-  dialogState: ReturnType<typeof useWorkspaceDialogState>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  chatCache: ReturnType<typeof useWorkspaceChatCache>
-  chatRead: ReturnType<typeof useWorkspaceChatReadState>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  scroll: ReturnType<typeof useWorkspaceScroll>
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-}) {
+}: WorkspaceRuntime) {
   const {
     selectedChat,
     chatDetail,
@@ -1178,8 +1151,7 @@ export function useWorkspaceSelection({
         }
         const loadedDetail = reuseChatSnapshotItems(
           currentDetail,
-          shouldPreserveOptimisticTurnUntilUserMessage(selectedProviderId) &&
-            isActiveChatStatus(detail.status)
+          isActiveChatStatus(detail.status)
             ? preserveOptimisticChatDetail(currentDetail, detail)
             : detail
         )
@@ -1666,7 +1638,6 @@ export function useWorkspaceSelection({
         .getGitChanges({
           container: changesContainerRef.current,
           cwd: changesCwd,
-          source: 'uncommitted',
           fetchRemote: true
         })
         .then((result) => {

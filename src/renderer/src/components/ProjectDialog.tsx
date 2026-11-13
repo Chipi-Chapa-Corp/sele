@@ -1,11 +1,10 @@
 import { MotionSurface } from '../motion/MotionSurface'
 import { Check, ImagePlus, Plus, X } from 'lucide-react'
-import { type FormEvent, type ReactElement, useEffect, useRef, useState } from 'react'
+import { type ReactElement, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type {
   AppAddProjectOptions,
   AppProject,
-  AppProjectGlyph,
   AppProjectIcon,
   AppProjectIconKind
 } from '../../../shared/app'
@@ -29,8 +28,6 @@ type ProjectDialogProps = {
   onClose: () => void
   onSaved: (project: AppProject, image: AppProjectIcon | null) => void
 }
-
-type ProjectIconValue = AppProjectGlyph | 'image'
 
 const getProjectForCwd = (projects: AppProject[], cwd: string): AppProject | null =>
   projects.find((project) => project.cwd === cwd) ?? null
@@ -94,7 +91,6 @@ export const ProjectDialog = ({
     const existingProject = getProjectForCwd(projects, folder)
     const keepExplicitIcon = iconExplicitlySelectedRef.current
     if (!keepExplicitIcon) {
-      iconExplicitlySelectedRef.current = false
       setProjectImage(null)
       setIcon(existingProject?.icon === 'image' ? 'folder' : (existingProject?.icon ?? 'folder'))
     }
@@ -111,14 +107,13 @@ export const ProjectDialog = ({
 
     if (keepExplicitIcon) return
 
-    const nextIcon = existingProject?.icon ?? null
     const image = await appApi.getProjectIcon({ cwd: folder }).catch((error) => {
       console.error('[caught:ProjectDialog:updateFromMainFolder]', error)
       return null
     })
     if (sequence !== mainFolderSequenceRef.current || iconExplicitlySelectedRef.current) return
     setProjectImage(image)
-    setIcon(nextIcon ?? (image ? 'image' : 'folder'))
+    setIcon(existingProject?.icon ?? (image ? 'image' : 'folder'))
   }
 
   const handleSelectMainFolder = async (): Promise<void> => {
@@ -157,7 +152,7 @@ export const ProjectDialog = ({
     setError(null)
   }
 
-  const handleIconChange = (value: ProjectIconValue): void => {
+  const handleIconChange = (value: AppProjectIconKind): void => {
     iconExplicitlySelectedRef.current = true
     setIcon(value)
     setError(null)
@@ -206,24 +201,16 @@ export const ProjectDialog = ({
     }
   }
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-    void handleSave()
-  }
-
-  const iconOptions: DropdownOption<ProjectIconValue>[] = [
-    ...(projectImage
-      ? [
-          {
-            value: 'image' as const,
-            label: 'Project image',
-            icon: <img className="project-dialog__icon-image" src={projectImage.dataUrl} alt="" />
-          }
-        ]
+  const projectImageElement = projectImage && (
+    <img className="project-dialog__icon-image" src={projectImage.dataUrl} alt="" />
+  )
+  const iconOptions: DropdownOption<AppProjectIconKind>[] = [
+    ...(projectImageElement
+      ? [{ value: 'image' as const, label: 'Project image', icon: projectImageElement }]
       : []),
     ...projectGlyphOptions
   ]
-  const iconTitle = icon === 'image' ? 'Project image' : projectGlyphLabels[icon as AppProjectGlyph]
+  const iconTitle = icon === 'image' ? 'Project image' : projectGlyphLabels[icon]
 
   const dialog = (
     <MotionSurface
@@ -240,7 +227,10 @@ export const ProjectDialog = ({
           role="dialog"
           aria-modal="true"
           aria-label={projectCwd ? 'Edit project' : 'Add project'}
-          onSubmit={handleSubmit}
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleSave()
+          }}
           onKeyDown={(event) => {
             if (event.key !== 'Escape' || saving) return
             event.preventDefault()
@@ -262,7 +252,7 @@ export const ProjectDialog = ({
                 />
               </div>
               <div className="project-dialog__name-row">
-                <Dropdown<ProjectIconValue>
+                <Dropdown<AppProjectIconKind>
                   className="project-dialog__icon-picker"
                   aria-label="Project icon"
                   menuAlign="start"
@@ -280,15 +270,8 @@ export const ProjectDialog = ({
                   title={`Icon: ${iconTitle}`}
                   value={icon}
                   valueContent={
-                    icon === 'image' && projectImage ? (
-                      <img
-                        className="project-dialog__icon-image"
-                        src={projectImage.dataUrl}
-                        alt=""
-                      />
-                    ) : (
-                      renderProjectGlyph(icon === 'image' ? 'folder' : icon)
-                    )
+                    (icon === 'image' && projectImageElement) ||
+                    renderProjectGlyph(icon === 'image' ? 'folder' : icon)
                   }
                   onChange={handleIconChange}
                 />

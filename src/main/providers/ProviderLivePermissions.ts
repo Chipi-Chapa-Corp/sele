@@ -135,14 +135,13 @@ export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapt
       })
       const approvePending = async (): Promise<void> => {
         if (allowsWithoutApproval(options) && !latest.get(id)?.pendingApproval) {
-          const detail = adapter.getChatWindow
-            ? await adapter.getChatWindow(
-                id,
-                { startIndex: null, limit: 1 },
-                { container: options.container }
-              )
-            : await adapter.getChat(id, { container: options.container })
-          remember(detail)
+          remember(
+            await adapter.getChatWindow(
+              id,
+              { startIndex: null, limit: 1 },
+              { container: options.container }
+            )
+          )
         }
         await drain(id)
       }

@@ -159,7 +159,6 @@ const setup = (providerId, initial = null) => {
     reuseChatSnapshotItems,
     isChatDetailSnapshotStale: (next, current) =>
       current?.id === next.id && next.revision <= current.revision,
-    shouldPreserveOptimisticTurnUntilUserMessage: () => false,
     isActiveChatStatus: () => false,
     cacheRecentChatDetail: () => {},
     markChatSeenAt: (...args) => state.seen.push(args),

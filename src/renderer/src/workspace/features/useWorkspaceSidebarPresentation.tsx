@@ -1,19 +1,8 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { type ChatListGroupData } from '../../components/ChatListGroup'
 import { getChatKey, getChatProjectCwd } from '../chatControllerUtils'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
 import { useWorkspaceSubagentPresentation } from './useWorkspaceSubagentPresentation'
-
-import type { useChatInteractionController } from '../useChatInteractionController'
-import type { useWorkspaceSelection } from '../useWorkspaceSelection'
-type WorkspaceSidebarPresentationDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
-  session: Pick<ReturnType<typeof useWorkspaceSelection>, 'committingChatKeys' | 'selectedChatKey'>
-  interactions: Pick<ReturnType<typeof useChatInteractionController>, 'renderChatGroup'>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function useWorkspaceSidebarPresentation({
   chatState,
@@ -21,7 +10,9 @@ export function useWorkspaceSidebarPresentation({
   subagentPresentation,
   session,
   interactions
-}: WorkspaceSidebarPresentationDependencies) {
+}: WorkspaceChanges & {
+  subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
+}) {
   const { committingChatKeys, selectedChatKey } = session
   const { renderChatGroup } = interactions
 
@@ -48,7 +39,7 @@ export function useWorkspaceSidebarPresentation({
   }, [workingProjectCwds])
 
   const renderSidebarChatGroup = useCallback(
-    (group: ChatListGroupData, contentId: string): React.ReactElement => {
+    (group: ChatListGroupData): React.ReactElement => {
       const holdsSelectedChat = Boolean(
         selectedChatKey && group.chats.some((chat) => getChatKey(chat) === selectedChatKey)
       )
@@ -63,7 +54,6 @@ export function useWorkspaceSidebarPresentation({
                 workingProjectCwds.has(group.cwd)
             }
           : group,
-        contentId,
         holdsSelectedChat ? subagentPresentation.selectedChatSubagentList : null,
         holdsSelectedChat && subagentPresentation.selectedSubagentChatOpen,
         subagentState.workingSubagentChatKeys

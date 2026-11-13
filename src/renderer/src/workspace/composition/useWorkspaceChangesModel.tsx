@@ -9,7 +9,7 @@ import { useGitViewModel } from '../useGitViewModel'
 import { useGitSyncController } from '../useGitSyncController'
 import { useWorkspaceSelection } from '../useWorkspaceSelection'
 import { useSubagentController } from '../useSubagentController'
-import { useWorkspaceChatModel } from './useWorkspaceChatModel'
+import { useWorkspaceChatModel, type WorkspaceChat } from './useWorkspaceChatModel'
 import { useWorkspaceRuntime } from './useWorkspaceRuntime'
 import { useWorkspaceState } from './useWorkspaceState'
 
@@ -19,6 +19,8 @@ type WorkspaceChangesModelDependencies = {
   state: ReturnType<typeof useWorkspaceState>
   session: ReturnType<typeof useWorkspaceSelection>
 }
+
+export type WorkspaceChanges = WorkspaceChat & ReturnType<typeof useWorkspaceChangesModel>
 
 export function useWorkspaceChangesModel({
   runtime,

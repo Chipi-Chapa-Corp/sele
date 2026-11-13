@@ -148,13 +148,11 @@ export class ChromeAutomation implements BrowserAutomationService {
       if (closed) throw new Error('Chrome capability was revoked.')
       return result
     }
-    const downloads = new Map<number, BrowserDownload[]>()
     const authorizedDownloads = new Set<string>()
     this.listeners.set(owner, (event) => {
       if (!closed) onEvent?.(event)
     })
     const tabs = async (): Promise<BrowserAutomationTab[]> => {
-      if (closed) throw new Error('Chrome capability was revoked.')
       const all = await request<BrowserAutomationTab[]>('getTabs')
       return all.filter(
         (tab) =>
@@ -182,11 +180,9 @@ export class ChromeAutomation implements BrowserAutomationService {
       scope: { ...scope },
       listTabs: tabs,
       createTab: async (options) => {
-        if (closed) throw new Error('Chrome capability was revoked.')
         const tab = await request<BrowserAutomationTab>('createTab', {
           foreground: options?.foreground ?? true
         })
-        if (closed) throw new Error('Chrome capability was revoked.')
         this.owners.set(tab.id, owner)
         return tab
       },
@@ -235,24 +231,7 @@ export class ChromeAutomation implements BrowserAutomationService {
       listDownloads: async (id) => {
         await claim(id)
         const entries = await request<BrowserDownload[]>('getDownloads', { tabId: id })
-        const allowed = entries.filter((entry) => authorizedDownloads.has(entry.url))
-        downloads.set(id, allowed)
-        return allowed
-      },
-      waitForDownload: async (id, timeout = 15000) => {
-        await claim(id)
-        const deadline = Date.now() + Math.min(timeout, 60000)
-        while (!closed && Date.now() < deadline) {
-          const entries = await request<BrowserDownload[]>('getDownloads', { tabId: id })
-          downloads.set(
-            id,
-            entries.filter((entry) => authorizedDownloads.has(entry.url))
-          )
-          const complete = downloads.get(id)?.find((entry) => entry.status === 'complete')
-          if (complete) return complete
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
-        throw new Error('Chrome download did not complete.')
+        return entries.filter((entry) => authorizedDownloads.has(entry.url))
       },
       close: () => {
         if (closed) return

@@ -29,7 +29,6 @@ import {
 } from './CodexTranscriptMetadataIndex.ts'
 import {
   markTranscriptRecordsChanged,
-  getUnchangedTranscriptPrefix,
   indexTranscriptRecords,
   updateIndexedTranscriptRecords,
   type TranscriptRecordUpdate
@@ -156,6 +155,7 @@ import {
 import { loadSessionThreadName, loadSessionThreadNames } from './CodexSessionIndex'
 import { selectCodexTitleModel } from './CodexTitleModel'
 import { isTransientProviderFailure } from '../ProviderNetworkRetry.ts'
+import { getString } from '../providerValues.ts'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls'
 import {
   assertUniqueCodexSnapshotIds,
@@ -393,38 +393,6 @@ type ThreadNameGenerationResult = {
   title: string
 }
 
-type CodexThreadAccessOptions = {
-  approvalPolicy: 'on-request' | 'on-failure' | 'never'
-  approvalsReviewer?: 'user' | 'auto_review'
-  runtimeWorkspaceRoots?: string[]
-  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
-}
-
-type CodexThreadModelOptions = {
-  model: ProviderTurnOptions['model']
-  serviceTier: ProviderTurnOptions['serviceTier']
-}
-
-type CodexTurnAccessOptions = {
-  approvalPolicy: 'on-request' | 'on-failure' | 'never'
-  approvalsReviewer?: 'user' | 'auto_review'
-  runtimeWorkspaceRoots?: string[]
-  sandboxPolicy:
-    | { type: 'readOnly'; networkAccess: boolean }
-    | {
-        type: 'workspaceWrite'
-        writableRoots?: string[]
-        networkAccess: boolean
-      }
-    | { type: 'dangerFullAccess' }
-}
-
-type CodexTurnModelOptions = {
-  model: ProviderTurnOptions['model']
-  effort: ProviderTurnOptions['reasoningEffort']
-  serviceTier: ProviderTurnOptions['serviceTier']
-}
-
 type NotificationParams = Record<string, unknown>
 
 type CodexPendingApproval = {
@@ -477,9 +445,6 @@ const getAccountLabel = (account: CodexAccount): string => {
   return 'Amazon Bedrock'
 }
 
-const getStringValue = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
-
 const getRecordValue = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -492,8 +457,8 @@ const getOptionalNumberValue = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null
 
 const getTurnFailureMessage = (turn: CodexTurn, errorLabel: string): string => {
-  const message = getStringValue(turn.error?.message)
-  const additionalDetails = getStringValue(turn.error?.additionalDetails)
+  const message = getString(turn.error?.message)
+  const additionalDetails = getString(turn.error?.additionalDetails)
   const details = [message, additionalDetails]
     .filter((detail): detail is string => Boolean(detail))
     .filter((detail, index, values) => values.indexOf(detail) === index)
@@ -562,9 +527,6 @@ const hasDetailedTokenUsage = (usage: ProviderTokenUsageBreakdown): boolean =>
   usage.outputTokens > 0 ||
   usage.reasoningOutputTokens > 0
 
-const getTokenCountContextTokens = (last: ProviderTokenUsageBreakdown): number =>
-  last.inputTokens > 0 ? last.inputTokens : last.totalTokens
-
 const normalizeChatContextUsage = (value: unknown): ProviderChatContextUsage | null => {
   const usage = getRecordValue(value)
   if (!usage) return null
@@ -579,7 +541,7 @@ const normalizeChatContextUsage = (value: unknown): ProviderChatContextUsage | n
     modelContextWindow == null ? null : getRequiredUsageNumber(modelContextWindow)
   if (modelContextWindow != null && reportedContextWindow == null) return null
 
-  const usedTokens = getTokenCountContextTokens(last)
+  const usedTokens = last.inputTokens > 0 ? last.inputTokens : last.totalTokens
   const maxTokens =
     reportedContextWindow != null && reportedContextWindow > usedTokens
       ? reportedContextWindow
@@ -754,10 +716,10 @@ const getThreadName = (thread: CodexThread): string | null => {
   }
 
   return (
-    getStringValue(thread.name) ??
-    getStringValue(threadFields.thread_name) ??
-    getStringValue(threadFields.threadName) ??
-    getStringValue(threadFields.title)
+    getString(thread.name) ??
+    getString(threadFields.thread_name) ??
+    getString(threadFields.threadName) ??
+    getString(threadFields.title)
   )
 }
 
@@ -767,9 +729,7 @@ const getThreadTitle = (thread: CodexThread): string => {
 }
 
 const getThreadNotificationName = (params: NotificationParams): string | null =>
-  getStringValue(params.threadName) ??
-  getStringValue(params.thread_name) ??
-  getStringValue(params.name)
+  getString(params.threadName) ?? getString(params.thread_name) ?? getString(params.name)
 
 const getThreadMetadataStatus = (thread: CodexThread): ProviderChatStatus | null => {
   if (thread.status.type === 'systemError') return 'error'
@@ -876,7 +836,7 @@ const isActiveWriterError = (error: unknown): boolean =>
 
 const getSteerResponseTurnId = (response: TurnSteerResponse | string): string | null => {
   if (typeof response === 'string') return response.trim() || null
-  return getStringValue(response.turnId)
+  return getString(response.turnId)
 }
 
 const isLocalTurnStartUserMessage = (item: CodexThreadItem): boolean =>
@@ -902,32 +862,6 @@ const assertReadableCodexHistory = (thread: Pick<CodexThread, 'historyMode'>): v
   if (isSupportedCodexHistory(thread.historyMode) || isLegacyCodexHistory(thread.historyMode))
     return
   throw new Error(getUnsupportedCodexHistoryMessage(thread.historyMode))
-}
-
-type CodexThreadAction =
-  | { type: 'nameSet'; name: string | null }
-  | { type: 'statusSet'; status: CodexThreadStatus }
-  | { type: 'turnsReplaced'; turns: CodexTurn[] }
-  | { type: 'turnStatusSet'; turnId: string; status: string }
-
-const reduceCodexThread = (thread: CodexThread, action: CodexThreadAction): CodexThread => {
-  const updatedAt = nowSeconds()
-  switch (action.type) {
-    case 'nameSet':
-      return { ...thread, updatedAt, name: action.name }
-    case 'statusSet':
-      return { ...thread, updatedAt, status: action.status }
-    case 'turnsReplaced':
-      return { ...thread, updatedAt, turns: action.turns }
-    case 'turnStatusSet':
-      return {
-        ...thread,
-        updatedAt,
-        turns: thread.turns.map((turn) =>
-          turn.id === action.turnId ? { ...turn, status: action.status } : turn
-        )
-      }
-  }
 }
 
 const titleGenerationTimeoutMs = 30_000
@@ -959,6 +893,13 @@ const isExpectedCodexMetadataCapabilityError = (error: unknown): boolean => {
     typeof candidate?.message === 'string' &&
     /\b(?:method not found|unknown method|unsupported method)\b/i.test(candidate.message)
   )
+}
+const isolatedGenerationConfig = {
+  'features.enable_fanout': false,
+  'features.hooks': false,
+  'features.multi_agent': false,
+  'features.multi_agent_v2': false,
+  web_search: 'disabled'
 }
 const titleGenerationOutputSchema = {
   type: 'object',
@@ -1082,13 +1023,6 @@ const getAgentMessageText = (turn: CodexTurn): string | null => {
   return message?.text?.trim() || null
 }
 
-const getAgentMessageTextFromItem = (item: unknown): string | null => {
-  const message = getRecordValue(item)
-  if (message?.type !== 'agentMessage') return null
-
-  return getStringValue(message.text)
-}
-
 const getJsonText = (text: string): string => {
   const trimmed = text.trim()
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed)
@@ -1105,17 +1039,13 @@ const parseThreadTitleGenerationResult = (text: string): ThreadNameGenerationRes
     return null
   }
 
-  const rawTitle = getStringValue(getRecordValue(parsed)?.title)
+  const rawTitle = getString(getRecordValue(parsed)?.title)
   const title = rawTitle ? normalizeGeneratedTitle(rawTitle) : null
   return title ? { title } : null
 }
 
 const getGeneratedThreadTitle = (text: string): string | null =>
   parseThreadTitleGenerationResult(text)?.title ?? normalizeGeneratedTitle(text)
-
-const normalizeModelLabel = (model: CodexModel): string => {
-  return model.displayName?.trim() || model.model?.trim() || model.id.trim()
-}
 
 const normalizeReasoningEffortLabel = (reasoningEffort: string): string =>
   reasoningEffort
@@ -1177,7 +1107,7 @@ const mapCodexModel = (model: CodexModel): ProviderModel | null => {
 
   return {
     id,
-    label: normalizeModelLabel(model),
+    label: model.displayName?.trim() || model.model?.trim() || id,
     description: model.description?.trim() ?? '',
     isDefault: Boolean(model.isDefault),
     supportedReasoningEfforts,
@@ -1186,16 +1116,6 @@ const mapCodexModel = (model: CodexModel): ProviderModel | null => {
     defaultServiceTier
   }
 }
-
-const getApprovalPolicy = (options?: ProviderTurnOptions): ProviderTurnOptions['approvalPolicy'] =>
-  options?.approvalPolicy ?? 'on-request'
-
-const getApprovalsReviewer = (
-  options?: ProviderTurnOptions
-): ProviderTurnOptions['approvalsReviewer'] => options?.approvalsReviewer ?? 'user'
-
-const getSandboxMode = (options?: ProviderTurnOptions): ProviderTurnOptions['sandboxMode'] =>
-  options?.sandboxMode ?? 'workspace-write'
 
 const getRuntimeWorkspaceRoots = (options?: ProviderTurnOptions): string[] =>
   Array.from(
@@ -1206,12 +1126,12 @@ const getRuntimeWorkspaceRoots = (options?: ProviderTurnOptions): string[] =>
     )
   )
 
-const getThreadModelOptions = (options?: ProviderTurnOptions): CodexThreadModelOptions => ({
+const getThreadModelOptions = (options?: ProviderTurnOptions) => ({
   model: options?.model ?? 'gpt-5.5',
   serviceTier: options?.serviceTier ?? null
 })
 
-const getTurnModelOptions = (options?: ProviderTurnOptions): CodexTurnModelOptions => ({
+const getTurnModelOptions = (options?: ProviderTurnOptions) => ({
   model: options?.model ?? 'gpt-5.5',
   effort: options?.reasoningEffort ?? 'xhigh',
   serviceTier: options?.serviceTier ?? null
@@ -1221,43 +1141,41 @@ const getRecommendedPluginsConfig = (options?: ProviderTurnOptions): Record<stri
   'features.recommended_plugins': options?.showRecommendedPlugins === true
 })
 
-const getThreadAccessOptions = (options?: ProviderTurnOptions): CodexThreadAccessOptions => {
-  const approvalPolicy = getApprovalPolicy(options)
+const getAccessOptions = (options?: ProviderTurnOptions) => {
+  const approvalPolicy = options?.approvalPolicy ?? 'on-request'
   const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
-  const accessOptions: CodexThreadAccessOptions = {
+  return {
     approvalPolicy,
     ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
-    sandbox: getSandboxMode(options)
+    ...(approvalPolicy === 'never'
+      ? {}
+      : { approvalsReviewer: options?.approvalsReviewer ?? 'user' })
   }
-
-  if (approvalPolicy !== 'never') accessOptions.approvalsReviewer = getApprovalsReviewer(options)
-
-  return accessOptions
 }
 
-const getTurnAccessOptions = (options?: ProviderTurnOptions): CodexTurnAccessOptions => {
-  const approvalPolicy = getApprovalPolicy(options)
-  const sandboxMode = getSandboxMode(options)
-  const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
-  const sandboxPolicy: CodexTurnAccessOptions['sandboxPolicy'] =
-    sandboxMode === 'danger-full-access'
-      ? { type: 'dangerFullAccess' }
-      : sandboxMode === 'read-only'
-        ? { type: 'readOnly', networkAccess: false }
-        : {
-            type: 'workspaceWrite',
-            ...(runtimeWorkspaceRoots.length > 0 ? { writableRoots: runtimeWorkspaceRoots } : {}),
-            networkAccess: false
-          }
-  const accessOptions: CodexTurnAccessOptions = {
-    approvalPolicy,
-    ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
-    sandboxPolicy
+const getThreadAccessOptions = (options?: ProviderTurnOptions) => ({
+  ...getAccessOptions(options),
+  sandbox: options?.sandboxMode ?? 'workspace-write'
+})
+
+const getTurnAccessOptions = (options?: ProviderTurnOptions) => {
+  const accessOptions = getAccessOptions(options)
+  const sandboxMode = options?.sandboxMode ?? 'workspace-write'
+  return {
+    ...accessOptions,
+    sandboxPolicy:
+      sandboxMode === 'danger-full-access'
+        ? { type: 'dangerFullAccess' }
+        : sandboxMode === 'read-only'
+          ? { type: 'readOnly', networkAccess: false }
+          : {
+              type: 'workspaceWrite',
+              ...(accessOptions.runtimeWorkspaceRoots
+                ? { writableRoots: accessOptions.runtimeWorkspaceRoots }
+                : {}),
+              networkAccess: false
+            }
   }
-
-  if (approvalPolicy !== 'never') accessOptions.approvalsReviewer = getApprovalsReviewer(options)
-
-  return accessOptions
 }
 
 export class CodexProviderAdapter implements ProviderAdapter {
@@ -1267,21 +1185,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private authenticationFailures = new Set<string>()
 
   reauthenticate = (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> =>
-    this.runWithContainer(options.container, async () => {
-      const login = await this.client.request<LoginResponse>('account/login/start', {
-        type: 'chatgptDeviceCode'
-      })
-      if (login.type === 'chatgptDeviceCode')
-        return {
-          status: 'pending',
-          loginId: login.loginId,
-          authUrl: login.verificationUrl,
-          userCode: login.userCode
-        }
-      if (login.type === 'chatgpt')
-        return { status: 'pending', loginId: login.loginId, authUrl: login.authUrl }
-      throw new Error(`Unsupported Codex login response: ${login.type}`)
+    this.runWithContainer(options.container, () => this.startLoginInContext())
+
+  private startLoginInContext = async (): Promise<ProviderLoginResult> => {
+    const login = await this.client.request<LoginResponse>('account/login/start', {
+      type: 'chatgptDeviceCode'
     })
+    if (login.type === 'chatgptDeviceCode')
+      return {
+        status: 'pending',
+        loginId: login.loginId,
+        authUrl: login.verificationUrl,
+        userCode: login.userCode
+      }
+    if (login.type === 'chatgpt')
+      return { status: 'pending', loginId: login.loginId, authUrl: login.authUrl }
+    throw new Error(`Unsupported Codex login response: ${login.type}`)
+  }
 
   clearAuthenticationFailure = (container: AppContainerTarget | null | undefined): void => {
     this.authenticationFailures.delete(getContainerTargetKey(container))
@@ -1423,7 +1343,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.clientContainerContext.run(storedContainer, () => this.handleNotification(notification))
     )
     this.promptSuggestions.set(client, predictions)
-    client.onRequestFailed((method, _params, error) => {
+    client.onRequestFailed((method, error) => {
       if (!/^(?:account|thread|turn|model)\//.test(method) || !isCodexAuthenticationFailure(error))
         return
       this.authenticationFailures.add(key)
@@ -1645,28 +1565,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (account && !account.requiresOpenaiAuth) return { status: 'notRequired' }
 
-    const login = await this.client.request<LoginResponse>('account/login/start', {
-      type: 'chatgptDeviceCode'
-    })
-
-    if (login.type === 'chatgpt') {
-      return {
-        status: 'pending',
-        loginId: login.loginId,
-        authUrl: login.authUrl
-      }
-    }
-
-    if (login.type === 'chatgptDeviceCode') {
-      return {
-        status: 'pending',
-        loginId: login.loginId,
-        authUrl: login.verificationUrl,
-        userCode: login.userCode
-      }
-    }
-
-    throw new Error(`Unsupported Codex login response: ${login.type}`)
+    return this.startLoginInContext()
   }
 
   getApprovalModes = async (): Promise<ProviderApprovalModeOption[]> =>
@@ -1687,20 +1586,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   getModels = async (options: ProviderSourceOptions = {}): Promise<ProviderModel[]> =>
-    this.runWithContainer(options.container, () => this.getModelsInContext())
-
-  private getModelsInContext = async (): Promise<ProviderModel[]> => {
-    try {
-      const models = (await this.listModelsInContext())
-        .map(mapCodexModel)
-        .filter((model): model is ProviderModel => Boolean(model))
-      if (models.length === 0) throw new Error('Codex returned no available models')
-      return models
-    } catch (error) {
-      console.error('Unable to discover Codex models', error)
-      throw error
-    }
-  }
+    this.runWithContainer(options.container, async () => {
+      try {
+        const models = (await this.listModelsInContext())
+          .map(mapCodexModel)
+          .filter((model): model is ProviderModel => Boolean(model))
+        if (models.length === 0) throw new Error('Codex returned no available models')
+        return models
+      } catch (error) {
+        console.error('Unable to discover Codex models', error)
+        throw error
+      }
+    })
 
   private listModelsInContext = async (): Promise<CodexModel[]> => {
     const models: CodexModel[] = []
@@ -1870,12 +1767,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     } while (cursor)
     return { features: features.sort((a, b) => a.name.localeCompare(b.name)) }
   }
-
-  setConfigFeature = (
-    name: string,
-    enabled: boolean,
-    options: ProviderSourceOptions = {}
-  ): Promise<ProviderConfig> => this.setConfigValue(name, [], enabled, options)
 
   setConfigValue = (
     name: string,
@@ -2193,16 +2084,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
   resetRateLimits = async (
     options: ProviderSourceOptions = {}
   ): Promise<ProviderAccountRateLimitResetOutcome> =>
-    this.runWithContainer(options.container, () => this.resetRateLimitsInContext())
-
-  private resetRateLimitsInContext = async (): Promise<ProviderAccountRateLimitResetOutcome> => {
-    const response = await this.client.request<AccountRateLimitResetResponse>(
-      'account/rateLimitResetCredit/consume',
-      { idempotencyKey: randomUUID() }
-    )
-
-    return normalizeRateLimitResetOutcome(response.outcome)
-  }
+    this.runWithContainer(options.container, async () => {
+      const response = await this.client.request<AccountRateLimitResetResponse>(
+        'account/rateLimitResetCredit/consume',
+        { idempotencyKey: randomUUID() }
+      )
+      return normalizeRateLimitResetOutcome(response.outcome)
+    })
 
   getChats = async (options: ProviderChatListOptions = {}): Promise<ProviderChatPage> =>
     this.runWithContainer(options.container, () => this.getChatsInContext(options))
@@ -2338,19 +2226,21 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
   }
 
+  /** The latest turn's status and timestamps, without its item payloads. */
+  private readLatestTurnShell = (threadId: string): Promise<ThreadTurnsListResponse> =>
+    this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
+      threadId,
+      cursor: null,
+      limit: 1,
+      sortDirection: 'desc',
+      itemsView: 'notLoaded'
+    })
+
   private getSidebarTurnSummary = async (thread: CodexThread) => {
-    const response = await this.client
-      .request<ThreadTurnsListResponse>('thread/turns/list', {
-        threadId: thread.id,
-        cursor: null,
-        limit: 1,
-        sortDirection: 'desc',
-        itemsView: 'notLoaded'
-      })
-      .catch((error) => {
-        console.error('Unable to read latest Codex sidebar turn.', error)
-        return null
-      })
+    const response = await this.readLatestTurnShell(thread.id).catch((error) => {
+      console.error('Unable to read latest Codex sidebar turn.', error)
+      return null
+    })
     if (!response) return undefined
     const latest = response.data[0]
     const hasPendingLocalActivity =
@@ -2394,16 +2284,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     // Claim through the existing connection without delaying history. Keep writes disabled
     // until ownership is confirmed, and coalesce concurrent opens/retries.
-    const check = this.claimChatWriteAccess(detail)
-      .then(() => {})
-      .catch((error: unknown) => {
-        console.warn(`Unable to check write access for Codex thread ${detail.id}`, error)
-      })
-      .finally(() => {
-        if (this.writeAccessChecks.get(detail.id) !== check) return
-        this.writeAccessChecks.delete(detail.id)
-        this.emitChatUpdated(detail.id)
-      })
+    const check = this.claimChatWriteAccess(detail.id).finally(() => {
+      if (this.writeAccessChecks.get(detail.id) !== check) return
+      this.writeAccessChecks.delete(detail.id)
+      this.emitChatUpdated(detail.id)
+    })
     this.writeAccessChecks.set(detail.id, check)
     this.bumpThreadRevision(detail.id)
   }
@@ -2452,58 +2337,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   /** Claim opened chats on Sele's persistent connection, retaining ownership while it lives. */
-  private claimChatWriteAccess = async (
-    detail: ProviderChatDetail
-  ): Promise<ProviderChatDetail> => {
-    if (isLegacyCodexHistory(this.threads.get(detail.id)?.historyMode)) return detail
-
-    const hasLocallyOwnedTurn =
-      this.client.ownsThread(detail.id) ||
-      this.pendingTurnStarts.has(detail.id) ||
-      this.pendingTurnIds.has(detail.id) ||
-      this.activeTurnIds.has(detail.id)
-    if (hasLocallyOwnedTurn) {
-      this.externallyOwnedThreadIds.delete(detail.id)
-      return {
-        ...detail,
-        writeAccess: 'writable',
-        writeAccessReason: undefined,
-        capabilities: codexCapabilities
-      }
-    }
-
+  private claimChatWriteAccess = async (chatId: string): Promise<void> => {
     try {
       await this.client.request<ThreadResponse>('thread/resume', {
-        threadId: detail.id,
+        threadId: chatId,
         excludeTurns: true
       })
-      this.externallyOwnedThreadIds.delete(detail.id)
-      return {
-        ...detail,
-        writeAccess: 'writable',
-        writeAccessReason: undefined,
-        capabilities: codexCapabilities
-      }
+      this.externallyOwnedThreadIds.delete(chatId)
     } catch (error) {
-      if (!isActiveWriterError(error)) {
-        console.warn(`Unable to determine write access for Codex thread ${detail.id}`, error)
-        return this.externallyOwnedThreadIds.has(detail.id)
-          ? { ...detail, writeAccess: 'readOnly' }
-          : {
-              ...detail,
-              writeAccess: 'unknown',
-              writeAccessReason: undefined,
-              capabilities: codexCapabilities
-            }
-      }
-
-      this.externallyOwnedThreadIds.add(detail.id)
-      return {
-        ...detail,
-        writeAccess: 'readOnly',
-        writeAccessReason: 'externalOwner',
-        capabilities: { ...detail.capabilities, editMessages: false, activeMessages: false }
-      }
+      if (isActiveWriterError(error)) this.externallyOwnedThreadIds.add(chatId)
+      else console.warn(`Unable to determine write access for Codex thread ${chatId}`, error)
     }
   }
 
@@ -2541,9 +2384,21 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.rememberThreadContainer(chatId)
       const cached = this.threads.get(chatId)
       const cachedTurns = cached ? this.getRenderableTurns(cached) : []
-      const cachedTurnIndex = cachedTurns.findIndex(
-        (turn) => itemId === turn.id || itemId.startsWith(`${turn.id}:`)
-      )
+      const ownsItem = (turn: CodexTurn): boolean =>
+        itemId === turn.id || itemId.startsWith(`${turn.id}:`)
+      const centerWindow = (turns: CodexTurn[]): { startIndex: number; limit: number } => {
+        const targetTurnIndex = turns.findIndex(ownsItem)
+        if (targetTurnIndex < 0) throw new Error('Chat item not found')
+        const boundedLimit = Math.max(1, Math.floor(limit))
+        return {
+          startIndex: Math.min(
+            Math.max(0, targetTurnIndex - Math.floor(boundedLimit / 2)),
+            Math.max(0, turns.length - boundedLimit)
+          ),
+          limit: boundedLimit
+        }
+      }
+      const cachedTurnIndex = cachedTurns.findIndex(ownsItem)
       const cachedTurn = cachedTurns[cachedTurnIndex]
       if (cached && cachedTurn && limit === 1) {
         // Working/tool paging needs this turn's complete row index, not a latest-chat read
@@ -2563,18 +2418,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const response = await this.readThread(chatId, false)
       if (this.usesLegacyHistory(response.thread.historyMode)) {
         const thread = await this.loadThreadWithoutPagination(response.thread)
-        const renderableTurns = this.getRenderableTurns(thread)
-        const targetTurnIndex = renderableTurns.findIndex(
-          (turn) => itemId === turn.id || itemId.startsWith(`${turn.id}:`)
-        )
-        if (targetTurnIndex < 0) throw new Error('Chat item not found')
-        const boundedLimit = Math.max(1, Math.floor(limit))
-        const startIndex = Math.min(
-          Math.max(0, targetTurnIndex - Math.floor(boundedLimit / 2)),
-          Math.max(0, renderableTurns.length - boundedLimit)
-        )
+        const turnWindow = centerWindow(this.getRenderableTurns(thread))
         this.cacheThread(thread)
-        return this.createChatDetail(thread, { turnWindow: { startIndex, limit: boundedLimit } })
+        return this.createChatDetail(thread, { turnWindow })
       }
       assertSupportedCodexHistory(response.thread)
       const cachedCatalog = this.paginatedTurnCatalogs.get(chatId)
@@ -2592,16 +2438,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const renderableCatalog = this.filterRolledBackTurns(chatId, catalog).filter(
         (turn) => turn.status !== 'queued'
       )
-      const targetTurnIndex = renderableCatalog.findIndex(
-        (turn) => itemId === turn.id || itemId.startsWith(`${turn.id}:`)
-      )
-      if (targetTurnIndex < 0) throw new Error('Chat item not found')
-      const boundedLimit = Math.max(1, Math.floor(limit))
-      const startIndex = Math.min(
-        Math.max(0, targetTurnIndex - Math.floor(boundedLimit / 2)),
-        Math.max(0, renderableCatalog.length - boundedLimit)
-      )
-      return this.getChatWindowInContext(chatId, { startIndex, limit: boundedLimit })
+      return this.getChatWindowInContext(chatId, centerWindow(renderableCatalog))
     })
 
   private usesLegacyHistory = (historyMode: unknown): boolean =>
@@ -2905,23 +2742,13 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const pendingMessages = this.getProviderPendingMessages(chatId)
     const limit = Math.max(1, Math.floor(window.limit))
-    const loadWindow = async (
-      catalog: CodexTurn[]
-    ): Promise<{
-      selectedTurns: CodexTurn[]
-      startIndex: number
-      totalCount: number
-      pendingStartIndex: number
-      pendingEndIndex: number
-    }> => {
+    const requestedStartIndex = window.startIndex
+    const loadWindow = async (catalog: CodexTurn[]) => {
       const renderableCatalog = this.filterRolledBackTurns(threadMetadata.id, catalog).filter(
         (turn) => turn.status !== 'queued'
       )
       const totalCount = renderableCatalog.length + pendingMessages.length
-      const startIndex =
-        window.startIndex == null
-          ? Math.max(0, totalCount - limit)
-          : Math.max(0, Math.min(Math.floor(window.startIndex), totalCount))
+      const startIndex = Math.max(0, Math.min(Math.floor(requestedStartIndex), totalCount))
       const endIndex = Math.min(totalCount, startIndex + limit)
       const rawTurnEndIndex = Math.min(renderableCatalog.length, endIndex)
       const selectedTurns =
@@ -3045,16 +2872,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         .map(async (agent) => {
           try {
             const revision = this.threadRevisions.get(agent.id)
-            const response = await this.client.request<ThreadTurnsListResponse>(
-              'thread/turns/list',
-              {
-                threadId: agent.id,
-                cursor: null,
-                limit: 1,
-                sortDirection: 'desc',
-                itemsView: 'notLoaded'
-              }
-            )
+            const response = await this.readLatestTurnShell(agent.id)
             const latest = response.data[0]
             if (latest && this.threadRevisions.get(agent.id) === revision) {
               this.recordSubagentRunOutcome(agent.id, latest)
@@ -3134,13 +2952,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.subagentOutcomeChecks.set(subagent.id, revision)
 
       void this.runWithContainer(container, async () => {
-        const response = await this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
-          threadId: subagent.id,
-          cursor: null,
-          limit: 1,
-          sortDirection: 'desc',
-          itemsView: 'notLoaded'
-        })
+        const response = await this.readLatestTurnShell(subagent.id)
         const latestTurn = response.data[0]
         const outcome = latestTurn ? getCodexSubagentRunOutcome(latestTurn) : null
         // A live notification observed meanwhile is fresher than this history read.
@@ -3299,20 +3111,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private cancelSubagentInContext = async (_chatId: string, subagentId: string): Promise<void> => {
     let activeTurnId = this.activeTurnIds.get(subagentId)
     if (!activeTurnId) {
-      const response = await this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
-        threadId: subagentId,
-        cursor: null,
-        limit: 1,
-        sortDirection: 'desc',
-        itemsView: 'notLoaded'
-      })
+      const response = await this.readLatestTurnShell(subagentId)
       activeTurnId = response.data.find((turn) => turn.status === 'inProgress')?.id
     }
     if (!activeTurnId) return
-    const result = await this.interruptTurnWithClient(this.client, subagentId, activeTurnId)
+    const stoppedTurnId = await this.interruptTurnWithClient(this.client, subagentId, activeTurnId)
     this.activeTurnIds.delete(subagentId)
     this.subagentRunOutcomes.set(subagentId, { status: 'stopped', at: Date.now() })
-    this.markTurnInterrupted(subagentId, result.turnId)
+    this.markTurnInterrupted(subagentId, stoppedTurnId)
     this.setThreadStatus(subagentId, { type: 'idle' })
     this.emitChatUpdated(subagentId)
   }
@@ -3339,7 +3145,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         threadId: chatId,
         name: title
       })
-      this.commitThreadAction(chatId, { type: 'nameSet', name: title })
+      this.patchThread(chatId, { name: title })
       this.emitChatUpdated(chatId)
 
       const detail = this.getCachedChatDetail(chatId)
@@ -3380,6 +3186,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.activeOneShotGenerations.set(generationId, generation!)
     }
 
+    const roots = getRuntimeWorkspaceRoots(options)
+    const workspaceRoots = roots.length > 0 ? { runtimeWorkspaceRoots: roots } : {}
     let threadId: string | null = null
     let generatedText: Promise<string | null> | null = null
 
@@ -3398,21 +3206,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const startedThread = await client.request<ThreadResponse>('thread/start', {
         cwd: options?.cwd,
         historyMode: 'paginated',
-        ...(getRuntimeWorkspaceRoots(options).length > 0
-          ? { runtimeWorkspaceRoots: getRuntimeWorkspaceRoots(options) }
-          : {}),
+        ...workspaceRoots,
         model: options?.model,
         serviceTier: options?.serviceTier ?? null,
         approvalPolicy: 'never',
         sandbox: 'read-only',
-        config: {
-          ...getRecommendedPluginsConfig(options),
-          'features.enable_fanout': false,
-          'features.hooks': false,
-          'features.multi_agent': false,
-          'features.multi_agent_v2': false,
-          web_search: 'disabled'
-        },
+        config: { ...getRecommendedPluginsConfig(options), ...isolatedGenerationConfig },
         ephemeral: true
       })
       assertSupportedCodexHistory(startedThread.thread)
@@ -3437,9 +3236,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       const startedTurn = await client.request<TurnStartResponse>('turn/start', {
         threadId,
         cwd: options?.cwd,
-        ...(getRuntimeWorkspaceRoots(options).length > 0
-          ? { runtimeWorkspaceRoots: getRuntimeWorkspaceRoots(options) }
-          : {}),
+        ...workspaceRoots,
         input: createUserTextInput(text),
         approvalPolicy: 'never',
         sandboxPolicy: { type: 'readOnly', networkAccess: false },
@@ -3868,21 +3665,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     mode: ProviderActiveSendMode,
     options?: ProviderTurnOptions
   ): Promise<ProviderChatDetail> =>
-    this.runWithContainer(this.getThreadContainer(chatId, options), () =>
-      this.sendActiveChatMessageInContext(chatId, message, mode, options)
-    )
-
-  private sendActiveChatMessageInContext = async (
-    chatId: string,
-    message: string,
-    mode: ProviderActiveSendMode,
-    options?: ProviderTurnOptions
-  ): Promise<ProviderChatDetail> => {
-    this.rememberThreadContainer(chatId)
-    if (mode === 'queue') return this.queueChatMessage(chatId, message, options)
-    if (mode === 'interrupt') return this.interruptAndContinueChat(chatId, message, options)
-    return this.steerActiveChat(chatId, message, options)
-  }
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      this.rememberThreadContainer(chatId)
+      if (mode === 'queue') return this.queueChatMessage(chatId, message, options)
+      if (mode === 'interrupt') return this.interruptAndContinueChat(chatId, message, options)
+      return this.steerActiveChat(chatId, message, options)
+    })
 
   enqueueLimitResetMessage = (
     chatId: string,
@@ -4093,29 +3881,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
       return detail
     }
 
-    const steeringMessage = this.takeSteeringMessage(chatId, messageId)
-    if (steeringMessage) {
-      this.emitChatUpdated(chatId)
-      return this.interruptAndContinueChat(
-        chatId,
-        steeringMessage.text,
-        steeringMessage.options,
-        steeringMessage.input
-      )
-    }
+    const pending =
+      this.takeSteeringMessage(chatId, messageId) ?? this.takeQueuedTurn(chatId, messageId)
+    if (!pending) throw new Error('Pending message cannot be interrupted')
 
-    const queuedTurn = this.takeQueuedTurn(chatId, messageId)
-    if (queuedTurn) {
-      this.emitChatUpdated(chatId)
-      return this.interruptAndContinueChat(
-        chatId,
-        queuedTurn.text,
-        queuedTurn.options,
-        queuedTurn.input
-      )
-    }
-
-    throw new Error('Pending message cannot be interrupted')
+    this.emitChatUpdated(chatId)
+    return this.interruptAndContinueChat(chatId, pending.text, pending.options, pending.input)
   }
 
   editMessage = (
@@ -4152,7 +3923,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       'edit'
     )
     assertSupportedCodexHistory(thread)
-    await this.stopActiveTurn(chatId, { startQueuedTurn: false })
+    await this.stopActiveTurn(chatId)
     thread = this.threads.get(chatId) ?? thread
 
     const previousTurnCatalog = this.filterRolledBackTurns(
@@ -4476,7 +4247,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           this.pendingTurnStarts.has(id) ||
           this.queuedTurnsByThread.get(id)?.length
         )
-          await this.stopActiveTurn(id, { startQueuedTurn: false })
+          await this.stopActiveTurn(id)
         else if (id !== chatId && client.ownsThread(id))
           await this.cancelSubagentInContext(chatId, id)
         await this.getChatTerminalTasks(id, options)
@@ -4485,17 +4256,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
 
   stopChat = (chatId: string): Promise<ProviderChatDetail> =>
-    this.runWithContainer(this.getThreadContainer(chatId), () => this.stopChatInContext(chatId))
+    this.runWithContainer(this.getThreadContainer(chatId), async () => {
+      this.rememberThreadContainer(chatId)
+      await this.stopActiveTurn(chatId)
 
-  private stopChatInContext = async (chatId: string): Promise<ProviderChatDetail> => {
-    this.rememberThreadContainer(chatId)
-    await this.stopActiveTurn(chatId, { startQueuedTurn: false })
+      const detail = this.getCachedChatDetail(chatId)
+      if (!detail) throw new Error('Unable to stop chat')
 
-    const detail = this.getCachedChatDetail(chatId)
-    if (!detail) throw new Error('Unable to stop chat')
-
-    return detail
-  }
+      return detail
+    })
 
   onChatUpdated = (
     listener: (detail: ProviderChatDetail, metadata?: ProviderChatUpdateMetadata) => void
@@ -4636,9 +4405,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     initialMessageId: string
   ): Promise<void> => {
     if (this.pendingMessageEdits.blocks(chatId, initialMessageId)) return
-    const initialSteeringMessage = this.getSteeringMessage(chatId, initialMessageId)
-    if (!initialSteeringMessage || initialSteeringMessage.status !== 'waiting') return
-
     const currentSteeringMessage = this.getSteeringMessage(chatId, initialMessageId)
     if (!currentSteeringMessage || currentSteeringMessage.status !== 'waiting') return
 
@@ -4786,7 +4552,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     await this.ensureChatTailLoaded(chatId)
     if (this.hasActiveOrSubmittingTurn(chatId)) {
-      await this.stopActiveTurn(chatId, { startQueuedTurn: false })
+      await this.stopActiveTurn(chatId)
     }
 
     return this.continueChatImmediately(chatId, text, options, undefined, input)
@@ -4870,57 +4636,29 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return promise
   }
 
-  private interruptTurn = async (
-    threadId: string,
-    turnId: string
-  ): Promise<{ turnId: string; interrupted: boolean }> =>
-    this.interruptTurnWithClient(this.client, threadId, turnId)
-
+  /** Resolves to the turn that was stopped, which is the server's active turn when it differs. */
   private interruptTurnWithClient = async (
     client: CodexAppServerClient,
     threadId: string,
-    turnId: string
-  ): Promise<{ turnId: string; interrupted: boolean }> => {
+    turnId: string,
+    retryWithServerTurnId = true
+  ): Promise<string> => {
     try {
-      await client.request('turn/interrupt', {
-        threadId,
-        turnId
-      })
-      return { turnId, interrupted: true }
+      await client.request('turn/interrupt', { threadId, turnId })
     } catch (error) {
-      const serverTurnId = getFoundActiveTurnId(error)
-      if (!serverTurnId || serverTurnId === turnId) {
-        if (isRecoverableCodexStopError(error)) {
-          console.warn(`Codex turn ${turnId} was already stopped`, error)
-          return { turnId, interrupted: false }
-        }
-        throw error
-      }
-
-      try {
-        await client.request('turn/interrupt', {
-          threadId,
-          turnId: serverTurnId
-        })
-        return { turnId: serverTurnId, interrupted: true }
-      } catch (retryError) {
-        if (isRecoverableCodexStopError(retryError)) {
-          console.warn(`Codex turn ${serverTurnId} was already stopped`, retryError)
-          return { turnId: serverTurnId, interrupted: false }
-        }
-        throw retryError
-      }
+      const serverTurnId = retryWithServerTurnId ? getFoundActiveTurnId(error) : null
+      if (serverTurnId && serverTurnId !== turnId)
+        return this.interruptTurnWithClient(client, threadId, serverTurnId, false)
+      if (!isRecoverableCodexStopError(error)) throw error
+      console.warn(`Codex turn ${turnId} was already stopped`, error)
     }
+    return turnId
   }
 
-  private stopActiveTurn = async (
-    chatId: string,
-    options: { startQueuedTurn: boolean }
-  ): Promise<void> => {
+  private stopActiveTurn = async (chatId: string): Promise<void> => {
     if ((this.queuedTurnsByThread.get(chatId)?.length ?? 0) > 0) {
       this.pausedQueuedTurnThreads.add(chatId)
     }
-    if (options.startQueuedTurn) this.pausedQueuedTurnThreads.delete(chatId)
 
     // A local optimistic turn has no server identity and must never be passed to turn/interrupt.
     // Wait for turn/start to durably bind the submitted message to the server turn first.
@@ -4942,12 +4680,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.steeringMessagesByThread.delete(chatId)
       this.setThreadStatus(chatId, { type: 'idle' })
       this.emitChatUpdated(chatId)
-      if (options.startQueuedTurn) this.scheduleQueueDrain(chatId)
       return
     }
 
-    const interruptResult = await this.interruptTurn(chatId, turnId)
-    const stoppedTurnId = interruptResult.turnId
+    const stoppedTurnId = await this.interruptTurnWithClient(this.client, chatId, turnId)
 
     this.activeTurnIds.delete(chatId)
     this.rememberManuallyStoppedTurn(chatId, stoppedTurnId)
@@ -4956,7 +4692,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (stoppedTurnId !== turnId) this.markTurnInterrupted(chatId, turnId)
     this.setThreadStatus(chatId, { type: 'idle' })
     this.emitChatUpdated(chatId)
-    if (options.startQueuedTurn) this.scheduleQueueDrain(chatId)
   }
 
   private createChatDetail = (
@@ -5362,10 +5097,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private startThreadTitleGeneration = (
     threadId: string,
     prompt: string,
-    cwd: string | null,
-    container: AppContainerTarget | null = this.getCurrentContainer()
+    cwd: string | null
   ): void => {
-    void this.runWithContainer(container, () =>
+    void this.runWithContainer(this.getCurrentContainer(), () =>
       this.generateAndSetThreadTitle(threadId, prompt, cwd)
     ).catch((error: unknown) => {
       console.warn(`Unable to generate a title for Codex thread ${threadId}`, error)
@@ -5420,19 +5154,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
       ...modelOptions,
       approvalPolicy: 'never',
       sandbox: 'read-only',
-      config: {
-        'features.recommended_plugins': false,
-        'features.enable_fanout': false,
-        'features.hooks': false,
-        'features.multi_agent': false,
-        'features.multi_agent_v2': false,
-        web_search: 'disabled'
-      },
+      config: { 'features.recommended_plugins': false, ...isolatedGenerationConfig },
       ephemeral: true
     })
     assertSupportedCodexHistory(startedThread.thread)
     const titleThreadId = startedThread.thread.id
-    const generatedText = this.waitForTitleGenerationText(titleThreadId)
+    const generatedText = this.waitForOneShotText(
+      this.client,
+      titleThreadId,
+      titleGenerationTimeoutMs,
+      'thread title generation'
+    )
 
     try {
       await this.client.request<TurnStartResponse>('turn/start', {
@@ -5470,14 +5202,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
   }
 
-  private waitForTitleGenerationText = (threadId: string): Promise<string | null> =>
-    this.waitForOneShotText(
-      this.client,
-      threadId,
-      titleGenerationTimeoutMs,
-      'thread title generation'
-    )
-
   private waitForOneShotText = (
     client: CodexAppServerClient,
     threadId: string,
@@ -5506,7 +5230,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
         if (notification.method === 'turn/started') {
           const turn = getRecordValue(params?.turn)
-          const startedTurnId = getStringValue(turn?.id)
+          const startedTurnId = getString(turn?.id)
           if (startedTurnId) {
             turnId = startedTurnId
             onTurnStarted?.(startedTurnId)
@@ -5528,7 +5252,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
             return
           }
 
-          const messageText = getAgentMessageTextFromItem(params?.item)
+          const item = getRecordValue(params?.item)
+          const messageText = item?.type === 'agentMessage' ? getString(item.text) : null
           if (messageText) agentMessageText = messageText
           return
         }
@@ -5563,7 +5288,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const updatedThread = this.threads.get(threadId)
     if (updatedThread && getThreadName(updatedThread)) return
 
-    this.commitThreadAction(threadId, { type: 'nameSet', name: normalizedTitle })
+    this.patchThread(threadId, { name: normalizedTitle })
     this.emitChatUpdated(threadId)
   }
 
@@ -5631,7 +5356,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
     if (purpose === 'mutation') {
       const thread = {
         ...commonThread,
-        status: existingThread?.status ?? resume.thread.status,
         ...(existingThread?.turnWindowStartIndex == null
           ? {}
           : { turnWindowStartIndex: existingThread.turnWindowStartIndex }),
@@ -5653,10 +5377,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const turnWindowStartIndex =
       existingThread?.turnWindowStartIndex ??
       Math.max(0, (catalogTurnCount ?? turns.length) - turns.length)
-    const thread = {
-      ...commonThread,
-      ...(turnWindowStartIndex == null ? {} : { turnWindowStartIndex })
-    }
+    const thread = { ...commonThread, turnWindowStartIndex }
 
     this.cacheThread(thread)
     return thread
@@ -5695,6 +5416,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const container = this.getThreadContainer(thread.id)
     const key = getContainerTargetKey(container)
     const path = thread.path
+    const applyMetadata = async (from: TranscriptSource): Promise<boolean> => {
+      if (generation !== this.transcriptMetadataGeneration) return false
+      const metadata = await this.transcriptMetadataIndex.load(from)
+      if (generation !== this.transcriptMetadataGeneration) return false
+      const goalChanged = this.goalPrompts.apply(thread, metadata)
+      const anchorsChanged = this.commandStartAnchors.apply(thread, metadata)
+      return goalChanged || anchorsChanged
+    }
     let source: TranscriptSource
     const canUseLocal =
       !container && !isRunningInFlatpak()
@@ -5834,56 +5563,23 @@ export class CodexProviderAdapter implements ProviderAdapter {
       // The fallback remains bound to this exact app-server source. A same-named
       // path in Sele's own filesystem must never substitute for a remote rollout.
       try {
-        if (generation !== this.transcriptMetadataGeneration) return false
-        const metadata = await this.transcriptMetadataIndex.load(source)
-        if (generation !== this.transcriptMetadataGeneration) return false
-        const goalChanged = this.goalPrompts.apply(thread, metadata)
-        const anchorsChanged = this.commandStartAnchors.apply(thread, metadata)
-        return goalChanged || anchorsChanged
+        return await applyMetadata(source)
       } catch (error) {
-        if (source !== fallback && (error as { code?: string }).code !== 'ERR_CANCELED') {
-          if (!isExpectedFileAbsenceError(error)) {
-            this.transcriptRangeSupport.set(key, false)
-            if (
-              !isExpectedCodexMetadataCapabilityError(error) &&
-              !this.transcriptMetadataWarnings.has(key)
-            ) {
-              this.transcriptMetadataWarnings.add(key)
-              console.warn('Unable to read optional Codex transcript range', error)
-            }
-          }
-          source = fallback
-        } else {
+        if (source === fallback || (error as { code?: string }).code === 'ERR_CANCELED') throw error
+        if (!isExpectedFileAbsenceError(error)) {
+          this.transcriptRangeSupport.set(key, false)
           if (
-            (error as { code?: string }).code !== 'ERR_CANCELED' &&
-            !isExpectedFileAbsenceError(error)
-          )
-            console.warn(
-              `Unable to read optional Codex transcript metadata for thread ${thread.id}`,
-              error
-            )
-          return false
+            !isExpectedCodexMetadataCapabilityError(error) &&
+            !this.transcriptMetadataWarnings.has(key)
+          ) {
+            this.transcriptMetadataWarnings.add(key)
+            console.warn('Unable to read optional Codex transcript range', error)
+          }
         }
+        source = fallback
       }
     }
-    try {
-      if (generation !== this.transcriptMetadataGeneration) return false
-      const metadata = await this.transcriptMetadataIndex.load(source)
-      if (generation !== this.transcriptMetadataGeneration) return false
-      const goalChanged = this.goalPrompts.apply(thread, metadata)
-      const anchorsChanged = this.commandStartAnchors.apply(thread, metadata)
-      return goalChanged || anchorsChanged
-    } catch (error) {
-      if (
-        (error as { code?: string }).code !== 'ERR_CANCELED' &&
-        !isExpectedFileAbsenceError(error)
-      )
-        console.warn(
-          `Unable to read optional Codex transcript metadata for thread ${thread.id}`,
-          error
-        )
-      return false
-    }
+    return applyMetadata(source)
   }
 
   private emitChatUpdated = (threadId: string, metadata?: ProviderChatUpdateMetadata): void => {
@@ -5936,14 +5632,14 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.chatUpdatedTimers.set(threadId, timer)
   }
 
-  private commitThreadAction = (
+  private patchThread = (
     threadId: string,
-    action: CodexThreadAction
+    patch: Partial<Pick<CodexThread, 'name' | 'status' | 'turns'>>
   ): CodexThread | null => {
     const thread = this.threads.get(threadId)
     if (!thread) return null
 
-    const nextThread = reduceCodexThread(thread, action)
+    const nextThread = { ...thread, updatedAt: nowSeconds(), ...patch }
     this.cacheThread(nextThread)
     return nextThread
   }
@@ -5966,7 +5662,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private setThreadStatus = (threadId: string, status: CodexThreadStatus): void => {
-    this.commitThreadAction(threadId, { type: 'statusSet', status })
+    this.patchThread(threadId, { status })
   }
 
   private setThreadActiveFlag = (
@@ -5986,7 +5682,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         ? ({ type: 'active', activeFlags: nextFlags } satisfies CodexThreadStatus)
         : ({ type: 'idle' } satisfies CodexThreadStatus)
 
-    this.commitThreadAction(threadId, { type: 'statusSet', status })
+    this.patchThread(threadId, { status })
   }
 
   private getProviderPendingApproval = (threadId: string): ProviderPendingApproval | null => {
@@ -6207,8 +5903,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.clearPendingTurnId(threadId, pendingTurnId)
     const thread = this.threads.get(threadId)
     if (thread) {
-      this.commitThreadAction(threadId, {
-        type: 'turnsReplaced',
+      this.patchThread(threadId, {
         turns: thread.turns.filter((turn) => turn.id !== pendingTurnId)
       })
     }
@@ -6257,18 +5952,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
   }
 
   private takeQueuedTurn = (threadId: string, turnId: string): QueuedTurn | null => {
-    const queuedTurns = this.queuedTurnsByThread.get(threadId)
-    const queuedTurn = queuedTurns?.find((turn) => turn.id === turnId) ?? null
-    if (!queuedTurns || !queuedTurn) return null
+    const queuedTurn = this.queuedTurnsByThread.get(threadId)?.find((turn) => turn.id === turnId)
+    if (!queuedTurn) return null
 
-    const nextQueuedTurns = queuedTurns.filter((turn) => turn.id !== turnId)
-    if (nextQueuedTurns.length > 0) this.queuedTurnsByThread.set(threadId, nextQueuedTurns)
-    else {
-      this.queuedTurnsByThread.delete(threadId)
-      this.pausedQueuedTurnThreads.delete(threadId)
-      this.clearQueueDrainRetry(threadId)
-    }
-
+    this.removeQueuedTurns(threadId, new Set([turnId]))
     this.removeSyntheticTurn(threadId, turnId)
     return queuedTurn
   }
@@ -6277,10 +5964,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     const thread = this.threads.get(threadId)
     if (!thread?.turns.some((turn) => turn.id === turnId)) return false
 
-    this.commitThreadAction(threadId, {
-      type: 'turnsReplaced',
-      turns: thread.turns.filter((turn) => turn.id !== turnId)
-    })
+    this.patchThread(threadId, { turns: thread.turns.filter((turn) => turn.id !== turnId) })
 
     return true
   }
@@ -6870,10 +6554,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
     Boolean(this.getActiveTurnId(threadId))
 
   private markTurnInterrupted = (threadId: string, turnId: string): void => {
-    this.commitThreadAction(threadId, {
-      type: 'turnStatusSet',
-      turnId,
-      status: 'interrupted'
+    this.patchThread(threadId, {
+      turns: this.threads
+        .get(threadId)
+        ?.turns.map((turn) => (turn.id === turnId ? { ...turn, status: 'interrupted' } : turn))
     })
   }
 
@@ -7096,7 +6780,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           : turns.length
 
     turns.splice(Math.min(insertIndex, turns.length), 0, reconciledTurn)
-    this.commitThreadAction(threadId, { type: 'turnsReplaced', turns })
+    this.patchThread(threadId, { turns })
 
     return reconciledTurn
   }
@@ -7153,7 +6837,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (turnIndex >= 0) turns[turnIndex] = nextTurn
     else turns.push(nextTurn)
-    this.commitThreadAction(threadId, { type: 'turnsReplaced', turns })
+    this.patchThread(threadId, { turns })
   }
 
   private upsertItems = (threadId: string, turnId: string, items: CodexThreadItem[]): void => {
@@ -7208,8 +6892,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private updateTurnItems = (
     threadId: string,
     turnId: string,
-    update: (items: CodexThreadItem[]) => CodexThreadItem[],
-    indexedUpdate = false
+    update: (items: CodexThreadItem[]) => CodexThreadItem[]
   ): CodexThread | null => {
     if (this.isRolledBackTurn(threadId, turnId)) return null
 
@@ -7236,20 +6919,18 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const updatedItems = update(turn.items)
     if (updatedItems === turn.items) return currentThread
-    const nextItems = indexedUpdate ? updatedItems : this.reconcileTurnItems(updatedItems)
-    let unchangedPrefix = indexedUpdate ? getUnchangedTranscriptPrefix(turn.items, nextItems) : 0
-    if (!indexedUpdate) {
-      while (
-        unchangedPrefix < turn.items.length &&
-        turn.items[unchangedPrefix] === nextItems[unchangedPrefix]
-      ) {
-        unchangedPrefix += 1
-      }
+    const nextItems = this.reconcileTurnItems(updatedItems)
+    let unchangedPrefix = 0
+    while (
+      unchangedPrefix < turn.items.length &&
+      turn.items[unchangedPrefix] === nextItems[unchangedPrefix]
+    ) {
+      unchangedPrefix += 1
     }
     markTranscriptRecordsChanged(turn.items, nextItems, unchangedPrefix)
     turns[turnIndex >= 0 ? turnIndex : turns.length] = { ...turn, items: nextItems }
 
-    return this.commitThreadAction(threadId, { type: 'turnsReplaced', turns })
+    return this.patchThread(threadId, { turns })
   }
 
   private handleTurnNotification = (
@@ -7431,49 +7112,41 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.scheduleChatUpdated(threadId)
   }
 
-  private handleAgentMessageDelta = (params: NotificationParams): void => {
+  private updateItemFromDelta = (
+    params: NotificationParams,
+    update: (item: CodexThreadItem | null, delta: string, itemId: string) => CodexThreadItem | null
+  ): void => {
     const threadId = getThreadId(params)
     const turnId = getTurnId(params)
     const itemId = getItemId(params)
     const delta = getDelta(params)
     if (!threadId || !turnId || !itemId || delta == null) return
 
+    this.updateItem(threadId, turnId, itemId, (item) => update(item, delta, itemId))
+    this.scheduleChatUpdated(threadId)
+  }
+
+  private handleAgentMessageDelta = (params: NotificationParams): void => {
     const startedAtMs = Date.now()
-    this.updateItem(threadId, turnId, itemId, (item) => ({
+    this.updateItemFromDelta(params, (item, delta, itemId) => ({
       ...(item?.type === 'agentMessage' ? item : { type: 'agentMessage', id: itemId }),
       startedAtMs: item?.startedAtMs ?? startedAtMs,
       text: `${item?.type === 'agentMessage' ? (item.text ?? '') : ''}${delta}`,
       phase: item?.type === 'agentMessage' ? (item.phase ?? null) : null
     }))
-    this.scheduleChatUpdated(threadId)
   }
 
-  private handlePlanDelta = (params: NotificationParams): void => {
-    const threadId = getThreadId(params)
-    const turnId = getTurnId(params)
-    const itemId = getItemId(params)
-    const delta = getDelta(params)
-    if (!threadId || !turnId || !itemId || delta == null) return
-
-    this.updateItem(threadId, turnId, itemId, (item) => ({
+  private handlePlanDelta = (params: NotificationParams): void =>
+    this.updateItemFromDelta(params, (item, delta, itemId) => ({
       ...(item?.type === 'plan' ? item : { type: 'plan', id: itemId }),
       text: `${item?.type === 'plan' ? (item.text ?? '') : ''}${delta}`
     }))
-    this.scheduleChatUpdated(threadId)
-  }
 
   private handleReasoningSummaryDelta = (params: NotificationParams): void => {
-    const threadId = getThreadId(params)
-    const turnId = getTurnId(params)
-    const itemId = getItemId(params)
-    const delta = getDelta(params)
-    const summaryIndex =
-      typeof params.summaryIndex === 'number' && Number.isInteger(params.summaryIndex)
-        ? params.summaryIndex
-        : null
-    if (!threadId || !turnId || !itemId || delta == null || summaryIndex == null) return
+    const summaryIndex = params.summaryIndex
+    if (typeof summaryIndex !== 'number' || !Number.isInteger(summaryIndex)) return
 
-    this.updateItem(threadId, turnId, itemId, (item) => {
+    this.updateItemFromDelta(params, (item, delta, itemId) => {
       const summary = item?.summary ? [...item.summary] : []
       summary[summaryIndex] = `${summary[summaryIndex] ?? ''}${delta}`
 
@@ -7482,17 +7155,10 @@ export class CodexProviderAdapter implements ProviderAdapter {
         summary
       }
     })
-    this.scheduleChatUpdated(threadId)
   }
 
-  private handleCommandOutputDelta = (params: NotificationParams): void => {
-    const threadId = getThreadId(params)
-    const turnId = getTurnId(params)
-    const itemId = getItemId(params)
-    const delta = getDelta(params)
-    if (!threadId || !turnId || !itemId || delta == null) return
-
-    this.updateItem(threadId, turnId, itemId, (item) => {
+  private handleCommandOutputDelta = (params: NotificationParams): void =>
+    this.updateItemFromDelta(params, (item, delta, itemId) => {
       if (!item) {
         return { type: 'commandExecution', id: itemId, status: 'running', aggregatedOutput: delta }
       }
@@ -7517,8 +7183,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
       return item
     })
-    this.scheduleChatUpdated(threadId)
-  }
 
   private handleFileChangePatchUpdated = (params: NotificationParams): void => {
     const threadId = getThreadId(params)
@@ -7580,7 +7244,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     if (notification.method === 'thread/name/updated') {
       const name = getThreadNotificationName(params)
-      this.commitThreadAction(threadId, { type: 'nameSet', name })
+      this.patchThread(threadId, { name })
     }
 
     this.scheduleChatUpdated(threadId)
@@ -7863,52 +7527,12 @@ export class CodexProviderAdapter implements ProviderAdapter {
     }
 
     if (notification.method === 'account/login/completed') {
-      const loginId = getStringValue(params.loginId)
+      const loginId = getString(params.loginId)
       if (!loginId) return
       const success = params.success === true
-      const error = getStringValue(params.error)
+      const error = getString(params.error)
       if (!success) console.error(`Codex login ${loginId} failed`, error)
       this.resolveLogin(loginId, { success, error })
-      return
-    }
-
-    if (notification.method === 'turn/started' || notification.method === 'turn/completed') {
-      this.handleTurnNotification(notification, params)
-      return
-    }
-
-    if (notification.method === 'item/started' || notification.method === 'item/completed') {
-      this.handleItemNotification(notification, params)
-      return
-    }
-
-    if (notification.method === 'item/agentMessage/delta') {
-      this.handleAgentMessageDelta(params)
-      return
-    }
-
-    if (notification.method === 'item/plan/delta') {
-      this.handlePlanDelta(params)
-      return
-    }
-
-    if (notification.method === 'item/reasoning/summaryTextDelta') {
-      this.handleReasoningSummaryDelta(params)
-      return
-    }
-
-    if (notification.method === 'item/commandExecution/outputDelta') {
-      this.handleCommandOutputDelta(params)
-      return
-    }
-
-    if (notification.method === 'item/fileChange/patchUpdated') {
-      this.handleFileChangePatchUpdated(params)
-      return
-    }
-
-    if (notification.method === 'rawResponseItem/completed') {
-      this.handleRawResponseItemCompleted(params)
       return
     }
 
@@ -7933,16 +7557,39 @@ export class CodexProviderAdapter implements ProviderAdapter {
       return
     }
 
-    if (
-      notification.method === 'thread/status/changed' ||
-      notification.method === 'thread/name/updated'
-    ) {
-      this.handleThreadNotification(notification, params)
-      return
-    }
-
-    if (notification.method === 'thread/tokenUsage/updated') {
-      this.handleThreadTokenUsage(params)
+    switch (notification.method) {
+      case 'turn/started':
+      case 'turn/completed':
+        this.handleTurnNotification(notification, params)
+        break
+      case 'item/started':
+      case 'item/completed':
+        this.handleItemNotification(notification, params)
+        break
+      case 'item/agentMessage/delta':
+        this.handleAgentMessageDelta(params)
+        break
+      case 'item/plan/delta':
+        this.handlePlanDelta(params)
+        break
+      case 'item/reasoning/summaryTextDelta':
+        this.handleReasoningSummaryDelta(params)
+        break
+      case 'item/commandExecution/outputDelta':
+        this.handleCommandOutputDelta(params)
+        break
+      case 'item/fileChange/patchUpdated':
+        this.handleFileChangePatchUpdated(params)
+        break
+      case 'rawResponseItem/completed':
+        this.handleRawResponseItemCompleted(params)
+        break
+      case 'thread/status/changed':
+      case 'thread/name/updated':
+        this.handleThreadNotification(notification, params)
+        break
+      case 'thread/tokenUsage/updated':
+        this.handleThreadTokenUsage(params)
     }
   }
 }

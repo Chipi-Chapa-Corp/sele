@@ -8,7 +8,6 @@ import {
   selectOpenCodeBalanceKeys,
   verifyOpenCodeAdminKey
 } from './OpenCodeBalances.ts'
-import { extractOpenCodeApiKeys } from './OpenCodeUsage.ts'
 
 const now = Date.parse('2026-10-21T12:00:00.000Z')
 const monthStart = '2026-10-01T00:00:00.000Z'
@@ -28,19 +27,6 @@ const recordingFetch = (handler) => {
   }
   return { requests, fetchFn }
 }
-
-test('collects API keys from every saved provider and skips OAuth entries', () => {
-  assert.deepEqual(
-    extractOpenCodeApiKeys({
-      openrouter: { type: 'api', key: ' sk-or ' },
-      anthropic: { type: 'oauth', access: 'token' },
-      deepseek: { type: 'api', key: '' },
-      broken: null
-    }),
-    { openrouter: 'sk-or' }
-  )
-  assert.deepEqual(extractOpenCodeApiKeys(null), {})
-})
 
 test('environment keys cover providers with unambiguous variables only', () => {
   assert.deepEqual(

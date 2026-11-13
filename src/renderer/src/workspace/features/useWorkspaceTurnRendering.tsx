@@ -9,93 +9,8 @@ import {
   type SubagentChatTurnInputs
 } from '../chatTurnRendering'
 import { useLatestHandler, useStableProps } from '../stableProps'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceChatErrors } from './useWorkspaceChatErrors'
-import { useWorkspaceEffectiveSelection } from './useWorkspaceEffectiveSelection'
-import { useWorkspaceScroll } from './useWorkspaceScroll'
-import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
 import { useWorkspaceSubagentPresentation } from './useWorkspaceSubagentPresentation'
-
-import type { useConversationViewModel } from '../useConversationViewModel'
-import type { useFileNavigationController } from '../useFileNavigationController'
-import type { useChatInteractionController } from '../useChatInteractionController'
-import type { useChatMessagingController } from '../useChatMessagingController'
-import type { useWorkspaceSelection } from '../useWorkspaceSelection'
-import type { useSubagentController } from '../useSubagentController'
-type WorkspaceTurnRenderingDependencies = {
-  subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
-  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  scroll: ReturnType<typeof useWorkspaceScroll>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  chatErrors: ReturnType<typeof useWorkspaceChatErrors>
-  session: Pick<
-    ReturnType<typeof useWorkspaceSelection>,
-    | 'accountUsage'
-    | 'changesContainer'
-    | 'changesCwd'
-    | 'changesProjectCwd'
-    | 'selectedChatKey'
-    | 'refreshAccountUsage'
-    | 'resetAccountRateLimits'
-    | 'activeSubagentChatView'
-  >
-  messaging: Pick<
-    ReturnType<typeof useChatMessagingController>,
-    | 'handleLoadWorkingStep'
-    | 'handleLoadWorkingItem'
-    | 'handleLoadWorkingToolPage'
-    | 'handleDeletePendingMessage'
-    | 'handleEditPendingMessage'
-    | 'handleSteerPendingMessage'
-    | 'handleInterruptPendingMessage'
-    | 'handleContinueStoppedTurn'
-    | 'handleEditMessage'
-    | 'handleRetryStoppedTurn'
-    | 'handleStartGoalChat'
-  >
-  interactions: Pick<
-    ReturnType<typeof useChatInteractionController>,
-    'chatHasActiveTurn' | 'chatHasPendingSteeringMessage' | 'handleForkMessage'
-  >
-  conversation: Pick<
-    ReturnType<typeof useConversationViewModel>,
-    | 'chatItemIndexesById'
-    | 'visibleChatItems'
-    | 'followingWorkingStepsById'
-    | 'workingStepIdsWithNextWorkingStep'
-    | 'steeredWorkingStepDisclosureTargets'
-    | 'renderedChatTurns'
-    | 'effectiveChatTurnWindow'
-    | 'firstPendingChatItemId'
-    | 'chatCommitMarkersByBeforeItemId'
-    | 'chatCommitMarkersByAfterItemId'
-    | 'trailingChatCommitMarkers'
-    | 'canEditOwnMessages'
-    | 'stoppedTurnActionDisabled'
-    | 'continuedStoppedWorkingStepIds'
-    | 'pinnedChatMessageIds'
-    | 'canRetryStoppedTurns'
-    | 'stoppedTurnRetryMessages'
-    | 'streamingChatItemId'
-    | 'subagentChatItemIndexesById'
-    | 'subagentVisibleChatItems'
-    | 'subagentChatConversationModel'
-  >
-  files: Pick<
-    ReturnType<typeof useFileNavigationController>,
-    'handleOpenFileLink' | 'handleToggleChatMessagePinned'
-  >
-  subagents: Pick<
-    ReturnType<typeof useSubagentController>,
-    | 'renderChatCommitMarker'
-    | 'handleLoadSubagentWorkingStep'
-    | 'handleLoadSubagentWorkingItem'
-    | 'handleLoadSubagentWorkingToolPage'
-  >
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function useWorkspaceTurnRendering({
   subagentPresentation,
@@ -111,7 +26,9 @@ export function useWorkspaceTurnRendering({
   conversation,
   files,
   subagents
-}: WorkspaceTurnRenderingDependencies) {
+}: WorkspaceChanges & {
+  subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
+}) {
   const {
     accountUsage,
     changesContainer,

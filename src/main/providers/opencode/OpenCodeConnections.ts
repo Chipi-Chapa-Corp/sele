@@ -6,15 +6,10 @@ import type {
   ProviderConnectionAttemptStatus,
   ProviderConnectionStatus
 } from '../../../shared/providerConnections'
-import { getOpenCodeV2Client } from './OpenCodeV2Client.ts'
+import { requireOpenCodeV2Client as requireNative } from './OpenCodeV2Client.ts'
 import type { OpenCodeClient, FormField } from '@opencode/client'
 
 const v2Attempts = new WeakMap<OpencodeClient, Map<string, string>>()
-const requireNative = (client: OpencodeClient): OpenCodeClient => {
-  const native = getOpenCodeV2Client(client)
-  if (!native) throw new Error('OpenCode 2 client is unavailable.')
-  return native
-}
 const v2Integration = async (native: OpenCodeClient, providerID: string): Promise<string> =>
   (await native.provider.get({ providerID })).data.integrationID ?? providerID
 const promptsFromFields = (fields?: readonly FormField[]) =>

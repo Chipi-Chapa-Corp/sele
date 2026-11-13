@@ -9,6 +9,8 @@ import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
 import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
 import { useWorkspaceViewportState } from '../state/useWorkspaceViewportState'
 
+export type WorkspaceState = ReturnType<typeof useWorkspaceState>
+
 export function useWorkspaceState() {
   const preferences = useWorkspacePreferenceState()
 

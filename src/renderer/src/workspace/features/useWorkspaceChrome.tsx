@@ -3,21 +3,16 @@ import { startTransition, useCallback, useEffect } from 'react'
 import { appApi } from '../../appApi'
 import { Button } from '../../components/Button'
 import { useLatestHandler } from '../stableProps'
-import { useWorkspaceDialogState } from '../state/useWorkspaceDialogState'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
 import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceChromeDependencies = {
-  dialogState: ReturnType<typeof useWorkspaceDialogState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceChrome({
   dialogState,
   settings,
   preferences
-}: WorkspaceChromeDependencies) {
+}: WorkspaceState & {
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+}) {
   useEffect(() => {
     let active = true
 

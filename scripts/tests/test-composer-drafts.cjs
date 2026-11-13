@@ -23,7 +23,8 @@ if (!process.versions.electron) {
             function Fixture({editing}) {
               window.drafts = useComposerDrafts(editing)
               window.chatList = useChatListController({
-                applyChatMetadata: () => {}, removeRecentChatCacheEntry: () => {}, selectedChat: null
+                chatRead: {applyChatMetadata: () => {}}, chatCache: {removeRecentChatCacheEntry: () => {}}, chatState: {selectedChat: null},
+                chatProjection: {}, sourceState: {}, projectState: {}, sidebarModel: {}
               })
               return null
             }

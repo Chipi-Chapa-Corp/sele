@@ -320,8 +320,6 @@ export type AppContainerSuggestion = {
   current?: boolean
 }
 
-export type AppGitChangeSource = 'branch' | 'uncommitted'
-
 export type AppGitChangeKind = 'edit' | 'create' | 'delete' | 'rename' | 'untracked'
 
 export type AppGitCommitAction = 'commit' | 'amend'
@@ -356,7 +354,6 @@ export type AppSourceAvailability = {
 
 export type AppGitChangesOptions = AppContainerOptions & {
   cwd?: string | null
-  source: AppGitChangeSource
   fetchRemote?: boolean
 }
 
@@ -514,7 +511,6 @@ export type AppFileTreeOptions = AppContainerOptions & {
 export type AppGitChangesResult = {
   repositoryRoot: string
   branchName: string | null
-  baseRef: string | null
   unpulledCount: number
   unpushedCount: number
   remoteFetchError?: string

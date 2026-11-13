@@ -7,32 +7,7 @@ import { type ChatListGroupData } from '../../components/ChatListGroup'
 import type { LinkedChatReference } from '../../linkedChats'
 import { providerApi } from '../../providerApi'
 import { getChatFromDetail, getChatKey, getChatProjectCwd } from '../chatControllerUtils'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
-import { useWorkspaceViewportState } from '../state/useWorkspaceViewportState'
-import { useWorkspaceChatCache } from './useWorkspaceChatCache'
-import { useWorkspaceChatProjection } from './useWorkspaceChatProjection'
-import { useWorkspaceChatReadState } from './useWorkspaceChatReadState'
-
-import type { useWorkspaceSelection } from '../useWorkspaceSelection'
-type WorkspaceNavigationDependencies = {
-  onConversationRequested: (() => void) | undefined
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  handleReturnToRootChat: () => void
-  chatCache: ReturnType<typeof useWorkspaceChatCache>
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  chatRead: ReturnType<typeof useWorkspaceChatReadState>
-  handleReturnFromSubagentChat: () => void
-  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  session: Pick<ReturnType<typeof useWorkspaceSelection>, 'activeSubagentChatView'>
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceNavigation({
   onConversationRequested,
@@ -48,7 +23,11 @@ export function useWorkspaceNavigation({
   chatProjection,
   viewportState,
   session
-}: WorkspaceNavigationDependencies) {
+}: WorkspaceSession & {
+  onConversationRequested: (() => void) | undefined
+  handleReturnToRootChat: () => void
+  handleReturnFromSubagentChat: () => void
+}) {
   const { activeSubagentChatView } = session
 
   const handleSelectChat = (chat: ProviderChat): void => {

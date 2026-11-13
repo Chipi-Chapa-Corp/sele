@@ -52,7 +52,6 @@ import type {
   AppGitChangesOptions,
   AppGitCommitMessageContextResult,
   AppGitFileChange,
-  AppGitChangeSource,
   AppGitPullStrategy,
   AppGitPushTarget,
   AppGitRecoverableFailure,
@@ -493,7 +492,7 @@ const getProjectIconFile = async (
 const resolveLocalMediaPath = async (
   cwd: string | null,
   path: string,
-  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
+  relativeTo: AppLocalImageOptions['relativeTo']
 ): Promise<string> => {
   let imagePath = path
 
@@ -694,11 +693,6 @@ const getInstalledFontFamilies = (): Promise<string[]> => {
   return installedFontFamiliesPromise
 }
 
-type BranchBase = {
-  ref: string
-  commit: string
-}
-
 type RunGitOptions = {
   env?: NodeJS.ProcessEnv
   required?: boolean
@@ -897,13 +891,7 @@ const getGitChangesOptions = (value: unknown): AppGitChangesOptions => {
   const options = value as {
     container?: unknown
     cwd?: unknown
-    source?: unknown
     fetchRemote?: unknown
-  }
-  const source = options.source
-
-  if (source !== 'branch' && source !== 'uncommitted') {
-    throw new Error('Invalid Git changes source')
   }
   if (options.fetchRemote != null && typeof options.fetchRemote !== 'boolean') {
     throw new Error('Invalid Git remote fetch option')
@@ -912,7 +900,6 @@ const getGitChangesOptions = (value: unknown): AppGitChangesOptions => {
   return {
     container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
-    source,
     fetchRemote: options.fetchRemote === true
   }
 }
@@ -1452,120 +1439,12 @@ const createGitWorktree = async (
   }
 }
 
-const getOriginHeadBranch = async (cwd: string): Promise<string | null> => {
-  const originHead = await runGit(cwd, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])
-  const prefix = 'refs/remotes/'
-
-  return originHead?.startsWith(prefix) ? originHead.slice(prefix.length) : null
-}
-
-const getVerifiedBranchBase = async (
-  cwd: string,
-  candidateRef: string
-): Promise<BranchBase | null> => {
-  const verifiedRef = await runGit(cwd, ['rev-parse', '--verify', '--quiet', candidateRef])
-  if (!verifiedRef) return null
-
-  const commit = await runGit(cwd, ['merge-base', 'HEAD', candidateRef])
-  return commit ? { ref: candidateRef, commit } : null
-}
-
-const getBranchBase = async (
-  cwd: string,
-  branchName: string | null
-): Promise<BranchBase | null> => {
-  const originHeadBranch = await getOriginHeadBranch(cwd)
-  const candidateRefs = [
-    originHeadBranch,
-    'origin/main',
-    'origin/master',
-    'upstream/main',
-    'upstream/master',
-    'main',
-    'master'
-  ]
-  const uniqueRefs = [...new Set(candidateRefs.filter((ref): ref is string => Boolean(ref)))]
-
-  for (const candidateRef of uniqueRefs) {
-    if (candidateRef === branchName) continue
-
-    const branchBase = await getVerifiedBranchBase(cwd, candidateRef)
-    if (branchBase) return branchBase
-  }
-
-  const upstreamRef = await runGit(cwd, [
-    'rev-parse',
-    '--abbrev-ref',
-    '--symbolic-full-name',
-    '@{upstream}'
-  ])
-
-  if (upstreamRef && upstreamRef !== branchName) {
-    const upstreamBase = await getVerifiedBranchBase(cwd, upstreamRef)
-    if (upstreamBase) return upstreamBase
-  }
-
-  return null
-}
-
-const getChangeKind = (status: string): AppGitChangeKind => {
-  const code = status[0]
-  if (code === '?') return 'untracked'
-  if (code === 'A' || code === 'C') return 'create'
-  if (code === 'D') return 'delete'
-  if (code === 'R') return 'rename'
-  return 'edit'
-}
-
 const getPorcelainChangeKind = (status: string): AppGitChangeKind => {
   if (status.includes('?')) return 'untracked'
   if (status.includes('R')) return 'rename'
   if (status.includes('A') || status.includes('C')) return 'create'
   if (status.includes('D')) return 'delete'
   return 'edit'
-}
-
-const parseNameStatusChanges = (output: string): AppGitFileChange[] => {
-  if (!output) return []
-
-  const fields = output.split('\0')
-  const changes: AppGitFileChange[] = []
-  let index = 0
-
-  while (index < fields.length && fields[index]) {
-    const status = fields[index]
-    index += 1
-
-    if (status[0] === 'R' || status[0] === 'C') {
-      const previousPath = fields[index]
-      const path = fields[index + 1]
-      index += 2
-
-      if (path) {
-        changes.push({
-          path,
-          previousPath: previousPath || null,
-          kind: getChangeKind(status),
-          status
-        })
-      }
-
-      continue
-    }
-
-    const path = fields[index]
-    index += 1
-
-    if (path) {
-      changes.push({
-        path,
-        kind: getChangeKind(status),
-        status
-      })
-    }
-  }
-
-  return changes
 }
 
 const parsePorcelainChanges = (output: string): AppGitFileChange[] => {
@@ -1608,17 +1487,12 @@ const parsePorcelainChanges = (output: string): AppGitFileChange[] => {
   return changes
 }
 
-const getGitChanges = async (
-  cwd: string,
-  source: AppGitChangeSource,
-  fetchRemote = false
-): Promise<AppGitChangesResult> => {
+const getGitChanges = async (cwd: string, fetchRemote = false): Promise<AppGitChangesResult> => {
   const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'])
   if (!repositoryRoot) {
     return {
       repositoryRoot: cwd,
       branchName: null,
-      baseRef: null,
       unpulledCount: 0,
       unpushedCount: 0,
       untrackedFilesHiddenForPerformance: false,
@@ -1647,55 +1521,21 @@ const getGitChanges = async (
     runGit
   )
 
-  if (source === 'uncommitted') {
-    const status = await runGit(
-      repositoryRoot,
-      ['status', '--porcelain=v1', '--untracked-files=all', '-z'],
-      true
-    )
-
-    const visibleChanges = limitVisibleUntrackedGitFiles(parsePorcelainChanges(status ?? ''))
-
-    return {
-      repositoryRoot,
-      branchName,
-      baseRef: null,
-      unpulledCount,
-      unpushedCount,
-      remoteFetchError,
-      ...visibleChanges
-    }
-  }
-
-  const branchBase = await getBranchBase(repositoryRoot, branchName)
-  if (!branchBase) {
-    return {
-      repositoryRoot,
-      branchName,
-      baseRef: null,
-      unpulledCount,
-      unpushedCount,
-      remoteFetchError,
-      untrackedFilesHiddenForPerformance: false,
-      files: []
-    }
-  }
-
-  const diff = await runGit(
+  const status = await runGit(
     repositoryRoot,
-    ['diff', '--name-status', '-z', '--find-renames', `${branchBase.commit}...HEAD`, '--'],
+    ['status', '--porcelain=v1', '--untracked-files=all', '-z'],
     true
   )
+
+  const visibleChanges = limitVisibleUntrackedGitFiles(parsePorcelainChanges(status ?? ''))
 
   return {
     repositoryRoot,
     branchName,
-    baseRef: branchBase.ref,
     unpulledCount,
     unpushedCount,
     remoteFetchError,
-    untrackedFilesHiddenForPerformance: false,
-    files: parseNameStatusChanges(diff ?? '')
+    ...visibleChanges
   }
 }
 
@@ -1774,7 +1614,11 @@ const runSshFileCommand = async (
   return runTargetFileCommand(container, cwd, args, options)
 }
 
-const getRemoteRepositoryFilePath = (repositoryRoot: string, path: string): string => {
+const getRemoteRepositoryFilePath = (
+  repositoryRoot: string,
+  path: string,
+  outsideMessage = 'File is outside the repository'
+): string => {
   const absolutePath = isAbsolute(path) ? path : resolve(repositoryRoot, path)
   const relativePath = relative(repositoryRoot, absolutePath).replace(/\\/g, '/')
   if (
@@ -1783,7 +1627,7 @@ const getRemoteRepositoryFilePath = (repositoryRoot: string, path: string): stri
     relativePath.startsWith('../') ||
     isAbsolute(relativePath)
   ) {
-    throw new Error('File is outside the repository')
+    throw new Error(outsideMessage)
   }
 
   return relativePath
@@ -1884,8 +1728,8 @@ const getTargetLocalMedia = async (
   container: AppContainerTarget | null | undefined,
   cwd: string | null,
   path: string,
-  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository',
-  kind: 'image' | 'video' = 'image'
+  relativeTo: AppLocalImageOptions['relativeTo'],
+  kind: 'image' | 'video'
 ): Promise<AppLocalImage> => {
   let commandCwd = cwd ?? '/'
   let imagePath = path
@@ -2156,21 +2000,8 @@ const getRecentGitCommitMessages = async (
   }
 }
 
-const normalizePatchPath = (repositoryRoot: string, path: string): string => {
-  const absolutePath = isAbsolute(path) ? path : resolve(repositoryRoot, path)
-  const relativePath = relative(repositoryRoot, absolutePath).replace(/\\/g, '/')
-
-  if (
-    !relativePath ||
-    relativePath === '..' ||
-    relativePath.startsWith('../') ||
-    isAbsolute(relativePath)
-  ) {
-    throw new Error(`Patch path is outside the repository: ${path}`)
-  }
-
-  return relativePath
-}
+const normalizePatchPath = (repositoryRoot: string, path: string): string =>
+  getRemoteRepositoryFilePath(repositoryRoot, path, `Patch path is outside the repository: ${path}`)
 
 const getTemporaryIndexEnv = (indexPath: string): NodeJS.ProcessEnv => ({
   GIT_INDEX_FILE: indexPath
@@ -2665,7 +2496,7 @@ export const registerAppIpc = (): void => {
   })
 
   handleGitRequest(appIpcChannels.getGitChanges, getGitChangesOptions, (cwd, options) =>
-    getGitChanges(cwd, options.source, options.fetchRemote)
+    getGitChanges(cwd, options.fetchRemote)
   )
 
   handleGitHubRequest(

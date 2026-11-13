@@ -1,26 +1,4 @@
-import { useWorkspaceChrome } from '../features/useWorkspaceChrome'
-import { useWorkspacePanes } from '../features/useWorkspacePanes'
-import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useGitHubPullRequests } from '../useGitHubPullRequests'
-import { useChangesData } from '../useChangesData'
-import { useFileNavigationController } from '../useFileNavigationController'
-import { useGitViewModel } from '../useGitViewModel'
-import { useGitSyncController } from '../useGitSyncController'
-import { useWorkspaceSelection } from '../useWorkspaceSelection'
-
-type WorkspaceChangesHeaderDependencies = {
-  gitHubPullRequests: ReturnType<typeof useGitHubPullRequests>
-  panes: ReturnType<typeof useWorkspacePanes>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  gitPresentation: ReturnType<typeof useGitViewModel>
-  changes: ReturnType<typeof useChangesData>
-  session: ReturnType<typeof useWorkspaceSelection>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  files: ReturnType<typeof useFileNavigationController>
-  gitSync: ReturnType<typeof useGitSyncController>
-  chrome: ReturnType<typeof useWorkspaceChrome>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceChangesHeader({
   gitHubPullRequests,
@@ -33,7 +11,7 @@ export function getWorkspaceChangesHeader({
   files,
   gitSync,
   chrome
-}: WorkspaceChangesHeaderDependencies) {
+}: WorkspaceChanges) {
   return {
     gitHubPullRequests,
     gitPaneView: panes.gitPaneView,

@@ -322,16 +322,14 @@ export const renderOpenCodeChatItems = (
       const attachments = getAttachments(message.parts)
       if (!content && attachments.length === 0) return
       flushSegment(false)
-      if (content || attachments.length > 0) {
-        items.push({
-          type: 'message',
-          id: message.info.id,
-          role: 'user',
-          content,
-          attachments: attachments.length > 0 ? attachments : undefined,
-          createdAt: message.info.time.created
-        })
-      }
+      items.push({
+        type: 'message',
+        id: message.info.id,
+        role: 'user',
+        content,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        createdAt: message.info.time.created
+      })
       segment = {
         id: `${message.info.id}:working`,
         timing: includeConversationTime(undefined, message.info.time.created),

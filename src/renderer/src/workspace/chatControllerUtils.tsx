@@ -1084,13 +1084,10 @@ export const getScopedChatCommitPrompt = (
     .join('\n')
 }
 
-export const getErrorMessage = (error: unknown, fallback: string): string => {
-  if (!(error instanceof Error)) return fallback
-
-  const message = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
-
-  return message || fallback
-}
+export const getErrorMessage = (error: unknown, fallback: string): string =>
+  (error instanceof Error &&
+    error.message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').trim()) ||
+  fallback
 
 export const isGitChangesScope = (
   scope: GitChangesScope | null,

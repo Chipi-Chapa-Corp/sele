@@ -64,6 +64,7 @@ import { EditableUnifiedDiff } from './EditableUnifiedDiff'
 import { isRemoteClient } from '../runtimeCapabilities'
 import { MobileCodeEditor } from './MobileCodeEditor'
 import { useCompactLayout } from '../useCompactLayout'
+import { getErrorMessage } from '../workspace/chatControllerUtils'
 import './FileEditorDialog.css'
 
 export type FileEditorTarget = {
@@ -385,13 +386,6 @@ const toggleFolder =
     ...folders,
     [folderPath]: !folders[folderPath]
   })
-
-const getErrorMessage = (error: unknown, fallback: string): string => {
-  if (!(error instanceof Error)) return fallback
-
-  const message = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
-  return message || fallback
-}
 
 const getDiffKind = (kind: AppGitChangeKind): ProviderFileDiff['kind'] => {
   if (kind === 'delete') return 'delete'

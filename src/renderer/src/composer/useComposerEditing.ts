@@ -1,9 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
-import type { AppSelectedAttachment } from '../../../shared/app'
-import type { ProviderApp, ProviderSkill } from '../../../shared/provider'
 import { parseLinkedChatMessage, type ComposerLinkedChat } from '../linkedChats'
-import type { ComposerQuote } from '../composerQuotes'
 
 import type { MessageBoxProps } from '../components/MessageBox.types'
 import type { useComposerDraftState } from './useComposerDraftState'
@@ -69,51 +66,24 @@ export function useComposerEditing({
     updateLinkedChats
   } = linked
 
-  const messageRef = useRef(message)
-
-  const selectedAttachmentsRef = useRef(selectedAttachments)
-
-  const selectedSkillsRef = useRef(selectedSkills)
-
-  const selectedAppsRef = useRef(selectedApps)
-  const selectedQuotesRef = useRef(selectedQuotes)
-  const quotesBeforeEditRef = useRef<ComposerQuote[] | null>(null)
-
-  const messageBeforeEditRef = useRef<string | null>(null)
-
-  const attachmentsBeforeEditRef = useRef<AppSelectedAttachment[] | null>(null)
-
-  const skillsBeforeEditRef = useRef<ProviderSkill[] | null>(null)
-
-  const appsBeforeEditRef = useRef<ProviderApp[] | null>(null)
+  const currentDraft = {
+    message,
+    attachments: selectedAttachments,
+    skills: selectedSkills,
+    apps: selectedApps,
+    quotes: selectedQuotes
+  }
+  const draftRef = useRef(currentDraft)
+  const draftBeforeEditRef = useRef<typeof currentDraft | null>(null)
 
   useEffect(() => {
-    messageRef.current = message
-  }, [message])
-
-  useEffect(() => {
-    selectedAttachmentsRef.current = selectedAttachments
-  }, [selectedAttachments])
-
-  useEffect(() => {
-    selectedSkillsRef.current = selectedSkills
-  }, [selectedSkills])
-
-  useEffect(() => {
-    selectedAppsRef.current = selectedApps
-  }, [selectedApps])
-  useEffect(() => {
-    selectedQuotesRef.current = selectedQuotes
-  }, [selectedQuotes])
+    draftRef.current = currentDraft
+  })
 
   useEffect(() => {
     if (!editSession) {
       editSessionIdRef.current = null
-      messageBeforeEditRef.current = null
-      attachmentsBeforeEditRef.current = null
-      skillsBeforeEditRef.current = null
-      appsBeforeEditRef.current = null
-      quotesBeforeEditRef.current = null
+      draftBeforeEditRef.current = null
       restoreLinkedChatsBeforeEdit()
       return
     }
@@ -121,13 +91,7 @@ export function useComposerEditing({
     if (editSessionIdRef.current === editSession.id) return
 
     editSessionIdRef.current = editSession.id
-    if (messageBeforeEditRef.current === null) {
-      messageBeforeEditRef.current = messageRef.current
-      attachmentsBeforeEditRef.current = selectedAttachmentsRef.current
-      skillsBeforeEditRef.current = selectedSkillsRef.current
-      appsBeforeEditRef.current = selectedAppsRef.current
-      quotesBeforeEditRef.current = selectedQuotesRef.current
-    }
+    draftBeforeEditRef.current ??= draftRef.current
     if (linkedChatsBeforeEditRef.current === null) {
       linkedChatsBeforeEditRef.current = { scope: draftScopeKey, chats: linkedChatsRef.current }
     }
@@ -174,27 +138,20 @@ export function useComposerEditing({
     return () => window.cancelAnimationFrame(frame)
   }, [editing, selectedReview])
 
-  const handleCancelEdit = (): void => {
+  const restoreDraftBeforeEdit = (previousDraft = draftBeforeEditRef.current): void => {
     restoreLinkedChatsBeforeEdit()
-    setMessage(messageBeforeEditRef.current ?? '')
-    setSelectedAttachments(attachmentsBeforeEditRef.current ?? [])
-    setSelectedSkills(skillsBeforeEditRef.current ?? [])
-    setSelectedApps(appsBeforeEditRef.current ?? [])
-    setSelectedQuotes(quotesBeforeEditRef.current ?? [])
+    setMessage(previousDraft?.message ?? '')
+    setSelectedAttachments(previousDraft?.attachments ?? [])
+    setSelectedSkills(previousDraft?.skills ?? [])
+    setSelectedApps(previousDraft?.apps ?? [])
+    setSelectedQuotes(previousDraft?.quotes ?? [])
     editSessionIdRef.current = null
-    messageBeforeEditRef.current = null
-    attachmentsBeforeEditRef.current = null
-    skillsBeforeEditRef.current = null
-    appsBeforeEditRef.current = null
-    quotesBeforeEditRef.current = null
+    draftBeforeEditRef.current = null
+  }
+
+  const handleCancelEdit = (): void => {
+    restoreDraftBeforeEdit()
     onCancelEdit?.()
   }
-  return {
-    messageBeforeEditRef,
-    attachmentsBeforeEditRef,
-    skillsBeforeEditRef,
-    appsBeforeEditRef,
-    quotesBeforeEditRef,
-    handleCancelEdit
-  }
+  return { draftBeforeEditRef, restoreDraftBeforeEdit, handleCancelEdit }
 }

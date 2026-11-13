@@ -115,6 +115,7 @@ import {
   createCopilotSubagentTranscriptItems,
   mergeCopilotSubagentFollowUps,
   renderCopilotSubagentWindow,
+  truncate,
   type CopilotSubagentFollowUp
 } from './CopilotSubagents'
 import { selectCopilotTitleModel } from './CopilotTitleModel'
@@ -149,6 +150,8 @@ type PendingPermission = {
 type CopilotUserInputHandler = NonNullable<SessionConfig['onUserInputRequest']>
 type CopilotUserInputRequest = Parameters<CopilotUserInputHandler>[0]
 type CopilotUserInputResponse = Awaited<ReturnType<CopilotUserInputHandler>>
+type CopilotElicitationHandler = NonNullable<SessionConfig['onElicitationRequest']>
+type CopilotElicitationResult = Awaited<ReturnType<CopilotElicitationHandler>>
 
 type PendingUserInput = {
   id: string
@@ -227,8 +230,7 @@ const copilotTurnActivityEventTypes: ReadonlySet<SessionEvent['type']> = new Set
 ])
 
 type CopilotOneShotGeneration = {
-  session: CopilotSession | null
-  state: CopilotSessionState | null
+  state: CopilotSessionState
   canceled: boolean
 }
 
@@ -386,11 +388,6 @@ const toMilliseconds = (value: Date | string | number | undefined): number => {
   if (value instanceof Date) return value.getTime()
   const timestamp = typeof value === 'number' ? value : value ? Date.parse(value) : Number.NaN
   return Number.isFinite(timestamp) ? timestamp : Date.now()
-}
-
-const truncate = (value: string, limit: number): string => {
-  const normalized = value.replace(/\s+/g, ' ').trim()
-  return normalized.length <= limit ? normalized : `${normalized.slice(0, limit - 1)}…`
 }
 
 const chatTitlePromptLimit = 2_000
@@ -652,6 +649,11 @@ const getMessageOptions = (
 const hasMessageAttachments = (
   options: ProviderTurnOptions | ProviderOneShotOptions | undefined
 ): boolean => Boolean(options?.files?.length || options?.images?.length)
+
+const setSessionTitle = (state: CopilotSessionState, title: string | null): void => {
+  state.title = title
+  if (state.metadata) state.metadata = { ...state.metadata, name: title ?? undefined }
+}
 
 export class CopilotProviderAdapter implements ProviderAdapter {
   id = 'copilot' as const
@@ -1045,9 +1047,11 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   getUsage = async (options: ProviderUsageOptions = {}): Promise<ProviderAccountUsage> => {
     const client = await this.ensureClient(options.container)
+    let rateLimits: ProviderAccountUsage['rateLimits'] = []
+    const errors: string[] = []
     try {
       const result = await client.rpc.account.getQuota({})
-      const rateLimits = Object.entries(result.quotaSnapshots)
+      rateLimits = Object.entries(result.quotaSnapshots)
         .filter((entry): entry is [string, NonNullable<(typeof entry)[1]>] => Boolean(entry[1]))
         .map(([id, quota], index) => ({
           id,
@@ -1059,27 +1063,18 @@ export class CopilotProviderAdapter implements ProviderAdapter {
           windowMinutes: null,
           resetsAt: quota.resetDate ? toMilliseconds(quota.resetDate) : null
         }))
-
-      return {
-        updatedAt: Date.now(),
-        statisticsLoaded: false,
-        summary: emptyUsageSummary,
-        dailyUsageBuckets: null,
-        rateLimits,
-        rateLimitResetCredits: null,
-        errors: []
-      }
     } catch (error) {
       console.error('[caught:CopilotProviderAdapter:getUsage]', error)
-      return {
-        updatedAt: Date.now(),
-        statisticsLoaded: false,
-        summary: emptyUsageSummary,
-        dailyUsageBuckets: null,
-        rateLimits: [],
-        rateLimitResetCredits: null,
-        errors: [error instanceof Error ? error.message : 'Copilot usage is unavailable.']
-      }
+      errors.push(error instanceof Error ? error.message : 'Copilot usage is unavailable.')
+    }
+    return {
+      updatedAt: Date.now(),
+      statisticsLoaded: false,
+      summary: emptyUsageSummary,
+      dailyUsageBuckets: null,
+      rateLimits,
+      rateLimitResetCredits: null,
+      errors
     }
   }
 
@@ -1481,13 +1476,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   setChatTitle = async (chatId: string, title: string): Promise<ProviderChatDetail> => {
     const state = await this.ensureSession(chatId)
     await state.session.rpc.name.set({ name: title })
-    state.title = title
-    if (state.metadata) {
-      state.metadata = {
-        ...state.metadata,
-        name: title
-      }
-    }
+    setSessionTitle(state, title)
     this.emitUpdate(state)
     return this.createChatDetail(state)
   }
@@ -1498,21 +1487,18 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       throw new Error('Duplicate one-shot generation ID')
     }
 
+    const sessionId = randomUUID()
+    this.hiddenSessionIds.add(sessionId)
+    const state = this.createState(sessionId, options)
     const generation: CopilotOneShotGeneration = {
-      session: null,
-      state: null,
+      state,
       canceled: this.takeCanceledOneShotGeneration(generationId)
     }
     this.oneShotGenerations.set(generationId, generation)
 
-    const sessionId = randomUUID()
-    this.hiddenSessionIds.add(sessionId)
-    const state = this.createState(sessionId, options)
-    generation.state = state
-
     const throwIfCanceled = async (): Promise<void> => {
       if (!generation.canceled) return
-      await (generation.session ?? generation.state?.session)?.abort().catch((error) => {
+      await state.session?.abort().catch((error) => {
         console.error('[caught:CopilotProviderAdapter:throwIfCanceled]', error)
       })
       throw new Error(providerOneShotGenerationCanceledMessage)
@@ -1521,7 +1507,6 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     try {
       await throwIfCanceled()
       const session = await this.createSession(state, options, false, copilotOneShotClientName)
-      generation.session = session
       await throwIfCanceled()
 
       const response = await session.sendAndWait(
@@ -1571,7 +1556,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     }
 
     generation.canceled = true
-    await (generation.session ?? generation.state?.session)?.abort().catch((error) => {
+    await generation.state.session?.abort().catch((error) => {
       console.error('[caught:CopilotProviderAdapter:cancelOneShot]', error)
     })
   }
@@ -2435,7 +2420,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     this.updateTimers.clear()
     this.completionCoordinator.clear()
     this.oneShotGenerations.forEach((generation) => {
-      void (generation.session ?? generation.state?.session)?.abort().catch((error) => {
+      void generation.state.session?.abort().catch((error) => {
         console.error('[caught:CopilotProviderAdapter:dispose]', error)
       })
     })
@@ -3009,15 +2994,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       console.error('[caught:CopilotProviderAdapter:loadSessionTitle]', error)
       return null
     })
-    if (!result) return
-
-    state.title = result.name?.trim() || null
-    if (state.metadata) {
-      state.metadata = {
-        ...state.metadata,
-        name: state.title ?? undefined
-      }
-    }
+    if (result) setSessionTitle(state, result.name?.trim() || null)
   }
 
   private storeEvent = (state: CopilotSessionState, event: SessionEvent): void => {
@@ -3051,18 +3028,19 @@ export class CopilotProviderAdapter implements ProviderAdapter {
           !candidate.agentId &&
           toMilliseconds(candidate.timestamp) <= attributedAt
       )
+      const usage = normalizeTokenUsage(
+        event.data.inputTokens,
+        event.data.cacheReadTokens,
+        event.data.outputTokens,
+        true
+      )
       this.tokenUsageReporter.report({
         chatId: state.id,
         sourceKey: getContainerTargetKey(state.container),
         turnId: user?.id ?? null,
         recordId: event.data.providerCallId ?? event.data.apiCallId ?? event.id,
         timestamp: toMilliseconds(event.timestamp),
-        usage: normalizeTokenUsage(
-          event.data.inputTokens,
-          event.data.cacheReadTokens,
-          event.data.outputTokens,
-          true
-        ),
+        usage,
         models: [
           {
             modelId: event.data.model,
@@ -3073,12 +3051,7 @@ export class CopilotProviderAdapter implements ProviderAdapter {
                 ? event.data.copilotUsage.totalNanoAiu / 100_000_000_000
                 : undefined,
             cacheWriteTokens: event.data.cacheWriteTokens,
-            usage: normalizeTokenUsage(
-              event.data.inputTokens,
-              event.data.cacheReadTokens,
-              event.data.outputTokens,
-              true
-            )
+            usage
           }
         ]
       })
@@ -3115,15 +3088,8 @@ export class CopilotProviderAdapter implements ProviderAdapter {
       }
     }
 
-    if (event.type === 'session.title_changed') {
-      state.title = event.data.title.trim() || null
-      if (state.metadata) {
-        state.metadata = {
-          ...state.metadata,
-          name: state.title ?? undefined
-        }
-      }
-    }
+    if (event.type === 'session.title_changed')
+      setSessionTitle(state, event.data.title.trim() || null)
     if (copilotTurnActivityEventTypes.has(event.type)) {
       if (event.type === 'user.message' || event.type === 'assistant.turn_start') {
         state.turnGeneration += 1
@@ -3236,30 +3202,26 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   }
 
   private createElicitationHandler =
-    (sessionId: string): NonNullable<SessionConfig['onElicitationRequest']> =>
+    (sessionId: string): CopilotElicitationHandler =>
     async (request) => {
       const state = this.createState(sessionId)
       const presentation = createProviderElicitation(`elicitation:${randomUUID()}`, {
         ...request,
         serverName: request.elicitationSource
       })
-      return new Promise<Awaited<ReturnType<NonNullable<SessionConfig['onElicitationRequest']>>>>(
-        (resolve) => {
-          state.pendingUserInputs.push({
-            id: presentation.id,
-            request: { question: request.message },
-            startedAt: presentation.startedAt!,
-            elicitation: presentation,
-            resolve: (response) =>
-              resolve(
-                getProviderElicitationResult(presentation, response) as Awaited<
-                  ReturnType<NonNullable<SessionConfig['onElicitationRequest']>>
-                >
-              )
-          })
-          this.emitUpdate(state)
-        }
-      )
+      return new Promise<CopilotElicitationResult>((resolve) => {
+        state.pendingUserInputs.push({
+          id: presentation.id,
+          request: { question: request.message },
+          startedAt: presentation.startedAt!,
+          elicitation: presentation,
+          resolve: (response) =>
+            resolve(
+              getProviderElicitationResult(presentation, response) as CopilotElicitationResult
+            )
+        })
+        this.emitUpdate(state)
+      })
     }
 
   private handleUserInput = (

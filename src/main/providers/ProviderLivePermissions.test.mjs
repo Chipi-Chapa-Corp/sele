@@ -42,7 +42,7 @@ const fixture = (nativeUpdate) => {
         listener = null
       }
     },
-    getChat: async (id) => details.get(id) ?? makeDetail(id),
+    getChatWindow: async (id) => details.get(id) ?? makeDetail(id),
     resolveApproval: async (id, decision) => {
       replies.push([id, details.get(id)?.pendingApproval?.id, decision])
       const detail = makeDetail(id)

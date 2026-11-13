@@ -571,6 +571,11 @@ export function UsageIndicator({
   }, [onUsageRefresh, rateLimitRefreshBaseline, rateLimitUsageFingerprint, sourceKey])
 
   const accountUsageErrors = accountUsage?.errors ?? []
+  const usageErrorMessages = accountUsageErrors.map((usageError, index) => (
+    <p className="message-box__usage-status" key={`${usageError}:${index}`}>
+      {usageError}
+    </p>
+  ))
   const tokenUsageSupported = providerId !== 'opencode-v2'
   const statisticsSupported = providerId === 'codex'
   const statisticsReported = Boolean(
@@ -968,11 +973,7 @@ export function UsageIndicator({
                       accountUsageErrors.length === 0 && (
                         <p className="message-box__usage-status">Usage unavailable.</p>
                       )}
-                    {accountUsageErrors.map((usageError, index) => (
-                      <p className="message-box__usage-status" key={`${usageError}:${index}`}>
-                        {usageError}
-                      </p>
-                    ))}
+                    {usageErrorMessages}
                   </section>
                 </div>
               ) : visibleUsageView === 'usage' ? (
@@ -1027,11 +1028,7 @@ export function UsageIndicator({
                     {accountUsage?.statisticsLoaded && !accountUsage.summary && (
                       <p className="message-box__usage-status">Statistics unavailable.</p>
                     )}
-                    {accountUsageErrors.map((usageError, index) => (
-                      <p className="message-box__usage-status" key={`${usageError}:${index}`}>
-                        {usageError}
-                      </p>
-                    ))}
+                    {usageErrorMessages}
                   </section>
                 </div>
               )}

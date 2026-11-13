@@ -1,4 +1,4 @@
-import { type CSSProperties, type RefObject, useEffect, useRef, useState } from 'react'
+import { type RefObject, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Quote } from 'lucide-react'
 import { toCssRem } from '../cssUnits'
@@ -139,11 +139,6 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       setSelectedQuote(null)
     }
 
-    const clearSelectionAndDismiss = (): void => {
-      dismiss()
-      clearSelectionInContainer(containerRef.current)
-    }
-
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target
       if (!(target instanceof Node)) return
@@ -168,10 +163,6 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       scheduleSelectionUpdate()
     }
 
-    const handlePointerCancel = (): void => {
-      dismiss()
-    }
-
     const handleSelectionChange = (): void => {
       // Chromium also emits document selection changes for text controls. Their
       // private editing selection must not be serialized or measured as a quote.
@@ -193,11 +184,8 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       if (rootRef.current?.contains(target)) return
       // Removing ranges after Chromium focuses an input also removes its editing
       // caret. Dismiss the action without interfering with native text selection.
-      if (isEditingTarget(target)) {
-        dismiss()
-        return
-      }
-      clearSelectionAndDismiss()
+      dismiss()
+      if (!isEditingTarget(target)) clearSelectionInContainer(containerRef.current)
     }
 
     const handleVisibilityChange = (): void => {
@@ -206,7 +194,7 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
 
     document.addEventListener('pointerdown', handlePointerDown, true)
     document.addEventListener('pointerup', handlePointerUp, true)
-    document.addEventListener('pointercancel', handlePointerCancel, true)
+    document.addEventListener('pointercancel', dismiss, true)
     document.addEventListener('selectionchange', handleSelectionChange)
     document.addEventListener('focusin', handleFocusIn, true)
     document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -217,7 +205,7 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       cancelSelectionUpdate()
       document.removeEventListener('pointerdown', handlePointerDown, true)
       document.removeEventListener('pointerup', handlePointerUp, true)
-      document.removeEventListener('pointercancel', handlePointerCancel, true)
+      document.removeEventListener('pointercancel', dismiss, true)
       document.removeEventListener('selectionchange', handleSelectionChange)
       document.removeEventListener('focusin', handleFocusIn, true)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -241,21 +229,14 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
       />
     )
 
-  if (!selectedQuote || !selectedQuote.host.isConnected) {
-    return null
-  }
-
-  const style: CSSProperties = {
-    left: toCssRem(selectedQuote.left),
-    top: toCssRem(selectedQuote.top)
-  }
+  if (!selectedQuote?.host.isConnected) return null
 
   return createPortal(
     <div
       className="message-selection-quote"
       data-placement={selectedQuote.placement}
       ref={rootRef}
-      style={style}
+      style={{ left: toCssRem(selectedQuote.left), top: toCssRem(selectedQuote.top) }}
     >
       <Button
         aria-label="Quote selected text"

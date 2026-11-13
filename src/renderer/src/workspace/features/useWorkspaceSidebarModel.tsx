@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import type { AppContainerTarget, AppProject } from '../../../../shared/app'
+import type { AppContainerTarget } from '../../../../shared/app'
 import { isNoProjectChat, noProjectGroupKey } from '../../../../shared/noProject'
 import type { ProviderChat } from '../../../../shared/provider'
 import { matchesChatSidebarFilter } from '../../chatSidebarFilter'
@@ -22,28 +22,8 @@ import {
   doneGroupKey,
   newSessionNoProjectValue
 } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceSubagentState } from '../state/useWorkspaceSubagentState'
 import { useSidebarSearch } from '../useSidebarSearch'
-import { useWorkspaceChatReadState } from './useWorkspaceChatReadState'
-
-import type { useWorkspaceSelection } from '../useWorkspaceSelection'
-type WorkspaceSidebarModelDependencies = {
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  chatRead: ReturnType<typeof useWorkspaceChatReadState>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  projectRecordsByCwd: Map<string, AppProject>
-  session: Pick<
-    ReturnType<typeof useWorkspaceSelection>,
-    'latestCommitFinishedAtByChatKey' | 'committingChatKeys'
-  >
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceSidebarModel({
   searchState,
@@ -54,7 +34,7 @@ export function useWorkspaceSidebarModel({
   projectState,
   projectRecordsByCwd,
   session
-}: WorkspaceSidebarModelDependencies) {
+}: WorkspaceSession) {
   const { latestCommitFinishedAtByChatKey, committingChatKeys } = session
 
   const searchTerms = useMemo(

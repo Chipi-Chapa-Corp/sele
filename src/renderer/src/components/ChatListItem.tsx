@@ -76,8 +76,6 @@ type ChatListItemProps = {
   canMarkUndone?: boolean
   /** Pinned reordering: shows the drag handle and reorder styles. */
   draggable?: boolean
-  /** The row can be dragged into a composer to link this chat. */
-  linkDraggable?: boolean
   dragging?: boolean
   dropPosition?: 'before' | 'after' | null
   onClick: (chat: ProviderChat) => void
@@ -100,7 +98,6 @@ const statusLabels = {
 } as const
 const finishedUnseenLabel = 'Finished since last viewed'
 
-const workingStatuses = new Set<NonNullable<ProviderChat['status']>>(['active'])
 const minuteMs = 60_000
 const hourMs = 60 * minuteMs
 const dayMs = 24 * hourMs
@@ -143,7 +140,6 @@ export const ChatListItem = memo(function ChatListItem({
   canMarkDone = true,
   canMarkUndone = false,
   draggable = false,
-  linkDraggable = false,
   dragging = false,
   dropPosition = null,
   onClick,
@@ -207,12 +203,8 @@ export const ChatListItem = memo(function ChatListItem({
   const LocationIcon = noProject ? MessageSquare : isGitWorktree ? GitFork : Folder
   const approvalStatus = chat.status === 'waitingOnApproval' ? chat.status : null
   const userInputStatus = chat.status === 'waitingOnUserInput' ? chat.status : null
-  const workingStatus =
-    chat.status && workingStatuses.has(chat.status)
-      ? chat.status
-      : descendantWorking && !approvalStatus && !userInputStatus
-        ? 'active'
-        : null
+  const working =
+    chat.status === 'active' || (descendantWorking && !approvalStatus && !userInputStatus)
   const turnOutcomeStatus =
     chat.lastTurnOutcome === 'failed'
       ? 'error'
@@ -225,14 +217,47 @@ export const ChatListItem = memo(function ChatListItem({
   const hasUnread = markedUnread || unreadUpdatedAt > (chat.seenUpdatedAt ?? 0)
   const unread = !chat.done && (markedUnread || (!selected && !childOpen && hasUnread))
   const finishedUnseen = unread && chat.status === null
-  const showFinishedUnseen = !committing && !workingStatus && !approvalStatus && finishedUnseen
+  const showFinishedUnseen = !committing && !working && !approvalStatus && finishedUnseen
   const normalizedNameDraft = nameDraft.trim()
-  const canHover =
-    typeof window !== 'undefined' &&
-    window.matchMedia?.('(hover: hover) and (pointer: fine)').matches === true
+  const canHover = window.matchMedia('(hover: hover) and (pointer: fine)').matches
   const detailOpen =
     canHover && !holdActions.touch && (detailHovered || detailFocused) && !editingName && !dragging
   const shortUpdatedAge = formatShortAge(chat.updatedAt, now)
+  const statusDot = (modifier: string, title: string) => ({
+    title,
+    icon: (
+      <span
+        className={`chat-list-item__status chat-list-item__status--${modifier}`}
+        role="img"
+        aria-label={title}
+      />
+    )
+  })
+  const iconStatus = (
+    Icon: typeof Spinner | typeof Terminal,
+    className: string,
+    title: string
+  ) => ({
+    title,
+    icon: <Icon className={className} aria-label={title} />
+  })
+  const leadingStatus = committing
+    ? iconStatus(GitCommitHorizontal, 'chat-list-item__committing', 'Committing changes')
+    : working
+      ? iconStatus(Spinner, 'app-loading-spinner chat-list-item__loading', statusLabels.active)
+      : approvalStatus
+        ? iconStatus(
+            ShieldQuestionMark,
+            'chat-list-item__approval-icon',
+            statusLabels[approvalStatus]
+          )
+        : userInputStatus
+          ? statusDot(userInputStatus, statusLabels[userInputStatus])
+          : terminalActivity.running
+            ? iconStatus(Terminal, 'chat-list-item__terminal', 'Terminal task running')
+            : turnOutcomeStatus
+              ? statusDot(turnOutcomeStatus, statusLabels[turnOutcomeStatus])
+              : showFinishedUnseen && statusDot('finished-unseen', finishedUnseenLabel)
 
   useLayoutEffect(() => {
     if (!detailOpen) return
@@ -341,12 +366,8 @@ export const ChatListItem = memo(function ChatListItem({
       data-chat-id={chat.id}
       data-touch-actions={holdActions.open ? 'open' : undefined}
       data-touch-input={holdActions.touch ? 'true' : undefined}
-      className={`chat-list-item${!committing && workingStatus ? ' chat-list-item--working' : ''}${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
-      draggable={
-        !editingName &&
-        (draggable || linkDraggable) &&
-        (!compact || (holdActions.open && touchDragArmed))
-      }
+      className={`chat-list-item${!committing && working ? ' chat-list-item--working' : ''}${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
+      draggable={!editingName && (!compact || (holdActions.open && touchDragArmed))}
       onDragEnd={onDragEnd}
       onDragOver={(event) => onDragOver?.(event, chat)}
       onDragStart={(event) => {
@@ -407,78 +428,13 @@ export const ChatListItem = memo(function ChatListItem({
             })}
       >
         <span className="chat-list-item__header">
-          {committing ? (
+          {leadingStatus && (
             <span
               className="chat-list-item__status-container chat-list-item__status-container--leading"
-              title="Committing changes"
+              title={leadingStatus.title}
             >
-              <GitCommitHorizontal
-                className="chat-list-item__committing"
-                aria-label="Committing changes"
-              />
+              {leadingStatus.icon}
             </span>
-          ) : workingStatus ? (
-            <span
-              className="chat-list-item__status-container chat-list-item__status-container--leading"
-              title={statusLabels[workingStatus]}
-            >
-              <Spinner
-                className="app-loading-spinner chat-list-item__loading"
-                aria-label={statusLabels[workingStatus]}
-              />
-            </span>
-          ) : approvalStatus ? (
-            <span
-              className="chat-list-item__status-container chat-list-item__status-container--leading"
-              title={statusLabels[approvalStatus]}
-            >
-              <ShieldQuestionMark
-                className="chat-list-item__approval-icon"
-                aria-label={statusLabels[approvalStatus]}
-              />
-            </span>
-          ) : userInputStatus ? (
-            <span
-              className="chat-list-item__status-container chat-list-item__status-container--leading"
-              title={statusLabels[userInputStatus]}
-            >
-              <span
-                className="chat-list-item__status chat-list-item__status--waitingOnUserInput"
-                role="img"
-                aria-label={statusLabels[userInputStatus]}
-              />
-            </span>
-          ) : terminalActivity.running ? (
-            <span
-              className="chat-list-item__status-container chat-list-item__status-container--leading"
-              title="Terminal task running"
-            >
-              <Terminal className="chat-list-item__terminal" aria-label="Terminal task running" />
-            </span>
-          ) : turnOutcomeStatus ? (
-            <span
-              className="chat-list-item__status-container chat-list-item__status-container--leading"
-              title={statusLabels[turnOutcomeStatus]}
-            >
-              <span
-                className={`chat-list-item__status chat-list-item__status--${turnOutcomeStatus}`}
-                role="img"
-                aria-label={statusLabels[turnOutcomeStatus]}
-              />
-            </span>
-          ) : (
-            showFinishedUnseen && (
-              <span
-                className="chat-list-item__status-container chat-list-item__status-container--leading"
-                title={finishedUnseenLabel}
-              >
-                <span
-                  className="chat-list-item__status chat-list-item__status--finished-unseen"
-                  role="img"
-                  aria-label={finishedUnseenLabel}
-                />
-              </span>
-            )
           )}
           {editingName ? (
             <>

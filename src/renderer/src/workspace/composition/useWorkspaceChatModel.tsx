@@ -12,11 +12,11 @@ import { useWorkspaceSidebarActions } from '../features/useWorkspaceSidebarActio
 import { useWorkspaceSidebarModel } from '../features/useWorkspaceSidebarModel'
 import { useWorkspaceSourceControls } from '../features/useWorkspaceSourceControls'
 import { useGitHubPullRequests } from '../useGitHubPullRequests'
-import { useWorkspaceChatListActions } from '../wiring/useWorkspaceChatListActions'
 import { useConversationViewModel } from '../useConversationViewModel'
 import { useChatInteractionController } from '../useChatInteractionController'
+import { useChatListController } from '../useChatListController'
 import { useChatMessagingController } from '../useChatMessagingController'
-import { useWorkspaceSelection } from '../useWorkspaceSelection'
+import { useWorkspaceSelection, type WorkspaceSession } from '../useWorkspaceSelection'
 import { useSettingsController } from '../useSettingsController'
 import { useWorkspaceRuntime } from './useWorkspaceRuntime'
 import { useWorkspaceState } from './useWorkspaceState'
@@ -29,6 +29,8 @@ type WorkspaceChatModelDependencies = {
   returnToRootChat: () => void
   returnFromSubagentChat: () => void
 }
+
+export type WorkspaceChat = WorkspaceSession & ReturnType<typeof useWorkspaceChatModel>
 
 export function useWorkspaceChatModel({
   state,
@@ -80,7 +82,7 @@ export function useWorkspaceChatModel({
 
   const chatErrors = useWorkspaceChatErrors({ ...workspace, effectiveSelection })
 
-  const listActions = useWorkspaceChatListActions({ ...workspace, sidebarModel })
+  const listActions = useChatListController({ ...workspace, sidebarModel })
 
   const messaging = useChatMessagingController({ ...workspace, chatErrors, effectiveSelection })
 

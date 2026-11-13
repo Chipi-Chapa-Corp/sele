@@ -4,26 +4,8 @@ import { normalizeContainerTarget } from '../../containerSelection'
 import { chatOpenElsewhereMessage } from '../../requestError'
 import { useOpenCodeConnectionHealth } from '../../useOpenCodeConnectionHealth'
 import { getErrorMessage } from '../chatControllerUtils'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
 import { useWorkspaceEffectiveSelection } from './useWorkspaceEffectiveSelection'
-import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
-
-import type { useWorkspaceSelection } from '../useWorkspaceSelection'
-type WorkspaceChatErrorsDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  session: Pick<
-    ReturnType<typeof useWorkspaceSelection>,
-    'changesContainer' | 'selectedChatKey' | 'usageAuthenticationRequired'
-  >
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceChatErrors({
   chatState,
@@ -33,7 +15,9 @@ export function useWorkspaceChatErrors({
   preferences,
   provider,
   session
-}: WorkspaceChatErrorsDependencies) {
+}: WorkspaceSession & {
+  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
+}) {
   const { changesContainer, selectedChatKey, usageAuthenticationRequired } = session
 
   const chatWriteAccess = getChatWriteAccessPresentation(chatState.chatDetail)

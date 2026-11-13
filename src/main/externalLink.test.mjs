@@ -76,7 +76,7 @@ for (const platform of ['darwin', 'win32', 'linux']) {
 }
 
 for (const environment of [
-  { name: 'Distrobox', bridge: { file: 'distrobox-host-exec', argsPrefix: [] } },
+  { name: 'Distrobox', bridge: { file: 'distrobox-host-exec' } },
   { name: 'Flatpak', flatpak: true }
 ]) {
   test(`opens links on the host in ${environment.name} and preserves the URL argument`, async () => {
@@ -112,7 +112,7 @@ test('system protocol links also use the host desktop in a container', async () 
 
 test('preserves the GUI session across a Distrobox host bridge without forwarding other variables', async () => {
   const app = harness({
-    bridge: { file: 'distrobox-host-exec', argsPrefix: [] },
+    bridge: { file: 'distrobox-host-exec' },
     env: {
       DISPLAY: ':0',
       WAYLAND_DISPLAY: 'wayland-0',

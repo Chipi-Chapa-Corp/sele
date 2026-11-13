@@ -14,11 +14,7 @@ export const isExecutableFile = async (
     await accessFile(file, constants.X_OK)
     return true
   } catch (error) {
-    const code =
-      typeof error === 'object' && error !== null && 'code' in error
-        ? (error as { code?: unknown }).code
-        : null
-    if (!isExpectedFileAbsenceError(error) && code !== 'EACCES') {
+    if (!isExpectedFileAbsenceError(error) && (error as ProcessFailure | null)?.code !== 'EACCES') {
       console.error('[hostProcess:isExecutableFile] Unable to inspect executable candidate', error)
     }
     return false
@@ -27,12 +23,8 @@ export const isExecutableFile = async (
 
 export const isExpectedShellCandidateAbsence = (error: unknown, detail = ''): boolean => {
   if (isExpectedFileAbsenceError(error)) return true
-  const code =
-    typeof error === 'object' && error !== null && 'code' in error
-      ? (error as { code?: unknown }).code
-      : null
   return (
-    code === 1 &&
+    (error as ProcessFailure | null)?.code === 1 &&
     /(?:failed to execute[^\n]*no such file|no such file or directory[^\n]*(?:shell|executable)?)/i.test(
       detail
     )
@@ -64,18 +56,11 @@ type ProcessFailure = {
 }
 
 const isExitCode = (error: unknown, codes: readonly number[]): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  typeof (error as ProcessFailure).code === 'number' &&
-  codes.includes((error as ProcessFailure).code as number)
+  codes.includes((error as ProcessFailure | null)?.code as number)
 
 const wasInterrupted = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  ((error as ProcessFailure).killed === true || Boolean((error as ProcessFailure).signal))
-
-const includesArgument = (args: readonly string[], argument: string): boolean =>
-  args.includes(argument)
+  (error as ProcessFailure | null)?.killed === true ||
+  Boolean((error as ProcessFailure | null)?.signal)
 
 export const isExpectedOptionalGitProbeFailure = (
   args: readonly string[],
@@ -88,16 +73,16 @@ export const isExpectedOptionalGitProbeFailure = (
   if (!command) return false
 
   if (command === 'config') {
-    if (includesArgument(args, '--get') || includesArgument(args, '--get-all')) {
+    if (args.includes('--get') || args.includes('--get-all')) {
       return !stderr.trim() && isExpectedCommandAbsenceError(error, [1])
     }
-    if (includesArgument(args, '--unset-all')) {
+    if (args.includes('--unset-all')) {
       return !stderr.trim() && isExpectedCommandAbsenceError(error, [5])
     }
     return false
   }
 
-  if (command === 'symbolic-ref' && includesArgument(args, '--quiet')) {
+  if (command === 'symbolic-ref' && args.includes('--quiet')) {
     return !stderr.trim() && isExpectedCommandAbsenceError(error, [1])
   }
 
@@ -105,11 +90,7 @@ export const isExpectedOptionalGitProbeFailure = (
     return !stderr.trim() && isExpectedCommandAbsenceError(error, [1])
   }
 
-  if (
-    command === 'apply' &&
-    includesArgument(args, '--reverse') &&
-    includesArgument(args, '--check')
-  ) {
+  if (command === 'apply' && args.includes('--reverse') && args.includes('--check')) {
     return (
       isExpectedCommandAbsenceError(error, [1]) &&
       /(?:patch failed|patch does not apply)/i.test(stderr)
@@ -117,16 +98,13 @@ export const isExpectedOptionalGitProbeFailure = (
   }
 
   if (command === 'rev-parse') {
-    if (includesArgument(args, '--verify') && includesArgument(args, '--quiet')) {
+    if (args.includes('--verify') && args.includes('--quiet')) {
       return !stderr.trim() && isExpectedCommandAbsenceError(error, [1])
     }
 
     if (!isExitCode(error, [128])) return false
     const normalizedStderr = stderr.toLocaleLowerCase()
-    if (
-      includesArgument(args, '--show-toplevel') &&
-      normalizedStderr.includes('not a git repository')
-    ) {
+    if (args.includes('--show-toplevel') && normalizedStderr.includes('not a git repository')) {
       return true
     }
 

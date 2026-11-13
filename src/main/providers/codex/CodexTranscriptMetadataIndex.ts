@@ -41,7 +41,17 @@ const maxEntries = 16
 const record = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null
 
-const isExpectedCodexRolloutJsonError = (error: unknown): boolean => error instanceof SyntaxError
+const resetEntry = (entry: Entry): void => {
+  entry.prompts.clear()
+  entry.starts.clear()
+  entry.offset = 0
+  entry.partialChunks = []
+  entry.partialLength = 0
+  entry.decoder = new StringDecoder('utf8')
+  entry.currentTurnId = null
+  entry.previewedPartialLength = 0
+  entry.version++
+}
 
 /** A source-local index of the two presentation fields used by Codex history. */
 export class CodexTranscriptMetadataIndex {
@@ -55,27 +65,21 @@ export class CodexTranscriptMetadataIndex {
 
   async load(source: TranscriptSource): Promise<CodexTranscriptMetadata> {
     const key = `${source.key}\0${source.threadId ?? ''}\0${source.path}`
-    let entry = this.entries.get(key)
-    if (!entry) {
-      entry = this.newEntry()
-      this.entries.set(key, entry)
-      while (this.entries.size > maxEntries) this.entries.delete(this.entries.keys().next().value!)
-    } else {
-      this.entries.delete(key)
-      this.entries.set(key, entry)
-    }
+    const entry = this.entries.get(key) ?? this.newEntry()
+    this.entries.delete(key)
+    this.entries.set(key, entry)
+    while (this.entries.size > maxEntries) this.entries.delete(this.entries.keys().next().value!)
     if (entry.pending) return entry.pending
-    const target = entry
-    const request = this.update(target, source)
-    target.pending = request
+    const request = this.update(entry, source)
+    entry.pending = request
     try {
       return await request
     } catch (error) {
       // A failed read must be retried; do not preserve an incomplete file position.
-      if (this.entries.get(key) === target) this.entries.delete(key)
+      if (this.entries.get(key) === entry) this.entries.delete(key)
       throw error
     } finally {
-      if (target.pending === request) target.pending = undefined
+      if (entry.pending === request) entry.pending = undefined
     }
   }
 
@@ -111,17 +115,9 @@ export class CodexTranscriptMetadataIndex {
         entry.modifiedAtMs >= 0 &&
         info.modifiedAtMs !== entry.modifiedAtMs)
     if (replaced) {
-      entry.prompts.clear()
-      entry.starts.clear()
-      entry.offset = 0
-      entry.partialChunks = []
-      entry.partialLength = 0
-      entry.decoder = new StringDecoder('utf8')
-      entry.currentTurnId = null
+      resetEntry(entry)
       entry.head = null
       entry.tail = null
-      entry.previewedPartialLength = 0
-      entry.version++
     }
     if (source.read) {
       const size = info.size
@@ -133,17 +129,8 @@ export class CodexTranscriptMetadataIndex {
         if (
           (entry.head && !head.subarray(0, entry.head.length).equals(entry.head)) ||
           (entry.tail && !tail.equals(entry.tail))
-        ) {
-          entry.prompts.clear()
-          entry.starts.clear()
-          entry.offset = 0
-          entry.partialChunks = []
-          entry.partialLength = 0
-          entry.decoder = new StringDecoder('utf8')
-          entry.currentTurnId = null
-          entry.previewedPartialLength = 0
-          entry.version++
-        }
+        )
+          resetEntry(entry)
       }
       const priorOffset = entry.offset
       while (entry.offset < size && entry.generation === this.generation) {
@@ -171,17 +158,8 @@ export class CodexTranscriptMetadataIndex {
         bytes.length < entry.offset ||
         (entry.head && !head.subarray(0, entry.head.length).equals(entry.head)) ||
         (entry.tail && !previousTail.equals(entry.tail))
-      ) {
-        entry.prompts.clear()
-        entry.starts.clear()
-        entry.offset = 0
-        entry.partialChunks = []
-        entry.partialLength = 0
-        entry.decoder = new StringDecoder('utf8')
-        entry.currentTurnId = null
-        entry.previewedPartialLength = 0
-        entry.version++
-      }
+      )
+        resetEntry(entry)
       entry.head = Buffer.from(head)
       for (
         let offset = entry.offset;
@@ -200,8 +178,7 @@ export class CodexTranscriptMetadataIndex {
     entry.modifiedAtMs = info.modifiedAtMs
     entry.identity = info.identity
     if (entry.partialLength !== entry.previewedPartialLength) {
-      const partial = entry.partialChunks.join('')
-      this.consumeLine(entry, partial)
+      this.consumeLine(entry, entry.partialChunks.join(''))
       entry.previewedPartialLength = entry.partialLength
     }
     return entry
@@ -248,7 +225,7 @@ export class CodexTranscriptMetadataIndex {
       row = record(JSON.parse(line))
     } catch (error) {
       // A writer may leave its last JSONL record incomplete while the turn is live.
-      if (!isExpectedCodexRolloutJsonError(error))
+      if (!(error instanceof SyntaxError))
         console.warn('Unable to parse optional Codex rollout metadata', error)
       return
     }

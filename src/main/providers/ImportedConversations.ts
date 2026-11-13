@@ -150,8 +150,7 @@ export class ImportedConversations {
     const record = await this.record(providerId, id)
     container ??= record?.container
     const adapter = this.native[providerId]
-    const native = await (adapter.getChatWindow?.(id, fullWindow, { container }) ??
-      adapter.getChat(id, { container }))
+    const native = await adapter.getChatWindow(id, fullWindow, { container })
     return record ? this.project(record, native) : native
   }
   private view(record: ImportedConversation): ImportedHistoryView {
@@ -295,9 +294,9 @@ export class ImportedConversations {
       )
       if (!record) throw new Error('Provider did not register the imported session.')
       if (cancelled()) return null
-      const detail = await (adapter.getChatWindow?.(id, fullWindow, {
+      const detail = await adapter.getChatWindow(id, fullWindow, {
         container: options.container
-      }) ?? adapter.getChat(id, { container: options.container }))
+      })
       record.baseline = detail.items.map((item) => item.id)
       if (cancelled()) return null
       await this.store.save({ ...record, state: 'ready' })
@@ -409,13 +408,7 @@ export class ImportedConversations {
               }
             return { ...page, chats }
           }
-        const method =
-          Reflect.get(target, property) ??
-          (property === 'getChatCursorWindow'
-            ? () => {
-                throw new Error('Cursor history is unavailable for this provider.')
-              }
-            : undefined)
+        const method = Reflect.get(target, property)
         if (
           typeof method !== 'function' ||
           typeof property !== 'string' ||

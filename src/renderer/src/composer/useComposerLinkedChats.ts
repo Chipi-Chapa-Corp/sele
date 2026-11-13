@@ -8,13 +8,9 @@ import {
   type LinkedChatReference
 } from '../linkedChats'
 import { providerApi } from '../providerApi'
+import { getErrorMessage } from '../workspace/chatControllerUtils'
 
 export const noLinkedChats: ComposerLinkedChat[] = []
-
-const getLinkedChatErrorMessage = (error: unknown): string =>
-  (error instanceof Error
-    ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
-    : '') || 'Unable to load the linked chat.'
 
 import type { MessageBoxProps } from '../components/MessageBox.types'
 
@@ -133,7 +129,7 @@ export function useComposerLinkedChats({
         console.error('Unable to prepare the linked chat.', linkError)
         settle({
           status: 'failed',
-          error: getLinkedChatErrorMessage(linkError)
+          error: getErrorMessage(linkError, 'Unable to load the linked chat.')
         })
       })
   }

@@ -2,24 +2,17 @@ import { useEffect } from 'react'
 import { normalizeContainerTarget } from '../../containerSelection'
 import { providerApi } from '../../providerApi'
 import { mergeSettingsProviderSkills } from '../../providerSettings'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
 import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceProviderSettingsDependencies = {
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceProviderSettings({
   preferences,
   sourceState,
   providerState,
   settings
-}: WorkspaceProviderSettingsDependencies) {
+}: WorkspaceState & {
+  settings: ReturnType<typeof useWorkspaceSettingsContext>
+}) {
   useEffect(() => {
     let active = true
     queueMicrotask(() => {

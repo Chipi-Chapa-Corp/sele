@@ -1,7 +1,7 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { startTransition, useCallback, useEffect, useMemo, useRef } from 'react'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../../shared/noProject'
-import type { AppProject, AppSelectedAttachment } from '../../../shared/app'
+import type { AppSelectedAttachment } from '../../../shared/app'
 import type {
   ProviderChat,
   ProviderChatDetail,
@@ -66,20 +66,9 @@ import {
   serializeReviewMessage
 } from './chatControllerUtils'
 import type { useWorkspaceChatErrors } from './features/useWorkspaceChatErrors'
-import type { useWorkspaceChatProjection } from './features/useWorkspaceChatProjection'
-import type { useWorkspaceChatReadState } from './features/useWorkspaceChatReadState'
 import type { useWorkspaceEffectiveSelection } from './features/useWorkspaceEffectiveSelection'
-import type { useWorkspaceProviderContext } from './features/useWorkspaceProviderContext'
-import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
-import type { useWorkspaceProviderState } from './state/useWorkspaceProviderState'
-import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
-import type { useWorkspaceSubagentState } from './state/useWorkspaceSubagentState'
-import type { useWorkspaceViewportState } from './state/useWorkspaceViewportState'
-import type { useWorkspaceProviderUpdates } from './wiring/useWorkspaceProviderUpdates'
-import type { useWorkspaceSelection } from './useWorkspaceSelection'
 import type { SubagentChatView } from './controllerTypes'
+import type { WorkspaceSession } from './useWorkspaceSelection'
 
 // Return shape is inferred from the controller declarations below.
 export function useChatMessagingController({
@@ -98,22 +87,9 @@ export function useChatMessagingController({
   chatRead,
   chatProjection,
   gitState
-}: {
+}: WorkspaceSession & {
   chatErrors: ReturnType<typeof useWorkspaceChatErrors>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  session: ReturnType<typeof useWorkspaceSelection>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  projectRecordsByCwd: Map<string, AppProject>
   effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
-  subagentState: ReturnType<typeof useWorkspaceSubagentState>
-  viewportState: ReturnType<typeof useWorkspaceViewportState>
-  chatRead: ReturnType<typeof useWorkspaceChatReadState>
-  chatProjection: ReturnType<typeof useWorkspaceChatProjection>
-  gitState: ReturnType<typeof useWorkspaceGitState>
 }) {
   const { authenticationRequired, handleSendFailure } = chatErrors
   const {

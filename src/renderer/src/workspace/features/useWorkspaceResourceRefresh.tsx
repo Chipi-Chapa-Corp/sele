@@ -2,18 +2,9 @@ import { useCallback, useEffect, useLayoutEffect } from 'react'
 import { getContainerTargetKey } from '../../containerSelection'
 import { providerApi } from '../../providerApi'
 import { type DeferredProviderResourceRefresh } from '../controllerTypes'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
-type WorkspaceResourceRefreshDependencies = {
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-}
-
-export function useWorkspaceResourceRefresh({
-  providerState,
-  preferences
-}: WorkspaceResourceRefreshDependencies) {
+export function useWorkspaceResourceRefresh({ providerState, preferences }: WorkspaceState) {
   const flushDeferredProviderResourceRefreshes = useCallback(async (): Promise<void> => {
     if (providerState.deferredProviderResourceRefreshRunningRef.current) return
     providerState.deferredProviderResourceRefreshRunningRef.current = true

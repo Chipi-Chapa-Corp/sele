@@ -65,14 +65,7 @@ import {
   modelSupportsReasoningEffort,
   trimRecentChatCache
 } from './chatControllerUtils'
-import type { useWorkspaceChatCache } from './features/useWorkspaceChatCache'
-import type { useWorkspaceProviderContext } from './features/useWorkspaceProviderContext'
-import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useWorkspacePreferenceState } from './state/useWorkspacePreferenceState'
-import type { useWorkspaceProjectState } from './state/useWorkspaceProjectState'
-import type { useWorkspaceProviderState } from './state/useWorkspaceProviderState'
-import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
+import type { WorkspaceSession } from './useWorkspaceSelection'
 
 // Return shape is inferred from the controller declarations below.
 export function useSettingsController({
@@ -84,16 +77,7 @@ export function useSettingsController({
   projectState,
   providerState,
   provider
-}: {
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  chatCache: ReturnType<typeof useWorkspaceChatCache>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-}) {
+}: WorkspaceSession) {
   const {
     setAppSettings,
     setProjectSettingsByCwd,

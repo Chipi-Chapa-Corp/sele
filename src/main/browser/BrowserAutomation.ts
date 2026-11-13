@@ -39,7 +39,6 @@ export interface BrowserAutomationClient {
     childTargetId?: string
   ): Promise<BrowserCdpParams>
   allowDownload(id: number, url: string): Promise<void>
-  waitForDownload(id: number, timeoutMs?: number): Promise<BrowserDownload>
   listDownloads(id: number): Promise<BrowserDownload[]>
   close(): void
 }
@@ -490,10 +489,6 @@ export function startBrowserAutomationService(): BrowserAutomationService {
       allowDownload: async (id, url) => {
         await attach(id)
         await downloadManager().allow(id, url)
-      },
-      waitForDownload: async (id, timeoutMs) => {
-        await attach(id)
-        return downloadManager().wait(id, timeoutMs)
       },
       listDownloads: async (id) => {
         await guestForId(id)

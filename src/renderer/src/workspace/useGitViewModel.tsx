@@ -14,15 +14,8 @@ import {
 } from './controllerTypes'
 import { getFileTreeEmptyMessage } from './gitControllerUtils'
 import { getChatCwdGroupKey } from './chatControllerUtils'
-import type { useWorkspaceGitState } from './state/useWorkspaceGitState'
-import type { useWorkspaceSettingsContext } from './features/useWorkspaceSettingsContext'
-import type { useWorkspaceSelection } from './useWorkspaceSelection'
-import type { useWorkspaceChatState } from './state/useWorkspaceChatState'
-import type { useChatInteractionController } from './useChatInteractionController'
 import type { useChangesData } from './useChangesData'
-import type { useWorkspaceProviderUpdates } from './wiring/useWorkspaceProviderUpdates'
-import type { useWorkspaceSourceState } from './state/useWorkspaceSourceState'
-import type { useWorkspacePanes } from './features/useWorkspacePanes'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the view-model declarations below.
 export function useGitViewModel({
@@ -36,17 +29,9 @@ export function useGitViewModel({
   handleSyncChanges,
   sourceState,
   panes
-}: {
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  session: ReturnType<typeof useWorkspaceSelection>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  interactions: ReturnType<typeof useChatInteractionController>
+}: WorkspaceChat & {
   changes: ReturnType<typeof useChangesData>
-  providerUpdates: ReturnType<typeof useWorkspaceProviderUpdates>
   handleSyncChanges: (action: GitSyncAction) => Promise<void>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  panes: ReturnType<typeof useWorkspacePanes>
 }) {
   const {
     commitInput,

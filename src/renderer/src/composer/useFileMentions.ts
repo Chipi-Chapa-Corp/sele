@@ -6,13 +6,15 @@ import type {
   AppSelectedAttachment
 } from '../../../shared/app'
 import { appApi } from '../appApi'
+import type { ComposerMention } from '../composerMention'
 import { maxSelectedAttachmentCount } from './composerLimits'
 import {
-  FileMention,
   ProjectFileCache,
+  applyMentionReplacement,
   getFileMentionResults,
   getMentionAttachmentPath,
-  getMentionFileName
+  getMentionFileName,
+  removeComposerMention
 } from './mentionResults'
 
 type FileMentionsDependencies = {
@@ -40,7 +42,7 @@ export function useFileMentions({
   setSelectedAttachments,
   textareaRef
 }: FileMentionsDependencies) {
-  const [fileMention, setFileMention] = useState<FileMention | null>(null)
+  const [fileMention, setFileMention] = useState<ComposerMention | null>(null)
 
   const [projectFileCache, setProjectFileCache] = useState<ProjectFileCache | null>(null)
 
@@ -54,27 +56,20 @@ export function useFileMentions({
     fileMention && !editing && selectedAttachments.length < maxSelectedAttachmentCount
   )
 
+  const currentFileCache =
+    projectCwd &&
+    projectFileCache?.cwd === projectCwd &&
+    projectFileCache.sourceKey === composerSourceKey
+      ? projectFileCache
+      : null
+
   const fileMentionResults = useMemo(
-    () =>
-      getFileMentionResults(
-        projectCwd &&
-          projectFileCache?.cwd === projectCwd &&
-          projectFileCache.sourceKey === composerSourceKey
-          ? projectFileCache.files
-          : [],
-        fileMention?.query ?? ''
-      ),
-    [composerSourceKey, fileMention?.query, projectCwd, projectFileCache]
+    () => getFileMentionResults(currentFileCache?.files ?? [], fileMention?.query ?? ''),
+    [currentFileCache, fileMention?.query]
   )
 
   useEffect(() => {
-    if (
-      !fileMentionMenuOpen ||
-      !projectCwd ||
-      (projectFileCache?.cwd === projectCwd && projectFileCache.sourceKey === composerSourceKey)
-    ) {
-      return
-    }
+    if (!fileMentionMenuOpen || !projectCwd || currentFileCache) return
 
     let active = true
 
@@ -100,19 +95,12 @@ export function useFileMentions({
     return () => {
       active = false
     }
-  }, [composerSourceKey, container, fileMentionMenuOpen, projectCwd, projectFileCache])
+  }, [composerSourceKey, container, currentFileCache, fileMentionMenuOpen, projectCwd])
 
   const handleSelectFileMention = (file: AppFileTreeFile): void => {
-    if (
-      !fileMention ||
-      !projectCwd ||
-      projectFileCache?.cwd !== projectCwd ||
-      projectFileCache.sourceKey !== composerSourceKey
-    ) {
-      return
-    }
+    if (!fileMention || !currentFileCache) return
 
-    const attachmentPath = getMentionAttachmentPath(projectFileCache.repositoryRoot, file.path)
+    const attachmentPath = getMentionAttachmentPath(currentFileCache.repositoryRoot, file.path)
     const attachmentAlreadySelected = selectedAttachments.some(
       (attachment) => attachment.path === attachmentPath
     )
@@ -122,15 +110,7 @@ export function useFileMentions({
       return
     }
 
-    const prefix = message.slice(0, fileMention.start)
-    const suffix = message.slice(fileMention.end)
-    const removeLeadingSuffixSpace =
-      suffix.startsWith(' ') && (prefix.length === 0 || prefix.endsWith(' '))
-    const nextSuffix = removeLeadingSuffixSpace ? suffix.slice(1) : suffix
-    const nextMessage = prefix + nextSuffix
-    const nextCaret = prefix.length
-
-    setMessage(nextMessage)
+    applyMentionReplacement(removeComposerMention(message, fileMention), setMessage, textareaRef)
     setFileMention(null)
     setAttachmentSelectionError(null)
     if (!attachmentAlreadySelected) {
@@ -143,18 +123,11 @@ export function useFileMentions({
         }
       ])
     }
-
-    window.requestAnimationFrame(() => {
-      const textarea = textareaRef.current
-      if (!textarea) return
-      textarea.focus({ preventScroll: true })
-      textarea.setSelectionRange(nextCaret, nextCaret)
-    })
   }
   return {
     fileMention,
     setFileMention,
-    projectFileCache,
+    currentFileCache,
     projectFilesErrorCwd,
     projectFilesError,
     activeFileMentionIndex,

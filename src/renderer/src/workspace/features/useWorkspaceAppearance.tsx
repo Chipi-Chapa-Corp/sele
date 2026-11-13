@@ -7,15 +7,15 @@ import {
   applyShadowPreference,
   applyWindowControlAppearancePreferences
 } from '../gitControllerUtils'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
 import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
-type WorkspaceAppearanceDependencies = {
+export function useWorkspaceAppearance({
+  settings,
+  preferences
+}: WorkspaceState & {
   settings: ReturnType<typeof useWorkspaceSettingsContext>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-}
-
-export function useWorkspaceAppearance({ settings, preferences }: WorkspaceAppearanceDependencies) {
+}) {
   useEffect(() => {
     setThemePreference(settings.effectiveAppSettings.appearance.theme)
   }, [settings.effectiveAppSettings.appearance.theme])
