@@ -6,6 +6,7 @@ import {
 } from '../../shared/browser'
 import { BrowserAccessibility, type BrowserTreeOptions } from './BrowserAccessibility'
 import { BrowserRecording, saveBrowserArtifact, type BrowserArtifact } from './BrowserArtifacts'
+import { uploadBrowserFiles } from './BrowserFileUploads'
 import type {
   BrowserAutomationClient,
   BrowserAutomationService,
@@ -36,6 +37,7 @@ type Page = {
   cdp: BrowserCdpCommand
   accessibility: BrowserAccessibility
   ready: Promise<void>
+  fileChooser?: (params: Record<string, unknown>) => void
   console: ConsoleEntry[]
   network: Map<string, NetworkEntry>
   dialog?: { type: string; message: string; defaultPrompt?: string; url?: string }
@@ -128,6 +130,7 @@ export class BrowserWorkspace {
       return
     }
     const params = event.params
+    if (event.method === 'Page.fileChooserOpened') page.fileChooser?.(params)
     if (event.method === 'Page.javascriptDialogOpening') {
       page.dialog = {
         type: String(params.type),
@@ -363,15 +366,33 @@ export class BrowserWorkspace {
     const attributes = new Map<string, string>()
     for (let index = 0; index < (input.attributes?.length ?? 0); index += 2)
       attributes.set(input.attributes![index], input.attributes![index + 1])
-    if (
-      input.nodeName.toLowerCase() !== 'input' ||
-      attributes.get('type')?.toLowerCase() !== 'file'
+    const fileInput =
+      input.nodeName.toLowerCase() === 'input' && attributes.get('type')?.toLowerCase() === 'file'
+    const chooserButton =
+      options.ref &&
+      (input.nodeName.toLowerCase() === 'button' || attributes.get('role') === 'button')
+    if (!fileInput && !chooserButton)
+      throw new Error('Upload target must be a file input or file chooser button')
+    if (attributes.has('disabled')) throw new Error('Upload target is disabled')
+    await uploadBrowserFiles(
+      page.cdp,
+      fileInput ? node : undefined,
+      options.paths,
+      chooserButton
+        ? {
+            signal: this.controller.signal,
+            subscribe: (callback) => {
+              if (page.fileChooser) throw new Error('File selection is already in progress')
+              page.fileChooser = callback
+              return () => {
+                if (page.fileChooser === callback) delete page.fileChooser
+              }
+            },
+            open: async () =>
+              clickBrowserPoint(page.cdp, await this.point(page, { ref: options.ref }))
+          }
+        : undefined
     )
-      throw new Error('Upload target must be an input[type=file] element')
-    if (attributes.has('disabled')) throw new Error('File input is disabled')
-    if (options.paths.length > 1 && !attributes.has('multiple'))
-      throw new Error('This file input does not accept multiple files')
-    await page.cdp('DOM.setFileInputFiles', { ...node, files: options.paths })
     return { files: options.paths.length }
   }
 

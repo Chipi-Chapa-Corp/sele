@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Copy, FolderOpen, MoreHorizontal, Unplug } from 'lucide-react'
 import {
   pairedBrowserNames,
   type DesktopApi,
@@ -9,12 +10,18 @@ import { appApi } from '../appApi'
 import { Button } from './Button'
 
 const api = (): DesktopApi => (window as unknown as { desktopApi: DesktopApi }).desktopApi
+
+type ConnectionAction = PairedBrowserId | 'computer' | 'folder'
+
 export function DesktopAutomationSettings(): React.ReactElement {
   const [state, setState] = useState<DesktopState | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<ConnectionAction | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [directory, setDirectory] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
+  const desktopAvailable = document.documentElement.dataset.platform === 'linux'
+
   useEffect(() => {
     let alive = true
     const refresh = (): void => {
@@ -22,10 +29,13 @@ export function DesktopAutomationSettings(): React.ReactElement {
         .getState()
         .then(
           (value) => {
-            if (alive) setState(value)
+            if (alive) {
+              setState(value)
+              setLoadError(null)
+            }
           },
-          (error) => {
-            if (alive) setError(String(error))
+          (failure) => {
+            if (alive) setLoadError(String(failure))
           }
         )
     }
@@ -36,136 +46,214 @@ export function DesktopAutomationSettings(): React.ReactElement {
       clearInterval(timer)
     }
   }, [])
-  const run = async (operation: () => Promise<DesktopState>): Promise<void> => {
-    setBusy(true)
+
+  const run = async (action: ConnectionAction, operation: () => Promise<void>): Promise<void> => {
+    if (busy) return
+    setBusy(action)
     setError(null)
     setStatus(null)
     try {
-      setState(await operation())
-    } catch (error) {
+      await operation()
+    } catch (failure) {
       setError(
-        error instanceof Error
-          ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
-          : String(error)
+        failure instanceof Error
+          ? failure.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+          : String(failure)
       )
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
+
+  const copyAddress = (id: PairedBrowserId): Promise<void> =>
+    run(id, async () => {
+      let connection = state?.[id]
+      if (!connection?.pairingUrl) {
+        const next = await (id === 'chrome' ? api().pairChrome() : api().pairOpera())
+        setState(next)
+        connection = next[id]
+      }
+      if (!connection.pairingUrl)
+        throw new Error(`${pairedBrowserNames[id]} has no connection address.`)
+      await appApi.writeClipboardText(connection.pairingUrl)
+      setStatus(
+        `${pairedBrowserNames[id]} address copied. Paste it in the extension and choose Connect.`
+      )
+    })
+
   return (
-    <section className="settings-dialog__section" aria-label="Desktop connections">
-      <h2 className="settings-dialog__section-heading">Additional connections</h2>
-      <p>Connect Sele's desktop control or shared-tab extension for local conversations.</p>
-      <div className="settings-dialog__field settings-dialog__field--stack">
-        <div className="settings-dialog__field-header">
-          <strong>Native computer control</strong>
-          <p>
-            {state?.computer.connected
-              ? `Connected (${state.computer.backend}). Disconnect to stop all native control.`
-              : 'Share a Linux desktop for screenshots, clicks, typing, keys and scrolling. Wayland opens the system consent dialog.'}
-          </p>
-        </div>
-        <Button
-          disabled={busy && !state?.computer.connecting}
-          callback={() =>
-            run(() =>
-              state?.computer.connected || state?.computer.connecting
-                ? api().disconnectComputer()
-                : api().connectComputer()
-            )
-          }
-          label={
-            state?.computer.connected || state?.computer.connecting
-              ? 'Disconnect computer'
-              : 'Connect computer'
-          }
-          theme="secondary"
-        />
+    <section
+      className="settings-dialog__section browser-connections"
+      aria-label="Browser connections"
+    >
+      <div className="browser-connections__heading">
+        <h2 className="settings-dialog__section-heading">Your browsers</h2>
+        <p>Connect once. Website tabs are available automatically.</p>
       </div>
-      <details open={Boolean(state?.chrome.pairingUrl || state?.opera.pairingUrl)}>
-        <summary>Sele browser extension (Chrome and Opera)</summary>
-        <p>
-          This is a separate shared-tab connection. Claude and Codex's official Chrome integrations
-          use their own setup above. Chrome and Opera can stay connected at the same time. Each
-          browser has its own pairing address and shared tabs.
-        </p>
-        {(['chrome', 'opera'] as const).map((id: PairedBrowserId) => {
+      <div className="settings-dialog__section-cards">
+        {(['chrome', 'opera'] as const).map((id) => {
           const name = pairedBrowserNames[id]
           const connection = state?.[id]
-          const pair = id === 'chrome' ? () => api().pairChrome() : () => api().pairOpera()
-          const disconnect =
-            id === 'chrome' ? () => api().disconnectChrome() : () => api().disconnectOpera()
+          const connected = connection?.connected === true
+          const paired = Boolean(connection?.pairingUrl)
           return (
-            <div key={id} role="group" aria-label={`${name} connection`}>
-              <div className="settings-dialog__field settings-dialog__field--stack">
-                <div className="settings-dialog__field-header">
-                  <strong>{name} attachment</strong>
-                  <p>
-                    {connection?.connected
-                      ? 'Connected. Use the extension to choose which tabs to share.'
-                      : `Connect your existing ${name} profile through the Sele extension. Only tabs you share are exposed.`}
-                  </p>
-                </div>
-                <Button
-                  disabled={busy}
-                  callback={() => run(connection?.connected ? disconnect : pair)}
-                  label={
-                    connection?.connected
-                      ? `Disconnect ${name}`
-                      : `Generate ${name} pairing address`
-                  }
-                  theme="secondary"
-                />
+            <div
+              className="settings-dialog__field browser-connections__row"
+              key={id}
+              role="group"
+              aria-label={`${name} connection`}
+            >
+              <div className="settings-dialog__field-header">
+                <h3>{name}</h3>
+                <p
+                  role="status"
+                  className={connected && !loadError ? 'browser-connections__connected' : undefined}
+                >
+                  {loadError
+                    ? 'Status unavailable'
+                    : !connection
+                      ? 'Checking…'
+                      : connected
+                        ? 'Connected'
+                        : paired
+                          ? 'Waiting for extension'
+                          : 'Not connected'}
+                </p>
               </div>
-              {connection?.pairingUrl && (
-                <div className="chat-approval__actions">
+              <div className="browser-connections__actions">
+                {!connected && (
                   <Button
-                    disabled={busy}
-                    callback={async () => {
-                      try {
-                        await appApi.writeClipboardText(connection.pairingUrl!)
-                        setStatus(`${name} pairing address copied.`)
-                      } catch (error) {
-                        setError(String(error))
-                      }
-                    }}
-                    label={`Copy ${name} pairing address`}
+                    disabled={Boolean(busy) || Boolean(loadError) || !connection}
+                    callback={() => copyAddress(id)}
+                    label={busy === id ? 'Preparing…' : paired ? 'Copy address' : 'Connect'}
+                    size="small"
                     theme="secondary"
                   />
-                </div>
-              )}
+                )}
+                {paired && (
+                  <Button
+                    aria-label={`${name} connection options`}
+                    callback={() => {}}
+                    disabled={Boolean(busy) || Boolean(loadError)}
+                    icon={<MoreHorizontal aria-hidden="true" />}
+                    menuOnly
+                    dropdownLabel={`${name} connection`}
+                    dropdownActions={[
+                      ...(connected
+                        ? [
+                            {
+                              id: 'copy',
+                              label: 'Copy connection address',
+                              icon: <Copy aria-hidden="true" />,
+                              callback: () => copyAddress(id)
+                            }
+                          ]
+                        : []),
+                      {
+                        id: 'disconnect',
+                        label: 'Disconnect',
+                        icon: <Unplug aria-hidden="true" />,
+                        callback: () =>
+                          run(id, async () => {
+                            setState(
+                              await (id === 'chrome'
+                                ? api().disconnectChrome()
+                                : api().disconnectOpera())
+                            )
+                          })
+                      }
+                    ]}
+                    size="small"
+                    theme="transparent"
+                  />
+                )}
+              </div>
               {connection?.error && (
-                <p role="alert">
-                  {name}: {connection.error}
+                <p className="browser-settings__error" role="alert">
+                  {connection.error}
                 </p>
               )}
             </div>
           )
         })}
-        <div className="chat-approval__actions">
+      </div>
+      {status && (
+        <p className="browser-settings__feedback" role="status">
+          {status}
+        </p>
+      )}
+      {(error || loadError) && (
+        <p className="browser-settings__error" role="alert">
+          {error || loadError}
+        </p>
+      )}
+      <details className="browser-settings__disclosure">
+        <summary>Install the extension</summary>
+        <div className="browser-settings__disclosure-body">
+          <ol className="browser-settings__steps">
+            <li>Open the extension folder below.</li>
+            <li>
+              In your browser’s Extensions page, enable Developer mode and choose Load unpacked.
+            </li>
+            <li>Copy the address for that browser above and connect in the extension.</li>
+          </ol>
           <Button
-            disabled={busy}
-            callback={async () => {
-              try {
+            disabled={Boolean(busy)}
+            callback={() =>
+              run('folder', async () => {
                 setDirectory(await api().openChromeExtension())
-              } catch (error) {
-                setError(String(error))
-              }
-            }}
-            label="Open browser extension folder"
+              })
+            }
+            icon={<FolderOpen aria-hidden="true" />}
+            label="Open extension folder"
+            size="small"
             theme="secondary"
           />
+          {directory && <code className="browser-settings__path">{directory}</code>}
         </div>
-        <p>
-          In Chrome or Opera, open Extensions, enable Developer mode, and Load unpacked from the
-          extension folder. Copy that browser's pairing address above, paste it in the extension,
-          connect, then Share current tab. Generating an Opera address does not change Chrome's
-          connection. Disconnect affects only the named browser.
-        </p>
-        <p role="status">{status}</p>
-        {directory && <p>{directory}</p>}
       </details>
-      {(error || state?.computer.error) && <p role="alert">{error || state?.computer.error}</p>}
+      {(desktopAvailable || state?.computer.connected || state?.computer.error) && (
+        <details className="browser-settings__disclosure">
+          <summary>Desktop control</summary>
+          <div className="browser-settings__disclosure-body">
+            <div className="browser-settings__desktop-row">
+              <p>
+                {state?.computer.connected
+                  ? `Connected · ${state.computer.backend}`
+                  : !desktopAvailable
+                    ? 'Available on Linux.'
+                    : 'Control a shared Linux desktop.'}
+              </p>
+              {(desktopAvailable || state?.computer.connected || state?.computer.connecting) && (
+                <Button
+                  disabled={Boolean(busy) && !state?.computer.connecting}
+                  callback={() =>
+                    run('computer', async () => {
+                      setState(
+                        await (state?.computer.connected || state?.computer.connecting
+                          ? api().disconnectComputer()
+                          : api().connectComputer())
+                      )
+                    })
+                  }
+                  label={
+                    state?.computer.connected || state?.computer.connecting
+                      ? 'Disconnect computer'
+                      : 'Connect computer'
+                  }
+                  size="small"
+                  theme="secondary"
+                />
+              )}
+            </div>
+            {state?.computer.error && (
+              <p className="browser-settings__error" role="alert">
+                {state.computer.error}
+              </p>
+            )}
+          </div>
+        </details>
+      )}
     </section>
   )
 }

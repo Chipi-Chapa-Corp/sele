@@ -2,12 +2,15 @@ import { getProviderHostCommand } from '../../providerProcesses'
 import { providerProcessContext } from '../../providerProcessContext'
 import {
   registerBrowserUseSession,
+  getBrowserUseSession,
   removeBrowserUseSession,
   removeBrowserUseSessions
 } from './CodexBrowserSessions'
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import { app } from 'electron'
+import { createHash, randomUUID } from 'node:crypto'
+import { app, safeStorage } from 'electron'
+import { join } from 'node:path'
+import { EncryptedChromePairingStore } from '../../desktop/ChromePairingStore'
 import { createInterface } from 'node:readline'
 import type { AppContainerTarget } from '../../../shared/app'
 import { getHostCommand, isRunningInFlatpak, resolveHostExecutable } from '../../hostProcess'
@@ -23,6 +26,8 @@ import { registerCodexBrowserTools } from './CodexBrowserTools'
 import { supportsLocalHostTools } from '../hostToolTarget'
 import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
 import { getCodexNativeChromeConfig } from './CodexNativeChrome'
+import { CodexOperaMcp } from './CodexOperaMcp'
+import { operaAutomation } from '../../desktop/ChromeAutomation'
 
 type RpcError = {
   code: number
@@ -164,6 +169,24 @@ export class CodexAppServerClient {
   }
   private desktopTools: ReturnType<typeof registerCodexDesktopTools> | null = null
   private browserTools: ReturnType<typeof registerCodexBrowserTools> = null
+  private readonly operaMcp = new CodexOperaMcp(
+    (id) => this.dynamicTools.isReadOnly(id),
+    (scope) =>
+      new EncryptedChromePairingStore(
+        () =>
+          join(
+            app.getPath('userData'),
+            'codex-opera-mcp',
+            createHash('sha256')
+              .update(
+                JSON.stringify([scope.providerId, scope.sessionId, scope.cwd, scope.containerKey])
+              )
+              .digest('hex') + '.enc.json'
+          ),
+        async () => safeStorage
+      )
+  )
+  private readonly operaConfiguredThreads = new Set<string>()
 
   private process: CodexProcess | null = null
   private initialized = false
@@ -273,7 +296,7 @@ export class CodexAppServerClient {
       }
     }
     if (
-      (method === 'thread/start' || method === 'thread/resume') &&
+      method === 'thread/start' &&
       input.ephemeral !== true &&
       input.sandbox !== 'read-only' &&
       input.dynamicTools === undefined &&
@@ -310,18 +333,59 @@ export class CodexAppServerClient {
       throw error
     }
     if (method === 'thread/start' || method === 'thread/resume' || method === 'thread/fork') {
-      const thread = (result as { thread?: { id?: string; cwd?: string } })?.thread
+      const thread = (
+        result as { thread?: { id?: string; cwd?: string; status?: { type?: string } } }
+      )?.thread
       if (typeof thread?.id === 'string') {
         this.ownedThreadIds.add(thread.id)
         if (method === 'thread/fork' && typeof input.threadId === 'string')
           this.dynamicTools.inherit(thread.id, input.threadId)
         else {
-          this.dynamicTools.bind(thread.id, (params as Record<string, unknown>)?.dynamicTools)
+          this.dynamicTools.bind(
+            thread.id,
+            method === 'thread/resume' && input.sandbox !== 'read-only'
+              ? this.dynamicTools.specs
+              : (params as Record<string, unknown>)?.dynamicTools
+          )
           this.dynamicTools.setReadOnly(thread.id, input.sandbox === 'read-only')
         }
         const cwd = thread.cwd ?? (typeof input.cwd === 'string' ? input.cwd : '')
         this.browserSessionCwds.set(thread.id, cwd)
         registerBrowserUseSession(this, thread.id, cwd, this.container)
+        if (
+          method === 'thread/resume' &&
+          thread.status?.type !== 'active' &&
+          input.ephemeral !== true &&
+          input.sandbox !== 'read-only' &&
+          supportsLocalHostTools(this.container) &&
+          (operaAutomation.status.connected || operaAutomation.status.pairingUrl)
+        ) {
+          const scope = getBrowserUseSession(thread.id)
+          if (!scope) throw new Error('Opera session is not owned by Sele.')
+          if (!this.operaConfiguredThreads.has(thread.id) || !this.operaMcp.hasScope(scope)) {
+            // Loaded Codex threads also retain their existing MCP manager. Wait for
+            // a confirmed idle-thread unload before resuming with the new endpoint.
+            await this.releaseThread(thread.id)
+            registerBrowserUseSession(this, thread.id, cwd, this.container)
+            const operaConfig = await this.operaMcp.config(scope)
+            result = await this.sendRequest<Result>(
+              'thread/resume',
+              {
+                ...(params as Record<string, unknown>),
+                config: {
+                  ...((params as Record<string, unknown>).config as
+                    | Record<string, unknown>
+                    | undefined),
+                  ...operaConfig
+                }
+              },
+              options
+            )
+            this.ownedThreadIds.add(thread.id)
+            this.browserSessionCwds.set(thread.id, cwd)
+            this.operaConfiguredThreads.add(thread.id)
+          }
+        }
       }
     }
     if (
@@ -366,6 +430,8 @@ export class CodexAppServerClient {
     this.recoveryThreadIds.clear()
     this.desktopTools?.close()
     this.browserTools?.close()
+    void this.operaMcp.close()
+    this.operaConfiguredThreads.clear()
     this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
@@ -534,9 +600,15 @@ export class CodexAppServerClient {
       for (const { thread, dynamicTools, readOnly } of restored) {
         this.ownedThreadIds.add(thread.id)
         this.browserSessionCwds.set(thread.id, thread.cwd ?? '')
-        this.dynamicTools.bind(thread.id, dynamicTools)
+        // Runtime snapshots may predate the current host catalog, or follow an
+        // idle-thread unload (resume cannot carry dynamicTools on the wire).
+        // Rebind the current local handlers; Codex retains its own advertised catalog.
+        this.dynamicTools.bind(thread.id, readOnly ? dynamicTools : this.dynamicTools.specs)
         this.dynamicTools.setReadOnly(thread.id, readOnly === true)
         registerBrowserUseSession(this, thread.id, thread.cwd ?? null, this.container)
+        const scope = getBrowserUseSession(thread.id)
+        if (scope && !readOnly && (await this.operaMcp.restore(scope)))
+          this.operaConfiguredThreads.add(thread.id)
       }
       const recoveredThreadIds = [
         ...new Set([...restored.map(({ thread }) => thread.id), ...this.recoveryThreadIds])
@@ -657,6 +729,7 @@ export class CodexAppServerClient {
         if (method === 'thread/closed') {
           const threadId = (notification.params as { threadId?: string } | undefined)?.threadId
           if (threadId) {
+            this.operaConfiguredThreads.delete(threadId)
             this.ownedThreadIds.delete(threadId)
             this.browserSessionCwds.delete(threadId)
             removeBrowserUseSession(this, threadId)
@@ -733,6 +806,8 @@ export class CodexAppServerClient {
       for (const threadId of this.ownedThreadIds) this.recoveryThreadIds.add(threadId)
     this.desktopTools?.close()
     this.browserTools?.close()
+    void this.operaMcp.close()
+    this.operaConfiguredThreads.clear()
     this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)

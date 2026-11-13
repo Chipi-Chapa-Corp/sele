@@ -45,6 +45,11 @@ export interface BrowserAutomationClient {
 }
 
 export interface BrowserAutomationService {
+  getConnectionInfo?(): {
+    browser: string
+    connected: boolean
+    extensionId: string | null
+  }
   createClient(
     scope: BrowserAutomationScope,
     onEvent?: (event: BrowserCdpEvent) => void

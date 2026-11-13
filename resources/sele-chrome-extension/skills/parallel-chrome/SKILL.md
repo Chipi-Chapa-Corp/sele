@@ -17,7 +17,10 @@ Use the paired Sele extension for this workflow. If its tools or connection are 
 
 ## Own background tabs
 
-- Start by listing this conversation's tabs through the selected transport. Use only tabs created by this conversation, or a specific tab the user explicitly hands over.
+When locating an already-open page without an explicitly chosen browser, list tabs in both connected Chrome and Opera before declaring it missing. Use the actual matching browser and keep its namespace with every tab ID. Treat a failed connection separately from an absent tab. Honour an explicit browser or account choice; never switch browsers to bypass a denied grant. Use Chrome by default only for a new tab when no browser was specified.
+
+- Start by listing tabs through the selected transport. Paired browsers automatically expose existing and new website tabs without a sharing button. Tabs owned by another conversation are excluded. Inspect an existing tab only when it belongs to the user's assigned task; prefer creating a background tab for concurrent work.
+- Never ask for **Share current tab**, manual sharing, or re-pairing after `Tab is outside this browser workspace`. That error alone does not identify its cause. Re-list the same browser and check the exact owned tab; if it remains absent, report the access failure and stop that tab. Never reclaim another chat's tab, bypass a canceled grant, or create replacements to evade a denial.
 - Create tabs with `foreground: false` (or the tool's documented equivalent). Never activate a tab or bring a window forward for routine browser work.
 - Retain the returned tab IDs and pass an explicit owned ID to every observation and action. Never use the active/current tab as an implicit target.
 - Read fresh tab-local UI before clicking or typing. Screenshots, element references and coordinates belong to that tab and document.
@@ -31,7 +34,7 @@ If the user takes over an agent tab, pause that tab until it is explicitly retur
 
 Pair each browser once through Sele Settings → Browser & desktop → Sele browser extension (Chrome and Opera), using that browser's own Generate/Copy buttons. Treat the pairing address as a credential; never print it or place it in logs. A normal Sele or browser restart retains pairing and reconnects automatically. Allow up to one minute for a cold extension retry, then inspect the error instead of repeatedly generating addresses. Reopen the popup to obtain fresh status; a restored setup page can show an earlier startup snapshot. Disconnect removes only the named browser's binding.
 
-A transport interruption, Sele restart or service-worker suspension preserves ownership within the current Chrome session. Revalidate each owned tab after recovery. Full Chrome restart or extension reload revokes old tab grants while retaining pairing. Never reclaim a tab from its numeric ID alone or silently create replacement tabs to bypass a revoked grant. Report missing tabs and request a handoff when continuation needs them. Explicit Disconnect removes saved pairing.
+A transport interruption, Sele restart or service-worker suspension preserves ownership within the current browser session. Revalidate each owned tab after recovery. Full browser restart or extension reload clears ownership while retaining pairing and automatically rediscovers current website tabs. Inspect their current identity before resuming; never infer it from an old numeric ID. Canceling the debugger banner excludes that tab for the current browser session, including worker restarts; do not bypass that cancellation. Explicit Disconnect removes saved pairing.
 
 ## Verify what was observed
 

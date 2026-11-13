@@ -136,18 +136,17 @@ credentials or unsupported remote MCP OAuth credentials may require sign-in agai
 
 ## Parallel work in your signed-in Chrome and Opera
 
-Sele's optional shared-tab extension lets agents use your existing Chrome and Opera
+Sele's optional browser extension lets agents use your existing Chrome and Opera
 profiles while you keep working. Both browsers can stay connected simultaneously. Each
 has its own pairing address, encrypted credential, connection, and tab ownership. Each chat
 creates its own background tabs; Sele rejects
 access to tabs owned by another conversation. Input is sent to the target tab rather
 than the system mouse, keyboard or clipboard.
 
-1. Open **Settings → Browser & desktop → Sele browser extension (Chrome and Opera)**.
-2. Select **Open browser extension folder**. In your browser's Extensions manager, enable
+1. Open **Settings → Browser & desktop → Your browsers**.
+2. Expand **Install the extension** and select **Open extension folder**. In your browser's Extensions manager, enable
    Developer mode, choose **Load unpacked**, and select that folder.
-3. In Sele, choose **Generate Chrome pairing address** or **Generate Opera pairing address**,
-   then **Copy Chrome pairing address** or **Copy Opera pairing address**. Paste it
+3. In the Chrome or Opera row, choose **Connect** (or **Copy address** for a saved binding). Paste it
    into that browser's extension and select **Connect**. Keep the address private. Adding
    Opera does not require disconnecting Chrome or regenerating Chrome's existing address.
 4. Install the bundled `skills/parallel-chrome` folder from that same extension folder
@@ -155,19 +154,26 @@ than the system mouse, keyboard or clipboard.
    for Claude (on Windows, `~` means your user home). Copy the entire folder, then start
    a new chat so the agent can discover it. From a source checkout, the folder is
    [resources/sele-chrome-extension/skills/parallel-chrome](resources/sele-chrome-extension/skills/parallel-chrome/SKILL.md).
-5. Ask the chat to use the `parallel-chrome` skill and work in its own background tab
-   in your existing Chrome. Use **Share current tab** only to hand a specific existing
-   website tab to an agent; do not share your active personal tab for concurrent work.
+5. Existing and new website tabs become available automatically after pairing; no per-tab
+   sharing button is needed. Ask the chat to use the `parallel-chrome` skill and work in
+   its own background tab. Tabs claimed by another conversation remain inaccessible.
 
 Pairing survives normal Sele and Chrome restarts and reconnects automatically. A cold
 extension can take up to one minute to retry. Full Chrome restart or extension reload
-clears previous tab grants; agents must revalidate ownership rather than reuse old IDs.
+clears previous ownership and rediscovers current website tabs automatically; agents must
+revalidate the page rather than reuse old IDs. Canceling control in the browser debugger
+banner excludes that tab for the current browser session, including worker restarts.
 **Disconnect** deliberately removes pairing. The skill guides agent behavior; the extension
 connection supplies and enforces access. It does not configure standalone agent CLIs.
 
 Chrome tools retain their `chrome` namespace (`chrome_*` for MCP providers); Opera uses
 `opera` (`opera_*`). Tab IDs are local to each browser and can overlap: always use the
-matching namespace. Disconnect and pairing reset affect only the named browser. An existing
+matching namespace. Existing Codex chats also receive `opera_*` tools from the scoped
+`sele_opera` MCP server when resumed. Sele unloads an idle chat once to apply this
+catalog; running turns are preserved, and browser pairing is unchanged.
+The per-chat MCP address and key are stored with OS encryption and restored on
+Sele restart so a retained Codex runtime can keep its existing connection.
+Disconnect and pairing reset affect only the named browser. An existing
 saved Chrome binding is restored from its original location without rotating its credential.
 When connecting a second extension to an already occupied browser address, Sele rejects
 it; copy the other browser's own address instead. Opera uses the same unpacked extension.

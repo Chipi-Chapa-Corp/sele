@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Sele Browser Connection",
-  "version": "1.1.0",
+  "version": "1.2.2",
   "minimum_chrome_version": "125",
-  "description": "Share selected Chrome or Opera tabs with your local Sele conversations.",
+  "description": "Automatically connect Chrome or Opera website tabs to your local Sele conversations.",
   "permissions": ["debugger", "tabs", "downloads", "storage", "alarms"],
   "host_permissions": ["http://127.0.0.1/*"],
   "background": {
@@ -11,6 +11,6 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Share tabs with Sele"
+    "default_title": "Connect browser to Sele"
   }
 }

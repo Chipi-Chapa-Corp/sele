@@ -169,6 +169,7 @@ test('client ownership lasts through idle turns and clears on disposal or proces
     'CodexAppServerClient',
     [
       'ownedThreadIds',
+      'operaConfiguredThreads',
       'recoveryThreadIds',
       'lifecycle',
       'reconnectTimer',
@@ -180,6 +181,7 @@ test('client ownership lasts through idle turns and clears on disposal or proces
     ],
     {
       CodexDynamicTools,
+      supportsLocalHostTools: () => false,
       registerBrowserUseSession() {},
       removeBrowserUseSession() {},
       removeBrowserUseSessions() {}
@@ -189,6 +191,7 @@ test('client ownership lasts through idle turns and clears on disposal or proces
     start: async () => {},
     sendRequest: async () => ({ thread: { id: 'chat', cwd: '/tmp' } }),
     browserSessionCwds: new Map(),
+    operaMcp: { close: async () => {} },
     rejectPending() {},
     process: null
   })
@@ -206,6 +209,7 @@ const releaseFixture = (globals = {}) => {
     'CodexAppServerClient',
     [
       'ownedThreadIds',
+      'operaConfiguredThreads',
       'browserSessionCwds',
       'notificationListeners',
       'stoppedListeners',

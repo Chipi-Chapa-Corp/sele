@@ -36,6 +36,7 @@ import {
 } from '../transcriptProjection/recordChanges.ts'
 import { BufferedSnapshotMap } from '../transcriptProjection/BufferedSnapshotMap'
 import { isBrowserPermissionRequest } from './CodexBrowserPermissions'
+import { getCodexApprovalPolicy, type CodexApprovalPolicy } from './CodexApprovalPolicy'
 import { codexFeatureSchemas } from './CodexFeatureSchemas'
 import { updateConfigFeatureValue } from './CodexConfigValues'
 import type {
@@ -410,7 +411,7 @@ type ThreadHistoryMutationResponse = {
 }
 
 type CodexThreadAccessOptions = {
-  approvalPolicy: 'on-request' | 'on-failure' | 'never'
+  approvalPolicy: CodexApprovalPolicy
   approvalsReviewer?: 'user' | 'auto_review'
   runtimeWorkspaceRoots?: string[]
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
@@ -422,7 +423,7 @@ type CodexThreadModelOptions = {
 }
 
 type CodexTurnAccessOptions = {
-  approvalPolicy: 'on-request' | 'on-failure' | 'never'
+  approvalPolicy: CodexApprovalPolicy
   approvalsReviewer?: 'user' | 'auto_review'
   runtimeWorkspaceRoots?: string[]
   sandboxPolicy:
@@ -1289,7 +1290,7 @@ const getThreadAccessOptions = (options?: ProviderTurnOptions): CodexThreadAcces
   const approvalPolicy = getApprovalPolicy(options)
   const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
   const accessOptions: CodexThreadAccessOptions = {
-    approvalPolicy,
+    approvalPolicy: getCodexApprovalPolicy(approvalPolicy),
     ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
     sandbox: getSandboxMode(options)
   }
@@ -1314,7 +1315,7 @@ const getTurnAccessOptions = (options?: ProviderTurnOptions): CodexTurnAccessOpt
             networkAccess: false
           }
   const accessOptions: CodexTurnAccessOptions = {
-    approvalPolicy,
+    approvalPolicy: getCodexApprovalPolicy(approvalPolicy),
     ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
     sandboxPolicy
   }
