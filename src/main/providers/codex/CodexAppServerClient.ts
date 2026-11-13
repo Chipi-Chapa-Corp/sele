@@ -27,7 +27,7 @@ import { supportsLocalHostTools } from '../hostToolTarget'
 import { connectCodexRuntime, type CodexProcess } from './CodexRuntime'
 import { getCodexNativeChromeConfig } from './CodexNativeChrome'
 import { CodexOperaMcp } from './CodexOperaMcp'
-import { operaAutomation } from '../../desktop/ChromeAutomation'
+import { pairedBrowserAutomations } from '../../desktop/ChromeAutomation'
 
 type RpcError = {
   code: number
@@ -358,10 +358,12 @@ export class CodexAppServerClient {
           input.ephemeral !== true &&
           input.sandbox !== 'read-only' &&
           supportsLocalHostTools(this.container) &&
-          (operaAutomation.status.connected || operaAutomation.status.pairingUrl)
+          Object.values(pairedBrowserAutomations).some(
+            ({ status }) => status.connected || status.pairingUrl
+          )
         ) {
           const scope = getBrowserUseSession(thread.id)
-          if (!scope) throw new Error('Opera session is not owned by Sele.')
+          if (!scope) throw new Error('Browser session is not owned by Sele.')
           if (!this.operaConfiguredThreads.has(thread.id) || !this.operaMcp.hasScope(scope)) {
             // Loaded Codex threads also retain their existing MCP manager. Wait for
             // a confirmed idle-thread unload before resuming with the new endpoint.
@@ -607,8 +609,17 @@ export class CodexAppServerClient {
         this.dynamicTools.setReadOnly(thread.id, readOnly === true)
         registerBrowserUseSession(this, thread.id, thread.cwd ?? null, this.container)
         const scope = getBrowserUseSession(thread.id)
-        if (scope && !readOnly && (await this.operaMcp.restore(scope)))
-          this.operaConfiguredThreads.add(thread.id)
+        if (scope && !readOnly && (await this.operaMcp.restore(scope))) {
+          // A retained runtime can still cache the earlier Opera-only catalog.
+          // Refresh it once at the next idle resume; do not interrupt an active turn.
+          const status = await this.sendRequest<{
+            data: Array<{ name: string; tools: Record<string, { name: string }> }>
+          }>('mcpServerStatus/list', { threadId: thread.id, serverName: 'sele_opera', limit: 100 })
+          const server = status.data.find((entry) => entry.name === 'sele_opera')
+          const names = new Set(Object.values(server?.tools ?? {}).map((tool) => tool.name))
+          if (names.has('chrome_tabs_context') && names.has('opera_tabs_context'))
+            this.operaConfiguredThreads.add(thread.id)
+        }
       }
       const recoveredThreadIds = [
         ...new Set([...restored.map(({ thread }) => thread.id), ...this.recoveryThreadIds])

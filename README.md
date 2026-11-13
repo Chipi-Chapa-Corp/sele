@@ -168,8 +168,10 @@ connection supplies and enforces access. It does not configure standalone agent 
 
 Chrome tools retain their `chrome` namespace (`chrome_*` for MCP providers); Opera uses
 `opera` (`opera_*`). Tab IDs are local to each browser and can overlap: always use the
-matching namespace. Existing Codex chats also receive `opera_*` tools from the scoped
-`sele_opera` MCP server when resumed. Sele unloads an idle chat once to apply this
+matching namespace. Existing Codex chats receive both `chrome_*` and `opera_*` tools from the scoped
+MCP server when resumed, including chats whose original tool catalog had neither browser.
+The historical `sele_opera` configuration key identifies this shared transport; tool prefixes
+select the actual browser. Sele unloads an idle chat once to apply this
 catalog; running turns are preserved, and browser pairing is unchanged.
 The per-chat MCP address and key are stored with OS encryption and restored on
 Sele restart so a retained Codex runtime can keep its existing connection.

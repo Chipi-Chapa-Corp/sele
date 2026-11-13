@@ -24,7 +24,7 @@ export type BrowserMcpOptions = {
   /** Restore an existing authenticated endpoint for a retained runtime client. */
   binding?: ChromePairing
   /** Limit both discovery and execution to this explicit host-selected catalog. */
-  pairedBrowser?: PairedBrowserId
+  pairedBrowsers?: readonly PairedBrowserId[]
   /** OpenCode shares MCP configuration across sessions, so its caller metadata is mandatory. */
   requireSessionMetadata?: boolean
   authorizeTool?: (name: string, args: Record<string, unknown>) => void | Promise<void>
@@ -45,7 +45,7 @@ export async function createBrowserMcpServer(
   let browser: ReturnType<typeof createProviderBrowserTools> | null = createProviderBrowserTools(
     service,
     boundScope,
-    options.pairedBrowser
+    options.pairedBrowsers
   )
   const definitions = browser.tools.map((tool) => ({
     name: tool.name,
@@ -171,7 +171,7 @@ export async function createBrowserMcpServer(
     suspend,
     resume: () => {
       if (closed) throw new Error('Browser MCP endpoint closed')
-      browser ??= createProviderBrowserTools(service, boundScope, options.pairedBrowser)
+      browser ??= createProviderBrowserTools(service, boundScope, options.pairedBrowsers)
     },
     close: async () => {
       if (closed) return
