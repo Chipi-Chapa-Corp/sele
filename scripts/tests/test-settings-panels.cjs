@@ -108,7 +108,19 @@ if (!process.versions.electron) {
             setItem:(key,value)=>{values.set(key,value);return {ok:true}},
             removeItem:key=>{values.delete(key);return {ok:true}}
           };
-          window.desktopApi = {getState:async()=>({computer:{connected:false,connecting:false,backend:null,error:null},chrome:{connected:false,pairingUrl:null}})};
+          document.documentElement.dataset.platform='linux';
+          window.desktopCalls=[];
+          window.desktopState={computer:{connected:false,connecting:false,backend:null,error:null},chrome:{connected:false,pairingUrl:'ws://127.0.0.1:1/extension?token=fixture-chrome',error:null},opera:{connected:false,pairingUrl:null,error:null}};
+          const state=()=>structuredClone(window.desktopState);
+          window.desktopApi={
+            getState:async()=>state(),
+            pairChrome:async()=>{desktopCalls.push('pairChrome');return state()},
+            pairOpera:async()=>{desktopCalls.push('pairOpera');desktopState.opera.pairingUrl='ws://127.0.0.1:2/extension?token=fixture-opera';return state()},
+            disconnectChrome:async()=>state(),disconnectOpera:async()=>state(),
+            connectComputer:async()=>state(),disconnectComputer:async()=>state(),
+            openChromeExtension:async()=>'/fixture/permanent-extension'
+          };
+          window.appApi={writeClipboardText:async value=>desktopCalls.push(['copy',value])};
           window.localAccessApi = {getState:async()=>({enabled:false,port:4589,urls:[],error:null})};
         </script><script src="fixture.js"></script>`
       )
@@ -165,32 +177,21 @@ if (!process.versions.electron) {
       }
       await run("renderPanel('browser'); window.calls=[]")
       await settle()
-      assert.match(
-        await run('document.querySelector("#settings-native-chrome").parentElement.textContent'),
-        /Keep using your existing browser setup/
-      )
       assert.equal(
         await run(
-          'document.querySelector("#settings-native-chrome").parentElement.querySelector("details").open'
+          'document.querySelector("#settings-panel-browser > section").getAttribute("aria-label")'
         ),
-        false,
-        'official Chrome integrations are optional and off by default'
+        'Browser connections'
       )
       assert.equal(
-        await run('document.querySelector("[aria-label^=Desktop] details").open'),
-        false,
-        'Sele extension pairing is collapsed by default'
-      )
-      await run(
-        'document.querySelector("#settings-native-chrome").parentElement.querySelector("summary").click()'
+        await run('document.querySelector("#settings-native-chrome").closest("details").open'),
+        false
       )
       assert.equal(
-        await run(
-          'Array.from(document.querySelectorAll("button")).find(button=>button.textContent==="Connect computer").closest("details")'
-        ),
-        null,
-        'desktop control is separate from the optional Chrome extension'
+        await run(`document.querySelector('[aria-label="Browser connections"] details').open`),
+        false
       )
+      await run('document.querySelector("#settings-native-chrome").click()')
       for (const provider of ['claude', 'codex']) {
         assert.equal(
           await run(
@@ -207,16 +208,46 @@ if (!process.versions.electron) {
         ['handleNativeChromeChange', 'codex', true]
       ])
       await run('settings.providers.codex.nativeChrome=true; renderPanel("browser")')
+      await run('document.querySelector("#settings-native-chrome").click(); renderPanel("browser")')
+      assert.equal(
+        await run('document.querySelector("#settings-native-chrome").closest("details").open'),
+        false,
+        'parent renders must not reopen advanced settings'
+      )
+      await run(`document.querySelector('[aria-label="Chrome connection"] button').click()`)
+      await settle()
+      assert.deepEqual(
+        await run('window.desktopCalls'),
+        [['copy', 'ws://127.0.0.1:1/extension?token=fixture-chrome']],
+        'copying a saved address must not rotate the pairing'
+      )
+      await run(`document.querySelector('[aria-label="Opera connection"] button').click()`)
+      await settle()
+      assert.deepEqual(await run('window.desktopCalls.slice(1)'), [
+        'pairOpera',
+        ['copy', 'ws://127.0.0.1:2/extension?token=fixture-opera']
+      ])
+      await run(`document.querySelector('[aria-label="Opera connection"] button').click()`)
+      await settle()
+      assert.equal(
+        await run('window.desktopCalls.filter(value=>value==="pairOpera").length'),
+        1,
+        'a second copy must retain the existing Opera binding'
+      )
       assert.equal(
         await run(
-          'document.querySelector("#settings-native-chrome").parentElement.querySelector("details").open'
+          'Array.from(document.querySelectorAll("button")).find(button=>button.textContent==="Connect computer").closest("details") !== null'
         ),
-        true,
-        'an enabled official integration is visible when reopening Settings'
+        true
       )
-      await run('settings.providers.codex.nativeChrome=false; renderPanel("browser")')
-      await run('document.querySelector("[aria-label^=Desktop] summary").click()')
-      assert.equal(await run('document.querySelector("[aria-label^=Desktop] details").open'), true)
+      await run('document.documentElement.dataset.platform="darwin"; renderPanel("browser")')
+      assert.equal(
+        await run(
+          'Array.from(document.querySelectorAll("button")).some(button=>button.textContent==="Connect computer")'
+        ),
+        false,
+        'unsupported Linux control must not clutter macOS settings'
+      )
       for (const provider of ['claude', 'codex', 'copilot', 'opencode']) {
         await run(`renderPanel('providers', {newSessionProvider:${JSON.stringify(provider)}})`)
         await settle()

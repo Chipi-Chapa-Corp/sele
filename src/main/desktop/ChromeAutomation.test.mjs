@@ -406,6 +406,11 @@ test('Chrome pairing authenticates the extension, limits tab ownership, and revo
     cwd: '',
     containerKey: 'host'
   })
+  assert.deepEqual(service.getConnectionInfo(), {
+    browser: 'Chrome',
+    connected: true,
+    extensionId: 'a'.repeat(32)
+  })
   const second = service.createClient({
     providerId: 'claude',
     sessionId: 'two',
@@ -421,9 +426,14 @@ test('Chrome pairing authenticates the extension, limits tab ownership, and revo
   )
   await assert.rejects(
     first.executeCdp(999, 'Page.navigate', { url: 'https://example.com' }),
-    /not been shared/
+    /unavailable/
   )
   await service.disconnect()
+  assert.deepEqual(service.getConnectionInfo(), {
+    browser: 'Chrome',
+    connected: false,
+    extensionId: null
+  })
   await assert.rejects(first.listTabs(), /Pair the Sele/)
   first.close()
   second.close()

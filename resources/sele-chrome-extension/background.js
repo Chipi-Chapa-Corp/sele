@@ -6,6 +6,7 @@ let pairingEndpoint = null
 let reconnectTimer = null
 let sharingEpoch = crypto.randomUUID()
 const shared = new Set()
+const blocked = new Set()
 const tabOwners = new Map()
 const attached = new Set()
 const allowedDownloads = new Map()
@@ -33,7 +34,12 @@ function validEndpoint(endpoint) {
   return url.href
 }
 function persistSession() {
-  const value = { epoch: sharingEpoch, tabs: [...shared], owners: [...tabOwners] }
+  const value = {
+    epoch: sharingEpoch,
+    tabs: [...shared],
+    owners: [...tabOwners],
+    blocked: [...blocked]
+  }
   const write = writes.then(() => chrome.storage.session.set({ [SESSION_KEY]: value }))
   writes = write.catch((error) => {
     storageError = error
@@ -61,6 +67,10 @@ async function bootstrap() {
       !Array.isArray(session.tabs) ||
       !session.tabs.every((id) => Number.isInteger(id) && id > 0) ||
       new Set(session.tabs).size !== session.tabs.length ||
+      (session.blocked !== undefined &&
+        (!Array.isArray(session.blocked) ||
+          !session.blocked.every((id) => Number.isInteger(id) && id > 0) ||
+          session.blocked.some((id) => session.tabs.includes(id)))) ||
       !Array.isArray(session.owners) ||
       !session.owners.every(
         (entry) =>
@@ -78,6 +88,7 @@ async function bootstrap() {
     sharingEpoch = session.epoch
     for (const id of session.tabs) shared.add(id)
     for (const [id, owner] of session.owners) tabOwners.set(id, owner)
+    for (const id of session.blocked ?? []) blocked.add(id)
   } else await persistSession()
   if (local[PAIRING_KEY] !== undefined) {
     pairingEndpoint = validEndpoint(local[PAIRING_KEY])
@@ -117,15 +128,16 @@ chrome.runtime.onInstalled.addListener(wake)
 const send = (value) => {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value))
 }
+const isPageUrl = (url) => /^https?:\/\//.test(url ?? '') || url === 'about:blank'
+const navigationTab = (tab) =>
+  !tab.url && isPageUrl(tab.pendingUrl) ? { ...tab, url: tab.pendingUrl } : tab
 const safeTab = async (id) => {
-  if (!shared.has(id)) throw new Error('Share this tab using the Sele extension first.')
-  const tab = await chrome.tabs.get(id)
+  if (!shared.has(id)) throw new Error('This tab is not available to Sele.')
+  const tab = navigationTab(await chrome.tabs.get(id))
   if (!shared.has(id)) throw new Error('Tab sharing was revoked.')
-  // Chrome can return a newly created blank tab before its URL has committed.
-  // Accept only that explicit pending navigation; a missing URL alone is invalid.
-  if (!tab.url && tab.pendingUrl === 'about:blank') return { ...tab, url: tab.pendingUrl }
-  if (!/^https?:\/\//.test(tab.url ?? '') && tab.url !== 'about:blank')
-    throw new Error('This browser page cannot be automated.')
+  // A pending URL comes from Chrome's navigation state, including a new blank tab.
+  // Missing or unsupported URLs never grant access to internal browser pages.
+  if (!isPageUrl(tab.url)) throw new Error('This browser page cannot be automated.')
   return tab
 }
 const summary = (tab) => ({
@@ -169,6 +181,7 @@ async function disconnect() {
   if (heartbeat) clearInterval(heartbeat)
   heartbeat = null
   shared.clear()
+  blocked.clear()
   tabOwners.clear()
   allowedDownloads.clear()
   downloads.clear()
@@ -267,16 +280,25 @@ function handle(method, params) {
 async function perform(method, params) {
   const revision = generation
   if (method === 'getTabs') {
+    const inventory = await discoverTabs()
+    const existing = new Set(inventory.map((tab) => tab.id))
     const tabs = []
     for (const id of shared) {
+      let current
       try {
-        const tab = summary(await safeTab(id))
-        if (tabOwners.has(id)) tab.owner = tabOwners.get(id)
-        tabs.push(tab)
-      } catch {
+        current = navigationTab(await chrome.tabs.get(id))
+      } catch (error) {
+        // A sleeping/reloaded worker can retain a closed tab. Remove its grant
+        // only when Chrome's actual inventory also confirms it is absent.
+        if (existing.has(id)) throw error
         shared.delete(id)
         tabOwners.delete(id)
+        continue
       }
+      if (!shared.has(id) || !isPageUrl(current.url)) continue
+      const tab = summary(current)
+      if (tabOwners.has(id)) tab.owner = tabOwners.get(id)
+      tabs.push(tab)
     }
     await persistSession()
     return tabs
@@ -397,6 +419,17 @@ async function perform(method, params) {
   }
   throw new Error('Unsupported Chrome operation.')
 }
+async function discoverTabs() {
+  if (!pairingEndpoint) return []
+  const revision = generation
+  const tabs = await chrome.tabs.query({})
+  if (generation !== revision || !pairingEndpoint) throw new Error('Chrome connection was revoked.')
+  for (const tab of tabs) {
+    if (Number.isInteger(tab.id) && /^https?:\/\//.test(tab.url ?? '') && !blocked.has(tab.id))
+      shared.add(tab.id)
+  }
+  return tabs
+}
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!shared.has(source.tabId) || !attached.has(source.tabId)) return
   const children = childSessions.get(source.tabId) ?? new Map()
@@ -425,6 +458,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   if (!attached.delete(source.tabId)) return
   childSessions.delete(source.tabId)
   if (reason === 'canceled_by_user') {
+    blocked.add(source.tabId)
     shared.delete(source.tabId)
     tabOwners.delete(source.tabId)
     void persistSession().catch(() => {})
@@ -434,6 +468,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 chrome.tabs.onRemoved.addListener((id) => {
   if (shared.delete(id)) send({ event: { type: 'detach', tabId: id } })
   tabOwners.delete(id)
+  blocked.delete(id)
   attached.delete(id)
   childSessions.delete(id)
   void ready.then(() => persistSession()).catch(() => {})
@@ -489,32 +524,17 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       await disconnect()
       ready = Promise.resolve()
     }
-    if (message.action === 'share') {
-      if (socket?.readyState !== WebSocket.OPEN)
-        throw new Error('Connect to Sele before sharing a tab.')
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.id || !/^https?:\/\//.test(tab.url ?? ''))
-        throw new Error('Open a normal website tab first.')
-      shared.add(tab.id)
-      await persistSession()
-    }
-    if (message.action === 'unshare') {
-      await detach(message.tabId)
-      shared.delete(message.tabId)
-      tabOwners.delete(message.tabId)
-      await persistSession()
-      send({ event: { type: 'detach', tabId: message.tabId } })
-    }
-    const tabs = []
-    for (const id of shared) {
-      try {
-        tabs.push(summary(await chrome.tabs.get(id)))
-      } catch {
-        shared.delete(id)
-      }
-    }
+    await discoverTabs()
+    // Status polling must never revoke ownership after a transient lookup error.
+    // Only onRemoved and explicit user revocation remove a tab's grant.
+    const tabs = (await chrome.tabs.query({})).filter((tab) => shared.has(tab.id)).map(summary)
     await persistSession()
-    return { connected: socket?.readyState === WebSocket.OPEN, tabs, error: connectionError }
+    return {
+      connected: socket?.readyState === WebSocket.OPEN,
+      paired: pairingEndpoint !== null,
+      tabs,
+      error: connectionError
+    }
   })().then(
     (result) => respond(result),
     (error) => respond({ error: error instanceof Error ? error.message : String(error) })

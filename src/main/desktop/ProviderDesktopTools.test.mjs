@@ -10,12 +10,14 @@ import { tmpdir } from 'node:os'
 import { WebSocket } from 'ws'
 import { once } from 'node:events'
 import { readFile } from 'node:fs/promises'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { CodexDynamicTools } from '../providers/codex/CodexDynamicTools.ts'
 const require = createRequire(import.meta.url)
 const bundle = await build({
   stdin: {
     contents:
-      "export {registerCodexDesktopTools} from './src/main/providers/codex/CodexDesktopTools';export {registerCodexBrowserTools} from './src/main/providers/codex/CodexBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {createOpenCodeBrowserBridge} from './src/main/providers/opencode/OpenCodeBrowserBridge';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {chromeAutomation,operaAutomation,configureChromePairingStorage} from './src/main/desktop/ChromeAutomation';export {registerBrowserUseSession,removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
+      "export {CodexOperaMcp} from './src/main/providers/codex/CodexOperaMcp';export {registerCodexDesktopTools} from './src/main/providers/codex/CodexDesktopTools';export {registerCodexBrowserTools} from './src/main/providers/codex/CodexBrowserTools';export {createBrowserMcpServer} from './src/main/browser/BrowserMcpServer';export {createOpenCodeBrowserBridge} from './src/main/providers/opencode/OpenCodeBrowserBridge';export {createClaudeBrowserIntegration} from './src/main/providers/claude/ClaudeBrowserTools';export {chromeAutomation,operaAutomation,configureChromePairingStorage} from './src/main/desktop/ChromeAutomation';export {registerBrowserUseSession,removeBrowserUseSessions} from './src/main/providers/codex/CodexBrowserSessions'",
     resolveDir: process.cwd(),
     loader: 'ts'
   },
@@ -410,4 +412,138 @@ test('Claude exposes Opera independently and refreshes its catalog when Opera pa
   assert.match(unavailable.content[0].text, /Pair the Sele Opera/)
   await api.operaAutomation.disconnect()
   assert.equal(paired.isCurrent(), false)
+})
+
+test('resumed Codex Opera MCP exposes only Opera and revokes execution with the chat scope', async (t) => {
+  const owner = {}
+  const bound = {
+    providerId: 'codex',
+    sessionId: 'old-codex-opera',
+    cwd: '/project',
+    containerKey: 'host'
+  }
+  api.registerBrowserUseSession(owner, bound.sessionId, bound.cwd, null)
+  let readOnly = false
+  const bridge = new api.CodexOperaMcp(() => readOnly)
+  t.after(() => {
+    bridge.close()
+    api.removeBrowserUseSessions(owner)
+  })
+  const config = await bridge.config(bound)
+  const endpoint = config['mcp_servers.sele_opera']
+  assert.equal(
+    endpoint.default_tools_approval_mode,
+    'approve',
+    'the authorized host browser must not request approval for every tool call'
+  )
+  assert.deepEqual(
+    await bridge.config(bound),
+    config,
+    'reuse the chat endpoint without rotating access'
+  )
+  const rpc = async (method, params) => {
+    const response = await fetch(endpoint.url, {
+      method: 'POST',
+      headers: {
+        ...endpoint.http_headers,
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream'
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+    })
+    assert.equal(response.status, 200)
+    return (await response.json()).result
+  }
+  const names = (await rpc('tools/list')).tools.map((tool) => tool.name)
+  assert.ok(names.includes('opera_tabs_context'))
+  assert.ok(names.every((name) => name.startsWith('opera_')))
+  const excluded = await rpc('tools/call', {
+    name: 'native_computer',
+    arguments: { action: 'screenshot' }
+  })
+  assert.equal(excluded.isError, true)
+  readOnly = true
+  const denied = await rpc('tools/call', { name: 'opera_tabs_context', arguments: {} })
+  assert.equal(denied.isError, true)
+  assert.match(denied.content[0].text, /read-only/)
+  api.removeBrowserUseSessions(owner)
+  await assert.rejects(fetch(endpoint.url, { method: 'POST' }))
+})
+
+test('Opera MCP restores the same private endpoint after a host restart', async (t) => {
+  const owner = {},
+    bound = {
+      providerId: 'codex',
+      sessionId: 'persistent-opera-chat',
+      cwd: '/project',
+      containerKey: 'host'
+    }
+  api.registerBrowserUseSession(owner, bound.sessionId, bound.cwd, null)
+  let saved = null
+  const store = {
+    load: async () => saved,
+    save: async (value) => {
+      saved = structuredClone(value)
+    },
+    clear: async () => {
+      saved = null
+    }
+  }
+  const first = new api.CodexOperaMcp(
+    () => false,
+    () => store
+  )
+  const original = await first.config(bound)
+  const endpointBefore = original['mcp_servers.sele_opera']
+  const mcp = new Client({ name: 'retained-client-fixture', version: '1' })
+  mcp.onerror = () => {}
+  await mcp.connect(
+    new StreamableHTTPClientTransport(new URL(endpointBefore.url), {
+      requestInit: { headers: endpointBefore.http_headers }
+    })
+  )
+  assert.ok((await mcp.listTools()).tools.some((tool) => tool.name === 'opera_upload_files'))
+  t.after(() => mcp.close())
+  const occupied = new api.CodexOperaMcp(
+    () => false,
+    () => store
+  )
+  await assert.rejects(occupied.restore(bound), /EADDRINUSE|already in use/)
+  await occupied.close()
+  assert.equal(
+    saved.port,
+    Number(new URL(endpointBefore.url).port),
+    'port conflicts cannot rotate the retained binding'
+  )
+  assert.equal(saved.token, endpointBefore.http_headers.Authorization.slice('Bearer '.length))
+  await first.close()
+  // The retained runtime runs in another process; let its idle HTTP socket observe host exit.
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  const restored = new api.CodexOperaMcp(
+    () => false,
+    () => store
+  )
+  t.after(async () => {
+    await restored.close()
+    api.removeBrowserUseSessions(owner)
+  })
+  assert.equal(await restored.restore(bound), true)
+  const next = await restored.config(bound)
+  assert.deepEqual(next, original, 'the live Codex MCP client must retain its URL and bearer token')
+  assert.ok(
+    (await mcp.listTools()).tools.some((tool) => tool.name === 'opera_upload_files'),
+    'the existing client reconnects without reconfiguration'
+  )
+  const endpoint = original['mcp_servers.sele_opera']
+  const response = await fetch(endpoint.url, {
+    method: 'POST',
+    headers: {
+      ...endpoint.http_headers,
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream'
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+  })
+  assert.equal(response.status, 200)
+  assert.ok((await response.json()).result.tools.some((tool) => tool.name === 'opera_upload_files'))
 })

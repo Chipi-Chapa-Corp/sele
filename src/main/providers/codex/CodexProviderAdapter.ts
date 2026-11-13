@@ -35,6 +35,7 @@ import {
 } from '../transcriptProjection/recordChanges.ts'
 import { BufferedSnapshotMap } from '../transcriptProjection/BufferedSnapshotMap'
 import { isBrowserPermissionRequest } from './CodexBrowserPermissions'
+import { getCodexApprovalPolicy, type CodexApprovalPolicy } from './CodexApprovalPolicy'
 import { codexFeatureSchemas } from './CodexFeatureSchemas'
 import { updateConfigFeatureValue } from './CodexConfigValues'
 import type {
@@ -394,6 +395,27 @@ type ThreadNameGenerationResult = {
 }
 
 type NotificationParams = Record<string, unknown>
+
+type CodexThreadAccessOptions = {
+  approvalPolicy: CodexApprovalPolicy
+  approvalsReviewer?: 'user' | 'auto_review'
+  runtimeWorkspaceRoots?: string[]
+  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
+}
+
+type CodexTurnAccessOptions = {
+  approvalPolicy: CodexApprovalPolicy
+  approvalsReviewer?: 'user' | 'auto_review'
+  runtimeWorkspaceRoots?: string[]
+  sandboxPolicy:
+    | { type: 'readOnly'; networkAccess: boolean }
+    | {
+        type: 'workspaceWrite'
+        writableRoots?: string[]
+        networkAccess: boolean
+      }
+    | { type: 'dangerFullAccess' }
+}
 
 type CodexPendingApproval = {
   requestId: number
@@ -1141,41 +1163,53 @@ const getRecommendedPluginsConfig = (options?: ProviderTurnOptions): Record<stri
   'features.recommended_plugins': options?.showRecommendedPlugins === true
 })
 
-const getAccessOptions = (options?: ProviderTurnOptions) => {
-  const approvalPolicy = options?.approvalPolicy ?? 'on-request'
+const getApprovalPolicy = (options?: ProviderTurnOptions): ProviderTurnOptions['approvalPolicy'] =>
+  options?.approvalPolicy ?? 'on-request'
+
+const getApprovalsReviewer = (
+  options?: ProviderTurnOptions
+): ProviderTurnOptions['approvalsReviewer'] => options?.approvalsReviewer ?? 'user'
+
+const getSandboxMode = (options?: ProviderTurnOptions): ProviderTurnOptions['sandboxMode'] =>
+  options?.sandboxMode ?? 'workspace-write'
+
+const getThreadAccessOptions = (options?: ProviderTurnOptions): CodexThreadAccessOptions => {
+  const approvalPolicy = getApprovalPolicy(options)
   const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
-  return {
-    approvalPolicy,
+  const accessOptions: CodexThreadAccessOptions = {
+    approvalPolicy: getCodexApprovalPolicy(approvalPolicy),
     ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
-    ...(approvalPolicy === 'never'
-      ? {}
-      : { approvalsReviewer: options?.approvalsReviewer ?? 'user' })
+    sandbox: getSandboxMode(options)
   }
+
+  if (approvalPolicy !== 'never') accessOptions.approvalsReviewer = getApprovalsReviewer(options)
+
+  return accessOptions
 }
 
-const getThreadAccessOptions = (options?: ProviderTurnOptions) => ({
-  ...getAccessOptions(options),
-  sandbox: options?.sandboxMode ?? 'workspace-write'
-})
-
-const getTurnAccessOptions = (options?: ProviderTurnOptions) => {
-  const accessOptions = getAccessOptions(options)
-  const sandboxMode = options?.sandboxMode ?? 'workspace-write'
-  return {
-    ...accessOptions,
-    sandboxPolicy:
-      sandboxMode === 'danger-full-access'
-        ? { type: 'dangerFullAccess' }
-        : sandboxMode === 'read-only'
-          ? { type: 'readOnly', networkAccess: false }
-          : {
-              type: 'workspaceWrite',
-              ...(accessOptions.runtimeWorkspaceRoots
-                ? { writableRoots: accessOptions.runtimeWorkspaceRoots }
-                : {}),
-              networkAccess: false
-            }
+const getTurnAccessOptions = (options?: ProviderTurnOptions): CodexTurnAccessOptions => {
+  const approvalPolicy = getApprovalPolicy(options)
+  const sandboxMode = getSandboxMode(options)
+  const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
+  const sandboxPolicy: CodexTurnAccessOptions['sandboxPolicy'] =
+    sandboxMode === 'danger-full-access'
+      ? { type: 'dangerFullAccess' }
+      : sandboxMode === 'read-only'
+        ? { type: 'readOnly', networkAccess: false }
+        : {
+            type: 'workspaceWrite',
+            ...(runtimeWorkspaceRoots.length > 0 ? { writableRoots: runtimeWorkspaceRoots } : {}),
+            networkAccess: false
+          }
+  const accessOptions: CodexTurnAccessOptions = {
+    approvalPolicy: getCodexApprovalPolicy(approvalPolicy),
+    ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
+    sandboxPolicy
   }
+
+  if (approvalPolicy !== 'never') accessOptions.approvalsReviewer = getApprovalsReviewer(options)
+
+  return accessOptions
 }
 
 export class CodexProviderAdapter implements ProviderAdapter {

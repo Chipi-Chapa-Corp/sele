@@ -16,7 +16,7 @@ import type {
 } from '../browser/BrowserAutomation'
 import type { BrowserAutomationScope, BrowserAutomationTab } from '../../shared/browser'
 
-/** User-paired extension transport. Only tabs explicitly shared in Chrome are visible. */
+/** User-paired browser transport with automatic discovery and per-conversation ownership. */
 export class ChromeAutomation implements BrowserAutomationService {
   private readonly pairingStore?: ChromePairingStore
   private readonly browserName: 'Chrome' | 'Opera'
@@ -46,6 +46,7 @@ export class ChromeAutomation implements BrowserAutomationService {
   private token = ''
   private pairingUrl: string | null = null
   private extensionEpoch: string | null = null
+  private extensionId: string | null = null
   private nextId = 0
   private pending = new Map<
     number,
@@ -65,6 +66,13 @@ export class ChromeAutomation implements BrowserAutomationService {
   }
   get status(): { connected: boolean; pairingUrl: string | null } {
     return { connected: this.socket?.readyState === WebSocket.OPEN, pairingUrl: this.pairingUrl }
+  }
+  getConnectionInfo(): { browser: string; connected: boolean; extensionId: string | null } {
+    return {
+      browser: this.browserName,
+      connected: this.status.connected,
+      extensionId: this.extensionId
+    }
   }
 
   pair(): Promise<void> {
@@ -103,6 +111,7 @@ export class ChromeAutomation implements BrowserAutomationService {
         return
       }
       sockets.handleUpgrade(request, socket, head, (extension) => {
+        this.extensionId = request.headers.origin!.slice('chrome-extension://'.length)
         if (this.extensionEpoch !== epoch) {
           for (const [id, owner] of this.owners) this.emit(owner, { type: 'detach', tabId: id })
           this.owners.clear()
@@ -166,6 +175,7 @@ export class ChromeAutomation implements BrowserAutomationService {
     socket.on('close', () => {
       if (this.socket !== socket) return
       this.socket = null
+      this.extensionId = null
       for (const [id, owner] of this.owners) this.emit(owner, { type: 'detach', tabId: id })
       // A transient transport loss does not transfer tabs to other conversations.
       // Explicit disconnect/pairing still revokes the ownership map below.
@@ -227,7 +237,7 @@ export class ChromeAutomation implements BrowserAutomationService {
     const tabs = async (): Promise<BrowserAutomationTab[]> => {
       if (closed) throw new Error(`${this.browserName} capability was revoked.`)
       const all = await request<Array<BrowserAutomationTab & { owner?: string }>>('getTabs')
-      // Extension session storage is authoritative, including offline Unshare.
+      // Extension session storage is authoritative, including canceled browser control.
       // Claims use extension-side compare-and-set before any tab operation.
       for (const tab of all) {
         const previous = this.owners.get(tab.id)
@@ -249,7 +259,7 @@ export class ChromeAutomation implements BrowserAutomationService {
     const claim = async (id: number): Promise<void> => {
       if (!(await tabs()).some((tab) => tab.id === id))
         throw new Error(
-          `This ${this.browserName} tab has not been shared or belongs to another conversation.`
+          `This ${this.browserName} tab is unavailable or belongs to another conversation.`
         )
       const existing = this.owners.get(id)
       if (closed || (existing && existing !== owner))
@@ -376,6 +386,7 @@ export class ChromeAutomation implements BrowserAutomationService {
     for (const [id, owner] of this.owners) this.emit(owner, { type: 'detach', tabId: id })
     this.owners.clear()
     this.extensionEpoch = null
+    this.extensionId = null
     const server = this.http
     this.http = null
     this.pairingUrl = null

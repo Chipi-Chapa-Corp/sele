@@ -6,11 +6,46 @@ import { randomUUID } from 'node:crypto'
 import { WebSocket as NodeWebSocket } from 'ws'
 import { ChromeAutomation } from './ChromeAutomation.ts'
 
+test('extension popup stays compact and reconnects without asking for pairing again', async () => {
+  const elements = new Map(
+    ['status', 'error', 'settings', 'pairing', 'disconnect', 'endpoint'].map((id) => [id, {}])
+  )
+  let state = { connected: true, paired: true, error: '' }
+  let poll
+  vm.runInNewContext(
+    readFileSync(
+      new URL('../../../resources/sele-chrome-extension/popup.js', import.meta.url),
+      'utf8'
+    ),
+    {
+      chrome: { runtime: { sendMessage: async () => state } },
+      document: { getElementById: (id) => elements.get(id) },
+      setInterval: (fn) => {
+        poll = fn
+      }
+    }
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(elements.get('settings').open, false)
+  assert.equal(elements.get('pairing').hidden, true)
+  assert.match(elements.get('status').textContent, /Connected/)
+  state = { connected: false, paired: true, error: '' }
+  await poll()
+  assert.match(elements.get('status').textContent, /Reconnecting automatically/)
+  assert.equal(elements.get('pairing').hidden, true)
+  state = { connected: false, paired: false, error: '' }
+  await elements.get('disconnect').onclick()
+  assert.equal(elements.get('settings').open, true)
+  assert.equal(elements.get('pairing').hidden, false)
+  assert.equal(elements.get('disconnect').hidden, true)
+})
+
 async function fixture(overrides = {}) {
   const listeners = {}
   const commands = []
   const local = overrides.local ?? {}
   const session = overrides.session ?? {}
+  const browserTabs = overrides.browserTabs ?? []
   const area = (data) => ({
     get: async (key) => ({ [key]: data[key] }),
     set: async (value) => Object.assign(data, structuredClone(value)),
@@ -51,6 +86,7 @@ async function fixture(overrides = {}) {
     },
     tabs: {
       get: async (id) => ({ id, url: 'https://example.com' }),
+      query: async () => browserTabs,
       onRemoved: { addListener: () => {} }
     },
     downloads: {
@@ -100,8 +136,72 @@ async function fixture(overrides = {}) {
     context
   )
   await context.fixture.ready
-  return { ...context.fixture, listeners, commands, chrome, local, session }
+  return { ...context.fixture, listeners, commands, chrome, local, session, browserTabs }
 }
+
+test('paired browsers discover existing and newly opened websites without manual sharing', async (t) => {
+  const transport = automaticSocket()
+  const h = await fixture({
+    ...transport,
+    local: { selePairingV1: 'ws://127.0.0.1:12345/extension?token=fixture' },
+    browserTabs: [
+      { id: 10, url: 'https://www.linkedin.com/developers/apps', active: false },
+      { id: 11, url: 'chrome://extensions' },
+      { id: 12, url: 'opera://extensions' }
+    ]
+  })
+  t.after(() => h.stopWorker())
+  assert.deepEqual(
+    Array.from(await h.handle('getTabs', {}), (tab) => tab.id),
+    [10]
+  )
+  await h.handle('claimTab', { tabId: 10, owner: 'codex-a' })
+  h.browserTabs.push({ id: 13, url: 'https://developers.facebook.com/apps', active: false })
+  assert.deepEqual(
+    Array.from(await h.handle('getTabs', {}), (tab) => tab.id),
+    [10, 13]
+  )
+  await assert.rejects(
+    h.handle('claimTab', { tabId: 10, owner: 'claude-b' }),
+    /another conversation/
+  )
+
+  // A fresh browser session rediscovers actual tabs, never old numeric ownership.
+  const restarted = await fixture({
+    ...automaticSocket(),
+    local: h.local,
+    session: {},
+    browserTabs: h.browserTabs
+  })
+  t.after(() => restarted.stopWorker())
+  const tabs = await restarted.handle('getTabs', {})
+  assert.deepEqual(
+    Array.from(tabs, (tab) => tab.id),
+    [10, 13]
+  )
+  assert.equal(tabs[0].owner, undefined)
+})
+
+test('canceling browser control stays revoked during automatic discovery and worker restart', async (t) => {
+  const h = await fixture({
+    ...automaticSocket(),
+    local: { selePairingV1: 'ws://127.0.0.1:12345/extension?token=fixture' },
+    browserTabs: [{ id: 10, url: 'https://example.com' }]
+  })
+  t.after(() => h.stopWorker())
+  await h.handle('getTabs', {})
+  await h.handle('attach', { tabId: 10 })
+  h.listeners.detach({ tabId: 10 }, 'canceled_by_user')
+  assert.equal((await h.handle('getTabs', {})).length, 0)
+  const resumed = await fixture({
+    ...automaticSocket(),
+    local: h.local,
+    session: h.session,
+    browserTabs: h.browserTabs
+  })
+  t.after(() => resumed.stopWorker())
+  assert.equal((await resumed.handle('getTabs', {})).length, 0)
+})
 
 test('Chrome extension creates a background tab when foreground is omitted', async () => {
   const h = await fixture()
@@ -134,11 +234,11 @@ test('a new background tab remains accessible before its blank URL commits', asy
   }
 })
 
-test('Chrome extension enforces explicit sharing and forwards flattened CDP sessions', async () => {
+test('Chrome extension enforces tab availability and forwards flattened CDP sessions', async () => {
   const h = await fixture()
   await assert.rejects(
     h.handle('executeCdp', { tabId: 3, method: 'Runtime.evaluate' }),
-    /Share this tab/
+    /not available/
   )
   h.shared.add(3)
   await h.handle('attach', { tabId: 3 })
@@ -173,7 +273,7 @@ test('Chrome extension enforces explicit sharing and forwards flattened CDP sess
   assert.equal(h.shared.has(3), false)
   await assert.rejects(
     h.handle('executeCdp', { tabId: 3, method: 'Page.navigate' }),
-    /Share this tab/
+    /not available/
   )
 })
 
@@ -398,7 +498,7 @@ test('Disconnect revokes live control before delayed or failed durable removal',
   await new Promise((resolve) => setImmediate(resolve))
   await assert.rejects(
     h.handle('executeCdp', { tabId: 3, method: 'Input.insertText', params: { text: 'forbidden' } }),
-    /disconnected|Share this tab/
+    /disconnected|not available/
   )
   assert.equal(h.commands.length, 0)
   release()
@@ -445,7 +545,8 @@ test('actual WebSocket transport recovers after Sele restarts and after a fresh 
   }
   await first.pair()
   const local = { selePairingV1: first.status.pairingUrl }
-  const h = await fixture({ WebSocket: ExtensionSocket, local })
+  const browserTabs = [{ id: 42, url: 'https://example.com/existing', active: false }]
+  const h = await fixture({ WebSocket: ExtensionSocket, local, browserTabs })
   workers.push(h)
   await until(() => first.status.connected)
   h.chrome.tabs.create = async () => ({ id: 99, url: 'about:blank', active: false })
@@ -453,19 +554,84 @@ test('actual WebSocket transport recovers after Sele restarts and after a fresh 
   const owner = JSON.stringify(['codex', 'owner', 'host'])
   await h.handle('createTab', { owner })
   assert.equal((await first.createClient(scope('owner')).listTabs())[0].id, 99)
+  assert.deepEqual(
+    (await first.createClient(scope('foreign')).listTabs()).map((tab) => tab.id),
+    [42]
+  )
+  await first.createClient(scope('foreign')).attach(42)
+  assert.deepEqual(
+    (await first.createClient(scope('owner')).listTabs()).map((tab) => tab.id),
+    [99]
+  )
   await first.close()
   await restored.restore()
   await until(() => restored.status.connected)
   assert.equal((await restored.createClient(scope('owner')).listTabs())[0].id, 99)
-  assert.deepEqual(await restored.createClient(scope('foreign')).listTabs(), [])
+  assert.deepEqual(
+    (await restored.createClient(scope('foreign')).listTabs()).map((tab) => tab.id),
+    [42]
+  )
   h.stopWorker()
   await until(() => !restored.status.connected)
   await restored.close()
   // New browser session starts while Sele is absent; local pairing survives, session grants do not.
-  const coldWorker = await fixture({ WebSocket: ExtensionSocket, local, session: {} })
+  const coldWorker = await fixture({ WebSocket: ExtensionSocket, local, session: {}, browserTabs })
   workers.push(coldWorker)
   await new Promise((resolve) => setTimeout(resolve, 50))
   await coldHost.restore()
   await until(() => coldHost.status.connected)
-  assert.deepEqual(await coldHost.createClient(scope('owner')).listTabs(), [])
+  const rediscovered = await coldHost.createClient(scope('owner')).listTabs()
+  assert.deepEqual(
+    rediscovered.map((tab) => tab.id),
+    [42]
+  )
+  await coldHost.createClient(scope('owner')).attach(42)
+  assert.deepEqual(await coldHost.createClient(scope('foreign')).listTabs(), [])
+})
+
+test('navigation and temporary tab lookup failures never discard conversation ownership', async (t) => {
+  const h = await fixture({
+    ...automaticSocket(),
+    local: { selePairingV1: 'ws://127.0.0.1:12345/extension?token=fixture' },
+    browserTabs: [{ id: 91, url: 'https://example.com/start' }]
+  })
+  t.after(() => h.stopWorker())
+  await h.handle('getTabs', {})
+  await h.handle('claimTab', { tabId: 91, owner: 'original-chat' })
+  h.chrome.tabs.get = async () => ({ id: 91, pendingUrl: 'https://example.com/next' })
+  const pending = await h.handle('getTabs', {})
+  assert.equal(pending[0]?.owner, 'original-chat')
+  assert.equal(pending[0]?.url, 'https://example.com/next')
+  h.chrome.tabs.get = async () => {
+    throw new Error('Temporary browser lookup failure')
+  }
+  await assert.rejects(h.handle('getTabs', {}), /Temporary browser lookup failure/)
+  h.chrome.tabs.get = async () => ({ id: 91, url: 'chrome://extensions' })
+  assert.equal((await h.handle('getTabs', {})).length, 0)
+  h.chrome.tabs.get = async () => ({ id: 91, url: 'https://example.com/next' })
+  assert.equal((await h.handle('getTabs', {}))[0].owner, 'original-chat')
+  await assert.rejects(
+    h.handle('claimTab', { tabId: 91, owner: 'other-chat' }),
+    /another conversation/
+  )
+})
+
+test('a closed tab left in restored session state cannot break discovery of other tabs', async (t) => {
+  const h = await fixture({
+    ...automaticSocket(),
+    local: { selePairingV1: 'ws://127.0.0.1:12345/extension?token=fixture' },
+    browserTabs: [{ id: 92, url: 'https://example.com/live' }]
+  })
+  t.after(() => h.stopWorker())
+  h.shared.add(91)
+  h.chrome.tabs.get = async (id) => {
+    if (id === 91) throw new Error('No tab with id: 91.')
+    return { id, url: 'https://example.com/live' }
+  }
+  const tabs = await h.handle('getTabs', {})
+  assert.deepEqual(
+    Array.from(tabs, (tab) => tab.id),
+    [92]
+  )
+  assert.equal(h.shared.has(91), false)
 })
