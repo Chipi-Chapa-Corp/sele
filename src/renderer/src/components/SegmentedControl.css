@@ -61,15 +61,13 @@
 
 :where(.ui-segmented-control__option:focus-visible) {
   color: var(--ink);
-  background: var(--tab-hover-surface);
 }
 
-/* Touch browsers can retain :hover after a tap or while reopening a drawer.
-   Only the selected indicator should highlight a segment on those devices. */
+/* Keep the filled surface exclusive to the selected indicator. Hover and
+   keyboard focus must not make an unselected option look selected too. */
 @media (hover: hover) and (pointer: fine) {
   :where(.ui-segmented-control__option:hover:not(:disabled)) {
     color: var(--ink);
-    background: var(--tab-hover-surface);
   }
 }
 

@@ -15,6 +15,7 @@ import { MenuPageTransition } from '../motion/MenuPageTransition'
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { toCssRem } from '../cssUnits'
 import { useCompactLayout } from '../useCompactLayout'
+import { isAndroidClient } from '../runtimeCapabilities'
 import { dropdownOptionMatches, type DropdownOption } from './Dropdown'
 import { ChatConfigSectionHeader } from './ChatConfigSectionHeader'
 import { Input } from './Input'
@@ -215,8 +216,9 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   }, [])
 
   const focusModelSearchInput = useCallback((): void => {
+    if (compact || isAndroidClient()) return
     window.requestAnimationFrame(() => modelSearchInputRef.current?.focus({ preventScroll: true }))
-  }, [])
+  }, [compact])
 
   const updateMenuPosition = useCallback((): void => {
     const buttonRect = buttonRef.current?.getBoundingClientRect()
