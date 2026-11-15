@@ -5,31 +5,35 @@ import './MobileConnectionScreen.css'
 import { useEffect, useRef, useState } from 'react'
 import { Laptop, LoaderCircle, Radio, ArrowRight, X } from 'lucide-react'
 import { Button } from './Button'
-import { Input } from './Input'
 import {
-  localNetwork,
-  nativeDiscoveryAvailable,
+  watchNearbyComputers,
+  restartNearbyDiscovery,
   pairComputer,
   type NearbyComputer
 } from '../mobileDiscovery'
-import type { MobileConnection } from '../mobileConnection'
+import { readMobileDevices, type MobileConnection } from '../mobileConnection'
 
 export function MobileConnectionScreen({
   error: initialError,
   previous,
+  validate,
   onConnect
 }: {
   error?: string
   previous?: MobileConnection | null
+  validate?: (connection: MobileConnection, signal: AbortSignal) => Promise<void>
   onConnect(connection: MobileConnection): void
 }): React.ReactElement {
   const [computers, setComputers] = useState<NearbyComputer[]>([])
   const [error, setError] = useState(initialError ?? null)
   const [waiting, setWaiting] = useState<NearbyComputer | null>(null)
-  const [address, setAddress] = useState('')
-  const [scanning, setScanning] = useState(true)
-  const [scan, setScan] = useState(0)
+  const [connecting, setConnecting] = useState<string | null>(null)
+  const [saved] = useState(readMobileDevices)
   const pairing = useRef<AbortController | null>(null)
+  const retryLast = useRef(!/invalid|revoked/i.test(initialError ?? ''))
+  const attempt = useRef<
+    (computer: NearbyComputer, connection?: MobileConnection) => Promise<void>
+  >(async () => {})
   useEffect(() => {
     const query = window.matchMedia('(prefers-color-scheme: dark)')
     const update = (): void => {
@@ -40,81 +44,116 @@ export function MobileConnectionScreen({
     return () => query.removeEventListener('change', update)
   }, [])
   useEffect(() => {
-    console.debug('Starting nearby Sele discovery.', scan)
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async (): Promise<void> => {
-      if (!active) return
-      try {
-        const result = await localNetwork.getServices()
-        if (active) {
-          setComputers(result.services)
-          if (result.error) {
-            setError(result.error)
-            setScanning(false)
-          }
-        }
-      } catch (error) {
-        console.warn('Unable to list nearby Sele computers.', error)
-        if (active) {
-          setError('Nearby discovery is unavailable. Try again or enter your computer’s address.')
-          setScanning(false)
-        }
-      } finally {
-        if (active) timer = setTimeout(() => void poll(), 1500)
-      }
-    }
-    if (nativeDiscoveryAvailable()) {
-      void localNetwork
-        .startDiscovery()
-        .then(poll)
-        .catch((error) => {
-          console.warn('Unable to start nearby discovery.', error)
-          if (active) {
-            setError('Could not start nearby discovery. Check Wi-Fi and try again.')
-            setScanning(false)
-          }
-        })
-    } else setScanning(false)
-    return () => {
-      active = false
-      clearTimeout(timer)
-      pairing.current?.abort()
-      if (nativeDiscoveryAvailable())
-        void localNetwork
-          .stopDiscovery()
-          .catch((error) => console.warn('Unable to stop nearby discovery.', error))
-    }
-  }, [scan])
-  const connect = async (computer: NearbyComputer): Promise<void> => {
+    setError(initialError ?? null)
+    return watchNearbyComputers((devices, discoveryError) => {
+      setComputers(devices)
+      if (discoveryError) setError(discoveryError)
+    })
+  }, [initialError])
+  useEffect(() => () => pairing.current?.abort(), [])
+  const connect = async (
+    computer: NearbyComputer,
+    savedConnection?: MobileConnection
+  ): Promise<void> => {
     pairing.current?.abort()
     const abort = new AbortController()
     pairing.current = abort
-    setWaiting(computer)
     setError(null)
+    setConnecting(computer.name)
+    const revoked =
+      savedConnection &&
+      /invalid|revoked/i.test(initialError ?? '') &&
+      (savedConnection.hostId ?? savedConnection.origin) === (previous?.hostId ?? previous?.origin)
+    setWaiting(savedConnection && !revoked ? null : computer)
     try {
-      const connection = await pairComputer(computer, abort.signal)
+      const connection =
+        savedConnection && !revoked
+          ? { ...savedConnection, origin: computer.origin }
+          : await pairComputer(computer, abort.signal)
+      if (abort.signal.aborted) return
+      setWaiting(null)
+      await validate?.(connection, abort.signal)
       if (!abort.signal.aborted) onConnect(connection)
     } catch (error) {
-      console.warn('Unable to pair Sele device.', error)
-      if (!abort.signal.aborted) setError(error instanceof Error ? error.message : String(error))
+      if (!abort.signal.aborted) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (savedConnection && !revoked && /invalid|revoked/i.test(message)) {
+          retryLast.current = false
+          await connect(computer)
+          return
+        }
+        if (/invalid|revoked/i.test(message)) retryLast.current = false
+        setError(message)
+      }
     } finally {
-      if (pairing.current === abort) setWaiting(null)
+      if (pairing.current === abort) {
+        pairing.current = null
+        setWaiting(null)
+        setConnecting(null)
+      }
     }
+  }
+  attempt.current = connect
+  useEffect(() => {
+    if (!previous || !validate) return
+    const retry = (): void => {
+      if (!retryLast.current || pairing.current) return
+      void attempt.current(
+        {
+          id: previous.hostId ?? previous.origin,
+          name: previous.name ?? 'Saved computer',
+          origin: previous.origin
+        },
+        previous
+      )
+    }
+    const first = setTimeout(retry, 500)
+    const timer = setInterval(retry, 6000)
+    return () => {
+      clearTimeout(first)
+      clearInterval(timer)
+    }
+  }, [previous, validate])
+
+  const devices: { computer: NearbyComputer; connection?: MobileConnection }[] = saved.map(
+    (connection) => {
+      const nearby = computers.find(
+        (computer) => computer.id === connection.hostId || computer.origin === connection.origin
+      )
+      return {
+        computer: nearby ?? {
+          id: connection.hostId ?? connection.origin,
+          name: connection.name ?? 'Saved computer',
+          origin: connection.origin
+        },
+        connection
+      }
+    }
+  )
+  for (const computer of computers) {
+    if (
+      !devices.some(
+        (device) => device.computer.id === computer.id || device.computer.origin === computer.origin
+      )
+    )
+      devices.push({ computer })
   }
   return (
     <main className="chat mobile-connect">
-      <section className="chat-panel mobile-connect__content" aria-labelledby="mobile-connect-title">
+      <section
+        className="chat-panel mobile-connect__content"
+        aria-labelledby="mobile-connect-title"
+      >
         <header>
           <Laptop aria-hidden="true" />
-          <h1 id="mobile-connect-title">Connect to Sele</h1>
+          <h1 id="mobile-connect-title">Your devices</h1>
         </header>
-        <p>Choose your computer on the same Wi-Fi, then approve this device in Sele.</p>
+        <p>Choose a computer running Sele. New devices ask for approval on your computer.</p>
         {waiting ? (
           <div className="mobile-connect__waiting" role="status">
             <LoaderCircle className="mobile-connect__spin" aria-hidden="true" />
             <h2>Allow this device on {waiting.name}</h2>
-            <p>A request is waiting in Sele on your computer. You only need to do this once.</p>
+            <p>Approve the request in Sele on your computer. You only need to do this once.</p>
             <Button
               label="Cancel request"
               icon={<X size={16} />}
@@ -122,105 +161,67 @@ export function MobileConnectionScreen({
               callback={() => {
                 pairing.current?.abort()
                 setWaiting(null)
+                setConnecting(null)
               }}
             />
           </div>
         ) : (
           <>
+            {connecting && <p role="status">Connecting to {connecting}…</p>}
+            {previous && retryLast.current && !connecting && (
+              <p role="status">
+                Reconnecting to {previous.name ?? 'your last device'} when it’s available.
+              </p>
+            )}
             <div className="mobile-connect__section-label">
-              <Radio size={15} aria-hidden="true" /> Nearby computers
+              <Radio size={15} aria-hidden="true" /> Computers
             </div>
             <div className="mobile-connect__computers">
-              {computers.map((computer) => (
+              {devices.map(({ computer, connection }) => (
                 <Button
                   key={computer.id}
                   theme="secondary"
                   fill
-                  callback={() => void connect(computer)}
                   icon={<Laptop aria-hidden="true" />}
+                  callback={() => {
+                    retryLast.current = false
+                    void connect(computer, connection)
+                  }}
                   label={
                     <span className="mobile-connect__computer-copy">
-                      <span>{computer.name}</span>
+                      <span>
+                        {computer.name}
+                        {connection && <small>Paired</small>}
+                      </span>
                       <ArrowRight aria-hidden="true" />
                     </span>
                   }
                 />
               ))}
-              {!computers.length && (
+              {!devices.length && (
                 <div className="mobile-connect__empty" role="status">
-                  {scanning && (
-                    <LoaderCircle size={18} className="mobile-connect__spin" aria-hidden="true" />
-                  )}
-                  <span>{scanning ? 'Looking for Sele…' : 'No computers found yet'}</span>
+                  <LoaderCircle size={18} className="mobile-connect__spin" aria-hidden="true" />
+                  <span>Looking for Sele devices…</span>
                   <small>Enable Local network in Sele’s settings on your computer.</small>
                 </div>
               )}
             </div>
-            {previous && (
-              <Button
-                label={
-                  /invalid|revoked/i.test(initialError ?? '')
-                    ? `Request access to ${previous.name ?? 'saved computer'}`
-                    : 'Reconnect to saved computer'
-                }
-                theme="secondary"
-                fill
-                callback={() =>
-                  /invalid|revoked/i.test(initialError ?? '')
-                    ? connect({
-                        id: previous.hostId ?? previous.origin,
-                        name: previous.name ?? 'your computer',
-                        origin: previous.origin
-                      })
-                    : onConnect(previous)
-                }
-              />
-            )}
             <details className="mobile-connect__help">
               <summary className="ui-button ui-button--secondary ui-button--normal">
                 Can’t find your computer?
               </summary>
               <p>
-                Some Wi-Fi networks block discovery. Check that both devices use the same network,
-                then search again.
+                Connect both devices to your local network and keep Sele open. Your router must
+                allow devices to communicate. Wi-Fi and Ethernet can be used together.
               </p>
               <Button
                 label="Search again"
                 theme="secondary"
                 callback={() => {
                   setError(null)
-                  setScanning(true)
-                  setScan((value) => value + 1)
+                  restartNearbyDiscovery()
                 }}
               />
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  try {
-                    const url = new URL(address.includes('://') ? address : `http://${address}`)
-                    if (!url.port) url.port = '4589'
-                    void connect({ id: url.origin, name: url.hostname, origin: url.origin })
-                  } catch (error) {
-                    console.warn('Invalid computer address.', error)
-                    setError('Enter your computer’s local address, for example 192.168.1.20.')
-                  }
-                }}
-              >
-                <label htmlFor="sele-computer-address">Computer address</label>
-                <Input
-                  id="sele-computer-address"
-                  value={address}
-                  placeholder="192.168.1.20"
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  onChange={(event) => setAddress(event.currentTarget.value)}
-                  required
-                />
-                <button className="ui-button ui-button--secondary ui-button--normal" type="submit">
-                  Request access
-                </button>
-              </form>
             </details>
           </>
         )}

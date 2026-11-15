@@ -1,3 +1,4 @@
+import { useLanReconnectRevision } from '../../useLanReconnectRevision'
 import { startTransition, useCallback, useEffect, type SetStateAction } from 'react'
 import type { AppContainerTarget } from '../../../../shared/app'
 import type { ProviderChat, ProviderId } from '../../../../shared/provider'
@@ -14,6 +15,7 @@ import { chatListFetchPageSize, type LoadState } from '../controllerTypes'
 import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceChatDiscovery({ chatState, searchState, sourceState }: WorkspaceState) {
+  const connectionRevision = useLanReconnectRevision()
   // Discovery can return thousands of summaries at once. Its state updates
   // must remain interruptible while the first workspace controls are mounting.
   const publishChats = useCallback(
@@ -175,6 +177,7 @@ export function useWorkspaceChatDiscovery({ chatState, searchState, sourceState 
       active = false
     }
   }, [
+    connectionRevision,
     clearSelectedChatIfUnavailableInSource,
     publishChats,
     publishLoadState,
@@ -301,6 +304,7 @@ export function useWorkspaceChatDiscovery({ chatState, searchState, sourceState 
       active = false
     }
   }, [
+    connectionRevision,
     publishChats,
     sourceState.containerSelectionReady,
     sourceState.containerSuggestions,

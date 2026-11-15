@@ -10,6 +10,7 @@ import { useCompactLayout } from './useCompactLayout'
 import { useMobileKeyboard } from './useMobileKeyboard'
 import { isAndroidClient, isRemoteClient } from './runtimeCapabilities'
 import {
+  CompactWindowTitlebar,
   MobileWorkspaceNavigation,
   type MobileWorkspacePane
 } from './workspace/components/MobileWorkspaceChrome'
@@ -306,6 +307,9 @@ export const App: React.FC = () => {
         >
           <AppDialogs {...workspace.dialogs} />
           <DevicePairingPrompt />
+          {compact && (
+            <CompactWindowTitlebar renderWindowControls={chatSidebar.renderWindowControls} />
+          )}
           {compact && <MobileWorkspaceNavigation {...mobileChrome} />}
           <WorkspaceShell
             {...workspace.layout}

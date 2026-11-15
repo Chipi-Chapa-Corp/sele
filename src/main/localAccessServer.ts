@@ -69,6 +69,22 @@ export const startLocalAccessServer = async (options: Options) => {
   let port = options.port
   let stopping = false
   const authorizations = new Map<WebSocket, string>()
+  type Session = {
+    client: RendererClient
+    lifetime: EventEmitter
+    socket: WebSocket | null
+    deliver(message: unknown): void
+    token: string
+    expiry?: ReturnType<typeof setTimeout>
+  }
+  const sessions = new Map<string, Session>()
+  const destroySession = (key: string, session: Session): void => {
+    if (sessions.get(key) !== session) return
+    sessions.delete(key)
+    clearTimeout(session.expiry)
+    session.lifetime.emit('destroyed')
+    session.lifetime.removeAllListeners()
+  }
   const pairingAttempts = new Map<string, { count: number; reset: number }>()
   const authorized = (token: unknown): boolean =>
     authenticate(token, options.token) ||
@@ -131,7 +147,9 @@ export const startLocalAccessServer = async (options: Options) => {
             ['/index.html', '/@vite/client', '/@vite/env', '/@react-refresh'].includes(url.pathname)
           : ['src/renderer/', 'src/shared/', 'node_modules/'].some((prefix) =>
               path.startsWith(prefix)
-            ) || path === 'package.json'
+            ) ||
+            path === 'package.json' ||
+            path === 'src/preload/preferenceClient.ts'
       if (!allowed) {
         response.writeHead(404).end()
         return
@@ -265,7 +283,9 @@ export const startLocalAccessServer = async (options: Options) => {
     let queuedOutputBytes = 0
     const output: Array<{ data: string; bytes: number }> = []
     const requests: Array<{ id: number; channel: string; args: unknown[] }> = []
-    const lifetime = new EventEmitter()
+    let lifetime = new EventEmitter()
+    let session: Session | undefined
+    let sessionKey = ''
 
     const drainRequests = (): void => {
       // Stop starting work while the socket is backpressured. A few concurrent
@@ -335,10 +355,10 @@ export const startLocalAccessServer = async (options: Options) => {
       output.push({ data, bytes })
       flushOutput()
     }
-    const client: RendererClient = {
+    let client: RendererClient = {
       id: nextClientId--,
-      isDestroyed: () => ws.readyState !== WebSocket.OPEN,
-      send: (channel, ...args) => send({ type: 'event', channel, args }),
+      isDestroyed: () => (session ? !sessions.has(sessionKey) : ws.readyState !== WebSocket.OPEN),
+      send: (channel, ...args) => (session?.deliver ?? send)({ type: 'event', channel, args }),
       on: (event, listener) => lifetime.on(event, listener),
       once: (event, listener) => lifetime.once(event, listener)
     }
@@ -363,8 +383,17 @@ export const startLocalAccessServer = async (options: Options) => {
       requests.length = 0
       output.length = 0
       queuedOutputBytes = 0
-      lifetime.emit('destroyed')
-      lifetime.removeAllListeners()
+      if (!session) {
+        lifetime.emit('destroyed')
+        lifetime.removeAllListeners()
+      } else if (session.socket === ws) {
+        session.socket = null
+        const retained = session
+        // A brief roam/background pause keeps terminal ownership and provider
+        // subscriptions alive. Revocation and shutdown still release immediately.
+        if (stopping || !authorized(session.token)) destroySession(sessionKey, session)
+        else session.expiry = setTimeout(() => destroySession(sessionKey, retained), 90_000)
+      }
     })
     ws.on('message', (data, binary) => {
       try {
@@ -416,12 +445,36 @@ export const startLocalAccessServer = async (options: Options) => {
             return
           }
           authenticated = true
+          if (typeof hello.sessionId === 'string' && /^[a-f0-9-]{36}$/.test(hello.sessionId)) {
+            sessionKey = `${hello.token}:${hello.sessionId}`
+            session = sessions.get(sessionKey)
+            if (session) {
+              clearTimeout(session.expiry)
+              session.socket?.close(1000, 'Connection resumed')
+              session.socket = ws
+              session.deliver = send
+              client = session.client
+              lifetime = session.lifetime
+            } else {
+              if (sessions.size >= 256) {
+                ws.close(1013, 'Too many device sessions')
+                return
+              }
+              session = { client, lifetime, socket: ws, deliver: send, token: hello.token }
+              sessions.set(sessionKey, session)
+            }
+          }
           authorizations.set(ws, hello.token)
           clearTimeout(authenticationTimer)
-          send({ type: 'ready', version: localAccessProtocolVersion })
+          send({ type: 'ready', version: localAccessProtocolVersion, heartbeat: true })
           return
         }
         const message = decodeClientMessage(data.toString())
+        if (message.type === 'ping') {
+          alive = true
+          send({ type: 'pong' })
+          return
+        }
         if (
           !message ||
           typeof message.channel !== 'string' ||
@@ -474,12 +527,16 @@ export const startLocalAccessServer = async (options: Options) => {
   return {
     port,
     disconnectUnauthorized: (): void => {
+      for (const [key, session] of sessions) {
+        if (!authorized(session.token)) destroySession(key, session)
+      }
       for (const [socket, token] of authorizations) {
         if (!authorized(token)) socket.close(1008, 'Device access was revoked')
       }
     },
     stop: async (): Promise<void> => {
       stopping = true
+      for (const [key, session] of sessions) destroySession(key, session)
       sockets.clients.forEach((ws) => ws.terminate())
       hotSockets.clients.forEach((ws) => ws.terminate())
       await new Promise<void>((resolveStopped) => {

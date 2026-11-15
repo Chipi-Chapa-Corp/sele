@@ -65,6 +65,7 @@ const state = (): LocalAccessState => ({
     : [],
   error: serverError,
   computerName: hostname(),
+  computerId: configuration.computerId,
   devices: pairing?.list() ?? [],
   pairingRequests: pairing?.pending() ?? [],
   discoveryError

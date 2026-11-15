@@ -109,16 +109,6 @@
   min-height: 2.75rem;
   white-space: normal;
 }
-.mobile-connect__help form {
-  display: grid;
-  gap: 0.75rem;
-  margin-top: 1rem;
-}
-.mobile-connect input {
-  font-size: 1rem;
-  width: 100%;
-  box-sizing: border-box;
-}
 .mobile-connect__waiting {
   margin-top: 1rem;
   padding: 1rem;

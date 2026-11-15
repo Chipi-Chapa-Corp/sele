@@ -6,6 +6,7 @@ export type LocalAccessState = {
   urls: string[]
   error: string | null
   computerName?: string
+  computerId?: string
   devices?: LocalAccessDevice[]
   pairingRequests?: LocalAccessPairingRequest[]
   discoveryError?: string | null

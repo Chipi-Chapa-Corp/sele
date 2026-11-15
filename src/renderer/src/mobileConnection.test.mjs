@@ -90,3 +90,33 @@ test('Android drafts and UI preferences stay separate for different Sele hosts',
     'sele:draft': 'private draft for the first computer'
   })
 })
+
+test('saved devices retain their credentials and follow stable identity across address changes', async () => {
+  const { readMobileDevices, mobileConnectionStorageKey } = await import('./mobileConnection.ts')
+  const values = new Map()
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value)
+  }
+  const first = {
+    origin: 'http://192.168.1.2:4589',
+    token,
+    hostId: '11111111-1111-1111-1111-111111111111',
+    name: 'Desktop'
+  }
+  const second = {
+    origin: 'http://192.168.1.3:4589',
+    token: 'b'.repeat(64),
+    hostId: '22222222-2222-2222-2222-222222222222',
+    name: 'Laptop'
+  }
+  saveMobileConnection(first, storage)
+  saveMobileConnection(second, storage)
+  assert.deepEqual(readMobileDevices(storage), [second, first])
+  const moved = { ...first, origin: 'http://192.168.1.50:4589' }
+  saveMobileConnection(moved, storage)
+  assert.deepEqual(readMobileDevices(storage), [moved, second])
+  values.delete(mobileConnectionStorageKey)
+  assert.equal(readMobileConnection(storage), null, 'choosing devices does not auto-select one')
+  assert.deepEqual(readMobileDevices(storage), [moved, second], 'choosing devices keeps approvals')
+})

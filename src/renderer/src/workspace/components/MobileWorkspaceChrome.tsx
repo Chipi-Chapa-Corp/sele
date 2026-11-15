@@ -1,8 +1,26 @@
 import { ArrowLeft, PanelsTopLeft, PanelLeft, SquarePen } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Button } from '../../components/Button'
+import { isRemoteClient } from '../../runtimeCapabilities'
+import type { WorkspaceController } from '../../useWorkspaceController'
 
 export type MobileWorkspacePane = 'chats' | 'conversation' | 'workspace'
+
+export function CompactWindowTitlebar({
+  renderWindowControls
+}: Pick<WorkspaceController['chatSidebar'], 'renderWindowControls'>): ReactElement | null {
+  if (isRemoteClient()) return null
+  const leftControls = renderWindowControls('darwin')
+  const rightControls = renderWindowControls('default')
+  if (!leftControls && !rightControls) return null
+
+  return (
+    <div className="compact-window-titlebar">
+      {leftControls}
+      {rightControls}
+    </div>
+  )
+}
 
 export function MobileWorkspaceNavigation(props: {
   pane: 'conversation' | 'workspace'

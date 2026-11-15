@@ -1,21 +1,18 @@
 import { createRendererBridge } from '../../shared/rendererBridge'
 import { localAccessChannels } from '../../shared/localAccess'
 import type { AppLocalMedia, AppSelectedAttachment } from '../../shared/app'
-import { createPreferenceClient } from '../../preload/preferenceClient'
-import {
-  preferencesChannel,
-  type PreferenceChanges,
-  type PreferenceResult
-} from '../../shared/preferences'
-import { isLocalPreference, preferencesChangedChannel } from '../../shared/preferenceSync'
+import { createLanPreferences } from './lanPreferences'
+import { publishLanReconnected } from './lanConnectionEvents'
+import { appIpcChannels } from '../../shared/app'
+import { providerIpcChannels } from '../../shared/provider'
+import { preferencesChannel, type PreferenceResult } from '../../shared/preferences'
+import { isLocalPreference } from '../../shared/preferenceSync'
 import { createLocalPreferences } from './localPreferences'
-import { LanTransport } from './lanTransport'
-import { createRemoteReload } from './remoteReload'
-import { flushPreferences } from './preferences'
+import { LanAccessRevokedError, LanTransport } from './lanTransport'
 import { isAndroidClient } from './runtimeCapabilities'
 import { Capacitor } from '@capacitor/core'
 import { localNetwork } from './nativeLocalNetwork'
-import { findSavedComputer } from './mobileDiscovery'
+import { watchNearbyComputers } from './mobileDiscovery'
 import {
   createAndroidPreferences,
   initializeAndroidStorage,
@@ -24,6 +21,10 @@ import {
 } from './androidStorage'
 import {
   mobileWebSocketUrl,
+  mobileConnectionStorageKey,
+  mobileDevicesStorageKey,
+  forgetMobileConnection,
+  type MobileConnection,
   readMobileConnection,
   requestMobileConnection,
   saveMobileConnection
@@ -50,6 +51,13 @@ const showConnection = (message: string | null): void => {
   status.className = 'sele-connection-status'
   status.setAttribute('role', 'status')
   status.textContent = message
+  if (isAndroidClient()) {
+    const devices = document.createElement('button')
+    devices.type = 'button'
+    devices.textContent = 'Devices'
+    devices.onclick = () => void forgetMobileConnection().catch(console.error)
+    status.append(devices)
+  }
   document.body.append(status)
 }
 
@@ -133,64 +141,126 @@ export const initializeLanBridge = async (): Promise<void> => {
   const nativeStorage = android && Capacitor.isNativePlatform()
   if (nativeStorage) {
     await initializeAndroidStorage()
-    const stored = readAndroidStorage('sele-android-connection-v1')
-    if (stored) localStorage.setItem('sele-android-connection-v1', stored)
-    else localStorage.removeItem('sele-android-connection-v1')
+    for (const key of [mobileConnectionStorageKey, mobileDevicesStorageKey]) {
+      const stored = readAndroidStorage(key)
+      if (stored) localStorage.setItem(key, stored)
+      else localStorage.removeItem(key)
+    }
   }
   let mobileConnection = android ? readMobileConnection() : null
-  if (mobileConnection) mobileConnection = await findSavedComputer(mobileConnection)
-  if (android && !mobileConnection) mobileConnection = await requestMobileConnection()
   const parameters = new URLSearchParams(location.hash.slice(1))
   let token =
     mobileConnection?.token ??
     parameters.get('token') ??
     sessionStorage.getItem('sele-local-access-token')
   if (parameters.has('token')) history.replaceState(null, '', location.pathname + location.search)
-  let transport: LanTransport
-  let initialized = false
-  const reconnectReload = createRemoteReload({
-    settle: () =>
-      new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-    persist: async () => {
-      if (initialized) await flushPreferences()
-    },
-    reload: () => location.reload(),
-    onError: (error) => console.error('Unable to save the draft before reconnecting.', error)
-  })
-  for (;;) {
-    token ||= await requestToken()
+  let transport!: LanTransport
+  let initialPreferences!: PreferenceResult
+  let stopDiscovery = (): void => {}
+  let resynchronize = (): void => {}
+  const connect = async (
+    candidate: MobileConnection | null,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    transport?.close()
+    stopDiscovery()
+    mobileConnection = candidate
+    if (candidate) token = candidate.token
     transport = new LanTransport(
-      mobileConnection
-        ? mobileWebSocketUrl(mobileConnection)
+      candidate
+        ? mobileWebSocketUrl(candidate)
         : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/sele/ws`,
-      token,
+      token!,
       showConnection,
-      () => reconnectReload.request(),
-      android ? () => location.reload() : undefined
+      () => resynchronize()
     )
-    try {
-      await transport.connect()
-      const result = await transport.invoke<PreferenceResult>(preferencesChannel, {
-        action: 'load'
+    const current = transport
+    const abortConnection = (): void => current.close()
+    signal?.addEventListener('abort', abortConnection, { once: true })
+    if (signal?.aborted) {
+      current.close()
+      throw new Error('Connection canceled.')
+    }
+    showConnection(`Connecting to ${candidate?.name ?? 'Sele'}…`)
+    // The saved endpoint is tried now. DNS-SD runs concurrently and can replace a
+    // stale DHCP endpoint while the handshake is still in progress.
+    if (candidate?.hostId) {
+      stopDiscovery = watchNearbyComputers((computers) => {
+        const found = computers.find((computer) => computer.id === candidate.hostId)
+        if (!found) return
+        const origins = found.origins ?? [found.origin]
+        current.updateEndpoints(
+          [...origins, candidate.origin].map((origin) =>
+            mobileWebSocketUrl({ ...candidate, origin })
+          )
+        )
       })
-      if (!result.ok) throw new Error(result.error)
-      break
+    }
+    try {
+      await current.connect()
     } catch (error) {
-      console.warn('Unable to connect to Sele.', error)
-      transport.close()
-      showConnection(null)
-      const message = error instanceof Error ? error.message : String(error)
-      if (android) {
-        mobileConnection = await requestMobileConnection(message, mobileConnection)
-        token = mobileConnection.token
-      } else token = await requestToken(message)
+      if (error instanceof LanAccessRevokedError) throw error
+      if (!signal?.aborted && candidate?.hostId) await current.waitUntilReady()
+      else throw error
+    }
+    initialPreferences = await current.invoke<PreferenceResult>(preferencesChannel, {
+      action: 'load'
+    })
+    if (!initialPreferences.ok) throw new Error(initialPreferences.error)
+    signal?.removeEventListener('abort', abortConnection)
+    if (candidate) {
+      // Persist the endpoint that actually authenticated, including discovery changes.
+      const origin = current.endpoint.replace(/^ws/, 'http').replace(/\/sele\/ws$/, '')
+      mobileConnection = { ...candidate, origin }
     }
   }
-  if (mobileConnection) {
+  if (android) {
+    let error: string | undefined
+    if (mobileConnection) {
+      try {
+        await connect(mobileConnection)
+      } catch (failure) {
+        error = failure instanceof Error ? failure.message : String(failure)
+        transport?.close()
+      }
+    }
+    if (!transport?.isReady) {
+      showConnection(null)
+      const previous = mobileConnection
+      await requestMobileConnection(error, previous, async (candidate, signal) => {
+        await connect(candidate, signal)
+      })
+    }
+  } else {
+    for (;;) {
+      token ||= await requestToken()
+      try {
+        await connect(null)
+        break
+      } catch (error) {
+        transport.close()
+        showConnection(null)
+        token = await requestToken(error instanceof Error ? error.message : String(error))
+      }
+    }
+  }
+  const saveConnectedDevice = async (): Promise<void> => {
+    if (!mobileConnection) return
+    mobileConnection = {
+      ...mobileConnection,
+      origin: transport.endpoint.replace(/^ws/, 'http').replace(/\/sele\/ws$/, '')
+    }
     saveMobileConnection(mobileConnection)
-    if (nativeStorage)
-      await writeAndroidStorage('sele-android-connection-v1', JSON.stringify(mobileConnection))
-  } else sessionStorage.setItem('sele-local-access-token', token)
+    if (nativeStorage) {
+      await Promise.all(
+        [mobileConnectionStorageKey, mobileDevicesStorageKey].map((key) =>
+          writeAndroidStorage(key, localStorage.getItem(key))
+        )
+      )
+    }
+  }
+  if (mobileConnection) await saveConnectedDevice()
+  else sessionStorage.setItem('sele-local-access-token', token!)
   const bridge = createRendererBridge(transport, () => {
     throw new Error('Upload this file from the phone first.')
   })
@@ -218,16 +288,10 @@ export const initializeLanBridge = async (): Promise<void> => {
     return attachments
   }
   bridge.appApi.getDroppedMessageAttachments = async (files) => {
-    const release = reconnectReload.hold()
-    try {
-      return await upload(files)
-    } finally {
-      release()
-    }
+    return upload(files)
   }
   bridge.appApi.selectMessageAttachments = () =>
     new Promise((resolve, reject) => {
-      const release = reconnectReload.hold()
       const input = document.createElement('input')
       input.type = 'file'
       input.multiple = true
@@ -236,18 +300,16 @@ export const initializeLanBridge = async (): Promise<void> => {
       input.onchange = () => {
         const files = Array.from(input.files ?? [])
         input.remove()
-        void upload(files).then(resolve, reject).finally(release)
+        void upload(files).then(resolve, reject)
       }
       input.oncancel = () => {
         input.remove()
         resolve([])
-        release()
       }
       try {
         input.click()
       } catch (error) {
         input.remove()
-        release()
         reject(error)
       }
     })
@@ -323,28 +385,41 @@ export const initializeLanBridge = async (): Promise<void> => {
   const local = nativeStorage
     ? createAndroidPreferences(namespace)
     : createLocalPreferences(localStorage, namespace)
-  const sourceId = crypto.randomUUID()
-  let revision = 0
-  const shared = createPreferenceClient({
-    initialize: () => transport.invoke(preferencesChannel, { action: 'load' }),
-    write: (values) =>
-      transport.invoke(preferencesChannel, {
-        action: 'write',
-        sourceId,
-        revision: ++revision,
-        values
-      }),
-    // WebView cannot synchronously block on a socket; edits are sent immediately
-    // and explicit flush waits for host durability before navigation/reload.
-    commit: () => ({ ok: true, value: null }),
-    subscribe: (listener) => {
-      const handler = (_event: unknown, changes: PreferenceChanges): void => listener(changes)
-      transport.on(preferencesChangedChannel, handler)
-      return () => {
-        transport.removeListener(preferencesChangedChannel, handler)
-      }
-    }
+  const shared = createLanPreferences({
+    transport,
+    initial: initialPreferences,
+    key: `${namespace}shared-outbox-v1`,
+    storage: nativeStorage
+      ? { getItem: readAndroidStorage, setItem: writeAndroidStorage }
+      : localStorage
   })
+  let viewedChat: Parameters<typeof bridge.providerApi.setViewedChat> = [null, null]
+  bridge.providerApi.setViewedChat = (...args) => {
+    viewedChat = args
+    transport.send(providerIpcChannels.viewedChatChanged, ...args)
+  }
+  resynchronize = () => {
+    // Restore only subscription state. Never resend a prompt, terminal input,
+    // approval, upload, or other mutation whose outcome might be uncertain.
+    if (transport.hasListeners(providerIpcChannels.chatUpdated))
+      transport.send(providerIpcChannels.chatUpdatesReady)
+    transport.send(providerIpcChannels.viewedChatChanged, ...viewedChat)
+    void Promise.allSettled([
+      saveConnectedDevice(),
+      shared.reconnect(),
+      bridge.appApi
+        .getChatSleep()
+        .then((state) => transport.emit(appIpcChannels.chatSleepUpdated, state))
+    ]).then((results) => {
+      results.forEach((result) => {
+        if (result.status === 'rejected')
+          console.warn('Unable to refresh reconnected state.', result.reason)
+      })
+      if (!transport.isReady) return
+      transport.emit(appIpcChannels.workspaceUpdated)
+      publishLanReconnected()
+    })
+  }
   Object.assign(window, bridge, {
     seleRemoteClient: true,
     preferencesApi: {
@@ -353,6 +428,9 @@ export const initializeLanBridge = async (): Promise<void> => {
         if (!result.ok) return result
         const localResult = await local.initialize()
         if (!localResult.ok) return localResult
+        void shared
+          .syncPending()
+          .catch((error) => console.warn('Unable to sync saved drafts.', error))
         return {
           ok: true,
           value: {
@@ -386,9 +464,16 @@ export const initializeLanBridge = async (): Promise<void> => {
       }
     }
   })
-  initialized = true
-  window.addEventListener('pagehide', () => transport.close(), { once: true })
-  window.addEventListener('pageshow', (event) => {
-    if (event.persisted) location.reload()
+  const resume = (): void => {
+    if (document.visibilityState !== 'hidden') transport.resume()
+  }
+  window.addEventListener('online', resume)
+  window.addEventListener('pageshow', resume)
+  document.addEventListener('visibilitychange', resume)
+  window.addEventListener('pagehide', (event) => {
+    if (!event.persisted) {
+      stopDiscovery()
+      transport.close()
+    }
   })
 }

@@ -4,7 +4,6 @@ import {
   type LocalAccessApi,
   type LocalAccessState
 } from '../../../shared/localAccess'
-import { appApi } from '../appApi'
 import { isAndroidClient, isRemoteClient } from '../runtimeCapabilities'
 import { forgetMobileConnection, readMobileConnection } from '../mobileConnection'
 import { Button } from './Button'
@@ -81,7 +80,7 @@ export function LocalAccessSettings(): React.ReactElement {
             <p>Manage local network access from Sele on your computer.</p>
             {isAndroidClient() && (
               <>
-                <p>Connected to {readMobileConnection()?.origin}</p>
+                <p>Connected to {readMobileConnection()?.name ?? 'your computer'}</p>
                 <Button
                   label="Connect to another computer"
                   theme="secondary"
@@ -174,39 +173,6 @@ export function LocalAccessSettings(): React.ReactElement {
                     />
                   </div>
                 ))}
-                <details>
-                  <summary>Browser access links</summary>
-                  <p>
-                    These links grant access without device approval. Use them only on your trusted
-                    local network.
-                  </p>
-                  {state.urls.map((url) => (
-                    <div
-                      className="settings-dialog__field settings-dialog__field--inline"
-                      key={url}
-                    >
-                      <code>{url.split('/#')[0]}</code>
-                      <Button
-                        label="Copy connection link"
-                        theme="secondary"
-                        callback={() => appApi.writeClipboardText(url)}
-                      />
-                    </div>
-                  ))}
-                  {!state.urls.length && !state.error && (
-                    <p>No LAN address found. Connect your computer to Wi-Fi or Ethernet.</p>
-                  )}
-                  <Button
-                    label="Reset connection links"
-                    theme="secondary"
-                    disabled={busy}
-                    callback={() => configure(true, true)}
-                  />
-                  <p>
-                    Resetting links revokes browser links. Paired Android devices keep their access
-                    until you remove them above.
-                  </p>
-                </details>
               </div>
             )}
           </>

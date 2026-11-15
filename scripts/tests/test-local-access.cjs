@@ -579,7 +579,7 @@ if (!process.versions.electron) {
         assert.equal(attachment[0].kind, 'file')
         assert.equal(await fs.readFile(attachment[0].path, 'utf8'), 'phone attachment')
         // A native picker can outlive its Wi-Fi connection. Reconnecting must
-        // preserve the picker, then persist all selected images before reload.
+        // preserve the picker and mounted composer through reconnection.
         window.webContents.debugger.attach('1.3')
         await run(`window.pickerSurvived = true;
           const nativeClick = HTMLInputElement.prototype.click;
@@ -623,7 +623,12 @@ if (!process.versions.electron) {
           files: imageFiles
         })
         await waitFor(
-          '!window.pickerSurvived && Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))'
+          "document.querySelectorAll('.message-box__attachment-preview--image').length === 3"
+        )
+        assert.equal(
+          await run('window.pickerSurvived'),
+          true,
+          'reconnection keeps the document after upload'
         )
         await run(
           'document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()'

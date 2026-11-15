@@ -18,11 +18,24 @@
     overscroll-behavior: none;
   }
   .chat[data-mobile-pane] {
+    --compact-titlebar-height: 0rem;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     height: 100dvh;
     padding: 0;
     overflow: hidden;
+  }
+  .chat[data-mobile-pane]:has(> .compact-window-titlebar) {
+    --compact-titlebar-height: var(--window-titlebar-height);
+    grid-template-rows: var(--compact-titlebar-height) auto minmax(0, 1fr);
+  }
+  .compact-window-titlebar {
+    position: relative;
+    z-index: 801;
+    -webkit-app-region: drag;
+  }
+  .chat[data-mobile-pane] .chat__panels .window-controls {
+    display: none;
   }
   .chat[data-mobile-pane] .chat__panels {
     display: block !important;
@@ -215,9 +228,9 @@
     display: flex !important;
     position: fixed;
     z-index: 800;
-    inset: 0 auto 0 0;
+    inset: var(--compact-titlebar-height) auto 0 0;
     width: min(88vw, 23rem) !important;
-    height: 100dvh !important;
+    height: calc(100dvh - var(--compact-titlebar-height)) !important;
     overflow: hidden !important;
     box-sizing: border-box;
     padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
@@ -244,7 +257,7 @@
   }
   .mobile-sidebar-backdrop {
     position: fixed;
-    inset: 0;
+    inset: var(--compact-titlebar-height) 0 0;
     z-index: 799;
     border: 0;
     padding: 0;

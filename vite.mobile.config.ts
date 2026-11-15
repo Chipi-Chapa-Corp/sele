@@ -10,6 +10,21 @@ const config = defineConfig({
   plugins: [
     ...rendererViteConfig.plugins,
     {
+      name: 'sele-android-deferred-file-icons',
+      enforce: 'pre',
+      resolveId(source, importer) {
+        // Markdown renders icons synchronously in a worker. React trees can
+        // defer the catalog without delaying their first frame.
+        if (
+          source.endsWith('/SymbolIcons') &&
+          importer &&
+          !importer.endsWith('/chatMarkdownRenderer.tsx')
+        )
+          return resolve('src/renderer/src/components/SymbolIcons.mobile.tsx')
+        return null
+      }
+    },
+    {
       name: 'sele-android-document',
       transformIndexHtml: (html) =>
         html.replace(

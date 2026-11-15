@@ -6,6 +6,9 @@ import android.content.Intent;
 import android.app.Activity;
 import android.util.Base64;
 import androidx.activity.result.ActivityResult;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.wifi.WifiManager;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.os.Build;
@@ -178,6 +181,17 @@ public class LocalNetworkPlugin extends Plugin {
             if (committed) call.resolve(); else call.reject("Unable to save Sele data on this device.");
         });
     }
+    private ConnectivityManager connectivity;
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private Network discoveryNetwork;
+    private WifiManager.MulticastLock multicast;
+    private boolean discoveryWanted;
+    private final android.os.Handler discoveryHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable restartDiscovery = () -> {
+        if (!discoveryWanted) return;
+        stop();
+        startDiscovery(null);
+    };
     private NsdManager manager;
     private NsdManager.DiscoveryListener discovery;
     private final Map<String, JSObject> services = new HashMap<>();
@@ -185,6 +199,7 @@ public class LocalNetworkPlugin extends Plugin {
     private final HashSet<String> present = new HashSet<>();
     private boolean resolving;
     private int generation;
+    private int resolveAttempt;
     private String discoveryError;
 
     @PluginMethod
@@ -204,7 +219,33 @@ public class LocalNetworkPlugin extends Plugin {
     @PluginMethod
     public void startDiscovery(PluginCall call) {
         getActivity().runOnUiThread(() -> {
-            if (discovery != null) { call.resolve(); return; }
+            discoveryWanted = true;
+            if (networkCallback == null) {
+                connectivity = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+                discoveryNetwork = connectivity.getActiveNetwork();
+                networkCallback = new ConnectivityManager.NetworkCallback() {
+                    @Override public void onAvailable(Network network) { networkChanged(network); }
+                    @Override public void onLost(Network network) { networkChanged(null); }
+                    private void networkChanged(Network network) {
+                        discoveryHandler.post(() -> {
+                            if (!discoveryWanted || java.util.Objects.equals(discoveryNetwork, network)) return;
+                            discoveryNetwork = network;
+                            discoveryHandler.removeCallbacks(restartDiscovery);
+                            discoveryHandler.postDelayed(restartDiscovery, 250);
+                        });
+                    }
+                };
+                connectivity.registerDefaultNetworkCallback(networkCallback);
+            }
+            if (multicast == null) {
+                WifiManager wifi = (WifiManager) getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wifi != null) {
+                    multicast = wifi.createMulticastLock("sele-device-discovery");
+                    multicast.setReferenceCounted(false);
+                    multicast.acquire();
+                }
+            }
+            if (discovery != null) { if (call != null) call.resolve(); return; }
             manager = (NsdManager) getContext().getSystemService(Context.NSD_SERVICE);
             discoveryError = null;
             final int run = ++generation;
@@ -225,7 +266,7 @@ public class LocalNetworkPlugin extends Plugin {
                 @Override public void onServiceFound(NsdServiceInfo service) {
                     getActivity().runOnUiThread(() -> {
                         if (run != generation || !service.getServiceType().startsWith("_sele._tcp")) return;
-                        present.add(service.getServiceName());
+                        if (!present.add(service.getServiceName())) return;
                         resolveQueue.add(service);
                         resolveNext(run);
                     });
@@ -240,10 +281,11 @@ public class LocalNetworkPlugin extends Plugin {
             };
             try {
                 manager.discoverServices("_sele._tcp.", NsdManager.PROTOCOL_DNS_SD, discovery);
-                call.resolve();
+                if (call != null) call.resolve();
             } catch (RuntimeException error) {
                 discovery = null;
-                call.reject("Unable to discover nearby Sele computers.", error);
+                discoveryError = "Unable to search for devices. Check your local network.";
+                if (call != null) call.reject(discoveryError, error);
             }
         });
     }
@@ -253,11 +295,20 @@ public class LocalNetworkPlugin extends Plugin {
         if (resolving || run != generation || resolveQueue.isEmpty()) return;
         NsdServiceInfo service = resolveQueue.remove();
         resolving = true;
+        final int attempt = ++resolveAttempt;
+        Runnable expired = () -> {
+            if (run != generation || attempt != resolveAttempt) return;
+            resolveAttempt++;
+            resolving = false;
+            resolveNext(run);
+        };
+        discoveryHandler.postDelayed(expired, 5000);
         try {
             manager.resolveService(service, new NsdManager.ResolveListener() {
                 @Override public void onResolveFailed(NsdServiceInfo value, int code) {
                     getActivity().runOnUiThread(() -> {
-                        if (run != generation) return;
+                        if (run != generation || attempt != resolveAttempt) return;
+                        discoveryHandler.removeCallbacks(expired);
                         android.util.Log.w("SeleDiscovery", "Resolve failed: " + code);
                         resolving = false;
                         resolveNext(run);
@@ -265,7 +316,8 @@ public class LocalNetworkPlugin extends Plugin {
                 }
                 @Override public void onServiceResolved(NsdServiceInfo value) {
                     getActivity().runOnUiThread(() -> {
-                        if (run != generation) return;
+                        if (run != generation || attempt != resolveAttempt) return;
+                        discoveryHandler.removeCallbacks(expired);
                         InetAddress address = value.getHost();
                         if (Build.VERSION.SDK_INT >= 34) {
                             for (InetAddress candidate : value.getHostAddresses()) {
@@ -283,6 +335,17 @@ public class LocalNetworkPlugin extends Plugin {
                             result.put("name", displayName.isEmpty() || displayName.length() > 80
                                 ? value.getServiceName().replaceFirst("^Sele on ", "") : displayName);
                             result.put("origin", "http://" + host + ":" + value.getPort());
+                            JSArray origins = new JSArray();
+                            origins.put("http://" + host + ":" + value.getPort());
+                            if (Build.VERSION.SDK_INT >= 34) {
+                                for (InetAddress candidate : value.getHostAddresses()) {
+                                    if (candidate.equals(address) || candidate.isLinkLocalAddress()) continue;
+                                    String alternate = candidate.getHostAddress();
+                                    if (alternate.contains(":")) alternate = "[" + alternate + "]";
+                                    origins.put("http://" + alternate + ":" + value.getPort());
+                                }
+                            }
+                            result.put("origins", origins);
                             services.put(value.getServiceName(), result);
                         }
                         resolving = false;
@@ -291,6 +354,7 @@ public class LocalNetworkPlugin extends Plugin {
                 }
             });
         } catch (RuntimeException error) {
+            discoveryHandler.removeCallbacks(expired);
             android.util.Log.w("SeleDiscovery", "Resolve failed", error);
             resolving = false;
             resolveNext(run);
@@ -324,8 +388,19 @@ public class LocalNetworkPlugin extends Plugin {
 
     @PluginMethod
     public void stopDiscovery(PluginCall call) {
-        getActivity().runOnUiThread(() -> { stop(); call.resolve(); });
+        getActivity().runOnUiThread(() -> { endDiscovery(); call.resolve(); });
     }
 
-    @Override protected void handleOnDestroy() { stop(); }
+    private void endDiscovery() {
+        discoveryWanted = false;
+        discoveryHandler.removeCallbacks(restartDiscovery);
+        stop();
+        if (multicast != null) { if (multicast.isHeld()) multicast.release(); multicast = null; }
+        if (networkCallback != null) {
+            connectivity.unregisterNetworkCallback(networkCallback);
+            networkCallback = null;
+        }
+    }
+
+    @Override protected void handleOnDestroy() { endDiscovery(); }
 }

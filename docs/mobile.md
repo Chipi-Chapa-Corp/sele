@@ -13,7 +13,12 @@ without entering a code or copying a link. The computer must remain awake with S
 `registerLocalAccess.ts` starts the opt-in HTTP/WebSocket server and advertises `_sele._tcp`
 using DNS-SD. Its public TXT record contains a stable computer ID, display name, and protocol
 version. Credentials are never advertised. The Android `LocalNetworkPlugin` uses NsdManager
-to discover computers; a manual address fallback supports networks that block multicast.
+to discover computers. The device picker merges nearby computers with saved pairings by stable
+computer ID; addresses and connection links are not shown. The last connected computer is tried
+immediately while discovery runs in the background. Switching computers preserves previous pairings.
+Android holds a multicast lock during discovery, restarts discovery when its default network changes,
+and advertises all resolved usable addresses to the transport. Wi-Fi bands do not define device
+identity; the router still needs to permit communication between the devices.
 
 The phone generates an independent device credential. `LocalAccessPairing` exposes a bounded,
 expiring request to the desktop approval dialog and persists only the credential hash. Device
@@ -33,15 +38,22 @@ implementations.
 Each client has independent viewed-chat subscriptions and acknowledgements. Metadata changes
 are broadcast even while providers are idle, and queued provider updates receive the newest
 metadata before delivery. The server serializes output and applies request backpressure so a
-large history response does not disconnect a slow phone. Reconnection reloads authoritative
-state and never replays a mutation whose outcome may be uncertain.
+large history response does not disconnect a slow phone. Reconnection retains the document,
+composer, open pickers, and navigation, restores viewed-chat subscriptions, and refreshes chats,
+workspace data, sleep state, and preferences in place. An authenticated per-document session retains
+host ownership for 90 seconds across a dropped socket, including terminals; revocation and server
+shutdown release it immediately. Foreground probes detect half-open connections without reloading.
+Sent prompts, terminal input, approvals, and other uncertain mutations are never replayed.
 
 Sleep/wake state is owned by the host, loaded before the workspace renders, and broadcast to
 desktop and mobile clients. Existing desktop sleeps and legacy bookmarks remain visible on the
 phone. Per-chat mutations merge on the host; an old expiry cannot erase a newer timer. All persistent settings, presets, drafts, sidebar tab configuration, group state and chat
 preferences use the host's durable preference store, with live broadcasts in both directions.
 Only current navigation (viewed chat/tab and open browser tabs) remains device-specific. Phone
-storage retains pairing and local navigation; it never seeds the host with phone defaults.
+storage retains pairing, local navigation, and a per-computer durable preference outbox. Offline
+settings/draft edits remain usable and sync as idempotent values on reconnection; interrupted saves
+survive a new document. Host snapshots merge with outstanding local edits. Phone defaults are never
+used to initialize the host's settings.
 Project changes, order, runtime configuration, notes and icons also notify connected clients.
 
 HTTP and WebSocket traffic is unencrypted. Use a trusted LAN and do not expose this listener
@@ -68,9 +80,9 @@ remains available when the drawer closes. Native dialog cancellation follows the
 The conversation pane fills the sides and bottom without a floating border or shadow. Enter on the mobile keyboard inserts a newline; the send button submits the message.
 The composer stays above Android's keyboard, and native Back dismisses the topmost menu/dialog
 before closing the drawer or returning to the conversation.
-Reconnects defer the UI reload while an attachment picker or upload is active, then save the
-returned attachments in the draft before reloading. Multi-file uploads read and transfer one
-file at a time to reduce WebView memory use.
+Reconnects keep native attachment pickers and the mounted composer alive. Uploads wait for a ready
+connection before sending each file, and completed attachments flow into the same durable draft.
+Multi-file uploads read and transfer one file at a time to reduce WebView memory use.
 Conversation and workspace panels use the available width in portrait and landscape; the
 sidebar remains a drawer in both orientations. The transcript uses a
 standard percentage height on phones, including older WebViews without CSS `round()` support.
@@ -168,7 +180,7 @@ emulator network and checks native discovery/resolution, including stable TXT id
 `:app:assembleDebugAndroidTest` and install/run that app's test APK on the same private emulator.
 The same instrumentation suite checks native storage responses over twelve WebView reloads.
 The emulator's NAT does not relay the host's multicast discovery, so LAN connection fixtures use
-the address fallback; the native NSD test independently exercises discovery.
+an injected discovery result; the native NSD test independently exercises discovery.
 
 With all four provider CLIs installed, the provider matrix runs their actual SDK/CLI transports
 against a scripted local model server. Homes, accounts, workspace, and app profile are isolated:
@@ -186,3 +198,9 @@ loads a chat slept on desktop before the phone connects, restarts the phone, and
 sleep/wake changes in both directions, including all provider lists. It also verifies
 hold-opened actions, native rename and pin changes, a real host file save and Git
 commit, PTY input/output/interruption, rotation, direct native browser interaction and desktop tab transfer, host folder selection, and Android's Save dialog. Artifacts go to `test-results/`.
+
+Android startup uses the authenticated preference snapshot already fetched during connection setup,
+loads sleep support alongside preference initialization, and defers the full file/folder icon catalog
+until a React icon is needed. Markdown's worker keeps its synchronous icon renderer. The packaged
+renderer fixture reports saved-device startup timing and checks that reconnecting retains the
+same document and composer while offline edits synchronize.

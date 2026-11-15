@@ -289,16 +289,19 @@ module.exports = async ({
     forwarded = null
   }
   const connect = async (value) => {
-    await waitFor('Boolean(document.getElementById("sele-computer-address"))')
-    await delay(500)
+    await waitFor('Boolean(document.querySelector(".mobile-connect"))')
+    const state = await getState()
+    // Emulator NAT does not forward host multicast. Inject only the discovery
+    // result; native NSD itself is covered by LocalDiscoveryTest.
     await run(`(() => {
-      document.querySelector('.mobile-connect__help').open=true;
-      const input=document.getElementById('sele-computer-address');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(new URL(value).origin)});
-      input.dispatchEvent(new Event('input',{bubbles:true}));
+      const nativePromise = window.__fixtureNativePromise ?? Capacitor.nativePromise;
+      window.__fixtureNativePromise = nativePromise;
+      Capacitor.nativePromise = (plugin, method, options) => plugin === 'LocalNetwork' && method === 'getServices'
+        ? Promise.resolve({services:${JSON.stringify([{ id: state.computerId, name: state.computerName, origin: new URL(value).origin }])}})
+        : nativePromise(plugin, method, options);
     })()`)
-    await delay(100)
-    await run('document.getElementById("sele-computer-address").form.requestSubmit()')
+    await waitFor('Boolean(document.querySelector(".mobile-connect__computers button"))')
+    await run('document.querySelector(".mobile-connect__computers button").click()')
     await waitFor('document.body.innerText.includes("Allow this device on")')
     let request
     for (let i = 0; i < 100; i++) {
@@ -326,7 +329,7 @@ module.exports = async ({
     await attach()
     assert.equal(await run('location.origin'), 'http://sele.localhost')
     assert.equal(await run('Capacitor.isNativePlatform()'), true)
-    await waitFor('Boolean(document.getElementById("sele-computer-address"))')
+    await waitFor('Boolean(document.querySelector(".mobile-connect"))')
     await delay(500)
     await fs.mkdir(path.resolve('test-results/mobile-ui'), { recursive: true })
     await fs.writeFile(path.resolve('test-results/mobile-ui/nearby-computers.png'), adb(['exec-out', 'screencap', '-p'], true))
@@ -401,7 +404,7 @@ module.exports = async ({
       input.dispatchEvent(new Event('input',{bubbles:true})); })()`)
     await delay(150)
     await run(
-      `document.querySelector('.chat-panel__composer textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}))`
+      `document.querySelector('.chat-panel__composer [aria-label="Send message"]').click()`
     )
     await waitFor(
       'document.getElementById("chat-search-content")?.textContent.includes("Live answer over the LAN")'
@@ -421,13 +424,16 @@ module.exports = async ({
     // persist without loading the UI from that host or resending the message.
     detach()
     adb(['shell', 'am', 'force-stop', appId])
+    const restartStarted = Date.now()
     launch()
     await attach()
     await waitFor('Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))')
+    console.log('ANDROID APK SAVED STARTUP MS:', Date.now() - restartStarted)
     assert.equal(
       await run(`preferencesApi.getItem('sele:android-fixture-draft').value`),
       'saved on Android'
     )
+    await run('window.retainedConnectionDocument = true')
     await configure({ enabled: false, port })
     await waitFor('Boolean(document.getElementById("sele-connection-status"))')
     await delay(500)
@@ -437,10 +443,13 @@ module.exports = async ({
       '!document.getElementById("sele-connection-status") && Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))'
     )
     assert.equal(sends(), 1)
+    assert.equal(await run('window.retainedConnectionDocument'), true, 'reconnect keeps the native document')
     const device = (await getState()).devices[0]
     assert.ok(device, 'a paired Android device is persisted on the host')
     await revokeDevice(device.id)
-    await waitFor('Boolean(document.getElementById("sele-computer-address"))')
+    await waitFor('document.getElementById("sele-connection-status")?.textContent.includes("revoked")')
+    await run('document.querySelector("#sele-connection-status button").click()')
+    await waitFor('Boolean(document.querySelector(".mobile-connect"))')
     await connect(link)
     assert.equal(sends(), 1)
     await selectChat()
@@ -466,7 +475,7 @@ module.exports = async ({
     await run(
       'Array.from(document.querySelectorAll("button")).find(button=>button.textContent.includes("Connect to another computer")).click()'
     )
-    await waitFor('Boolean(document.getElementById("sele-computer-address"))')
+    await waitFor('Boolean(document.querySelector(".mobile-connect"))')
     console.log(
       'ANDROID APK PASSED: native WebView, pairing, chat send/stream, upload, saved host, restart, reconnect, revocation, host switching'
     )

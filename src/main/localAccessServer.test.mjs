@@ -169,7 +169,12 @@ test('development proxy limits filesystem access and forwards the Vite HMR conne
       .status,
     200
   )
+  assert.equal(
+    (await fetch(`${f.origin}/@fs/${directory}/src/preload/preferenceClient.ts`)).status,
+    200
+  )
   const allowedCount = paths.length
+  assert.equal((await fetch(`${f.origin}/@fs/${directory}/src/preload/index.ts`)).status, 404)
   assert.equal((await fetch(`${f.origin}/@fs/${directory}/local-access.json`)).status, 404)
   assert.equal((await fetch(`${f.origin}/@fs/etc/passwd`)).status, 404)
   assert.equal((await fetch(`${f.origin}/local-access.json`)).status, 404)
@@ -534,4 +539,55 @@ test('a canceled approval cannot revoke a later successful pairing for the same 
   assert.deepEqual(await Promise.all([first, second]), [false, true])
   assert.equal(pairing.authorize(firstToken), false)
   assert.equal(pairing.authorize(secondToken), true)
+})
+
+test('a device document resumes host ownership after socket loss; revocation destroys it immediately', async (t) => {
+  const credential = 'c'.repeat(64)
+  let approved = true
+  const destroyed = []
+  const observed = new Set()
+  const f = await fixture(t, {
+    authorize: (token) => token === credential && approved,
+    invoke: (owner) => {
+      if (!observed.has(owner.id)) {
+        observed.add(owner.id)
+        owner.once('destroyed', () => destroyed.push(owner.id))
+      }
+      return owner.id
+    }
+  })
+  const connect = async (sessionId) => {
+    const ws = new WebSocket(`${f.origin.replace('http:', 'ws:')}/sele/ws`, { origin: f.origin })
+    await once(ws, 'open')
+    const ready = once(ws, 'message')
+    ws.send(JSON.stringify({ type: 'hello', version: 1, token: credential, sessionId }))
+    assert.equal(JSON.parse((await ready)[0]).heartbeat, true)
+    return ws
+  }
+  const identify = async (ws) => {
+    const reply = once(ws, 'message')
+    ws.send(JSON.stringify({ type: 'invoke', id: 1, channel: 'identify', args: [] }))
+    return JSON.parse((await reply)[0]).result
+  }
+  const id = '11111111-2222-3333-4444-555555555555'
+  const first = await connect(id)
+  const owner = await identify(first)
+  const closed = once(first, 'close')
+  first.close()
+  await closed
+  assert.deepEqual(destroyed, [], 'brief socket loss retains the host owner')
+  const second = await connect(id)
+  assert.equal(await identify(second), owner)
+  const pong = once(second, 'message')
+  second.send(JSON.stringify({ type: 'ping' }))
+  assert.equal(JSON.parse((await pong)[0]).type, 'pong')
+  const third = await connect('99999999-2222-3333-4444-555555555555')
+  assert.notEqual(await identify(third), owner, 'other documents have independent owners')
+  const revoked = once(second, 'close')
+  const thirdClosed = once(third, 'close')
+  approved = false
+  f.server.disconnectUnauthorized()
+  assert.equal((await revoked)[0], 1008)
+  await thirdClosed
+  assert.ok(destroyed.includes(owner))
 })

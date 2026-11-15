@@ -1,6 +1,8 @@
 export type MobileConnection = { origin: string; token: string; hostId?: string; name?: string }
 
-const storageKey = 'sele-android-connection-v1'
+export const mobileConnectionStorageKey = 'sele-android-connection-v1'
+export const mobileDevicesStorageKey = 'sele-android-devices-v1'
+const storageKey = mobileConnectionStorageKey
 
 const isLanHostname = (hostname: string): boolean => {
   if (
@@ -82,16 +84,49 @@ export const readMobileConnection = (
 
 export const saveMobileConnection = (
   connection: MobileConnection,
-  storage: Pick<Storage, 'setItem'> = localStorage
+  storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage
 ): void => {
   const valid = parseMobileConnection(mobileConnectionLink(connection))
   storage.setItem(
     storageKey,
     JSON.stringify({ ...valid, hostId: connection.hostId, name: connection.name })
   )
+  const saved = readMobileDevices(storage).filter(
+    (device) => (device.hostId ?? device.origin) !== (connection.hostId ?? connection.origin)
+  )
+  storage.setItem(mobileDevicesStorageKey, JSON.stringify([connection, ...saved].slice(0, 20)))
+}
+
+export const readMobileDevices = (
+  storage: Pick<Storage, 'getItem'> = localStorage
+): MobileConnection[] => {
+  const devices: MobileConnection[] = []
+  const previous = readMobileConnection(storage)
+  if (previous) devices.push(previous)
+  try {
+    const saved: unknown = JSON.parse(storage.getItem(mobileDevicesStorageKey) ?? '[]')
+    if (Array.isArray(saved))
+      for (const candidate of saved.slice(0, 20)) {
+        const device = readMobileConnection({ getItem: () => JSON.stringify(candidate) })
+        if (
+          device &&
+          !devices.some(
+            (entry) => (entry.hostId ?? entry.origin) === (device.hostId ?? device.origin)
+          )
+        )
+          devices.push(device)
+      }
+  } catch (error) {
+    console.warn('Unable to read saved devices.', error)
+  }
+  return devices
 }
 
 export const forgetMobileConnection = async (): Promise<void> => {
+  if ('preferencesApi' in window) {
+    const { flushPreferences } = await import('./preferences')
+    await flushPreferences()
+  }
   const { Capacitor } = await import('@capacitor/core')
   if (Capacitor.isNativePlatform()) {
     const { writeAndroidStorage } = await import('./androidStorage')
@@ -103,7 +138,8 @@ export const forgetMobileConnection = async (): Promise<void> => {
 
 export const requestMobileConnection = async (
   error?: string,
-  previous?: MobileConnection | null
+  previous?: MobileConnection | null,
+  validate?: (connection: MobileConnection, signal: AbortSignal) => Promise<void>
 ): Promise<MobileConnection> => {
   const [{ createRoot }, { createElement }, { MobileConnectionScreen }] = await Promise.all([
     import('react-dom/client'),
@@ -118,6 +154,7 @@ export const requestMobileConnection = async (
       createElement(MobileConnectionScreen, {
         error,
         previous,
+        validate,
         onConnect: (connection: MobileConnection) => {
           root.unmount()
           container.remove()

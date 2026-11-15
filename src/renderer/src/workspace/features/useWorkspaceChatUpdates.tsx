@@ -6,6 +6,7 @@ import { chatTerminalActivity } from '../../chatTerminalActivity'
 import { getEffectiveChatTurnWindow, getLatestChatTurnWindow } from '../../chatTurnWindow'
 import { conversationViews } from '../../conversationViews'
 import { providerApi } from '../../providerApi'
+import { onLanReconnected } from '../../lanConnectionEvents'
 import {
   getChatDetailFromUpdate,
   getChatKey,
@@ -28,6 +29,23 @@ export function useWorkspaceChatUpdates({
 }: WorkspaceState & {
   chatProjection: ReturnType<typeof useWorkspaceChatProjection>
 }) {
+  useEffect(
+    () =>
+      onLanReconnected(() => {
+        startTransition(() => {
+          chatState.setChatLoadRequest((value) => value + 1)
+          gitState.setGitChangeLoadRequest((value) => value + 1)
+          gitState.setGitBranchLoadRequest((value) => value + 1)
+          gitState.setFileTreeLoadRequest((value) => value + 1)
+        })
+      }),
+    [
+      chatState.setChatLoadRequest,
+      gitState.setGitChangeLoadRequest,
+      gitState.setGitBranchLoadRequest,
+      gitState.setFileTreeLoadRequest
+    ]
+  )
   useEffect(
     () =>
       providerApi.onChatUpdated((event) => {

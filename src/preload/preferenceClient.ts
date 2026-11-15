@@ -16,7 +16,9 @@ const success: PreferenceResult = { ok: true, value: null }
 
 // This snapshot lives in the preload's isolated world. Ordinary renderer reads
 // and edits never wait for the main process; only explicit durability barriers do.
-export const createPreferenceClient = (transport: Transport): PreferencesApi => {
+export const createPreferenceClient = (transport: Transport): PreferencesApi & {
+  refresh(): Promise<PreferenceResult>
+} => {
   let snapshot: Map<string, string> | null = null
   let pending: PreferenceChanges = Object.create(null)
   let writing: PreferenceChanges | null = null
@@ -107,6 +109,22 @@ export const createPreferenceClient = (transport: Transport): PreferencesApi => 
     return success
   }
   return {
+    refresh: async () => {
+      try {
+        const result = await transport.initialize()
+        if (!result.ok) return result
+        if (!result.value || typeof result.value !== 'object')
+          return { ok: false, error: 'Invalid preference snapshot.' }
+        const changes: PreferenceChanges = { ...result.value }
+        for (const key of snapshot?.keys() ?? []) {
+          if (!Object.hasOwn(changes, key)) changes[key] = null
+        }
+        applyChanges(changes)
+        return result
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    },
     initialize: async (legacy) => {
       if (snapshot) return { ok: true, value: Object.fromEntries(snapshot) }
       try {

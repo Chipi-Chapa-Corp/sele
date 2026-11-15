@@ -1,6 +1,6 @@
 import { registerPlugin } from '@capacitor/core'
 
-export type NearbyComputer = { id: string; name: string; origin: string }
+export type NearbyComputer = { id: string; name: string; origin: string; origins?: string[] }
 // Register once: all native capabilities share the same Capacitor plugin proxy.
 export const localNetwork = registerPlugin<{
   startDiscovery(): Promise<void>

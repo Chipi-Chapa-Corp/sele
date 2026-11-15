@@ -25,8 +25,10 @@ const initialize = async (): Promise<void> => {
     const { initializeLanBridge } = await import('./lanBridge')
     await initializeLanBridge()
   }
-  await initializePreferences()
-  const { initializeChatSleep } = await import('./chatSleep')
+  const [, { initializeChatSleep }] = await Promise.all([
+    initializePreferences(),
+    import('./chatSleep')
+  ])
   await initializeChatSleep()
 }
 
