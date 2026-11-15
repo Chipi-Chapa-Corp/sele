@@ -18,46 +18,64 @@ import {
 } from './controllerTypes'
 import { getGitRecoveryAiResolutionPrompt, getGitRecoveryPullStrategy } from './gitControllerUtils'
 import { getChatCwdGroupKey, getErrorMessage } from './chatControllerUtils'
-import type { GitSyncControllerDependencies } from './controllerDependencies'
+import type { useGitViewModel } from './useGitViewModel'
+import type { useChangesData } from './useChangesData'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the controller declarations below.
-export function useGitSyncController(dependencies: GitSyncControllerDependencies) {
+export function useGitSyncController({
+  gitState,
+  session,
+  gitPresentation,
+  changes,
+  settings,
+  messaging,
+  provider
+}: WorkspaceChat & {
+  gitPresentation: ReturnType<typeof useGitViewModel>
+  changes: ReturnType<typeof useChangesData>
+}) {
   const {
+    startingScopedCommitActivitiesRef,
+    scopedCommitActivitiesRef,
     setSyncErrorsByProjectKey,
     setSyncRecoveriesByProjectKey,
-    changesProjectCwd,
     branchActionProjectKeysRef,
     syncProjectKeysRef,
-    hasAiCommitInProgressForProject,
     commitInFlightProjectKeysRef,
     commitMessageGenerationProjectKeysRef,
     setSyncProjectKeys,
-    changesContainer,
     setGitChangeLoadRequest,
-    syncDisabled,
-    changesCwd,
-    currentProjectKey,
-    visibleSyncRecovery,
-    syncInProgress,
-    visibleGitChangeLoadError,
-    effectiveAppSettings,
-    gitAiResolutionDisabled,
-    handleSendMessage,
-    getGitTurnOptions,
     setGitChangeLoadErrorDismissed,
     setCommitErrorsByProjectKey,
-    currentProjectSyncError,
-    currentProjectCommitError,
     gitBranchError,
     setGitBranchError,
     setGitBranchDeleteRetry,
     setGitBranchWorktreeDeleteRetry,
     gitBranchActionState,
-    setGitBranchActionState,
-    configProviderId,
-    untrackedFilesHiddenForPerformance,
+    setGitBranchActionState
+  } = gitState
+  const { changesProjectCwd, changesContainer, changesCwd } = session
+  const {
+    syncDisabled,
+    currentProjectKey,
+    visibleSyncRecovery,
+    syncInProgress,
+    gitAiResolutionDisabled,
+    currentProjectSyncError,
+    currentProjectCommitError,
     untrackedFilesAiDisabled
-  } = dependencies
+  } = gitPresentation
+  const { visibleGitChangeLoadError, untrackedFilesHiddenForPerformance } = changes
+  const { effectiveAppSettings } = settings
+  const { handleSendMessage, getGitTurnOptions } = messaging
+  const { configProviderId } = provider
+
+  const hasAiCommitInProgressForProject = (projectKey: string): boolean =>
+    Boolean(startingScopedCommitActivitiesRef.current[projectKey]) ||
+    Object.values(scopedCommitActivitiesRef.current).some(
+      (activity) => getChatCwdGroupKey(activity.projectCwd) === projectKey
+    )
 
   const showRecoverableGitFailure = (
     projectKey: string,
@@ -500,6 +518,7 @@ export function useGitSyncController(dependencies: GitSyncControllerDependencies
     handleSolveUntrackedFiles,
     handleSyncChanges,
     handleUnclassifiedGitSyncAiResolution,
+    hasAiCommitInProgressForProject,
     renderGitAiResolutionButton,
     runSyncChanges
   }

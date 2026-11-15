@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
+import { isRecord } from '../providerValues.ts'
 
 /**
  * Admin, management and organization keys only read billing data; providers reject them for
@@ -54,9 +55,6 @@ export type OpenCodeAdminKeyCrypto = {
 
 type StoredKey = { encoding: 'safeStorage' | 'plain'; value: string }
 type StoredFile = { version: 1; keys: Record<string, StoredKey> }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export class OpenCodeAdminKeyStore {
   private writes: Promise<unknown> = Promise.resolve()

@@ -58,7 +58,6 @@ function fixture() {
   }
   const noop = () => {}
   const dependencies = {
-    branchSwitchDisabled: false,
     branchActionProjectKeysRef: { current: new Set() },
     setBranchActionProjectKeys: noop,
     gitBranchRequestIdRef: { current: 0 },
@@ -74,18 +73,30 @@ function fixture() {
     syncProjectKeysRef: { current: new Set() },
     commitInFlightProjectKeysRef: { current: new Set() },
     commitMessageGenerationProjectKeysRef: { current: new Set() },
-    hasAiCommitInProgressForProject: () => false,
+    startingScopedCommitActivitiesRef: { current: {} },
+    scopedCommitActivitiesRef: { current: {} },
     setSyncProjectKeys: noop,
     setSyncErrorsByProjectKey: noop,
-    setSyncRecoveriesByProjectKey: noop,
-    effectiveAppSettings: { git: { errorResolutionPrompt: '', permanentErrorResolutionPrompt: '' } }
+    setSyncRecoveriesByProjectKey: noop
   }
   const project = (cwd) => {
     const scoped = {
-      ...dependencies,
-      currentProjectKey: `cwd:${cwd}`,
-      changesProjectCwd: cwd,
-      changesCwd: cwd
+      gitState: dependencies,
+      session: { changesProjectCwd: cwd, changesCwd: cwd },
+      gitPresentation: { branchSwitchDisabled: false, currentProjectKey: `cwd:${cwd}` },
+      settings: {
+        effectiveAppSettings: {
+          git: { errorResolutionPrompt: '', permanentErrorResolutionPrompt: '' }
+        }
+      },
+      changes: {},
+      messaging: {},
+      provider: {},
+      panes: {},
+      dialogState: {},
+      chatState: {},
+      viewportState: {},
+      scroll: {}
     }
     return {
       files: controllers.useFileNavigationController(scoped),

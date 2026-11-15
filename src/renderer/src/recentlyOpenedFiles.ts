@@ -15,13 +15,13 @@ export type RecentlyOpenedFilesByWorkspace = Record<string, RecentlyOpenedFile[]
 export const recentlyOpenedFilesStorageKey = 'sele:recently-opened-files:v1'
 export const recentlyOpenedFilesStoredLimit = 50
 
-const isNonEmptyString = (value: unknown): value is string =>
+export const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0
 
 const isOptionalPositiveInteger = (value: unknown): value is number | undefined =>
   value === undefined || (Number.isSafeInteger(value) && Number(value) > 0)
 
-const isRecentlyOpenedFile = (value: unknown): value is RecentlyOpenedFile => {
+export const isRecentlyOpenedFile = (value: unknown): value is RecentlyOpenedFile => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const file = value as Partial<RecentlyOpenedFile>
   return (
@@ -34,35 +34,45 @@ const isRecentlyOpenedFile = (value: unknown): value is RecentlyOpenedFile => {
   )
 }
 
-export const parseRecentlyOpenedFiles = (value: unknown): RecentlyOpenedFilesByWorkspace => {
+export const parseStoredReferences = <Reference extends RecentChatReferenceKeySource>(
+  value: unknown,
+  isReference: (value: unknown) => value is Reference,
+  limit: number
+): Record<string, Reference[]> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
 
-  const parsedFiles: RecentlyOpenedFilesByWorkspace = {}
+  const parsedReferences: Record<string, Reference[]> = {}
   Object.entries(value)
     .slice(-200)
-    .forEach(([workspaceKey, files]) => {
-      if (!workspaceKey || !Array.isArray(files)) return
+    .forEach(([storageKey, references]) => {
+      if (!storageKey || !Array.isArray(references)) return
 
-      const seenFiles = new Set<string>()
-      const validFiles = files
-        .filter(isRecentlyOpenedFile)
-        .filter((file) => {
-          const key = getRecentChatReferenceKey(file)
-          if (seenFiles.has(key)) return false
-          seenFiles.add(key)
+      const seenReferences = new Set<string>()
+      const validReferences = references
+        .filter(isReference)
+        .filter((reference) => {
+          const key = getRecentChatReferenceKey(reference)
+          if (seenReferences.has(key)) return false
+          seenReferences.add(key)
           return true
         })
-        .slice(0, recentlyOpenedFilesStoredLimit)
-      if (validFiles.length > 0) parsedFiles[workspaceKey] = validFiles
+        .slice(0, limit)
+      if (validReferences.length > 0) parsedReferences[storageKey] = validReferences
     })
 
-  return parsedFiles
+  return parsedReferences
 }
 
 export const readStoredRecentlyOpenedFiles = (): RecentlyOpenedFilesByWorkspace => {
   try {
     const storedValue = preferenceStorage.getItem(recentlyOpenedFilesStorageKey)
-    return storedValue ? parseRecentlyOpenedFiles(JSON.parse(storedValue)) : {}
+    return storedValue
+      ? parseStoredReferences(
+          JSON.parse(storedValue),
+          isRecentlyOpenedFile,
+          recentlyOpenedFilesStoredLimit
+        )
+      : {}
   } catch (error) {
     console.error('[caught:recentlyOpenedFiles:readStoredRecentlyOpenedFiles]', error)
     return {}

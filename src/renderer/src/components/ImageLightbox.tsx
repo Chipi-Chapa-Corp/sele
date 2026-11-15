@@ -15,6 +15,7 @@ import { appApi } from '../appApi'
 import { copyRenderedImage } from '../imageClipboard'
 import { Button } from './Button'
 import { PopupWindow } from './PopupWindow'
+import { getErrorMessage } from '../workspace/chatControllerUtils'
 import './ImageLightbox.css'
 
 type ImageLightboxProps = {
@@ -176,11 +177,7 @@ export const ImageLightbox = ({
     } catch (error) {
       console.error('[caught:ImageLightbox:handleCopy]', error)
       if (activeRef.current) {
-        const message =
-          error instanceof Error
-            ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '').trim()
-            : ''
-        setCopyError(message || `Unable to copy this ${mediaType}. Try copying again.`)
+        setCopyError(getErrorMessage(error, `Unable to copy this ${mediaType}. Try copying again.`))
         setCopyState('error')
       }
     }
@@ -231,9 +228,7 @@ export const ImageLightbox = ({
       console.error('[caught:ImageLightbox:handleReveal]', error)
       if (activeRef.current) {
         setRevealError(
-          (error instanceof Error &&
-            error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')) ||
-            `Unable to show this ${mediaType} in the file manager`
+          getErrorMessage(error, `Unable to show this ${mediaType} in the file manager`)
         )
       }
     }

@@ -21,7 +21,6 @@ const compare = new Function(
 const chat = { providerId: 'claude', id: 'one', cwd: '/repo', title: 'One' }
 const props = () => ({
   group: { key: 'cwd:/repo', cwd: '/repo', kind: 'cwd', label: 'repo', chats: [chat] },
-  contentId: 'repo',
   open: true,
   selectedChatKey: null,
   onMarkChatDone() {},

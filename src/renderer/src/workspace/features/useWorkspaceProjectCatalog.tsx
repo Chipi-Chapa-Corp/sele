@@ -13,21 +13,13 @@ import {
   getFolderName
 } from '../chatControllerUtils'
 import { newSessionNoProjectValue, newSessionProjectPlaceholderValue } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-
-type WorkspaceProjectCatalogDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceProjectCatalog({
   chatState,
   projectState,
   sourceState
-}: WorkspaceProjectCatalogDependencies) {
+}: WorkspaceSession) {
   // Chat summaries change on every switch (seen times) and update. The project
   // options only depend on each project's latest chat, so rebuild them, with
   // their icon elements, only when that changes.

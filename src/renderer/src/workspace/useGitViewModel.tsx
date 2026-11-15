@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { type CSSProperties, useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { isChatCommitProjectLocked } from '../chatCommitPolicy'
 import { type ButtonDropdownAction } from '../components/Button'
@@ -9,20 +9,33 @@ import { getFileTreeIndexNodes, getVisibleFileTreeFolderPaths } from '../fileTre
 import {
   gitCommitModeOptions,
   type GitCommitMode,
-  type GitCommitPromptAction
+  type GitCommitPromptAction,
+  type GitSyncAction
 } from './controllerTypes'
 import { getFileTreeEmptyMessage } from './gitControllerUtils'
-import { getChangesEmptyMessage, getChatCwdGroupKey } from './chatControllerUtils'
-import type { GitViewModelDependencies } from './controllerDependencies'
+import { getChatCwdGroupKey } from './chatControllerUtils'
+import type { useChangesData } from './useChangesData'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 // Return shape is inferred from the view-model declarations below.
-export function useGitViewModel(dependencies: GitViewModelDependencies) {
+export function useGitViewModel({
+  gitState,
+  settings,
+  session,
+  chatState,
+  interactions,
+  changes,
+  providerUpdates,
+  handleSyncChanges,
+  sourceState,
+  panes
+}: WorkspaceChat & {
+  changes: ReturnType<typeof useChangesData>
+  handleSyncChanges: (action: GitSyncAction) => Promise<void>
+}) {
   const {
     commitInput,
-    effectiveAppSettings,
     gitCommitMode,
-    changesProjectCwd,
-    changesCwd,
     visibleGitErrorProjectKeyRef,
     setCommitErrorsByProjectKey,
     setSyncErrorsByProjectKey,
@@ -35,35 +48,37 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     scopedCommitActivities,
     directCommitActivities,
     startingScopedCommitActivities,
+    setGitCommitMode,
+    branchActionProjectKeys,
+    collapsedFileTreeFolders,
+    collapsedChangeTreeFolders
+  } = gitState
+  const { effectiveAppSettings } = settings
+  const { changesProjectCwd, changesCwd, gitAvailableForCurrentSource } = session
+  const {
     sendState,
     sendInFlightProjectKey,
     editingMessage,
     selectedChat,
     chatDetail,
-    chatLoadState,
-    chatIsBusy,
+    chatLoadState
+  } = chatState
+  const { chatIsBusy, chatHasActiveTurn } = interactions
+  const {
     changedFiles,
     untrackedFilesHiddenForPerformance,
-    providerUpdateInProgress,
     changesLoadState,
     uncommittedChangedFiles,
-    gitAvailableForCurrentSource,
-    setGitCommitMode,
-    branchActionProjectKeys,
     hasUnpulledChanges,
     unpulledCount,
-    handleSyncChanges,
     hasUnpushedChanges,
     unpushedCount,
-    chatHasActiveTurn,
-    newSessionProviderAvailable,
-    changeSource,
     repositoryFileIndex,
-    changesPaneView,
-    collapsedFileTreeFolders,
-    collapsedChangeTreeFolders,
     filesLoadState
-  } = dependencies
+  } = changes
+  const { providerUpdateInProgress } = providerUpdates
+  const { newSessionProviderAvailable } = sourceState
+  const { changesPaneView } = panes
 
   const commitInputValue = commitInput.trim()
   const { showManualCommit, showAiInstructionsInput } = effectiveAppSettings.git.quickActions
@@ -251,7 +266,9 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
         chatLoadState !== 'ready' ||
         (chatHasActiveTurn && !chatDetail.capabilities.activeMessages)
       : !newSessionProviderAvailable)
-  const changesEmptyMessage = getChangesEmptyMessage(changeSource, changesCwd)
+  const changesEmptyMessage = changesCwd
+    ? 'No uncommitted changes.'
+    : 'Choose a folder to see changes.'
   const filesEmptyMessage = getFileTreeEmptyMessage(changesCwd)
   const changeTree = useMemo(() => buildChangeTree(changedFiles), [changedFiles])
   const repositoryFileTree = useMemo(
@@ -279,8 +296,6 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
   const treeToggleLabel = hasCollapsedActiveTreeFolders ? 'Expand all' : 'Collapse all'
   const activeSidebarLoadState = changesPaneView === 'files' ? filesLoadState : changesLoadState
   const refreshSidebarLabel = changesPaneView === 'files' ? 'Refresh files' : 'Refresh changes'
-  const getChangeTreeRowStyle = (depth: number): CSSProperties =>
-    ({ '--change-tree-depth': depth }) as CSSProperties
 
   return {
     activeSidebarLoadState,
@@ -301,7 +316,6 @@ export function useGitViewModel(dependencies: GitViewModelDependencies) {
     directProjectCommitInProgress,
     filesEmptyMessage,
     getAiCommitActionDisabled,
-    getChangeTreeRowStyle,
     getCommitActionDisabled,
     gitAiResolutionDisabled,
     gitCommitModeToggle,

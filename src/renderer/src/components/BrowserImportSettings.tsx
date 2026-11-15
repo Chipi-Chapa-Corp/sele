@@ -4,6 +4,7 @@ import type { AppContainerTarget } from '../../../shared/app'
 import type { BrowserCookieImportBrowser, BrowserCookieProfile } from '../../../shared/browser'
 import { browserApi } from '../browserApi'
 import { getBrowserCookieImportMessage } from '../browserCookieImport'
+import { getErrorMessage } from '../workspace/chatControllerUtils'
 import { Button } from './Button'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import './BrowserImportSettings.css'
@@ -37,9 +38,6 @@ const browserLabels: Record<BrowserCookieImportBrowser, string> = {
   firefox: 'Firefox',
   zen: 'Zen'
 }
-
-const getErrorMessage = (error: unknown, fallback: string): string =>
-  error instanceof Error && error.message ? error.message : fallback
 
 export const BrowserImportSettings: React.FC<BrowserImportSettingsProps> = ({
   currentEnvironment

@@ -13,10 +13,7 @@ export type ChatPaneWidths = {
   changes: number
 }
 
-export type ChatPanePercents = {
-  sidebar: number
-  changes: number
-}
+export type ChatPanePercents = ChatPaneWidths
 
 export const chatSidebarDefaultWidth = 224
 export const changesSidebarDefaultWidth = 192
@@ -125,18 +122,12 @@ export const restoreChatScrollAnchor = (
     return true
   }
 
-  const turnElements = contentElement.querySelectorAll<HTMLElement>('[data-chat-turn-id]')
-  let anchorElement: HTMLElement | null = null
-  for (const turnElement of turnElements) {
-    if (turnElement.dataset.chatTurnId === anchor.turnId) {
-      anchorElement = turnElement
-      break
-    }
-  }
+  const anchorElement = [
+    ...contentElement.querySelectorAll<HTMLElement>('[data-chat-turn-id]')
+  ].find((turnElement) => turnElement.dataset.chatTurnId === anchor.turnId)
   if (!anchorElement) return false
 
-  const nextOffset = anchorElement.getBoundingClientRect().top - contentRect.top
-  const adjustment = nextOffset - anchor.offset
+  const adjustment = anchorElement.getBoundingClientRect().top - contentRect.top - anchor.offset
   if (Math.abs(adjustment) >= 0.5) contentElement.scrollTop += adjustment
   return true
 }

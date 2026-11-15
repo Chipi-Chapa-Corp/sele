@@ -33,42 +33,31 @@ import type {
   AppAddProjectOptions,
   AppContainerTarget,
   AppCreateSshEnvironmentOptions,
-  AppDeleteSshEnvironmentOptions,
   AppExternalLinkAction,
   AppExternalLinkOptions,
   AppExternalLinkResult,
   AppFileContentsOptions,
-  AppFileTreeOptions,
   AppGitCommitAction,
-  AppGitCommitOptions,
   AppGitBranchesOptions,
   AppGitHubPullRequestsOptions,
   AppGitHubPullRequestOptions,
   AppGitBranchesResult,
-  AppGitDeleteBranchOptions,
   AppGitDeleteBranchResult,
   AppGitDeleteBranchScope,
   AppGitCreateWorktreeOptions,
   AppGitCreateWorktreeResult,
-  AppGitDiffOptions,
   AppGitFileDiffOptions,
   AppGitChangesResult,
   AppGitChangeKind,
   AppGitChangesOptions,
   AppGitCommitMessageContextResult,
   AppGitFileChange,
-  AppGitChangeSource,
   AppGitPullStrategy,
   AppGitPushTarget,
-  AppGitPatchChange,
-  AppGitRecentCommitMessagesOptions,
   AppGitRecoverableFailure,
-  AppGitSwitchBranchOptions,
-  AppGitUncommittedPatchChangesOptions,
   AppLocalImage,
   AppLocalImageOptions,
   AppProjectIcon,
-  AppProjectIconOptions,
   AppSelectedAttachment,
   AppSelectedImage,
   AppSourceAvailabilityOptions,
@@ -114,7 +103,6 @@ import {
   readLocalFileTreePaths,
   targetFileTreeScript
 } from './fileTree'
-import { commitAllGitChanges } from './gitCommit'
 import { summarizeGitNumstat } from './gitCommitMessage'
 import { limitVisibleUntrackedGitFiles } from './gitChanges'
 import { stageGitFileDiffPaths } from './gitFileDiff'
@@ -159,6 +147,16 @@ const getDefaultPath = (value: unknown): string | undefined => {
   return value
 }
 
+const getOptionsRecord = (value: unknown, message: string): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message)
+  return value as Record<string, unknown>
+}
+
+const getGitTarget = (options: Record<string, unknown>): AppGitBranchesOptions => ({
+  container: requireContainerTarget(options.container, { optional: true }),
+  cwd: getDefaultPath(options.cwd)
+})
+
 const externalLinkProtocols = new Set(['http:', 'https:', 'file:', 'mailto:', 'tel:'])
 const maxExternalLinkLength = 8_192
 
@@ -166,11 +164,7 @@ const isExternalLinkAction = (value: unknown): value is AppExternalLinkAction =>
   value === 'copy' || value === 'open'
 
 const getExternalLinkOptions = (value: unknown): AppExternalLinkOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid external link options')
-  }
-
-  const options = value as { url?: unknown; action?: unknown }
+  const options = getOptionsRecord(value, 'Invalid external link options')
   if (
     typeof options.url !== 'string' ||
     options.url.length === 0 ||
@@ -197,18 +191,6 @@ const getExternalLinkOptions = (value: unknown): AppExternalLinkOptions => {
     url: url.toString(),
     action: options.action
   }
-}
-
-const performExternalLinkAction = async (
-  action: AppExternalLinkAction,
-  url: string
-): Promise<void> => {
-  if (action === 'copy') {
-    clipboard.writeText(url)
-    return
-  }
-
-  await openExternalLink(url)
 }
 
 const imageMimeTypes = {
@@ -260,12 +242,8 @@ const getOptionalCwd = (value: unknown): string | null => {
   return value
 }
 
-const getProjectIconOptions = (value: unknown): AppProjectIconOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid project icon options')
-  }
-
-  const options = value as { cwd?: unknown; persist?: unknown }
+const getProjectIconOptions = (value: unknown): { cwd: string | null; persist?: boolean } => {
+  const options = getOptionsRecord(value, 'Invalid project icon options')
   if (options.persist != null && typeof options.persist !== 'boolean') {
     throw new Error('Invalid project icon persistence option')
   }
@@ -291,17 +269,7 @@ const getProjectOrderCwds = (value: unknown): string[] => {
 }
 
 const getAddProjectOptions = (value: unknown): AppAddProjectOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid project options')
-  }
-
-  const options = value as {
-    cwd?: unknown
-    name?: unknown
-    icon?: unknown
-    iconSelectionId?: unknown
-    additionalCwds?: unknown
-  }
+  const options = getOptionsRecord(value, 'Invalid project options')
   const cwd = getOptionalCwd(options.cwd)
   if (!cwd) throw new Error('Invalid project cwd')
 
@@ -358,17 +326,7 @@ const getAddProjectOptions = (value: unknown): AppAddProjectOptions => {
 }
 
 const getCreateSshEnvironmentOptions = (value: unknown): AppCreateSshEnvironmentOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid SSH environment options')
-  }
-
-  const options = value as {
-    name?: unknown
-    host?: unknown
-    port?: unknown
-    user?: unknown
-    identityFile?: unknown
-  }
+  const options = getOptionsRecord(value, 'Invalid SSH environment options')
   const name = typeof options.name === 'string' ? options.name.trim() : ''
   const host = typeof options.host === 'string' ? options.host.trim() : ''
   const user = typeof options.user === 'string' ? options.user.trim() : ''
@@ -408,11 +366,7 @@ const getCreateSshEnvironmentOptions = (value: unknown): AppCreateSshEnvironment
 }
 
 const getSshEnvironmentId = (value: unknown): string => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid SSH environment options')
-  }
-
-  const id = (value as { id?: unknown }).id
+  const id = getOptionsRecord(value, 'Invalid SSH environment options').id
   if (typeof id !== 'string' || !id || id.length > 128 || /[\0\r\n]/.test(id)) {
     throw new Error('Invalid SSH environment id')
   }
@@ -422,10 +376,6 @@ const getSshEnvironmentId = (value: unknown): string => {
 
 const getUpdateSshEnvironmentOptions = (value: unknown): AppUpdateSshEnvironmentOptions => ({
   ...getCreateSshEnvironmentOptions(value),
-  id: getSshEnvironmentId(value)
-})
-
-const getDeleteSshEnvironmentOptions = (value: unknown): AppDeleteSshEnvironmentOptions => ({
   id: getSshEnvironmentId(value)
 })
 
@@ -439,17 +389,8 @@ const validateSshIdentityFile = async (identityFile?: string | null): Promise<vo
   if (!identityStat?.isFile()) throw new Error('SSH identity file does not exist')
 }
 
-const getLocalMediaOptions = (value: unknown): AppLocalImageOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid local media options')
-  }
-
-  const options = value as {
-    container?: unknown
-    cwd?: unknown
-    path?: unknown
-    relativeTo?: unknown
-  }
+const getLocalMediaOptions = (value: unknown): AppLocalImageOptions & { cwd: string | null } => {
+  const options = getOptionsRecord(value, 'Invalid local media options')
   if (
     typeof options.path !== 'string' ||
     options.path.length === 0 ||
@@ -551,7 +492,7 @@ const getProjectIconFile = async (
 const resolveLocalMediaPath = async (
   cwd: string | null,
   path: string,
-  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository'
+  relativeTo: AppLocalImageOptions['relativeTo']
 ): Promise<string> => {
   let imagePath = path
 
@@ -583,11 +524,7 @@ const getLocalMedia = async (
     kind
   )
   if (!image) throw new Error(`Unable to load this ${kind}.`)
-  return {
-    data: image.data,
-    mimeType: image.mimeType,
-    updatedAt: image.updatedAt
-  }
+  return image
 }
 
 const getAppProjectIcon = async (cwd: string | null): Promise<AppProjectIcon | null> => {
@@ -756,15 +693,8 @@ const getInstalledFontFamilies = (): Promise<string[]> => {
   return installedFontFamiliesPromise
 }
 
-type BranchBase = {
-  ref: string
-  commit: string
-}
-
 type RunGitOptions = {
-  container?: AppContainerTarget | null
   env?: NodeJS.ProcessEnv
-  input?: string
   required?: boolean
   timeoutMs?: number
 }
@@ -773,8 +703,8 @@ const gitCommandContext = new AsyncLocalStorage<{ container?: AppContainerTarget
 
 const runWithGitContainer = <T>(
   container: AppContainerTarget | null | undefined,
-  run: () => Promise<T>
-): Promise<T> => gitCommandContext.run({ container }, run)
+  run: () => T
+): T => gitCommandContext.run({ container }, run)
 
 const runGitHub = async (
   cwd: string,
@@ -820,9 +750,6 @@ const runGitHub = async (
   return stdout
 }
 
-const getRunGitOptions = (options: boolean | RunGitOptions): RunGitOptions =>
-  typeof options === 'boolean' ? { required: options } : options
-
 // Transfers and remote hooks can take much longer than local repository probes.
 const gitRemoteOperationTimeoutMs = 10 * 60_000
 
@@ -853,16 +780,15 @@ const runGit = async (
   args: string[],
   options: boolean | RunGitOptions = false
 ): Promise<string | null> => {
-  const runOptions = getRunGitOptions(options)
-  const container = runOptions.container ?? gitCommandContext.getStore()?.container
+  const runOptions: RunGitOptions = typeof options === 'boolean' ? { required: options } : options
+  const container = gitCommandContext.getStore()?.container
   const env = { ...process.env, GIT_MERGE_AUTOEDIT: 'no', ...runOptions.env }
   const hostCommand = await getHostCommand('git', args, { container, cwd, env })
   const timeoutMs = runOptions.timeoutMs ?? 10_000
 
   const { error, stdout, stderr } = await bufferedCommands.run(hostCommand, {
     timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024,
-    input: runOptions.input
+    maxBuffer: 10 * 1024 * 1024
   })
   if (error) {
     if (runOptions.required) {
@@ -885,6 +811,12 @@ const runGit = async (
     return null
   }
   return stdout.trimEnd()
+}
+
+const getRepositoryRoot = async (cwd: string): Promise<string> => {
+  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
+  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  return repositoryRoot
 }
 
 const getGitErrorMessage = (error: unknown): string =>
@@ -959,13 +891,7 @@ const getGitChangesOptions = (value: unknown): AppGitChangesOptions => {
   const options = value as {
     container?: unknown
     cwd?: unknown
-    source?: unknown
     fetchRemote?: unknown
-  }
-  const source = options.source
-
-  if (source !== 'branch' && source !== 'uncommitted') {
-    throw new Error('Invalid Git changes source')
   }
   if (options.fetchRemote != null && typeof options.fetchRemote !== 'boolean') {
     throw new Error('Invalid Git remote fetch option')
@@ -974,37 +900,24 @@ const getGitChangesOptions = (value: unknown): AppGitChangesOptions => {
   return {
     container: requireContainerTarget(options.container, { optional: true }),
     cwd: getDefaultPath(options.cwd),
-    source,
     fetchRemote: options.fetchRemote === true
   }
 }
 
 const getSourceAvailabilityOptions = (value: unknown): AppSourceAvailabilityOptions => {
   if (value == null) return {}
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid source availability options')
-  }
-
-  return {
-    container: requireContainerTarget((value as { container?: unknown }).container, {
-      optional: true
-    })
-  }
+  const options = getOptionsRecord(value, 'Invalid source availability options')
+  return { container: requireContainerTarget(options.container, { optional: true }) }
 }
 
-const getGitBranchesOptions = (value: unknown): AppGitBranchesOptions => {
-  if (value == null) return {}
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Git branch options')
-  }
+const getGitTargetOptions =
+  (message: string) =>
+  (value: unknown): AppGitBranchesOptions =>
+    value == null ? {} : getGitTarget(getOptionsRecord(value, message))
 
-  return {
-    container: requireContainerTarget((value as { container?: unknown }).container, {
-      optional: true
-    }),
-    cwd: getDefaultPath((value as { cwd?: unknown }).cwd)
-  }
-}
+const getGitBranchesOptions = getGitTargetOptions('Invalid Git branch options')
+const getFileTreeOptions = getGitTargetOptions('Invalid file tree options')
+const getGitDiffOptions = getGitTargetOptions('Invalid Git diff options')
 
 const getGitHubPullRequestsOptions = (value: unknown): AppGitHubPullRequestsOptions => {
   const options = getGitBranchesOptions(value)
@@ -1049,17 +962,8 @@ const getGitHubPullRequestOptions = (value: unknown): AppGitHubPullRequestOption
   return { ...options, number, repository }
 }
 
-const getGitSwitchBranchOptions = (value: unknown): AppGitSwitchBranchOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Git branch switch options')
-  }
-
-  const options = value as {
-    branchName?: unknown
-    container?: unknown
-    create?: unknown
-    cwd?: unknown
-  }
+const getGitSwitchBranchOptions = (value: unknown) => {
+  const options = getOptionsRecord(value, 'Invalid Git branch switch options')
   const branchName = typeof options.branchName === 'string' ? options.branchName.trim() : ''
 
   if (!branchName || branchName.includes('\0') || branchName.includes('\n')) {
@@ -1071,28 +975,16 @@ const getGitSwitchBranchOptions = (value: unknown): AppGitSwitchBranchOptions =>
 
   return {
     branchName,
-    container: requireContainerTarget(options.container, { optional: true }),
-    create: Boolean(options.create),
-    cwd: getDefaultPath(options.cwd)
+    ...getGitTarget(options),
+    create: Boolean(options.create)
   }
 }
 
 const isGitDeleteBranchScope = (value: unknown): value is AppGitDeleteBranchScope =>
   value === 'local' || value === 'remote' || value === 'both'
 
-const getGitDeleteBranchOptions = (value: unknown): AppGitDeleteBranchOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Git branch delete options')
-  }
-
-  const options = value as {
-    branchName?: unknown
-    container?: unknown
-    force?: unknown
-    removeWorktree?: unknown
-    scope?: unknown
-    cwd?: unknown
-  }
+const getGitDeleteBranchOptions = (value: unknown) => {
+  const options = getOptionsRecord(value, 'Invalid Git branch delete options')
   const branchName = typeof options.branchName === 'string' ? options.branchName.trim() : ''
 
   if (!branchName || branchName.includes('\0') || branchName.includes('\n')) {
@@ -1110,56 +1002,26 @@ const getGitDeleteBranchOptions = (value: unknown): AppGitDeleteBranchOptions =>
 
   return {
     branchName,
-    container: requireContainerTarget(options.container, { optional: true }),
+    ...getGitTarget(options),
     force: Boolean(options.force),
     removeWorktree: Boolean(options.removeWorktree),
-    scope: isGitDeleteBranchScope(options.scope) ? options.scope : undefined,
-    cwd: getDefaultPath(options.cwd)
+    scope: isGitDeleteBranchScope(options.scope) ? options.scope : null
   }
 }
 
 const getGitCreateWorktreeOptions = (value: unknown): AppGitCreateWorktreeOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Git worktree options')
-  }
-
-  const options = value as {
-    container?: unknown
-    cwd?: unknown
-    name?: unknown
-  }
+  const options = getOptionsRecord(value, 'Invalid Git worktree options')
   const name = typeof options.name === 'string' ? options.name.trim() : ''
 
   if (!name || name.includes('\0') || name.includes('\n') || name.includes('\r')) {
     throw new Error('Invalid worktree name')
   }
 
-  return {
-    container: requireContainerTarget(options.container, { optional: true }),
-    cwd: getDefaultPath(options.cwd),
-    name
-  }
-}
-
-const getFileTreeOptions = (value: unknown): AppFileTreeOptions => {
-  if (value == null) return {}
-  if (typeof value !== 'object' || Array.isArray(value))
-    throw new Error('Invalid file tree options')
-
-  const options = value as { container?: unknown; cwd?: unknown }
-
-  return {
-    container: requireContainerTarget(options.container, { optional: true }),
-    cwd: getDefaultPath(options.cwd)
-  }
+  return { ...getGitTarget(options), name }
 }
 
 const getFileContentsOptions = (value: unknown): AppFileContentsOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid file options')
-  }
-
-  const options = value as { container?: unknown; cwd?: unknown; path?: unknown }
+  const options = getOptionsRecord(value, 'Invalid file options')
   if (
     typeof options.path !== 'string' ||
     options.path.length === 0 ||
@@ -1177,10 +1039,7 @@ const getFileContentsOptions = (value: unknown): AppFileContentsOptions => {
 
 const getWriteFileContentsOptions = (value: unknown): AppWriteFileContentsOptions => {
   const fileOptions = getFileContentsOptions(value)
-  const options = value as {
-    contents?: unknown
-    expectedVersion?: unknown
-  }
+  const options = value as Record<string, unknown>
 
   if (typeof options.contents !== 'string') throw new Error('Invalid file contents')
   if (
@@ -1197,97 +1056,20 @@ const getWriteFileContentsOptions = (value: unknown): AppWriteFileContentsOption
   }
 }
 
-const isGitPatchChangeKind = (value: unknown): value is AppGitPatchChange['kind'] =>
-  value === 'edit' || value === 'create' || value === 'delete'
-
-const getGitPatchChanges = (value: unknown, errorMessage: string): AppGitPatchChange[] => {
-  if (!Array.isArray(value)) throw new Error(errorMessage)
-
-  return value.map((candidate) => {
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
-      throw new Error(errorMessage)
-    }
-
-    const patch = candidate as Partial<AppGitPatchChange>
-    if (
-      typeof patch.path !== 'string' ||
-      patch.path.length === 0 ||
-      patch.path.includes('\0') ||
-      patch.path.includes('\n') ||
-      !isGitPatchChangeKind(patch.kind) ||
-      typeof patch.diff !== 'string'
-    ) {
-      throw new Error(errorMessage)
-    }
-
-    return {
-      path: patch.path,
-      kind: patch.kind,
-      diff: patch.diff
-    }
-  })
-}
-
-const getGitCommitOptions = (value: unknown): AppGitCommitOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Git commit options')
-  }
-
-  const options = value as {
-    action?: unknown
-    container?: unknown
-    cwd?: unknown
-    message?: unknown
-    patches?: unknown
-  }
-  const action = options.action === 'amend' ? options.action : 'commit'
+const getGitCommitOptions = (value: unknown) => {
+  const options = getOptionsRecord(value, 'Invalid Git commit options')
+  const action: AppGitCommitAction = options.action === 'amend' ? 'amend' : 'commit'
   const message = typeof options.message === 'string' ? options.message.trim() : ''
 
   if (action !== 'amend' && !message) throw new Error('Commit message is required')
-  const patches =
-    options.patches == null
-      ? undefined
-      : getGitPatchChanges(options.patches, 'Invalid Git commit patches')
 
-  return {
-    action,
-    container: requireContainerTarget(options.container, { optional: true }),
-    cwd: getDefaultPath(options.cwd),
-    patches,
-    message
-  }
+  return { action, ...getGitTarget(options), message }
 }
 
-const getGitSyncOptions = (
-  value: unknown
-): {
-  container?: AppContainerTarget | null
-  cwd?: string | null
-  rememberStrategy: boolean
-  rememberTarget: boolean
-  setUpstream: boolean
-  strategy?: AppGitPullStrategy
-  target?: AppGitPushTarget
-} => {
-  if (value == null) {
-    return { rememberStrategy: false, rememberTarget: false, setUpstream: false }
-  }
-  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid Git sync options')
-
-  const options = value as {
-    container?: unknown
-    cwd?: unknown
-    rememberStrategy?: unknown
-    rememberTarget?: unknown
-    setUpstream?: unknown
-    strategy?: unknown
-    target?: unknown
-  }
-  const rememberStrategy = options.rememberStrategy
-  const rememberTarget = options.rememberTarget
-  const setUpstream = options.setUpstream
-  const strategy = options.strategy
-  const target = options.target
+const getGitSyncOptions = (value: unknown) => {
+  const options: Record<string, unknown> =
+    value == null ? {} : getOptionsRecord(value, 'Invalid Git sync options')
+  const { rememberStrategy, rememberTarget, setUpstream, strategy, target } = options
 
   if (rememberStrategy != null && typeof rememberStrategy !== 'boolean') {
     throw new Error('Invalid Git remember strategy option')
@@ -1310,8 +1092,7 @@ const getGitSyncOptions = (
   }
 
   return {
-    container: requireContainerTarget(options.container, { optional: true }),
-    cwd: getDefaultPath(options.cwd),
+    ...getGitTarget(options),
     rememberStrategy: Boolean(rememberStrategy),
     rememberTarget: Boolean(rememberTarget),
     setUpstream: Boolean(setUpstream),
@@ -1320,13 +1101,9 @@ const getGitSyncOptions = (
   }
 }
 
-const getGitRecentCommitMessagesOptions = (value: unknown): AppGitRecentCommitMessagesOptions => {
-  if (value == null) return {}
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Git commit history options')
-  }
-
-  const options = value as { container?: unknown; cwd?: unknown; limit?: unknown }
+const getGitRecentCommitMessagesOptions = (value: unknown) => {
+  const options: Record<string, unknown> =
+    value == null ? {} : getOptionsRecord(value, 'Invalid Git commit history options')
   const limit = options.limit
 
   if (
@@ -1336,25 +1113,7 @@ const getGitRecentCommitMessagesOptions = (value: unknown): AppGitRecentCommitMe
     throw new Error('Invalid Git commit history limit')
   }
 
-  return {
-    container: requireContainerTarget(options.container, { optional: true }),
-    cwd: getDefaultPath(options.cwd),
-    limit: limit ?? null
-  }
-}
-
-const getGitDiffOptions = (value: unknown): AppGitDiffOptions => {
-  if (value == null) return {}
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Git diff options')
-  }
-
-  const options = value as { container?: unknown; cwd?: unknown }
-
-  return {
-    container: requireContainerTarget(options.container, { optional: true }),
-    cwd: getDefaultPath(options.cwd)
-  }
+  return { ...getGitTarget(options), limit: limit ?? 3 }
 }
 
 const getGitFileDiffOptions = (value: unknown): AppGitFileDiffOptions => {
@@ -1371,22 +1130,6 @@ const getGitFileDiffOptions = (value: unknown): AppGitFileDiffOptions => {
   return {
     ...fileOptions,
     previousPath: previousPath ?? null
-  }
-}
-
-const getGitUncommittedPatchChangesOptions = (
-  value: unknown
-): AppGitUncommittedPatchChangesOptions => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Git patch filter options')
-  }
-
-  const options = value as { container?: unknown; cwd?: unknown; patches?: unknown }
-
-  return {
-    container: requireContainerTarget(options.container, { optional: true }),
-    cwd: getDefaultPath(options.cwd),
-    patches: getGitPatchChanges(options.patches, 'Invalid Git patch filter patches')
   }
 }
 
@@ -1427,8 +1170,7 @@ const switchGitBranch = async (
   branchName: string,
   create: boolean
 ): Promise<AppGitBranchesResult> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(cwd)
 
   await runGit(repositoryRoot, ['check-ref-format', '--branch', branchName], true)
   await runGit(repositoryRoot, create ? ['switch', '-c', branchName] : ['switch', branchName], true)
@@ -1543,8 +1285,7 @@ const deleteGitBranch = async (
   force: boolean,
   removeWorktree: boolean
 ): Promise<AppGitDeleteBranchResult> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(cwd)
 
   await runGit(repositoryRoot, ['check-ref-format', '--branch', branchName], true)
   const remote =
@@ -1652,8 +1393,7 @@ const createGitWorktree = async (
   cwd: string,
   name: string
 ): Promise<AppGitCreateWorktreeResult> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(cwd)
 
   const baseBranchName = await getCurrentBranchName(repositoryRoot)
   if (!baseBranchName) {
@@ -1699,120 +1439,12 @@ const createGitWorktree = async (
   }
 }
 
-const getOriginHeadBranch = async (cwd: string): Promise<string | null> => {
-  const originHead = await runGit(cwd, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])
-  const prefix = 'refs/remotes/'
-
-  return originHead?.startsWith(prefix) ? originHead.slice(prefix.length) : null
-}
-
-const getVerifiedBranchBase = async (
-  cwd: string,
-  candidateRef: string
-): Promise<BranchBase | null> => {
-  const verifiedRef = await runGit(cwd, ['rev-parse', '--verify', '--quiet', candidateRef])
-  if (!verifiedRef) return null
-
-  const commit = await runGit(cwd, ['merge-base', 'HEAD', candidateRef])
-  return commit ? { ref: candidateRef, commit } : null
-}
-
-const getBranchBase = async (
-  cwd: string,
-  branchName: string | null
-): Promise<BranchBase | null> => {
-  const originHeadBranch = await getOriginHeadBranch(cwd)
-  const candidateRefs = [
-    originHeadBranch,
-    'origin/main',
-    'origin/master',
-    'upstream/main',
-    'upstream/master',
-    'main',
-    'master'
-  ]
-  const uniqueRefs = [...new Set(candidateRefs.filter((ref): ref is string => Boolean(ref)))]
-
-  for (const candidateRef of uniqueRefs) {
-    if (candidateRef === branchName) continue
-
-    const branchBase = await getVerifiedBranchBase(cwd, candidateRef)
-    if (branchBase) return branchBase
-  }
-
-  const upstreamRef = await runGit(cwd, [
-    'rev-parse',
-    '--abbrev-ref',
-    '--symbolic-full-name',
-    '@{upstream}'
-  ])
-
-  if (upstreamRef && upstreamRef !== branchName) {
-    const upstreamBase = await getVerifiedBranchBase(cwd, upstreamRef)
-    if (upstreamBase) return upstreamBase
-  }
-
-  return null
-}
-
-const getChangeKind = (status: string): AppGitChangeKind => {
-  const code = status[0]
-  if (code === '?') return 'untracked'
-  if (code === 'A' || code === 'C' || code === '?') return 'create'
-  if (code === 'D') return 'delete'
-  if (code === 'R') return 'rename'
-  return 'edit'
-}
-
 const getPorcelainChangeKind = (status: string): AppGitChangeKind => {
   if (status.includes('?')) return 'untracked'
   if (status.includes('R')) return 'rename'
-  if (status.includes('A') || status.includes('C') || status.includes('?')) return 'create'
+  if (status.includes('A') || status.includes('C')) return 'create'
   if (status.includes('D')) return 'delete'
   return 'edit'
-}
-
-const parseNameStatusChanges = (output: string): AppGitFileChange[] => {
-  if (!output) return []
-
-  const fields = output.split('\0')
-  const changes: AppGitFileChange[] = []
-  let index = 0
-
-  while (index < fields.length && fields[index]) {
-    const status = fields[index]
-    index += 1
-
-    if (status[0] === 'R' || status[0] === 'C') {
-      const previousPath = fields[index]
-      const path = fields[index + 1]
-      index += 2
-
-      if (path) {
-        changes.push({
-          path,
-          previousPath: previousPath || null,
-          kind: getChangeKind(status),
-          status
-        })
-      }
-
-      continue
-    }
-
-    const path = fields[index]
-    index += 1
-
-    if (path) {
-      changes.push({
-        path,
-        kind: getChangeKind(status),
-        status
-      })
-    }
-  }
-
-  return changes
 }
 
 const parsePorcelainChanges = (output: string): AppGitFileChange[] => {
@@ -1855,20 +1487,12 @@ const parsePorcelainChanges = (output: string): AppGitFileChange[] => {
   return changes
 }
 
-const parseGitPathList = (output: string): string[] =>
-  output.split('\0').filter((path) => path.length > 0)
-
-const getGitChanges = async (
-  cwd: string,
-  source: AppGitChangeSource,
-  fetchRemote = false
-): Promise<AppGitChangesResult> => {
+const getGitChanges = async (cwd: string, fetchRemote = false): Promise<AppGitChangesResult> => {
   const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'])
   if (!repositoryRoot) {
     return {
       repositoryRoot: cwd,
       branchName: null,
-      baseRef: null,
       unpulledCount: 0,
       unpushedCount: 0,
       untrackedFilesHiddenForPerformance: false,
@@ -1897,55 +1521,21 @@ const getGitChanges = async (
     runGit
   )
 
-  if (source === 'uncommitted') {
-    const status = await runGit(
-      repositoryRoot,
-      ['status', '--porcelain=v1', '--untracked-files=all', '-z'],
-      true
-    )
-
-    const visibleChanges = limitVisibleUntrackedGitFiles(parsePorcelainChanges(status ?? ''))
-
-    return {
-      repositoryRoot,
-      branchName,
-      baseRef: null,
-      unpulledCount,
-      unpushedCount,
-      remoteFetchError,
-      ...visibleChanges
-    }
-  }
-
-  const branchBase = await getBranchBase(repositoryRoot, branchName)
-  if (!branchBase) {
-    return {
-      repositoryRoot,
-      branchName,
-      baseRef: null,
-      unpulledCount,
-      unpushedCount,
-      remoteFetchError,
-      untrackedFilesHiddenForPerformance: false,
-      files: []
-    }
-  }
-
-  const diff = await runGit(
+  const status = await runGit(
     repositoryRoot,
-    ['diff', '--name-status', '-z', '--find-renames', `${branchBase.commit}...HEAD`, '--'],
+    ['status', '--porcelain=v1', '--untracked-files=all', '-z'],
     true
   )
+
+  const visibleChanges = limitVisibleUntrackedGitFiles(parsePorcelainChanges(status ?? ''))
 
   return {
     repositoryRoot,
     branchName,
-    baseRef: branchBase.ref,
     unpulledCount,
     unpushedCount,
     remoteFetchError,
-    untrackedFilesHiddenForPerformance: false,
-    files: parseNameStatusChanges(diff ?? '')
+    ...visibleChanges
   }
 }
 
@@ -2024,7 +1614,11 @@ const runSshFileCommand = async (
   return runTargetFileCommand(container, cwd, args, options)
 }
 
-const getRemoteRepositoryFilePath = (repositoryRoot: string, path: string): string => {
+const getRemoteRepositoryFilePath = (
+  repositoryRoot: string,
+  path: string,
+  outsideMessage = 'File is outside the repository'
+): string => {
   const absolutePath = isAbsolute(path) ? path : resolve(repositoryRoot, path)
   const relativePath = relative(repositoryRoot, absolutePath).replace(/\\/g, '/')
   if (
@@ -2033,7 +1627,7 @@ const getRemoteRepositoryFilePath = (repositoryRoot: string, path: string): stri
     relativePath.startsWith('../') ||
     isAbsolute(relativePath)
   ) {
-    throw new Error('File is outside the repository')
+    throw new Error(outsideMessage)
   }
 
   return relativePath
@@ -2134,8 +1728,8 @@ const getTargetLocalMedia = async (
   container: AppContainerTarget | null | undefined,
   cwd: string | null,
   path: string,
-  relativeTo: AppLocalImageOptions['relativeTo'] = 'repository',
-  kind: 'image' | 'video' = 'image'
+  relativeTo: AppLocalImageOptions['relativeTo'],
+  kind: 'image' | 'video'
 ): Promise<AppLocalImage> => {
   let commandCwd = cwd ?? '/'
   let imagePath = path
@@ -2196,12 +1790,7 @@ const shouldReadFilesThroughTarget = async (
 const resolveReadableFile = async (
   cwd: string,
   path: string
-): Promise<{
-  absolutePath: string
-  editable: boolean
-  gitRepositoryRoot: string | null
-  size: number
-}> => {
+): Promise<{ absolutePath: string; editable: boolean; gitRepositoryRoot: string | null }> => {
   const { absolutePath } = await resolveFileTarget(cwd, path)
   const resolvedFileStat = await stat(absolutePath)
 
@@ -2215,20 +1804,7 @@ const resolveReadableFile = async (
     '--show-toplevel'
   ])
 
-  return {
-    absolutePath,
-    editable: true,
-    gitRepositoryRoot,
-    size: resolvedFileStat.size
-  }
-}
-
-const resolveEditableFile = async (
-  cwd: string,
-  path: string
-): Promise<{ absolutePath: string; size: number }> => {
-  const file = await resolveReadableFile(cwd, path)
-  return { absolutePath: file.absolutePath, size: file.size }
+  return { absolutePath, editable: true, gitRepositoryRoot }
 }
 
 const readFileContents = async (
@@ -2270,7 +1846,7 @@ const writeEditableFile = async (
 
   if (isSshGitTarget()) return writeSshFileContents(cwd, path, contents, expectedVersion)
 
-  const { absolutePath } = await resolveEditableFile(cwd, path)
+  const { absolutePath } = await resolveReadableFile(cwd, path)
   const currentContents = await readFile(absolutePath)
 
   if (getFileVersion(currentContents) !== expectedVersion) {
@@ -2352,21 +1928,19 @@ const shouldStageFileForSystemApp = async (
 
 const getFileOpenPath = async (options: AppFileContentsOptions): Promise<string> => {
   const cwd = options.cwd ?? process.cwd()
-  let openPath: string
+  if (!(await shouldStageFileForSystemApp(options.container))) {
+    return (await resolveFileTarget(cwd, options.path)).absolutePath
+  }
 
-  if (await shouldStageFileForSystemApp(options.container)) {
-    const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-open-file-'))
-    openPath = join(tempDirectory, basename(options.path) || 'file')
-    try {
-      await copyTargetFile(options.container, cwd, options.path, openPath)
-    } catch (error) {
-      await rm(tempDirectory, { recursive: true, force: true }).catch((cleanupError: unknown) => {
-        console.warn('Unable to remove a staged system-app file after a copy failure', cleanupError)
-      })
-      throw error
-    }
-  } else {
-    openPath = (await resolveFileTarget(cwd, options.path)).absolutePath
+  const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-open-file-'))
+  const openPath = join(tempDirectory, basename(options.path) || 'file')
+  try {
+    await copyTargetFile(options.container, cwd, options.path, openPath)
+  } catch (error) {
+    await rm(tempDirectory, { recursive: true, force: true }).catch((cleanupError: unknown) => {
+      console.warn('Unable to remove a staged system-app file after a copy failure', cleanupError)
+    })
+    throw error
   }
 
   return openPath
@@ -2411,10 +1985,9 @@ const showFileInFolder = async (options: AppLocalImageOptions): Promise<void> =>
 
 const getRecentGitCommitMessages = async (
   cwd: string,
-  limit = 3
+  limit: number
 ): Promise<{ messages: string[] }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(cwd)
 
   const output = await runGit(repositoryRoot, ['log', `--max-count=${limit}`, '--format=%s'])
 
@@ -2427,78 +2000,31 @@ const getRecentGitCommitMessages = async (
   }
 }
 
-const normalizePatchPath = (repositoryRoot: string, path: string): string => {
-  const absolutePath = isAbsolute(path) ? path : resolve(repositoryRoot, path)
-  const relativePath = relative(repositoryRoot, absolutePath).replace(/\\/g, '/')
-
-  if (
-    !relativePath ||
-    relativePath === '..' ||
-    relativePath.startsWith('../') ||
-    isAbsolute(relativePath)
-  ) {
-    throw new Error(`Patch path is outside the repository: ${path}`)
-  }
-
-  return relativePath
-}
-
-const ensureTrailingNewline = (value: string): string =>
-  value.endsWith('\n') ? value : `${value}\n`
-
-const isFullUnifiedDiff = (diff: string): boolean => {
-  const trimmedDiff = diff.trimStart()
-  return trimmedDiff.startsWith('diff --git ') || trimmedDiff.startsWith('--- ')
-}
-
-const getUnifiedPatch = (change: AppGitPatchChange, path: string): string => {
-  if (isFullUnifiedDiff(change.diff)) return ensureTrailingNewline(change.diff)
-
-  const oldPath = change.kind === 'create' ? '/dev/null' : `a/${path}`
-  const newPath = change.kind === 'delete' ? '/dev/null' : `b/${path}`
-
-  return `diff --git a/${path} b/${path}\n--- ${oldPath}\n+++ ${newPath}\n${ensureTrailingNewline(change.diff)}`
-}
+const normalizePatchPath = (repositoryRoot: string, path: string): string =>
+  getRemoteRepositoryFilePath(repositoryRoot, path, `Patch path is outside the repository: ${path}`)
 
 const getTemporaryIndexEnv = (indexPath: string): NodeJS.ProcessEnv => ({
   GIT_INDEX_FILE: indexPath
 })
 
-const initializeTemporaryIndex = async (
+const withTemporaryGitIndex = async <Result>(
   repositoryRoot: string,
-  indexPath: string
-): Promise<void> => {
-  const env = getTemporaryIndexEnv(indexPath)
-  const head = await runGit(repositoryRoot, ['rev-parse', '--verify', 'HEAD'])
-
-  await runGit(repositoryRoot, head ? ['read-tree', 'HEAD'] : ['read-tree', '--empty'], {
-    env,
-    required: true
-  })
-}
-
-const getUncommittedGitDiff = async (cwd: string): Promise<{ diff: string }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
-
+  label: string,
+  run: (indexPath: string) => Promise<Result>
+): Promise<Result> => {
   const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-git-index-'))
   const indexPath = join(tempDirectory, 'index')
-  const env = getTemporaryIndexEnv(indexPath)
 
   try {
-    await initializeTemporaryIndex(repositoryRoot, indexPath)
-    await runGit(repositoryRoot, ['add', '-A', '--', '.'], { env, required: true })
-
-    const diff = await runGit(
-      repositoryRoot,
-      ['diff', '--cached', '--binary', '--full-index', '--find-renames'],
-      { env, required: true }
-    )
-
-    return { diff: diff ?? '' }
+    const head = await runGit(repositoryRoot, ['rev-parse', '--verify', 'HEAD'])
+    await runGit(repositoryRoot, head ? ['read-tree', 'HEAD'] : ['read-tree', '--empty'], {
+      env: getTemporaryIndexEnv(indexPath),
+      required: true
+    })
+    return await run(indexPath)
   } finally {
     await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
-      console.warn('Unable to remove a temporary Git index directory', error)
+      console.warn(`Unable to remove a temporary ${label} directory`, error)
     })
   }
 }
@@ -2506,15 +2032,10 @@ const getUncommittedGitDiff = async (cwd: string): Promise<{ diff: string }> => 
 const getGitCommitMessageContext = async (
   cwd: string
 ): Promise<AppGitCommitMessageContextResult> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(cwd)
 
-  const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-git-index-'))
-  const indexPath = join(tempDirectory, 'index')
-  const env = getTemporaryIndexEnv(indexPath)
-
-  try {
-    await initializeTemporaryIndex(repositoryRoot, indexPath)
+  return withTemporaryGitIndex(repositoryRoot, 'Git commit-context', async (indexPath) => {
+    const env = getTemporaryIndexEnv(indexPath)
     await runGit(repositoryRoot, ['add', '-A', '--', '.'], { env, required: true })
 
     const numstat = await runGit(
@@ -2543,11 +2064,7 @@ const getGitCommitMessageContext = async (
       ...summary,
       diff: diff?.replace(/^Binary files .+ differ$/gm, 'BINARY') ?? null
     }
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
-      console.warn('Unable to remove a temporary Git commit-context directory', error)
-    })
-  }
+  })
 }
 
 const getGitFileDiff = async (
@@ -2556,19 +2073,14 @@ const getGitFileDiff = async (
   previousPath?: string | null
 ): Promise<{ diff: string }> => {
   const target = await resolveFileTarget(cwd, path)
-  const repositoryRoot = await runGit(target.commandCwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(target.commandCwd)
 
   const paths = [
     normalizePatchPath(repositoryRoot, target.absolutePath),
     ...(previousPath ? [normalizePatchPath(repositoryRoot, previousPath)] : [])
   ]
-  const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-git-index-'))
-  const indexPath = join(tempDirectory, 'index')
-  const env = getTemporaryIndexEnv(indexPath)
-
-  try {
-    await initializeTemporaryIndex(repositoryRoot, indexPath)
+  return withTemporaryGitIndex(repositoryRoot, 'Git file-diff', async (indexPath) => {
+    const env = getTemporaryIndexEnv(indexPath)
     await stageGitFileDiffPaths(repositoryRoot, indexPath, paths, runGit)
 
     const diff = await runGit(
@@ -2588,329 +2100,23 @@ const getGitFileDiff = async (
     )
 
     return { diff: diff ?? '' }
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
-      console.warn('Unable to remove a temporary Git file-diff directory', error)
-    })
-  }
-}
-
-const applyUnifiedPatchToIndex = async (
-  repositoryRoot: string,
-  indexPath: string,
-  patch: string
-): Promise<void> => {
-  const env = getTemporaryIndexEnv(indexPath)
-  const applyArgs = ['apply', '--cached', '--whitespace=nowarn', '--recount', '-C0']
-
-  try {
-    await runGit(repositoryRoot, applyArgs, { env, input: patch, required: true })
-  } catch (error) {
-    console.warn('Git patch did not apply forward; checking whether it is already applied', error)
-    const reverseCheck = await runGit(repositoryRoot, [...applyArgs, '--reverse', '--check'], {
-      env,
-      input: patch
-    })
-
-    if (reverseCheck != null) return
-
-    throw error
-  }
-}
-
-const writeContentToIndex = async (
-  repositoryRoot: string,
-  indexPath: string,
-  path: string,
-  content: string
-): Promise<void> => {
-  const objectHash = await runGit(repositoryRoot, ['hash-object', '-w', '--stdin'], {
-    input: content,
-    required: true
   })
-  if (!objectHash) throw new Error(`Unable to write patch content for ${path}`)
-
-  await runGit(
-    repositoryRoot,
-    ['update-index', '--add', '--cacheinfo', `100644,${objectHash},${path}`],
-    { env: getTemporaryIndexEnv(indexPath), required: true }
-  )
-}
-
-const removePathFromIndex = async (
-  repositoryRoot: string,
-  indexPath: string,
-  path: string
-): Promise<void> => {
-  await runGit(repositoryRoot, ['update-index', '--force-remove', '--', path], {
-    env: getTemporaryIndexEnv(indexPath),
-    required: true
-  })
-}
-
-const applyPatchChangeToIndex = async (
-  repositoryRoot: string,
-  indexPath: string,
-  change: AppGitPatchChange
-): Promise<string> => {
-  const path = normalizePatchPath(repositoryRoot, change.path)
-
-  if (change.kind === 'create' && !isFullUnifiedDiff(change.diff)) {
-    await writeContentToIndex(repositoryRoot, indexPath, path, change.diff)
-    return path
-  }
-
-  if (change.kind === 'delete' && !isFullUnifiedDiff(change.diff)) {
-    await removePathFromIndex(repositoryRoot, indexPath, path)
-    return path
-  }
-
-  await applyUnifiedPatchToIndex(repositoryRoot, indexPath, getUnifiedPatch(change, path))
-  return path
-}
-
-const reverseApplyPatchChangeToIndex = async (
-  repositoryRoot: string,
-  indexPath: string,
-  change: AppGitPatchChange
-): Promise<string> => {
-  const path = normalizePatchPath(repositoryRoot, change.path)
-
-  if (change.kind === 'create' && !isFullUnifiedDiff(change.diff)) {
-    await removePathFromIndex(repositoryRoot, indexPath, path)
-    return path
-  }
-
-  if (change.kind === 'delete' && !isFullUnifiedDiff(change.diff)) {
-    await writeContentToIndex(repositoryRoot, indexPath, path, change.diff)
-    return path
-  }
-
-  await runGit(
-    repositoryRoot,
-    ['apply', '--cached', '--whitespace=nowarn', '--recount', '-C0', '--reverse'],
-    {
-      env: getTemporaryIndexEnv(indexPath),
-      input: getUnifiedPatch(change, path),
-      required: true
-    }
-  )
-  return path
-}
-
-const patchChangesHead = async (
-  repositoryRoot: string,
-  tempDirectory: string,
-  patchIndex: number,
-  change: AppGitPatchChange
-): Promise<boolean> => {
-  const indexPath = join(tempDirectory, `patch-${patchIndex}.index`)
-
-  try {
-    await initializeTemporaryIndex(repositoryRoot, indexPath)
-    await applyPatchChangeToIndex(repositoryRoot, indexPath, change)
-
-    return (await getTemporaryIndexChangedPaths(repositoryRoot, indexPath)).length > 0
-  } catch (error) {
-    console.warn('Unable to test whether a patch changes HEAD', error)
-    return false
-  }
-}
-
-const getTemporaryIndexDiffWeight = async (
-  repositoryRoot: string,
-  indexPath: string,
-  paths: string[]
-): Promise<number> => {
-  const output = await runGit(repositoryRoot, ['diff', '--cached', '--shortstat', '--', ...paths], {
-    env: getTemporaryIndexEnv(indexPath),
-    required: true
-  })
-
-  const files = Number.parseInt(output?.match(/(\d+) files? changed/)?.[1] ?? '0', 10)
-  const insertions = Number.parseInt(output?.match(/(\d+) insertions?\(\+\)/)?.[1] ?? '0', 10)
-  const deletions = Number.parseInt(output?.match(/(\d+) deletions?\(-\)/)?.[1] ?? '0', 10)
-
-  return files * 1000 + insertions + deletions
-}
-
-const reversePatchReducesWorktreeDiff = async (
-  repositoryRoot: string,
-  tempDirectory: string,
-  patchIndex: number,
-  worktreeIndexPath: string,
-  change: AppGitPatchChange
-): Promise<boolean> => {
-  const path = normalizePatchPath(repositoryRoot, change.path)
-  const reverseIndexPath = join(tempDirectory, `reverse-${patchIndex}.index`)
-  const beforeWeight = await getTemporaryIndexDiffWeight(repositoryRoot, worktreeIndexPath, [path])
-
-  if (beforeWeight === 0) return false
-
-  try {
-    await copyFile(worktreeIndexPath, reverseIndexPath)
-    await reverseApplyPatchChangeToIndex(repositoryRoot, reverseIndexPath, change)
-
-    return (
-      (await getTemporaryIndexDiffWeight(repositoryRoot, reverseIndexPath, [path])) < beforeWeight
-    )
-  } catch (error) {
-    console.warn('Unable to test whether a patch reverses a worktree change', error)
-    return false
-  }
-}
-
-const getGitPatchChangeKey = (patch: AppGitPatchChange): string =>
-  [patch.path, patch.kind, patch.diff].join('\0')
-
-const getUniqueGitPatchChanges = (patches: AppGitPatchChange[]): AppGitPatchChange[] => {
-  const seenPatchKeys = new Set<string>()
-  const uniquePatches: AppGitPatchChange[] = []
-
-  for (const patch of patches) {
-    const key = getGitPatchChangeKey(patch)
-    if (seenPatchKeys.has(key)) continue
-
-    seenPatchKeys.add(key)
-    uniquePatches.push(patch)
-  }
-
-  return uniquePatches
-}
-
-const getUncommittedGitPatchChanges = async (
-  cwd: string,
-  patches: AppGitPatchChange[]
-): Promise<{ patches: AppGitPatchChange[] }> => {
-  if (patches.length === 0) return { patches: [] }
-
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
-
-  const status = await runGit(repositoryRoot, ['status', '--porcelain=v1', '-z'], true)
-  if (!status) return { patches: [] }
-
-  const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-git-index-'))
-  const worktreeIndexPath = join(tempDirectory, 'worktree.index')
-
-  try {
-    await initializeTemporaryIndex(repositoryRoot, worktreeIndexPath)
-    await runGit(repositoryRoot, ['add', '-A', '--', '.'], {
-      env: getTemporaryIndexEnv(worktreeIndexPath),
-      required: true
-    })
-
-    const uncommittedPatches: AppGitPatchChange[] = []
-
-    for (const [patchIndex, patch] of getUniqueGitPatchChanges(patches).entries()) {
-      if (!(await patchChangesHead(repositoryRoot, tempDirectory, patchIndex, patch))) continue
-      if (
-        !(await reversePatchReducesWorktreeDiff(
-          repositoryRoot,
-          tempDirectory,
-          patchIndex,
-          worktreeIndexPath,
-          patch
-        ))
-      ) {
-        continue
-      }
-
-      uncommittedPatches.push(patch)
-    }
-
-    return { patches: uncommittedPatches }
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
-      console.warn('Unable to remove a temporary uncommitted-patch directory', error)
-    })
-  }
-}
-
-const getTemporaryIndexChangedPaths = async (
-  repositoryRoot: string,
-  indexPath: string
-): Promise<string[]> => {
-  const output = await runGit(repositoryRoot, ['diff', '--cached', '--name-only', '-z'], {
-    env: getTemporaryIndexEnv(indexPath),
-    required: true
-  })
-
-  return parseGitPathList(output ?? '')
-}
-
-const commitGitPatchChanges = async (
-  repositoryRoot: string,
-  patches: AppGitPatchChange[],
-  message: string | null | undefined,
-  action: AppGitCommitAction
-): Promise<void> => {
-  if (patches.length === 0) throw new Error('Patch changes are required')
-
-  const tempDirectory = await mkdtemp(join(tmpdir(), 'sele-git-index-'))
-  const indexPath = join(tempDirectory, 'index')
-
-  try {
-    await initializeTemporaryIndex(repositoryRoot, indexPath)
-
-    for (const patch of patches) {
-      await applyPatchChangeToIndex(repositoryRoot, indexPath, patch)
-    }
-
-    const changedPaths = await getTemporaryIndexChangedPaths(repositoryRoot, indexPath)
-    if (changedPaths.length === 0) throw new Error('No patch changes to commit')
-
-    if (action === 'amend') {
-      await runGit(repositoryRoot, ['commit', '--amend', '--no-edit'], {
-        env: getTemporaryIndexEnv(indexPath),
-        required: true
-      })
-    } else {
-      const commitMessage = message?.trim()
-      if (!commitMessage) throw new Error('Commit message is required')
-
-      await runGit(repositoryRoot, ['commit', '-m', commitMessage], {
-        env: getTemporaryIndexEnv(indexPath),
-        required: true
-      })
-    }
-
-    await runGit(repositoryRoot, ['reset', '-q', 'HEAD', '--', ...changedPaths], true)
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch((error: unknown) => {
-      console.warn('Unable to remove a temporary patch-application directory', error)
-    })
-  }
 }
 
 const commitGitChanges = async (
   cwd: string,
-  message: string | null | undefined,
-  action: AppGitCommitAction,
-  patches?: AppGitPatchChange[]
+  message: string,
+  action: AppGitCommitAction
 ): Promise<{ commitHash: string; pushed: boolean }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(cwd)
+  const options = { required: true, timeoutMs: 120_000 }
 
-  if (patches && patches.length > 0) {
-    const { patches: uncommittedPatches } = await getUncommittedGitPatchChanges(
-      repositoryRoot,
-      patches
-    )
-    if (uncommittedPatches.length === 0) {
-      throw new Error(
-        'The selected chat changes are no longer present in the working tree. Refresh Changes and try again.'
-      )
-    }
-
-    await commitGitPatchChanges(repositoryRoot, uncommittedPatches, message, action)
-    const commitHash = await runGit(repositoryRoot, ['rev-parse', 'HEAD'], true)
-    if (!commitHash) throw new Error('Unable to read commit hash')
-
-    return { commitHash, pushed: false }
-  }
-
-  await commitAllGitChanges({ action, message, repositoryRoot, runGit })
+  await runGit(repositoryRoot, ['add', '-A', '--', '.'], options)
+  await runGit(
+    repositoryRoot,
+    action === 'amend' ? ['commit', '--amend', '--no-edit'] : ['commit', '-m', message],
+    options
+  )
 
   const commitHash = await runGit(repositoryRoot, ['rev-parse', 'HEAD'], true)
   if (!commitHash) throw new Error('Unable to read commit hash')
@@ -2924,8 +2130,7 @@ const pushGitChanges = async (
   target?: AppGitPushTarget,
   rememberTarget = false
 ): Promise<{ pushed: boolean; failure?: AppGitRecoverableFailure | null }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(cwd)
   if (setUpstream && target) throw new Error('Cannot set an upstream and choose a push target.')
   if (rememberTarget && !target) {
     throw new Error('Cannot remember a push target without choosing one.')
@@ -3021,15 +2226,10 @@ const rememberGitPullStrategy = async (
   repositoryRoot: string,
   strategy: AppGitPullStrategy
 ): Promise<void> => {
-  if (strategy === 'rebase') {
-    await runGit(repositoryRoot, ['config', 'pull.rebase', 'true'], true)
-    await runGit(repositoryRoot, ['config', '--unset-all', 'pull.ff'])
-  }
+  if (strategy === 'ff-only') return
 
-  if (strategy === 'merge') {
-    await runGit(repositoryRoot, ['config', 'pull.rebase', 'false'], true)
-    await runGit(repositoryRoot, ['config', '--unset-all', 'pull.ff'])
-  }
+  await runGit(repositoryRoot, ['config', 'pull.rebase', String(strategy === 'rebase')], true)
+  await runGit(repositoryRoot, ['config', '--unset-all', 'pull.ff'])
 }
 
 const getGitPullArgs = async (
@@ -3048,8 +2248,7 @@ const pullGitChanges = async (
   strategy?: AppGitPullStrategy,
   rememberStrategy = false
 ): Promise<{ pulled: boolean; failure?: AppGitRecoverableFailure | null }> => {
-  const repositoryRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'], true)
-  if (!repositoryRoot) throw new Error('Folder is not inside a Git repository')
+  const repositoryRoot = await getRepositoryRoot(cwd)
 
   if (rememberStrategy && strategy) {
     await rememberGitPullStrategy(repositoryRoot, strategy)
@@ -3077,6 +2276,40 @@ const pullGitChanges = async (
 
   return { pulled: true, failure: null }
 }
+
+const showOpenDialog = (
+  event: Electron.IpcMainInvokeEvent,
+  options: Electron.OpenDialogOptions
+): Promise<Electron.OpenDialogReturnValue> => {
+  const browserWindow = BrowserWindow.fromWebContents(event.sender)
+  return browserWindow
+    ? dialog.showOpenDialog(browserWindow, options)
+    : dialog.showOpenDialog(options)
+}
+
+const handleGitRequest = <Options extends AppGitBranchesOptions>(
+  channel: string,
+  getOptions: (value: unknown) => Options,
+  run: (cwd: string, options: Options) => unknown
+): void =>
+  handleClientRequest(channel, (_event, value) => {
+    const options = getOptions(value)
+    return runWithGitContainer(options.container, () => run(options.cwd ?? process.cwd(), options))
+  })
+
+const handleGitHubRequest = <Options extends AppGitBranchesOptions>(
+  channel: string,
+  getOptions: (value: unknown) => Options,
+  run: (
+    cwd: string,
+    options: Options,
+    git: typeof runGit,
+    gitHub: (args: string[], input?: string) => Promise<string>
+  ) => unknown
+): void =>
+  handleGitRequest(channel, getOptions, (cwd, options) =>
+    run(cwd, options, runGit, (args, input) => runGitHub(cwd, options.container, args, input))
+  )
 
 export const registerAppIpc = (): void => {
   handleLoggedIpc(appIpcChannels.exportDiagnosticLog, async (event) => {
@@ -3185,20 +2418,15 @@ export const registerAppIpc = (): void => {
   })
 
   handleClientRequest(appIpcChannels.deleteSshEnvironment, async (_event, value: unknown) => {
-    const options = getDeleteSshEnvironmentOptions(value)
-    await deleteStoredSshEnvironment(options.id)
+    await deleteStoredSshEnvironment(getSshEnvironmentId(value))
     publishWorkspace()
   })
 
   handleLoggedIpc(appIpcChannels.selectSshIdentityFile, async (event) => {
-    const browserWindow = BrowserWindow.fromWebContents(event.sender)
-    const dialogOptions = {
+    const result = await showOpenDialog(event, {
       title: 'Choose SSH identity file',
       properties: ['openFile']
-    } satisfies Electron.OpenDialogOptions
-    const result = browserWindow
-      ? await dialog.showOpenDialog(browserWindow, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions)
+    })
 
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
@@ -3262,125 +2490,79 @@ export const registerAppIpc = (): void => {
       always = result.checkboxChecked
     }
 
-    await performExternalLinkAction(action, options.url)
+    if (action === 'copy') clipboard.writeText(options.url)
+    else await openExternalLink(options.url)
     return { action, always } satisfies AppExternalLinkResult
   })
 
-  handleClientRequest(appIpcChannels.getGitChanges, async (_event, value: unknown) => {
-    const options = getGitChangesOptions(value)
-    return runWithGitContainer(options.container, () =>
-      getGitChanges(options.cwd ?? process.cwd(), options.source, options.fetchRemote)
-    )
-  })
+  handleGitRequest(appIpcChannels.getGitChanges, getGitChangesOptions, (cwd, options) =>
+    getGitChanges(cwd, options.fetchRemote)
+  )
 
-  handleClientRequest(appIpcChannels.getGitHubPullRequests, async (_event, value: unknown) => {
-    const options = getGitHubPullRequestsOptions(value)
-    const cwd = options.cwd ?? process.cwd()
-    return runWithGitContainer(options.container, () =>
-      listGitHubPullRequests(cwd, options, runGit, (args) =>
-        runGitHub(cwd, options.container, args)
-      )
-    )
-  })
+  handleGitHubRequest(
+    appIpcChannels.getGitHubPullRequests,
+    getGitHubPullRequestsOptions,
+    listGitHubPullRequests
+  )
 
-  handleClientRequest(appIpcChannels.getGitHubPullRequest, async (_event, value: unknown) => {
-    const options = getGitHubPullRequestOptions(value)
-    const cwd = options.cwd ?? process.cwd()
-    return runWithGitContainer(options.container, () =>
-      getGitHubPullRequest(cwd, options, runGit, (args) => runGitHub(cwd, options.container, args))
-    )
-  })
+  handleGitHubRequest(
+    appIpcChannels.getGitHubPullRequest,
+    getGitHubPullRequestOptions,
+    getGitHubPullRequest
+  )
 
-  handleClientRequest(
+  handleGitHubRequest(
     appIpcChannels.getGitHubPullRequestChanges,
-    async (_event, value: unknown) => {
-      const options = getGitHubPullRequestOptions(value)
-      const cwd = options.cwd ?? process.cwd()
-      return runWithGitContainer(options.container, () =>
-        getGitHubPullRequestChanges(cwd, options, runGit, (args) =>
-          runGitHub(cwd, options.container, args)
-        )
-      )
-    }
+    getGitHubPullRequestOptions,
+    getGitHubPullRequestChanges
   )
 
-  handleClientRequest(
+  handleGitHubRequest(
     appIpcChannels.submitGitHubPullRequestReview,
-    async (_event, value: unknown) => {
-      const options = {
-        ...getGitHubPullRequestOptions(value),
-        ...gitHubPullRequestReviewSchema.parse(value)
-      }
-      const cwd = options.cwd ?? process.cwd()
-      return runWithGitContainer(options.container, () =>
-        submitGitHubPullRequestReview(cwd, options, runGit, (args, input) =>
-          runGitHub(cwd, options.container, args, input)
-        )
-      )
-    }
+    (value) => ({
+      ...getGitHubPullRequestOptions(value),
+      ...gitHubPullRequestReviewSchema.parse(value)
+    }),
+    submitGitHubPullRequestReview
   )
 
-  handleClientRequest(
+  handleGitHubRequest(
     appIpcChannels.getGitHubPullRequestManagement,
-    async (_event, value: unknown) => {
-      const options = getGitHubPullRequestOptions(value)
-      const cwd = options.cwd ?? process.cwd()
-      return runWithGitContainer(options.container, () =>
-        getGitHubPullRequestManagement(cwd, options, runGit, (args) =>
-          runGitHub(cwd, options.container, args)
-        )
-      )
-    }
+    getGitHubPullRequestOptions,
+    getGitHubPullRequestManagement
   )
-  handleClientRequest(
+
+  handleGitHubRequest(
     appIpcChannels.getGitHubPullRequestCommitChanges,
-    async (_event, value: unknown) => {
+    (value) => {
       const options = getGitHubPullRequestOptions(value)
       const commitSha = (value as { commitSha?: unknown }).commitSha
       if (typeof commitSha !== 'string' || !/^[a-f\d]{40,64}$/i.test(commitSha))
         throw new Error('Invalid commit SHA')
-      const cwd = options.cwd ?? process.cwd()
-      return runWithGitContainer(options.container, () =>
-        getGitHubPullRequestCommitChanges(cwd, { ...options, commitSha }, runGit, (args) =>
-          runGitHub(cwd, options.container, args)
-        )
-      )
-    }
+      return { ...options, commitSha }
+    },
+    getGitHubPullRequestCommitChanges
   )
-  handleClientRequest(
+
+  handleGitHubRequest(
     appIpcChannels.performGitHubPullRequestAction,
-    async (_event, value: unknown) => {
-      const options = {
-        ...getGitHubPullRequestOptions(value),
-        ...gitHubPullRequestActionSchema.parse(value)
-      }
-      const cwd = options.cwd ?? process.cwd()
-      return runWithGitContainer(options.container, () =>
-        performGitHubPullRequestAction(cwd, options, runGit, (args, input) =>
-          runGitHub(cwd, options.container, args, input)
-        )
-      )
-    }
+    (value) => ({
+      ...getGitHubPullRequestOptions(value),
+      ...gitHubPullRequestActionSchema.parse(value)
+    }),
+    performGitHubPullRequestAction
   )
 
-  handleClientRequest(appIpcChannels.getGitBranches, async (_event, value: unknown) => {
-    const options = getGitBranchesOptions(value)
-    return runWithGitContainer(options.container, () =>
-      getGitBranches(options.cwd ?? process.cwd())
-    )
-  })
+  handleGitRequest(appIpcChannels.getGitBranches, getGitBranchesOptions, getGitBranches)
 
-  handleClientRequest(appIpcChannels.switchGitBranch, async (_event, value: unknown) => {
-    const options = getGitSwitchBranchOptions(value)
-    return runWithGitContainer(options.container, () =>
-      switchGitBranch(options.cwd ?? process.cwd(), options.branchName, Boolean(options.create))
-    )
-  })
+  handleGitRequest(appIpcChannels.switchGitBranch, getGitSwitchBranchOptions, (cwd, options) =>
+    switchGitBranch(cwd, options.branchName, options.create)
+  )
 
   handleLoggedIpc(appIpcChannels.deleteGitBranch, async (event, value: unknown) => {
     const options = getGitDeleteBranchOptions(value)
-    let scope = options.scope ?? null
-    let force = Boolean(options.force)
+    let scope = options.scope
+    let force = options.force
 
     if (!scope) {
       const result = await dialog.showMessageBox(getBrowserWindow(event), {
@@ -3420,38 +2602,26 @@ export const registerAppIpc = (): void => {
         options.branchName,
         scope,
         force,
-        Boolean(options.removeWorktree)
+        options.removeWorktree
       )
     )
   })
 
-  handleClientRequest(appIpcChannels.createGitWorktree, async (_event, value: unknown) => {
-    const options = getGitCreateWorktreeOptions(value)
-    return runWithGitContainer(options.container, () =>
-      createGitWorktree(options.cwd ?? process.cwd(), options.name)
-    )
-  })
+  handleGitRequest(appIpcChannels.createGitWorktree, getGitCreateWorktreeOptions, (cwd, options) =>
+    createGitWorktree(cwd, options.name)
+  )
 
-  handleClientRequest(appIpcChannels.getFileTree, async (_event, value: unknown) => {
-    const options = getFileTreeOptions(value)
-    return runWithGitContainer(options.container, async () =>
-      createFileTreeResult(await readFileTreePaths(options.cwd ?? process.cwd()))
-    )
-  })
+  handleGitRequest(appIpcChannels.getFileTree, getFileTreeOptions, async (cwd) =>
+    createFileTreeResult(await readFileTreePaths(cwd))
+  )
 
-  handleClientRequest(appIpcChannels.getFileTreeListing, async (_event, value: unknown) => {
-    const options = getFileTreeOptions(value)
-    return runWithGitContainer(options.container, async () =>
-      createFileTreeListing(await readFileTreePaths(options.cwd ?? process.cwd()))
-    )
-  })
+  handleGitRequest(appIpcChannels.getFileTreeListing, getFileTreeOptions, async (cwd) =>
+    createFileTreeListing(await readFileTreePaths(cwd))
+  )
 
-  handleClientRequest(appIpcChannels.getFileContents, async (_event, value: unknown) => {
-    const options = getFileContentsOptions(value)
-    return runWithGitContainer(options.container, () =>
-      readFileContents(options.cwd ?? process.cwd(), options.path)
-    )
-  })
+  handleGitRequest(appIpcChannels.getFileContents, getFileContentsOptions, (cwd, options) =>
+    readFileContents(cwd, options.path)
+  )
 
   handleLoggedIpc(appIpcChannels.openFileInSystemApp, async (_event, value: unknown) => {
     const options = getFileContentsOptions(value)
@@ -3477,116 +2647,59 @@ export const registerAppIpc = (): void => {
     return runWithGitContainer(options.container, () => showFileInFolder(options))
   })
 
-  handleClientRequest(appIpcChannels.writeFileContents, async (_event, value: unknown) => {
-    const options = getWriteFileContentsOptions(value)
-    return runWithGitContainer(options.container, () =>
-      writeEditableFile(
-        options.cwd ?? process.cwd(),
-        options.path,
-        options.contents,
-        options.expectedVersion
-      )
-    )
-  })
-
-  handleClientRequest(appIpcChannels.getRecentGitCommitMessages, async (_event, value: unknown) => {
-    const options = getGitRecentCommitMessagesOptions(value)
-    return runWithGitContainer(options.container, () =>
-      getRecentGitCommitMessages(options.cwd ?? process.cwd(), options.limit ?? 3)
-    )
-  })
-
-  handleClientRequest(appIpcChannels.getUncommittedGitDiff, async (_event, value: unknown) => {
-    const options = getGitDiffOptions(value)
-    return runWithGitContainer(options.container, () =>
-      getUncommittedGitDiff(options.cwd ?? process.cwd())
-    )
-  })
-
-  handleClientRequest(appIpcChannels.getGitCommitMessageContext, async (_event, value: unknown) => {
-    const options = getGitDiffOptions(value)
-    return runWithGitContainer(options.container, () =>
-      getGitCommitMessageContext(options.cwd ?? process.cwd())
-    )
-  })
-
-  handleClientRequest(appIpcChannels.getGitFileDiff, async (_event, value: unknown) => {
-    const options = getGitFileDiffOptions(value)
-    return runWithGitContainer(options.container, () =>
-      getGitFileDiff(options.cwd ?? process.cwd(), options.path, options.previousPath)
-    )
-  })
-
-  handleClientRequest(
-    appIpcChannels.getUncommittedGitPatchChanges,
-    async (_event, value: unknown) => {
-      const options = getGitUncommittedPatchChangesOptions(value)
-      return runWithGitContainer(options.container, () =>
-        getUncommittedGitPatchChanges(options.cwd ?? process.cwd(), options.patches)
-      )
-    }
+  handleGitRequest(appIpcChannels.writeFileContents, getWriteFileContentsOptions, (cwd, options) =>
+    writeEditableFile(cwd, options.path, options.contents, options.expectedVersion)
   )
 
-  handleClientRequest(appIpcChannels.commitGitChanges, async (_event, value: unknown) => {
-    const options = getGitCommitOptions(value)
-    return runWithGitContainer(options.container, () =>
-      commitGitChanges(
-        options.cwd ?? process.cwd(),
-        options.message,
-        options.action ?? 'commit',
-        options.patches
-      )
-    )
-  })
+  handleGitRequest(
+    appIpcChannels.getRecentGitCommitMessages,
+    getGitRecentCommitMessagesOptions,
+    (cwd, options) => getRecentGitCommitMessages(cwd, options.limit)
+  )
 
-  handleClientRequest(appIpcChannels.pullGitChanges, async (_event, value: unknown) => {
-    const options = getGitSyncOptions(value)
-    return runWithGitContainer(options.container, () =>
-      pullGitChanges(options.cwd ?? process.cwd(), options.strategy, options.rememberStrategy)
-    )
-  })
+  handleGitRequest(
+    appIpcChannels.getGitCommitMessageContext,
+    getGitDiffOptions,
+    getGitCommitMessageContext
+  )
 
-  handleClientRequest(appIpcChannels.pushGitChanges, async (_event, value: unknown) => {
-    const options = getGitSyncOptions(value)
-    return runWithGitContainer(options.container, () =>
-      pushGitChanges(
-        options.cwd ?? process.cwd(),
-        options.setUpstream,
-        options.target,
-        options.rememberTarget
-      )
-    )
-  })
+  handleGitRequest(appIpcChannels.getGitFileDiff, getGitFileDiffOptions, (cwd, options) =>
+    getGitFileDiff(cwd, options.path, options.previousPath)
+  )
+
+  handleGitRequest(appIpcChannels.commitGitChanges, getGitCommitOptions, (cwd, options) =>
+    commitGitChanges(cwd, options.message, options.action)
+  )
+
+  handleGitRequest(appIpcChannels.pullGitChanges, getGitSyncOptions, (cwd, options) =>
+    pullGitChanges(cwd, options.strategy, options.rememberStrategy)
+  )
+
+  handleGitRequest(appIpcChannels.pushGitChanges, getGitSyncOptions, (cwd, options) =>
+    pushGitChanges(cwd, options.setUpstream, options.target, options.rememberTarget)
+  )
 
   handleLoggedIpc(appIpcChannels.selectFolder, async (event, options: unknown) => {
-    const browserWindow = BrowserWindow.fromWebContents(event.sender)
     const folderOptions =
       options && typeof options === 'object' && !Array.isArray(options)
         ? (options as { defaultPath?: unknown })
         : {}
-
-    const dialogOptions = {
+    const result = await showOpenDialog(event, {
       defaultPath: getDefaultPath(folderOptions.defaultPath),
       properties: ['openDirectory']
-    } satisfies Electron.OpenDialogOptions
-
-    const result = browserWindow
-      ? await dialog.showOpenDialog(browserWindow, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions)
+    })
 
     if (result.canceled) return null
     return result.filePaths[0] ?? null
   })
 
-  handleClientRequest(appIpcChannels.getProjectIcon, async (_event, value: unknown) => {
-    const options = getProjectIconOptions(value)
-    return getAppProjectIcon(options.cwd ?? null)
-  })
+  handleClientRequest(appIpcChannels.getProjectIcon, (_event, value: unknown) =>
+    getAppProjectIcon(getProjectIconOptions(value).cwd)
+  )
 
   handleLoggedIpc(appIpcChannels.selectProjectIcon, async (event, value: unknown) => {
     const options = getProjectIconOptions(value)
-    const browserWindow = BrowserWindow.fromWebContents(event.sender)
-    const dialogOptions = {
+    const result = await showOpenDialog(event, {
       properties: ['openFile'],
       filters: [
         {
@@ -3594,10 +2707,7 @@ export const registerAppIpc = (): void => {
           extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'ico']
         }
       ]
-    } satisfies Electron.OpenDialogOptions
-    const result = browserWindow
-      ? await dialog.showOpenDialog(browserWindow, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions)
+    })
 
     if (result.canceled) return null
 
@@ -3606,15 +2716,15 @@ export const registerAppIpc = (): void => {
 
     const copiedPath = await copyProjectIcon(sourcePath)
     if (options.persist !== false) {
-      await setStoredProjectIcon(options.cwd ?? null, copiedPath)
+      await setStoredProjectIcon(options.cwd, copiedPath)
       publishWorkspace()
-      return getAppProjectIcon(options.cwd ?? null)
+      return getAppProjectIcon(options.cwd)
     }
 
     const image = await getProjectIconFile(copiedPath)
     if (!image) throw new Error('Unable to load the selected project image')
     return {
-      cwd: options.cwd ?? null,
+      cwd: options.cwd,
       dataUrl: image.dataUrl,
       selectionId: rememberPendingProjectIconSelection(copiedPath),
       updatedAt: image.updatedAt
@@ -3624,12 +2734,10 @@ export const registerAppIpc = (): void => {
   handleClientRequest(
     appIpcChannels.prepareMessageAttachments,
     async (_event, attachments: unknown, value: unknown) => {
-      if (value != null && (typeof value !== 'object' || Array.isArray(value))) {
-        throw new Error('Invalid message attachment options')
-      }
-      const options = value as { container?: unknown; cwd?: unknown } | undefined
-      const container = requireContainerTarget(options?.container, { optional: true })
-      const cwd = getOptionalCwd(options?.cwd)
+      const options: Record<string, unknown> =
+        value == null ? {} : getOptionsRecord(value, 'Invalid message attachment options')
+      const container = requireContainerTarget(options.container, { optional: true })
+      const cwd = getOptionalCwd(options.cwd)
       return runWithGitContainer(container, () =>
         prepareMessageAttachments(
           attachments,
@@ -3641,13 +2749,7 @@ export const registerAppIpc = (): void => {
   )
 
   handleLoggedIpc(appIpcChannels.selectMessageAttachments, async (event) => {
-    const browserWindow = BrowserWindow.fromWebContents(event.sender)
-    const dialogOptions = {
-      properties: ['openFile', 'multiSelections']
-    } satisfies Electron.OpenDialogOptions
-    const result = browserWindow
-      ? await dialog.showOpenDialog(browserWindow, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions)
+    const result = await showOpenDialog(event, { properties: ['openFile', 'multiSelections'] })
 
     if (result.canceled) return []
     if (result.filePaths.length > maxMessageAttachmentCount) {
@@ -3700,7 +2802,6 @@ export const registerAppIpc = (): void => {
       throw new Error('Paste an image smaller than 32 MB.')
     }
 
-    const imageName = 'Pasted image.png'
     const imagePath = join(imageDirectory, `pasted-image-${randomUUID()}.png`)
     await mkdir(imageDirectory, { recursive: true })
     await writeFile(imagePath, imageFile)
@@ -3708,7 +2809,7 @@ export const registerAppIpc = (): void => {
     return {
       kind: 'image',
       dataUrl: `data:image/png;base64,${imageFile.toString('base64')}`,
-      name: imageName,
+      name: 'Pasted image.png',
       path: imagePath
     } satisfies AppSelectedImage
   })
@@ -3716,14 +2817,14 @@ export const registerAppIpc = (): void => {
   handleClientRequest(appIpcChannels.getLocalVideo, async (_event, value: unknown) => {
     const options = getLocalMediaOptions(value)
     return runWithGitContainer(options.container, () =>
-      getLocalMedia(options.cwd ?? null, options.path, options.relativeTo, 'video')
+      getLocalMedia(options.cwd, options.path, options.relativeTo, 'video')
     )
   })
 
   handleLoggedIpc(appIpcChannels.copyLocalVideo, async (_event, value: unknown) => {
     const options = getLocalMediaOptions(value)
     const video = await runWithGitContainer(options.container, () =>
-      getLocalMedia(options.cwd ?? null, options.path, options.relativeTo, 'video')
+      getLocalMedia(options.cwd, options.path, options.relativeTo, 'video')
     )
     await copyVideoFile(basename(options.path), Buffer.from(video.data))
   })
@@ -3731,7 +2832,7 @@ export const registerAppIpc = (): void => {
   handleClientRequest(appIpcChannels.getLocalImage, async (_event, value: unknown) => {
     const options = getLocalMediaOptions(value)
     return runWithGitContainer(options.container, () =>
-      getLocalMedia(options.cwd ?? null, options.path, options.relativeTo)
+      getLocalMedia(options.cwd, options.path, options.relativeTo)
     )
   })
 
@@ -3745,7 +2846,7 @@ export const registerAppIpc = (): void => {
       async (event, value: unknown) => {
         const options = getLocalMediaOptions(value)
         const image = await runWithGitContainer(options.container, () =>
-          getLocalMedia(options.cwd ?? null, options.path, options.relativeTo, kind)
+          getLocalMedia(options.cwd, options.path, options.relativeTo, kind)
         )
         const extension = extname(options.path).slice(1)
         const dialogOptions = {

@@ -17,6 +17,10 @@ if (!process.versions.electron) {
           "'./components/RendererErrorBoundary'",
           JSON.stringify(`/@fs/${rendererDirectory}/components/RendererErrorBoundary.tsx`)
         )
+        .replace(
+          "'./middleClickPaste'",
+          JSON.stringify(`/@fs/${rendererDirectory}/middleClickPaste.ts`)
+        )
       await fs.writeFile(path.join(directory, 'bootstrap.tsx'), bootstrap)
       await fs.writeFile(
         path.join(directory, 'label.ts'),

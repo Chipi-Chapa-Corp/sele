@@ -14,13 +14,6 @@ import {
   fallbackInitialReasoningEffort
 } from './controllerTypes'
 
-export const approvalTypeLabels = {
-  command: 'Command approval',
-  fileChange: 'File change approval',
-  browser: 'Browser permission',
-  permissions: 'Additional access requested'
-} as const
-
 export const getDefaultModel = (models: ProviderModel[]): ProviderModel =>
   models.find((nextModel) => nextModel.isDefault) ?? models[0] ?? fallbackInitialModel
 

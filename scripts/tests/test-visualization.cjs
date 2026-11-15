@@ -279,9 +279,13 @@ if (!process.versions.electron) {
         'Popup controls occupy their own row above the visualization content'
       )
       assert.equal(
-        await window.webContents.executeJavaScript(
-          `document.querySelector('.visualization dialog').matches(':modal') && getComputedStyle(document.querySelector('.visualization dialog')).resize==='both'`
-        ),
+        await window.webContents.executeJavaScript(`(() => {
+          const dialog = document.querySelector('.visualization dialog');
+          const grip = dialog.querySelector(':scope > .popup-window__resize-handle');
+          const bounds = grip.getBoundingClientRect();
+          return dialog.matches(':modal') &&
+            document.elementFromPoint((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2) === grip;
+        })()`),
         true,
         'Visualization expands into the shared modal with resizing enabled'
       )

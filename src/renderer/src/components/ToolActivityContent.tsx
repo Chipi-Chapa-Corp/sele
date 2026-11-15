@@ -50,7 +50,7 @@ export const CommandContent: React.FC<{ tools: ProviderWorkingTool[] }> = ({ too
   </div>
 )
 
-export const formatToolValue = (value: unknown): string => {
+const formatToolValue = (value: unknown): string => {
   if (value == null) return 'null'
   if (typeof value === 'string') return value
 

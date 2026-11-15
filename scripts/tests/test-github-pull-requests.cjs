@@ -228,6 +228,7 @@ if (!process.versions.electron) {
     let exitCode = 0
     try {
       await window.loadFile(path.join(process.argv[2], 'fixture.html'))
+      await fs.mkdir(path.resolve('test-results/github-pull-requests'), { recursive: true })
       const run = (source) => window.webContents.executeJavaScript(source)
       const capture = async (name) => {
         await run(
@@ -354,7 +355,6 @@ if (!process.versions.electron) {
           await run(`document.querySelectorAll('ul[aria-label="Pull requests"] > li').length<40`)
         )
         assert.equal(await run('window.requests.length'), 0)
-        await fs.mkdir(path.resolve('test-results/github-pull-requests'), { recursive: true })
         await capture('mock-window.png')
         await search('#10001')
         await ready(1)
@@ -562,7 +562,6 @@ if (!process.versions.electron) {
         ),
         true
       )
-      await fs.mkdir(path.resolve('test-results/github-pull-requests'), { recursive: true })
       await capture('native-details.png')
       await click('Refresh pull request')
       await wait('window.detailRequests.length===2')

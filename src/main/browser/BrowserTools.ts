@@ -38,7 +38,7 @@ const ref = z.string().regex(/^ref_\d+$/)
 const point = z.tuple([z.number().finite().nonnegative(), z.number().finite().nonnegative()])
 const limit = z.number().int().min(1).max(200).optional()
 
-const textResult = (value: unknown): { content: { type: 'text'; text: string }[] } => {
+const textResult = (value: unknown): BrowserToolResult => {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? { success: true })
   return {
     content: [
@@ -46,11 +46,7 @@ const textResult = (value: unknown): { content: { type: 'text'; text: string }[]
     ]
   }
 }
-const imageResult = (
-  shot: BrowserScreenshot
-): {
-  content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[]
-} => ({
+const imageResult = (shot: BrowserScreenshot): BrowserToolResult => ({
   content: [
     {
       type: 'text',
@@ -69,9 +65,7 @@ export function createBrowserTools(
   close(): void
 } {
   const browser = new BrowserWorkspace(service, scope)
-  const run = async <T>(
-    action: () => Promise<T>
-  ): Promise<Awaited<T> | (ReturnType<typeof textResult> & { isError: true })> => {
+  const run = async (action: () => Promise<BrowserToolResult>): Promise<BrowserToolResult> => {
     try {
       return await browser.run(action)
     } catch (error) {
@@ -124,20 +118,7 @@ export function createBrowserTools(
         ref_id: ref.optional(),
         max_chars: z.number().int().min(1).max(100000).optional()
       },
-      (args) =>
-        run(async () =>
-          textResult(
-            await browser.readPage(
-              {
-                filter: args.filter,
-                depth: args.depth,
-                ref: args.ref_id,
-                maxLength: args.max_chars
-              },
-              args.tabId
-            )
-          )
-        )
+      (args) => run(async () => textResult(await browser.readPage(args, args.tabId)))
     ),
     defineBrowserTool(
       'find',
@@ -196,21 +177,7 @@ export function createBrowserTools(
       },
       (args) =>
         run(async () => {
-          const result = await browser.computer(
-            {
-              action: args.action,
-              coordinate: args.coordinate,
-              startCoordinate: args.start_coordinate,
-              ref: args.ref,
-              text: args.text,
-              duration: args.duration,
-              scrollDirection: args.scroll_direction,
-              scrollAmount: args.scroll_amount,
-              scale: args.scale,
-              region: args.region
-            },
-            args.tabId
-          )
+          const result = await browser.computer(args, args.tabId)
           return result ? imageResult(result) : textResult(undefined)
         })
     ),

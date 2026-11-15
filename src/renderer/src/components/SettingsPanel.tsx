@@ -13,23 +13,28 @@ import { SettingsGitPanel } from './SettingsGitPanel'
 import { SettingsBrowserPanel } from './SettingsBrowserPanel'
 import { SettingsAppearancePanel } from './SettingsAppearancePanel'
 
+const settingsPanels = {
+  providers: ['Provider', SettingsProvidersPanel],
+  chatSidebar: ['Chat sidebar', SettingsChatSidebarPanel],
+  chat: ['Chat', SettingsChatPanel],
+  performance: ['Performance', SettingsPerformancePanel],
+  git: ['Git', SettingsGitPanel],
+  browser: ['Browser', SettingsBrowserPanel],
+  appearance: ['Appearance', SettingsAppearancePanel]
+} as const
+
 export const renderSettingsPanel = (props: SettingsPanelProps): React.ReactNode => {
-  switch (props.settingsTab) {
-    case 'localNetwork':
-      return <LocalAccessSettings />
-    case 'providers':
-      return <SettingsProvidersPanel {...props} />
-    case 'chatSidebar':
-      return <SettingsChatSidebarPanel {...props} />
-    case 'chat':
-      return <SettingsChatPanel {...props} />
-    case 'performance':
-      return <SettingsPerformancePanel {...props} />
-    case 'git':
-      return <SettingsGitPanel {...props} />
-    case 'browser':
-      return <SettingsBrowserPanel {...props} />
-    default:
-      return <SettingsAppearancePanel {...props} />
-  }
+  if (props.settingsTab === 'localNetwork') return <LocalAccessSettings />
+  const [label, Panel] = settingsPanels[props.settingsTab]
+  return (
+    <section
+      key={props.settingsTab}
+      className="settings-dialog__panel"
+      id={`settings-panel-${props.settingsTab}`}
+      role="tabpanel"
+      aria-label={`${label} settings`}
+    >
+      <Panel {...props} />
+    </section>
+  )
 }

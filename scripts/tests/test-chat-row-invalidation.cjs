@@ -113,7 +113,11 @@ if (!process.versions.electron) {
       const win = new BrowserWindow({ show: false })
       await win.loadFile(path.join(process.argv[2], 'index.html'))
       const run = (source) => win.webContents.executeJavaScript(source)
-      await run('renderRows();window.rowRenders=[]')
+      await run('renderRows()')
+      await run(
+        `new Promise(resolve=>{const wait=()=>document.querySelectorAll('.chat-detail__message-footer,.chat-detail__working').length===3?resolve():setTimeout(wait,10);wait()})`
+      )
+      await run('window.rowRenders=[]')
       await run(
         `renderRows({modelLabelsById:new Map([['old-model','Old label']]),resolvedModelIdsById:new Map()})`
       )

@@ -13,6 +13,7 @@ import {
   Upload,
   X
 } from 'lucide-react'
+import { Fragment } from 'react'
 import type { AppGitCommitAction } from '../../../shared/app'
 import type { ProviderId } from '../../../shared/provider'
 import type { ChatCommitMarkerStatus } from '../chatCommitMarker'
@@ -56,24 +57,12 @@ export const AnimatedStatusIcon: React.FC<{
   </div>
 )
 
-const getChatCommitMarkerLabel = (marker: ChatCommitMarker): string => {
-  if (marker.status === 'pending') {
-    return marker.commitAction === 'amend'
+const getChatCommitMarkerLabel = (marker: ChatCommitMarker): string =>
+  marker.status !== 'pending'
+    ? `AI ${marker.commitAction} ${marker.status}`
+    : marker.commitAction === 'amend'
       ? 'AI is amending the commit…'
       : 'AI is committing changes…'
-  }
-  if (marker.status === 'failed') {
-    return marker.commitAction === 'amend' ? 'AI amend failed' : 'AI commit failed'
-  }
-  if (marker.status === 'stopped') {
-    return marker.commitAction === 'amend' ? 'AI amend stopped' : 'AI commit stopped'
-  }
-  if (marker.status === 'interrupted') {
-    return marker.commitAction === 'amend' ? 'AI amend interrupted' : 'AI commit interrupted'
-  }
-
-  return marker.commitAction === 'amend' ? 'AI amend finished' : 'AI commit finished'
-}
 
 export const ChatCommitMarkerItem: React.FC<{
   marker: ChatCommitMarker
@@ -215,43 +204,28 @@ export const GitSyncCountsLabel: React.FC<{
   active: boolean
   unpulledCount: number
   unpushedCount: number
-}> = ({ active, unpulledCount, unpushedCount }) => {
-  const showPull = unpulledCount > 0
-  const showPush = unpushedCount > 0
-
-  return (
-    <span className="changes-sidebar__sync-label">
-      {showPull && (
-        <span className="changes-sidebar__sync-label-segment">
-          {active ? (
-            <AnimatedStatusIcon
-              Icon={Download}
-              active={active}
-              className="changes-sidebar__sync-label-icon"
-            />
-          ) : (
-            <Download className="changes-sidebar__sync-label-icon" aria-hidden="true" />
-          )}
-          <span>Pull</span>
-          <span className="changes-sidebar__sync-label-count">{unpulledCount}</span>
-        </span>
-      )}
-      {showPull && showPush && <span className="changes-sidebar__sync-label-separator">·</span>}
-      {showPush && (
-        <span className="changes-sidebar__sync-label-segment">
-          {active ? (
-            <AnimatedStatusIcon
-              Icon={Upload}
-              active={active}
-              className="changes-sidebar__sync-label-icon"
-            />
-          ) : (
-            <Upload className="changes-sidebar__sync-label-icon" aria-hidden="true" />
-          )}
-          <span>Push</span>
-          <span className="changes-sidebar__sync-label-count">{unpushedCount}</span>
-        </span>
-      )}
-    </span>
-  )
-}
+}> = ({ active, unpulledCount, unpushedCount }) => (
+  <span className="changes-sidebar__sync-label">
+    {(
+      [
+        [Download, 'Pull', unpulledCount],
+        [Upload, 'Push', unpushedCount]
+      ] as const
+    )
+      .filter(([, , count]) => count > 0)
+      .map(([Icon, label, count], index) => (
+        <Fragment key={label}>
+          {index > 0 && <span className="changes-sidebar__sync-label-separator">·</span>}
+          <span className="changes-sidebar__sync-label-segment">
+            {active ? (
+              <AnimatedStatusIcon Icon={Icon} active className="changes-sidebar__sync-label-icon" />
+            ) : (
+              <Icon className="changes-sidebar__sync-label-icon" aria-hidden="true" />
+            )}
+            <span>{label}</span>
+            <span className="changes-sidebar__sync-label-count">{count}</span>
+          </span>
+        </Fragment>
+      ))}
+  </span>
+)

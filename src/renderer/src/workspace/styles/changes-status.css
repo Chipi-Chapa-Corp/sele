@@ -96,13 +96,6 @@
   stroke-width: 1.35;
 }
 
-.changes-sidebar__empty-icon {
-  width: 3.4rem;
-  height: 3.4rem;
-  color: color-mix(in srgb, var(--quiet) 50%, transparent);
-  stroke-width: 1.45;
-}
-
 .changes-sidebar__pull-request-icon[data-state="open"] {
   color: var(--success);
 }

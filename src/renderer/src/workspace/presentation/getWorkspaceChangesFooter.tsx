@@ -1,22 +1,4 @@
-import { commitActionLabels } from '../controllerTypes'
-import { useWorkspacePanes } from '../features/useWorkspacePanes'
-import { getGitRecoveryActionIcon, getGitRecoveryRememberLabel } from '../gitControllerUtils'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useWorkspaceChanges } from '../wiring/useWorkspaceChanges'
-import { useWorkspaceCommits } from '../wiring/useWorkspaceCommits'
-import { useWorkspaceGitPresentation } from '../wiring/useWorkspaceGitPresentation'
-import { useWorkspaceGitSync } from '../wiring/useWorkspaceGitSync'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-
-type WorkspaceChangesFooterDependencies = {
-  panes: ReturnType<typeof useWorkspacePanes>
-  gitPresentation: ReturnType<typeof useWorkspaceGitPresentation>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-  session: ReturnType<typeof useWorkspaceSession>
-  commits: ReturnType<typeof useWorkspaceCommits>
-  gitSync: ReturnType<typeof useWorkspaceGitSync>
-  changes: ReturnType<typeof useWorkspaceChanges>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceChangesFooter({
   panes,
@@ -26,10 +8,9 @@ export function getWorkspaceChangesFooter({
   commits,
   gitSync,
   changes
-}: WorkspaceChangesFooterDependencies) {
+}: WorkspaceChanges) {
   return {
     visible: panes.changesPaneView === 'git' && panes.gitPaneView === 'changes',
-    commitActionLabels,
     commitDisabled: gitPresentation.commitDisabled,
     commitInput: gitState.commitInput,
     commitInputLabel: gitPresentation.commitInputLabel,
@@ -41,8 +22,6 @@ export function getWorkspaceChangesFooter({
     directProjectCommitInProgress: gitPresentation.directProjectCommitInProgress,
     navigationKey: `${session.selectedChatKey ?? ''}|${gitPresentation.currentProjectKey}`,
     getAiCommitActionDisabled: gitPresentation.getAiCommitActionDisabled,
-    getGitRecoveryActionIcon,
-    getGitRecoveryRememberLabel,
     gitCommitModeToggle: gitPresentation.gitCommitModeToggle,
     handleAiCommitChangedFiles: commits.handleAiCommitChangedFiles,
     handleDismissGitCommitError: gitSync.handleDismissGitCommitError,
@@ -54,7 +33,7 @@ export function getWorkspaceChangesFooter({
     handleGitSyncRecoveryAction: gitSync.handleGitSyncRecoveryAction,
     handleManualCommitChangedFiles: commits.handleManualCommitChangedFiles,
     handleQuickCommitChangedFiles: commits.handleQuickCommitChangedFiles,
-    handleSyncChanges: (action) => gitSync.handleSyncChanges(action),
+    handleSyncChanges: gitSync.handleSyncChanges,
     handleUnclassifiedGitSyncAiResolution: gitSync.handleUnclassifiedGitSyncAiResolution,
     hasSyncChanges: changes.hasSyncChanges,
     primarySyncAction: changes.primarySyncAction,

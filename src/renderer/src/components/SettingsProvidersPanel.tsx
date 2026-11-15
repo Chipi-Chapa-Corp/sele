@@ -1,4 +1,4 @@
-import { PackagePlus, RefreshCw, X } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import {
   areAnySettingsProviderSkillsEnabled,
   groupSettingsProviderResources,
@@ -10,41 +10,16 @@ import { getSettingsSkillDescription } from '../providerSettings'
 import { Button } from './Button'
 import { Dropdown } from './Dropdown'
 import { ProviderSettingsContent } from './ProviderSettingsContent'
+import { SettingsSection, sshEnvironmentMenuActions } from './settingsFields'
 import type { SettingsPanelProps } from './SettingsPanel.types'
 import { SettingsSkillPathAction } from './SettingsSkillPathAction'
 import { Switch } from './Switch'
 
-type SettingsProvidersPanelProps = Pick<
-  SettingsPanelProps,
-  | 'containerOptions'
-  | 'handleCodexRecommendedPluginsChange'
-  | 'handleProviderConnectionsChanged'
-  | 'handleNewSessionContainerChange'
-  | 'handleProviderAppEnabledChange'
-  | 'handleProviderSkillEnabledChange'
-  | 'handleProviderSkillsEnabledChange'
-  | 'newSessionContainerValue'
-  | 'newSessionProvider'
-  | 'newSessionProviderOptions'
-  | 'newSessionProviderValueContent'
-  | 'newSessionSourceAvailabilityReady'
-  | 'providerAccountUpdatingId'
-  | 'providerResourceUpdatingKey'
-  | 'providerResourcesError'
-  | 'providerResourcesLoadState'
-  | 'setEditingSshEnvironment'
-  | 'setNewSessionProvider'
-  | 'setProviderResourcesRefresh'
-  | 'setSshEnvironmentDialogOpen'
-  | 'setSshEnvironmentError'
-  | 'settingsPanelSettings'
-  | 'settingsProviderApps'
-  | 'settingsProviderSkills'
-  | 'sshEnvironmentError'
-  | 'newSessionContainer'
->
+const isClaudeMarketplaceSkill = (resource: SettingsProviderSkill): boolean =>
+  resource.providerId === 'claude' &&
+  resource.skill.path.replace(/\\/g, '/').includes('/plugins/marketplaces/')
 
-export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): React.ReactNode {
+export function SettingsProvidersPanel(props: SettingsPanelProps): React.ReactNode {
   const {
     containerOptions,
     handleCodexRecommendedPluginsChange,
@@ -62,15 +37,11 @@ export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): Reac
     providerResourceUpdatingKey,
     providerResourcesError,
     providerResourcesLoadState,
-    setEditingSshEnvironment,
     setNewSessionProvider,
     setProviderResourcesRefresh,
-    setSshEnvironmentDialogOpen,
-    setSshEnvironmentError,
     settingsPanelSettings,
     settingsProviderApps,
-    settingsProviderSkills,
-    sshEnvironmentError
+    settingsProviderSkills
   } = props
 
   const providerResourcesLoading = providerResourcesLoadState !== 'ready'
@@ -79,18 +50,38 @@ export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): Reac
     settingsProviderApps
   )
   const standaloneToggleSkills = unparentedSkills.filter(
-    (resource) =>
-      resource.providerId !== 'claude' ||
-      !resource.skill.path.replace(/\\/g, '/').includes('/plugins/marketplaces/')
+    (resource) => !isClaudeMarketplaceSkill(resource)
+  )
+  const renderSkill = (
+    resource: SettingsProviderSkill,
+    toggleId: string,
+    note?: string
+  ): React.ReactElement => (
+    <div className="settings-dialog__field" key={resource.skill.path}>
+      <div className="settings-dialog__field-header">
+        <div className="settings-dialog__skill-title">
+          <h3 id={toggleId}>{resource.skill.name}</h3>
+          <SettingsSkillPathAction path={resource.skill.path} />
+        </div>
+        <p>
+          {getSettingsSkillDescription(resource.skill)}
+          {note}
+        </p>
+      </div>
+      <Switch
+        className="settings-switch"
+        aria-labelledby={toggleId}
+        checked={resource.skill.enabled}
+        disabled={Boolean(providerResourceUpdatingKey)}
+        onChange={(event) =>
+          void handleProviderSkillEnabledChange(resource, event.currentTarget.checked)
+        }
+      />
+    </div>
   )
   const unparentedSkillsEnabled = areAnySettingsProviderSkillsEnabled(standaloneToggleSkills)
   return (
-    <section
-      className="settings-dialog__panel"
-      id="settings-panel-providers"
-      role="tabpanel"
-      aria-label="Provider settings"
-    >
+    <>
       <div
         className="settings-dialog__provider-configuration"
         role="group"
@@ -115,31 +106,7 @@ export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): Reac
         <Dropdown
           aria-label="Provider environment"
           disabled={Boolean(providerResourceUpdatingKey) || Boolean(providerAccountUpdatingId)}
-          menuActions={[
-            ...(sshEnvironmentError
-              ? [
-                  {
-                    id: 'provider-environment-error',
-                    label: sshEnvironmentError,
-                    title: sshEnvironmentError,
-                    disabled: true,
-                    icon: <X aria-hidden="true" />,
-                    callback: () => {}
-                  }
-                ]
-              : []),
-            {
-              id: 'provider-add-environment',
-              label: 'Add environment',
-              title: 'Add environment',
-              icon: <PackagePlus aria-hidden="true" />,
-              callback: () => {
-                setEditingSshEnvironment(null)
-                setSshEnvironmentError(null)
-                setSshEnvironmentDialogOpen(true)
-              }
-            }
-          ]}
+          menuActions={sshEnvironmentMenuActions(props, 'provider')}
           options={containerOptions}
           size="small"
           value={newSessionContainerValue}
@@ -157,31 +124,24 @@ export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): Reac
       >
         <>
           {newSessionProvider === 'codex' && (
-            <section className="settings-dialog__section" aria-labelledby="settings-providers-ads">
-              <h2 className="settings-dialog__section-heading" id="settings-providers-ads">
-                Ads
-              </h2>
-              <div className="settings-dialog__section-cards">
-                <div className="settings-dialog__field">
-                  <div className="settings-dialog__field-header">
-                    <h3 id="settings-provider-codex-recommended-plugins">
-                      Show recommended plugins to agent
-                    </h3>
-                    <p>
-                      Include the Codex list of available recommended plugins in new agent turns.
-                    </p>
-                  </div>
-                  <Switch
-                    className="settings-switch"
-                    aria-labelledby="settings-provider-codex-recommended-plugins"
-                    checked={settingsPanelSettings.providers.codex.showRecommendedPlugins}
-                    onChange={(event) =>
-                      handleCodexRecommendedPluginsChange(event.currentTarget.checked)
-                    }
-                  />
+            <SettingsSection id="settings-providers-ads" title="Ads">
+              <div className="settings-dialog__field">
+                <div className="settings-dialog__field-header">
+                  <h3 id="settings-provider-codex-recommended-plugins">
+                    Show recommended plugins to agent
+                  </h3>
+                  <p>Include the Codex list of available recommended plugins in new agent turns.</p>
                 </div>
+                <Switch
+                  className="settings-switch"
+                  aria-labelledby="settings-provider-codex-recommended-plugins"
+                  checked={settingsPanelSettings.providers.codex.showRecommendedPlugins}
+                  onChange={(event) =>
+                    handleCodexRecommendedPluginsChange(event.currentTarget.checked)
+                  }
+                />
               </div>
-            </section>
+            </SettingsSection>
           )}
         </>
         {(query) => {
@@ -194,24 +154,13 @@ export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): Reac
               resource.skill.shortDescription,
               resource.skill.path
             ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery))
-          const filteredAppGroups = appGroups
-            .map((group) => {
-              const appMatches = [group.resource.app.name, group.resource.app.description].some(
-                (value) => value.toLocaleLowerCase().includes(normalizedQuery)
-              )
-              return {
-                ...group,
-                visibleSkills: appMatches ? group.skills : group.skills.filter(matchesSkill)
-              }
-            })
-            .filter(
-              (group) =>
-                !normalizedQuery ||
-                group.visibleSkills.length > 0 ||
-                [group.resource.app.name, group.resource.app.description].some((value) =>
-                  value.toLocaleLowerCase().includes(normalizedQuery)
-                )
+          const filteredAppGroups = appGroups.flatMap((group) => {
+            const appMatches = [group.resource.app.name, group.resource.app.description].some(
+              (value) => value.toLocaleLowerCase().includes(normalizedQuery)
             )
+            const visibleSkills = appMatches ? group.skills : group.skills.filter(matchesSkill)
+            return appMatches || visibleSkills.length > 0 ? [{ ...group, visibleSkills }] : []
+          })
           const filteredStandaloneSkills = normalizedQuery
             ? unparentedSkills.filter(matchesSkill)
             : unparentedSkills
@@ -223,63 +172,35 @@ export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): Reac
                 filteredAppGroups.length === 0 &&
                 filteredStandaloneSkills.length === 0 && <p role="status">No matching skills.</p>}
               {providerResourcesError && (
-                <section
-                  className="settings-dialog__section"
-                  aria-labelledby="settings-providers-status"
-                >
-                  <h2 className="settings-dialog__section-heading" id="settings-providers-status">
-                    Status
-                  </h2>
-                  <div className="settings-dialog__section-cards">
-                    <div className="settings-dialog__field settings-dialog__field--inline">
-                      <div className="settings-dialog__field-header">
-                        <h3>{providerResourcesError}</h3>
-                      </div>
-                      <Button
-                        callback={() => setProviderResourcesRefresh((refresh) => refresh + 1)}
-                        disabled={providerResourcesLoading || Boolean(providerResourceUpdatingKey)}
-                        icon={<RefreshCw aria-hidden="true" />}
-                        label={<span>Retry</span>}
-                        size="small"
-                        theme="secondary"
-                      />
+                <SettingsSection id="settings-providers-status" title="Status">
+                  <div className="settings-dialog__field settings-dialog__field--inline">
+                    <div className="settings-dialog__field-header">
+                      <h3>{providerResourcesError}</h3>
                     </div>
+                    <Button
+                      callback={() => setProviderResourcesRefresh((refresh) => refresh + 1)}
+                      disabled={providerResourcesLoading || Boolean(providerResourceUpdatingKey)}
+                      icon={<RefreshCw aria-hidden="true" />}
+                      label={<span>Retry</span>}
+                      size="small"
+                      theme="secondary"
+                    />
                   </div>
-                </section>
+                </SettingsSection>
               )}
-              {providerResourcesLoading ? (
-                <section
-                  className="settings-dialog__section"
-                  aria-labelledby="settings-providers-apps"
-                >
-                  <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
-                    Apps
-                  </h2>
-                  <div className="settings-dialog__section-cards">
-                    <div className="settings-dialog__field">
-                      <div className="settings-dialog__field-header">
-                        <h3>Loading apps…</h3>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-              ) : filteredAppGroups.length === 0 && !normalizedQuery ? (
-                <section
-                  className="settings-dialog__section"
-                  aria-labelledby="settings-providers-apps"
-                >
-                  <h2 className="settings-dialog__section-heading" id="settings-providers-apps">
-                    Apps
-                  </h2>
-                  <div className="settings-dialog__section-cards">
-                    <div className="settings-dialog__field">
-                      <div className="settings-dialog__field-header">
-                        <h3>No connected apps found</h3>
+              {providerResourcesLoading || (filteredAppGroups.length === 0 && !normalizedQuery) ? (
+                <SettingsSection id="settings-providers-apps" title="Apps">
+                  <div className="settings-dialog__field">
+                    <div className="settings-dialog__field-header">
+                      <h3>
+                        {providerResourcesLoading ? 'Loading apps…' : 'No connected apps found'}
+                      </h3>
+                      {!providerResourcesLoading && (
                         <p>This environment did not report any installed apps.</p>
-                      </div>
+                      )}
                     </div>
                   </div>
-                </section>
+                </SettingsSection>
               ) : (
                 filteredAppGroups.map((group, appIndex) => {
                   const { resource } = group
@@ -327,33 +248,12 @@ export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): Reac
                           />
                         </div>
                         {(normalizedQuery || shouldShowSettingsProviderAppSkills(group)) &&
-                          group.visibleSkills.map((childSkill, skillIndex) => {
-                            const skillToggleId = `settings-provider-app-${appIndex}-skill-${skillIndex}`
-
-                            return (
-                              <div className="settings-dialog__field" key={childSkill.skill.path}>
-                                <div className="settings-dialog__field-header">
-                                  <div className="settings-dialog__skill-title">
-                                    <h3 id={skillToggleId}>{childSkill.skill.name}</h3>
-                                    <SettingsSkillPathAction path={childSkill.skill.path} />
-                                  </div>
-                                  <p>{getSettingsSkillDescription(childSkill.skill)}</p>
-                                </div>
-                                <Switch
-                                  className="settings-switch"
-                                  aria-labelledby={skillToggleId}
-                                  checked={childSkill.skill.enabled}
-                                  disabled={Boolean(providerResourceUpdatingKey)}
-                                  onChange={(event) =>
-                                    void handleProviderSkillEnabledChange(
-                                      childSkill,
-                                      event.currentTarget.checked
-                                    )
-                                  }
-                                />
-                              </div>
+                          group.visibleSkills.map((childSkill, skillIndex) =>
+                            renderSkill(
+                              childSkill,
+                              `settings-provider-app-${appIndex}-skill-${skillIndex}`
                             )
-                          })}
+                          )}
                       </div>
                     </section>
                   )
@@ -362,100 +262,66 @@ export function SettingsProvidersPanel(props: SettingsProvidersPanelProps): Reac
               {(!normalizedQuery ||
                 filteredStandaloneSkills.length > 0 ||
                 providerResourcesLoading) && (
-                <section
-                  className="settings-dialog__section"
-                  aria-labelledby="settings-providers-skills"
-                >
-                  <h2 className="settings-dialog__section-heading" id="settings-providers-skills">
-                    Skills
-                  </h2>
-                  <div className="settings-dialog__section-cards">
-                    {!normalizedQuery && (
-                      <div className="settings-dialog__field">
-                        <div className="settings-dialog__field-header">
-                          <h3 id="settings-provider-unparented-skills">All standalone skills</h3>
-                          <p>
-                            Enable or disable standalone skills. Plugin skills are controlled
-                            individually.
-                          </p>
-                        </div>
-                        <Switch
-                          className="settings-switch"
-                          aria-labelledby="settings-provider-unparented-skills"
-                          checked={unparentedSkillsEnabled}
-                          disabled={
-                            providerResourcesLoading ||
-                            standaloneToggleSkills.length === 0 ||
-                            Boolean(providerResourceUpdatingKey)
-                          }
-                          onChange={(event) =>
-                            void handleProviderSkillsEnabledChange(
-                              standaloneToggleSkills,
-                              event.currentTarget.checked
-                            )
-                          }
-                        />
+                <SettingsSection id="settings-providers-skills" title="Skills">
+                  {!normalizedQuery && (
+                    <div className="settings-dialog__field">
+                      <div className="settings-dialog__field-header">
+                        <h3 id="settings-provider-unparented-skills">All standalone skills</h3>
+                        <p>
+                          Enable or disable standalone skills. Plugin skills are controlled
+                          individually.
+                        </p>
                       </div>
-                    )}
-                    {providerResourcesLoading ? (
-                      <div className="settings-dialog__field">
-                        <div className="settings-dialog__field-header">
-                          <h3>Loading skills…</h3>
-                        </div>
+                      <Switch
+                        className="settings-switch"
+                        aria-labelledby="settings-provider-unparented-skills"
+                        checked={unparentedSkillsEnabled}
+                        disabled={
+                          providerResourcesLoading ||
+                          standaloneToggleSkills.length === 0 ||
+                          Boolean(providerResourceUpdatingKey)
+                        }
+                        onChange={(event) =>
+                          void handleProviderSkillsEnabledChange(
+                            standaloneToggleSkills,
+                            event.currentTarget.checked
+                          )
+                        }
+                      />
+                    </div>
+                  )}
+                  {providerResourcesLoading ? (
+                    <div className="settings-dialog__field">
+                      <div className="settings-dialog__field-header">
+                        <h3>Loading skills…</h3>
                       </div>
-                    ) : filteredStandaloneSkills.length === 0 && !normalizedQuery ? (
-                      <div className="settings-dialog__field">
-                        <div className="settings-dialog__field-header">
-                          <h3>No standalone skills found</h3>
-                          <p>All reported skills belong to an app.</p>
-                        </div>
+                    </div>
+                  ) : filteredStandaloneSkills.length === 0 && !normalizedQuery ? (
+                    <div className="settings-dialog__field">
+                      <div className="settings-dialog__field-header">
+                        <h3>No standalone skills found</h3>
+                        <p>All reported skills belong to an app.</p>
                       </div>
-                    ) : (
-                      filteredStandaloneSkills.map((resource, index) => {
-                        const toggleId = `settings-provider-skill-${index}`
-
-                        return (
-                          <div className="settings-dialog__field" key={resource.skill.path}>
-                            <div className="settings-dialog__field-header">
-                              <div className="settings-dialog__skill-title">
-                                <h3 id={toggleId}>{resource.skill.name}</h3>
-                                <SettingsSkillPathAction path={resource.skill.path} />
-                              </div>
-                              <p>
-                                {getSettingsSkillDescription(resource.skill)}
-                                {resource.providerId === 'claude' &&
-                                resource.skill.path
-                                  .replace(/\\/g, '/')
-                                  .includes('/plugins/marketplaces/')
-                                  ? resource.skill.enabled
-                                    ? ' Start a new Claude session after changing this plugin.'
-                                    : ' Turn on to install or enable its plugin. Start a new Claude session to use it.'
-                                  : ''}
-                              </p>
-                            </div>
-                            <Switch
-                              className="settings-switch"
-                              aria-labelledby={toggleId}
-                              checked={resource.skill.enabled}
-                              disabled={Boolean(providerResourceUpdatingKey)}
-                              onChange={(event) =>
-                                void handleProviderSkillEnabledChange(
-                                  resource,
-                                  event.currentTarget.checked
-                                )
-                              }
-                            />
-                          </div>
-                        )
-                      })
-                    )}
-                  </div>
-                </section>
+                    </div>
+                  ) : (
+                    filteredStandaloneSkills.map((resource, index) =>
+                      renderSkill(
+                        resource,
+                        `settings-provider-skill-${index}`,
+                        !isClaudeMarketplaceSkill(resource)
+                          ? ''
+                          : resource.skill.enabled
+                            ? ' Start a new Claude session after changing this plugin.'
+                            : ' Turn on to install or enable its plugin. Start a new Claude session to use it.'
+                      )
+                    )
+                  )}
+                </SettingsSection>
               )}
             </>
           )
         }}
       </ProviderSettingsContent>
-    </section>
+    </>
   )
 }

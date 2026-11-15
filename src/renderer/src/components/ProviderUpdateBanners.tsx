@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import { BellOff, Download, X } from 'lucide-react'
 import { Button } from './Button'
 import { ProviderIcon } from './ProviderIcon'
-import { getProviderUpdateKey, type ProviderUpdateSuggestion } from '../providerSettings'
+import { getProviderUpdateKey } from '../providerSettings'
 import { useProviderLabels } from '../providerLabels'
 import type { useProviderUpdates } from '../useProviderUpdates'
 import { getProviderUpdateSummary } from '../workspace/gitControllerUtils'
@@ -23,7 +23,7 @@ export function ProviderUpdateBanners({
   if (!providerUpdateSuggestions.length) return null
   return (
     <div className="chat-provider-updates" aria-label="Provider updates">
-      {providerUpdateSuggestions.map((suggestion: ProviderUpdateSuggestion) => {
+      {providerUpdateSuggestions.map((suggestion) => {
         const key = getProviderUpdateKey(suggestion)
         const updating = updatingProviderUpdateKey === key
         const error = providerUpdateErrors[key]

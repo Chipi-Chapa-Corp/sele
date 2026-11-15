@@ -3,39 +3,7 @@ import { type SettingsPanelProps } from '../../components/SettingsPanel'
 import { appAppearanceZoomLevelToPercent } from '../../settings'
 import { getFolderName } from '../chatControllerUtils'
 import { writeChatGroupingPreference } from '../controllerTypes'
-import { useWorkspaceChrome } from '../features/useWorkspaceChrome'
-import { useWorkspaceGitModels } from '../features/useWorkspaceGitModels'
-import { useWorkspaceProviderAccounts } from '../features/useWorkspaceProviderAccounts'
-import { useWorkspaceProviderContext } from '../features/useWorkspaceProviderContext'
-import { useWorkspaceResourceActions } from '../features/useWorkspaceResourceActions'
-import { useWorkspaceSettingsContext } from '../features/useWorkspaceSettingsContext'
-import { useWorkspaceSettingsOptions } from '../features/useWorkspaceSettingsOptions'
-import { useWorkspaceSourceControls } from '../features/useWorkspaceSourceControls'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceProjectState } from '../state/useWorkspaceProjectState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import { useWorkspaceSettingsActions } from '../wiring/useWorkspaceSettingsActions'
-
-type WorkspaceSettingsPanelDependencies = {
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  accountActions: ReturnType<typeof useWorkspaceProviderAccounts>
-  session: ReturnType<typeof useWorkspaceSession>
-  sourceControls: ReturnType<typeof useWorkspaceSourceControls>
-  settingsOptions: ReturnType<typeof useWorkspaceSettingsOptions>
-  settingsActions: ReturnType<typeof useWorkspaceSettingsActions>
-  gitModels: ReturnType<typeof useWorkspaceGitModels>
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  projectState: ReturnType<typeof useWorkspaceProjectState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  resourceActions: ReturnType<typeof useWorkspaceResourceActions>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  chrome: ReturnType<typeof useWorkspaceChrome>
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function getWorkspaceSettingsPanel({
   settings,
@@ -53,7 +21,7 @@ export function getWorkspaceSettingsPanel({
   sourceState,
   providerState,
   chrome
-}: WorkspaceSettingsPanelDependencies) {
+}: WorkspaceChanges) {
   const settingsProjectLabel = settings.settingsProjectCwd
     ? getFolderName(settings.settingsProjectCwd)
     : 'Project'
@@ -117,7 +85,6 @@ export function getWorkspaceSettingsPanel({
     handleNativeChromeChange: settingsActions.handleNativeChromeChange,
     handleContinuePromptChange: settingsActions.handleContinuePromptChange,
     handleLinkedChatSummaryPromptChange: settingsActions.handleLinkedChatSummaryPromptChange,
-    handleDeleteProviderAccount: accountActions.handleDeleteProviderAccount,
     handleGitCommitMessageGenerationChange: settingsActions.handleGitCommitMessageGenerationChange,
     handleGitCommitModelChange: settingsActions.handleGitCommitModelChange,
     handleGitCommitPromptChange: settingsActions.handleGitCommitPromptChange,
@@ -137,7 +104,6 @@ export function getWorkspaceSettingsPanel({
     handleRecentlyOpenedFilesLimitChange: settingsActions.handleRecentlyOpenedFilesLimitChange,
     handleRecentsMessageLimitChange: settingsActions.handleRecentsMessageLimitChange,
     handleThemePreferenceChange: settingsActions.handleThemePreferenceChange,
-    handleUseProviderAccount: accountActions.handleUseProviderAccount,
     installedFontFamilies: preferences.installedFontFamilies,
     installedFontOptions: settings.installedFontOptions,
     installedFontsLoaded: preferences.installedFontsLoaded,
@@ -149,22 +115,17 @@ export function getWorkspaceSettingsPanel({
     newSessionProviderValueContent: sourceControls.newSessionProviderValueContent,
     newSessionSourceAvailabilityReady: sourceState.newSessionSourceAvailabilityReady,
     providerAccountUpdatingId: providerState.providerAccountUpdatingId,
-    providerAccountsError: providerState.providerAccountsError,
-    providerAccountsLoadState: providerState.providerAccountsLoadState,
     providerResourceUpdatingKey: providerState.providerResourceUpdatingKey,
     providerResourcesError: providerState.providerResourcesError,
     providerResourcesLoadState: providerState.providerResourcesLoadState,
     renderProjectSettingAction: settingsActions.renderProjectSettingAction,
-    setAccountDialogOpen: providerState.setAccountDialogOpen,
     setBrowserDefaultScaleInputDraft: preferences.setBrowserDefaultScaleInputDraft,
     setEditingSshEnvironment: sourceState.setEditingSshEnvironment,
     setNewSessionProvider: sourceState.setNewSessionProvider,
-    setProviderAccountsRefresh: providerState.setProviderAccountsRefresh,
     setProviderResourcesRefresh: providerState.setProviderResourcesRefresh,
     setSshEnvironmentDialogOpen: sourceState.setSshEnvironmentDialogOpen,
     setSshEnvironmentError: sourceState.setSshEnvironmentError,
     settingsPanelSettings: settings.settingsPanelSettings,
-    settingsProviderAccounts: providerState.settingsProviderAccounts,
     settingsProviderApps: providerState.settingsProviderApps,
     settingsProviderSkills: providerState.settingsProviderSkills,
     settingsScopeKey: settings.settingsScopeKey,

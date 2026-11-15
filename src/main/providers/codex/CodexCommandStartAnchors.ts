@@ -1,39 +1,7 @@
 import type { CodexTurn } from './CodexItemRenderers.ts'
-import { isExpectedFileAbsenceError } from '../../../shared/expectedAbsence.ts'
 import type { CodexTranscriptMetadata } from './CodexTranscriptMetadataIndex.ts'
 
 type StartTimes = Map<string, number>
-
-/** Read identity and start time only; transcript content still comes from the history API. */
-export const readCodexItemStartTimes = (text: string): Map<string, StartTimes> => {
-  const turns = new Map<string, StartTimes>()
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue
-    let row
-    try {
-      row = JSON.parse(line)
-    } catch (error) {
-      // The writer may not have finished the final line yet.
-      if (error instanceof SyntaxError) continue
-      throw error
-    }
-    const event = row?.payload
-    const item = event?.item
-    if (
-      row?.type !== 'event_msg' ||
-      event?.type !== 'item_completed' ||
-      typeof event.turn_id !== 'string' ||
-      typeof item?.id !== 'string'
-    )
-      continue
-    const startedAt = event.started_at_ms
-    if (typeof startedAt !== 'number' || !Number.isFinite(startedAt)) continue
-    const times = turns.get(event.turn_id) ?? new Map<string, number>()
-    times.set(item.id, Math.min(times.get(item.id) ?? startedAt, startedAt))
-    turns.set(event.turn_id, times)
-  }
-  return turns
-}
 
 const hasTrailingCommand = (turn: CodexTurn): boolean => {
   let seenFinal = false
@@ -231,14 +199,12 @@ export class CodexCommandStartAnchors {
     { starts: StartTimes; projected: CodexTurn }
   >()
   private versions = new WeakMap<CodexTurn, number>()
-  private pending = new Map<string, Promise<boolean>>()
 
   clear(): void {
     this.snapshots = new WeakMap()
     this.retainedStarts.clear()
     this.inheritedSnapshots = new WeakMap()
     this.versions = new WeakMap()
-    this.pending.clear()
   }
 
   project(turn: CodexTurn): CodexTurn {
@@ -281,47 +247,5 @@ export class CodexCommandStartAnchors {
         (!previous || previous.items.some((item, index) => item !== projected.items[index]))
     }
     return changed
-  }
-
-  async load(
-    thread: { id: string; path?: string | null; turns: CodexTurn[] },
-    readFile: (path: string) => Promise<string>
-  ): Promise<boolean> {
-    if (!thread.path) return false
-    const pending = this.pending.get(thread.id)
-    if (pending) {
-      const changed = await pending
-      return (await this.load(thread, readFile)) || changed
-    }
-    const candidates = thread.turns.filter(
-      (turn) => !this.snapshots.has(turn) && hasTrailingCommand(turn)
-    )
-    if (!candidates.length) return false
-    const request = (async () => {
-      try {
-        const times = readCodexItemStartTimes(await readFile(thread.path!))
-        let changed = false
-        for (const turn of candidates) {
-          const starts = times.get(turn.id)
-          this.rememberStarts(turn.id, starts)
-          const projected = starts ? anchorCodexCommandsByStart(turn, starts) : turn
-          this.snapshots.set(turn, projected)
-          changed ||= projected !== turn
-        }
-        return changed
-      } catch (error) {
-        if (!isExpectedFileAbsenceError(error))
-          console.warn('Unable to read Codex command start anchors', error)
-        // Do not retry on every render of the same snapshot.
-        for (const turn of candidates) this.snapshots.set(turn, turn)
-        return false
-      }
-    })()
-    this.pending.set(thread.id, request)
-    try {
-      return await request
-    } finally {
-      this.pending.delete(thread.id)
-    }
   }
 }

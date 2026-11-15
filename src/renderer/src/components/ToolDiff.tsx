@@ -4,15 +4,20 @@ const UnifiedDiff = lazy(() =>
   import('./UnifiedDiff').then((module) => ({ default: module.UnifiedDiff }))
 )
 
-const getDisplayPath = (path: string, projectCwd: string | null | undefined): string => {
+export const getProjectRelativePath = (
+  path: string,
+  projectCwd: string | null | undefined,
+  stripCurrentDirectory = false
+): string => {
   const normalizedPath = path.replace(/\\/g, '/')
+  const outsidePath = stripCurrentDirectory ? normalizedPath.replace(/^\.\//, '') : normalizedPath
   const rawProjectCwd = projectCwd?.trim().replace(/\\/g, '/')
   const normalizedProjectCwd =
     rawProjectCwd === '/' || /^[A-Za-z]:\/$/.test(rawProjectCwd ?? '')
       ? rawProjectCwd
       : rawProjectCwd?.replace(/\/+$/, '')
 
-  if (!normalizedProjectCwd) return normalizedPath
+  if (!normalizedProjectCwd) return outsidePath
 
   const caseInsensitive = /^(?:[A-Za-z]:\/|\/\/)/.test(normalizedProjectCwd)
   const comparisonPath = caseInsensitive ? normalizedPath.toLocaleLowerCase() : normalizedPath
@@ -27,7 +32,7 @@ const getDisplayPath = (path: string, projectCwd: string | null | undefined): st
   const projectPrefix = comparisonProjectCwd.endsWith('/')
     ? comparisonProjectCwd
     : `${comparisonProjectCwd}/`
-  if (!comparisonPath.startsWith(projectPrefix)) return normalizedPath
+  if (!comparisonPath.startsWith(projectPrefix)) return outsidePath
 
   return normalizedPath.slice(projectPrefix.length)
 }
@@ -38,7 +43,7 @@ type ToolDiffProps = {
 }
 
 const ToolDiffComponent = ({ fileDiff, projectCwd }: ToolDiffProps): React.JSX.Element => {
-  const displayPath = getDisplayPath(fileDiff.path, projectCwd)
+  const displayPath = getProjectRelativePath(fileDiff.path, projectCwd)
 
   return (
     <section className="chat-detail__diff-section">

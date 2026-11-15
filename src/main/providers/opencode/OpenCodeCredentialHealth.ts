@@ -1,9 +1,7 @@
 import type { OpencodeClient, Provider } from '@opencode-ai/sdk/v2'
 import type { ProviderConnectionStatus } from '../../../shared/providerConnections'
 import { getOpenCodeErrorMessage, isOpenCodeAbortError } from './OpenCodeItemRenderers.ts'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+import { isRecord } from '../providerValues.ts'
 
 const credentialErrorTypes = new Set(['authentication_error', 'permission_error'])
 const credentialMessage = /\b(?:api[\s_-]?key|credential|unauthori[sz]ed|authenticat)/i
@@ -72,7 +70,6 @@ export type OpenCodeCredentialCheckRequest = {
   directory: string
   providerId: string
   onSession?: (sessionId: string) => void
-  timeoutMs?: number
 }
 
 /** Sends one tiny prompt through OpenCode with the provider's stored credential. */
@@ -80,11 +77,10 @@ export const checkOpenCodeCredential = async ({
   client,
   directory,
   providerId,
-  onSession,
-  timeoutMs = 30_000
+  onSession
 }: OpenCodeCredentialCheckRequest): Promise<ProviderConnectionStatus> => {
   const checkedAt = Date.now()
-  const signal = AbortSignal.timeout(timeoutMs)
+  const signal = AbortSignal.timeout(30_000)
   let sessionId: string | null = null
   try {
     const catalog = (await client.provider.list({ directory }, { throwOnError: true, signal })).data

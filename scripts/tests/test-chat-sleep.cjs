@@ -31,7 +31,7 @@ if (!process.versions.electron) {
               <aside style={{width:280,padding:24}}>
                 <ChatList chats={[chat]} selectedChatKey={null} onMarkDone={noop} onRename={noop}
                   onResolveApproval={noop} onSelect={noop} onTogglePinned={noop} />
-                <ChatListGroup contentId="project-chats" open visibleChatCount={1}
+                <ChatListGroup open visibleChatCount={1}
                   group={{ key: 'cwd:/project', cwd: '/project', label: 'Project', kind: 'cwd',
                     chats: [{ ...chat, id: 'b' }, { ...chat, id: 'c', providerId: 'claude' }] }}
                   selectedChatKey={null} onMarkChatDone={noop} onMarkCwdChatsDone={noop}
@@ -51,6 +51,20 @@ if (!process.versions.electron) {
         define: { 'process.env.NODE_ENV': '"production"' },
         jsx: 'automatic',
         loader: { '.svg': 'dataurl', '.png': 'dataurl', '.woff2': 'dataurl' },
+        plugins: [
+          {
+            name: 'unused-workers',
+            setup(build) {
+              build.onResolve({ filter: /\?worker$/ }, (args) => ({
+                path: args.path,
+                namespace: 'worker'
+              }))
+              build.onLoad({ filter: /.*/, namespace: 'worker' }, () => ({
+                contents: 'export default class {}'
+              }))
+            }
+          }
+        ],
         logLevel: 'silent'
       })
       await fs.writeFile(
@@ -83,7 +97,7 @@ if (!process.versions.electron) {
     try {
       const win = new BrowserWindow({
         show: false,
-        width: 800,
+        width: 1000,
         height: 600,
         webPreferences: { offscreen: true, backgroundThrottling: false }
       })

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, ExternalLink, Globe2, Plus, RefreshCw, X } from 'lucide-react'
 import { getBrowserFaviconUrl, isBrowserPageUrl } from '../../../shared/browser'
 import { Button } from './Button'
@@ -22,7 +22,6 @@ type Props = {
   onAddressChange: (value: string) => void
   onExternal: () => void
   externalLabel?: string
-  extraTabsAction?: ReactNode
 }
 const BrowserTabIcon: React.FC<{ url: string }> = ({ url }) => {
   const faviconUrl = getBrowserFaviconUrl(url)
@@ -56,8 +55,7 @@ export function BrowserChrome({
   onReload,
   onAddressChange,
   onExternal,
-  externalLabel = 'Open in host browser',
-  extraTabsAction
+  externalLabel = 'Open in host browser'
 }: Props): React.ReactElement {
   const tabsRail = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -99,7 +97,6 @@ export function BrowserChrome({
           theme="transparent"
           title="New browser tab"
         />
-        {extraTabsAction}
       </div>
       <form
         className="browser-panel__navigation"

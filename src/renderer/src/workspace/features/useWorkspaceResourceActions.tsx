@@ -7,24 +7,14 @@ import {
 import { normalizeContainerTarget } from '../../containerSelection'
 import { providerApi } from '../../providerApi'
 import { getErrorMessage } from '../chatControllerUtils'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceResourceRefresh } from './useWorkspaceResourceRefresh'
-import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceResourceActionsDependencies = {
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  resourceRefresh: ReturnType<typeof useWorkspaceResourceRefresh>
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceResourceActions({
   providerState,
   sourceState,
   settings,
   resourceRefresh
-}: WorkspaceResourceActionsDependencies) {
+}: WorkspaceSession) {
   const handleProviderSkillEnabledChange = async (
     resource: SettingsProviderSkill,
     enabled: boolean

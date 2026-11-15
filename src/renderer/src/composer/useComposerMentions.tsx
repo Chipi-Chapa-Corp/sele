@@ -8,12 +8,9 @@ import { getProjectDisplayName } from '../projectPresentation'
 import { isTouchEditingActivation } from '../touchInput'
 import {
   MentionMenuStyle,
-  getFileMentionAtCaret,
   getMentionFileName,
   getMentionMenuStyle,
-  getSkillMentionAtCaret,
-  getSkillSummary,
-  isComposerCacheCurrent
+  getSkillSummary
 } from './mentionResults'
 import { ProjectMentionIcon } from './ProjectMentionIcon'
 import { useFileMentions } from './useFileMentions'
@@ -98,7 +95,7 @@ export function useComposerMentions({
   const {
     fileMention,
     setFileMention,
-    projectFileCache,
+    currentFileCache,
     projectFilesErrorCwd,
     projectFilesError,
     activeFileMentionIndex,
@@ -122,7 +119,7 @@ export function useComposerMentions({
   const {
     skillMention,
     setSkillMention,
-    composerCache,
+    currentComposerCache,
     composerLoadErrorScope,
     activeSkillMentionIndex,
     setActiveSkillMentionIndex,
@@ -184,25 +181,67 @@ export function useComposerMentions({
     ]
   )
 
-  const mentionMenuOpen = projectMentionMenuOpen || skillMentionMenuOpen || fileMentionMenuOpen
+  const mentionMenu = <Result,>(
+    label: string,
+    open: boolean,
+    listboxId: string,
+    results: Result[],
+    activeIndex: number,
+    setActiveIndex: Dispatch<SetStateAction<number>>,
+    setMention: (mention: null) => void,
+    selectResult: (result: Result) => void
+  ) => ({
+    label,
+    open,
+    listboxId,
+    count: results.length,
+    activeIndex,
+    setActiveIndex,
+    close: () => setMention(null),
+    select: (index: number): void => {
+      const result = results[index]
+      if (result) selectResult(result)
+    }
+  })
 
-  const activeMentionIndex = projectMentionMenuOpen
-    ? activeProjectMentionIndex
-    : skillMentionMenuOpen
-      ? activeSkillMentionIndex
-      : activeFileMentionIndex
+  const fileMentionMenu = mentionMenu(
+    'Files',
+    fileMentionMenuOpen,
+    fileMentionListboxId,
+    fileMentionResults,
+    activeFileMentionIndex,
+    setActiveFileMentionIndex,
+    setFileMention,
+    handleSelectFileMention
+  )
 
-  const mentionListboxId = projectMentionMenuOpen
-    ? projectMentionListboxId
-    : skillMentionMenuOpen
-      ? skillMentionListboxId
-      : fileMentionListboxId
+  const mentionMenus = [
+    mentionMenu(
+      'Projects',
+      projectMentionMenuOpen,
+      projectMentionListboxId,
+      projectMentionResults,
+      activeProjectMentionIndex,
+      setActiveProjectMentionIndex,
+      setProjectMention,
+      handleSelectProjectMention
+    ),
+    mentionMenu(
+      'Skills and apps',
+      skillMentionMenuOpen,
+      skillMentionListboxId,
+      composerResults,
+      activeSkillMentionIndex,
+      setActiveSkillMentionIndex,
+      setSkillMention,
+      handleSelectComposerMention
+    ),
+    fileMentionMenu
+  ]
 
-  const setActiveMentionIndex = projectMentionMenuOpen
-    ? setActiveProjectMentionIndex
-    : skillMentionMenuOpen
-      ? setActiveSkillMentionIndex
-      : setActiveFileMentionIndex
+  const activeMentionMenu = mentionMenus.find((menu) => menu.open) ?? fileMentionMenu
+
+  const mentionMenuOpen = activeMentionMenu.open
 
   const updateMentionMenuPosition = useCallback((): void => {
     const anchorRect = textareaWrapRef.current?.getBoundingClientRect()
@@ -256,10 +295,10 @@ export function useComposerMentions({
       setActiveProjectMentionIndex(0)
     }
     const nextFileMention = collapsed
-      ? getFileMentionAtCaret(textarea.value, textarea.selectionStart)
+      ? getComposerMentionAtCaret(textarea.value, textarea.selectionStart, '@')
       : null
     const nextSkillMention = collapsed
-      ? getSkillMentionAtCaret(textarea.value, textarea.selectionStart)
+      ? getComposerMentionAtCaret(textarea.value, textarea.selectionStart, '$')
       : null
     if (!composerMentionsEqual(nextFileMention, fileMention)) {
       setFileMention(nextFileMention)
@@ -271,30 +310,17 @@ export function useComposerMentions({
     }
   }
 
+  const closeMentions = (): void => {
+    setFileMention(null)
+    setSkillMention(null)
+    setProjectMention(null)
+  }
+
   const handleMessageSelect = (event: React.SyntheticEvent<HTMLTextAreaElement>): void => {
     // Android can briefly report caret 0 while a suggestion is being tapped.
     // That platform selection must not unmount the option before pointer-up.
     if (!isTouchEditingActivation(event.currentTarget.ownerDocument))
       updateMessageMentions(event.currentTarget)
-  }
-
-  const handleSelectMentionDropdown = (value: string): void => {
-    const index = Number(value)
-    if (!Number.isInteger(index) || index < 0) return
-
-    if (projectMentionMenuOpen) {
-      const project = projectMentionResults[index]
-      if (project) handleSelectProjectMention(project)
-      return
-    }
-    if (skillMentionMenuOpen) {
-      const result = composerResults[index]
-      if (result) handleSelectComposerMention(result)
-      return
-    }
-
-    const file = fileMentionResults[index]
-    if (file) handleSelectFileMention(file)
   }
 
   const mentionDropdownEmptyContent = projectMentionMenuOpen ? (
@@ -308,13 +334,7 @@ export function useComposerMentions({
   ) : skillMentionMenuOpen ? (
     composerLoadErrorScope === skillScope ? (
       <div className="message-box__file-mention-status">Unable to load skills and apps</div>
-    ) : !isComposerCacheCurrent(
-        composerCache,
-        providerId,
-        cwd,
-        composerSourceKey,
-        providerResourcesRevision
-      ) ? (
+    ) : !currentComposerCache ? (
       <div className="message-box__file-mention-status">Loading skills and apps…</div>
     ) : (
       <div className="message-box__file-mention-status">No matching skills or apps</div>
@@ -325,7 +345,7 @@ export function useComposerMentions({
     <div className="message-box__file-mention-status" role="alert">
       Could not list files in {projectCwd}: {projectFilesError}
     </div>
-  ) : projectFileCache?.cwd !== projectCwd || projectFileCache.sourceKey !== composerSourceKey ? (
+  ) : !currentFileCache ? (
     <div className="message-box__file-mention-status">Searching files…</div>
   ) : (
     <div className="message-box__file-mention-status">No matching files</div>
@@ -334,34 +354,17 @@ export function useComposerMentions({
     mentionMenuStyle,
     textareaWrapRef,
     mentionMenuRef,
-    setProjectMention,
-    activeProjectMentionIndex,
     setActiveProjectMentionIndex,
-    projectMentionMenuOpen,
-    projectMentionResults,
-    handleSelectProjectMention,
-    composerSourceKey,
-    setFileMention,
-    activeFileMentionIndex,
     setActiveFileMentionIndex,
-    fileMentionMenuOpen,
-    fileMentionResults,
-    handleSelectFileMention,
-    setSkillMention,
-    composerCache,
-    activeSkillMentionIndex,
+    currentComposerCache,
     setActiveSkillMentionIndex,
-    skillMentionMenuOpen,
-    composerResults,
-    handleSelectComposerMention,
     mentionDropdownOptions,
+    mentionMenus,
+    activeMentionMenu,
     mentionMenuOpen,
-    activeMentionIndex,
-    mentionListboxId,
-    setActiveMentionIndex,
     updateMessageMentions,
+    closeMentions,
     handleMessageSelect,
-    handleSelectMentionDropdown,
     mentionDropdownEmptyContent
   }
 }

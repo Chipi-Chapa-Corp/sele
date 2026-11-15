@@ -91,7 +91,7 @@ test('Codex cold sidebar reads a stopped last turn before opening it, and after 
   const coldStart = () => {
     const instance = adapter(
       './codex/CodexProviderAdapter.ts',
-      ['getChatsInContext', 'getSidebarTurnSummary'],
+      ['getChatsInContext', 'getSidebarTurnSummary', 'readLatestTurnShell'],
       {
         ...codexStatuses,
         getCodexTurnOutcome,
@@ -492,7 +492,7 @@ const coldFixture = (provider, outcome) => {
   const instance = configure(
     adapter(
       './codex/CodexProviderAdapter.ts',
-      ['getChatsInContext', 'getSidebarTurnSummary', 'createChatDetail'],
+      ['getChatsInContext', 'getSidebarTurnSummary', 'readLatestTurnShell', 'createChatDetail'],
       {
         ...bindings,
         ...codex,

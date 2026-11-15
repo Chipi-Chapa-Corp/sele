@@ -125,12 +125,7 @@ export const EditableUnifiedDiff = ({
           sourceEditor.getOption(monaco.editor.EditorOption.lineHeight) / 2 -
           reviewMarkerHeight / 2
 
-        return [
-          {
-            group,
-            top
-          }
-        ]
+        return [{ group, top }]
       })
       setReviewMarkers((current) => reuseReviewMarkers(current, nextMarkers))
     })
@@ -140,24 +135,19 @@ export const EditableUnifiedDiff = ({
 
   useEffect(() => {
     onChangeRef.current = onChange
-  }, [onChange])
-
-  useEffect(() => {
     onAddCommentRef.current = onAddComment
     onCommentSelectionChangeRef.current = onCommentSelectionChange
-  }, [onAddComment, onCommentSelectionChange])
-
-  useEffect(() => {
     onSaveRef.current = onSave
-  }, [onSave])
-
-  useEffect(() => {
     onToggleWordWrapRef.current = onToggleWordWrap
-  }, [onToggleWordWrap])
-
-  useEffect(() => {
     showOriginalLineNumbersRef.current = showOriginalLineNumbers
-  }, [showOriginalLineNumbers])
+  }, [
+    onChange,
+    onAddComment,
+    onCommentSelectionChange,
+    onSave,
+    onToggleWordWrap,
+    showOriginalLineNumbers
+  ])
 
   useEffect(() => {
     const parent = hostRef.current
@@ -168,24 +158,18 @@ export const EditableUnifiedDiff = ({
     const language = getMonacoLanguage(initialConfig.fileDiff.path)
     const instanceId = ++editableDiffInstanceId
     const modelPath = initialConfig.fileDiff.path.replace(/\\/g, '/').replace(/^\/+/, '')
-    const originalModel = monaco.editor.createModel(
-      original,
-      language,
-      monaco.Uri.from({
-        scheme: 'inmemory',
-        authority: 'sele',
-        path: `/${instanceId}/original/${modelPath}`
-      })
-    )
-    const modifiedModel = monaco.editor.createModel(
-      initialConfig.contents,
-      language,
-      monaco.Uri.from({
-        scheme: 'inmemory',
-        authority: 'sele',
-        path: `/${instanceId}/modified/${modelPath}`
-      })
-    )
+    const createModel = (side: 'original' | 'modified', value: string) =>
+      monaco.editor.createModel(
+        value,
+        language,
+        monaco.Uri.from({
+          scheme: 'inmemory',
+          authority: 'sele',
+          path: `/${instanceId}/${side}/${modelPath}`
+        })
+      )
+    const originalModel = createModel('original', original)
+    const modifiedModel = createModel('modified', initialConfig.contents)
     originalModel.updateOptions({ insertSpaces: true, tabSize: 2 })
     modifiedModel.updateOptions({ insertSpaces: true, tabSize: 2 })
     const codeFont = getCodeFontAppearance()
@@ -240,9 +224,6 @@ export const EditableUnifiedDiff = ({
     }
     targetDecorationCollectionRef.current = modifiedEditor.createDecorationsCollection()
 
-    const changeSubscription = modifiedModel.onDidChangeContent(() => {
-      onChangeRef.current(modifiedModel.getValue())
-    })
     const showReviewInput = (
       sourceEditor: monaco.editor.IStandaloneCodeEditor,
       selection: monaco.Selection | null
@@ -278,30 +259,17 @@ export const EditableUnifiedDiff = ({
           : null
       )
     }
-    const originalSelectionSubscription = originalEditor.onDidChangeCursorSelection(() =>
-      trackSelection(originalEditor)
-    )
-    const modifiedSelectionSubscription = modifiedEditor.onDidChangeCursorSelection(() =>
-      trackSelection(modifiedEditor)
-    )
-    const originalFocusSubscription = originalEditor.onDidFocusEditorText(() =>
-      trackSelection(originalEditor)
-    )
-    const modifiedFocusSubscription = modifiedEditor.onDidFocusEditorText(() =>
-      trackSelection(modifiedEditor)
-    )
-    const originalScrollSubscription = originalEditor.onDidScrollChange(() =>
-      setReviewLayoutVersion((version) => version + 1)
-    )
-    const modifiedScrollSubscription = modifiedEditor.onDidScrollChange(() =>
-      setReviewLayoutVersion((version) => version + 1)
-    )
-    const layoutSubscription = editor.onDidUpdateDiff(() =>
-      setReviewLayoutVersion((version) => version + 1)
-    )
-    const editorLayoutSubscription = modifiedEditor.onDidLayoutChange(() =>
-      setReviewLayoutVersion((version) => version + 1)
-    )
+    const updateReviewLayout = (): void => setReviewLayoutVersion((version) => version + 1)
+    const subscriptions = [
+      modifiedModel.onDidChangeContent(() => onChangeRef.current(modifiedModel.getValue())),
+      ...[originalEditor, modifiedEditor].flatMap((sourceEditor) => [
+        sourceEditor.onDidChangeCursorSelection(() => trackSelection(sourceEditor)),
+        sourceEditor.onDidFocusEditorText(() => trackSelection(sourceEditor)),
+        sourceEditor.onDidScrollChange(updateReviewLayout)
+      ]),
+      editor.onDidUpdateDiff(updateReviewLayout),
+      modifiedEditor.onDidLayoutChange(updateReviewLayout)
+    ]
     modifiedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
       onSaveRef.current()
     )
@@ -359,15 +327,7 @@ export const EditableUnifiedDiff = ({
       targetDecorationCollectionRef.current = null
       themeObserver.disconnect()
       window.removeEventListener(appFontSettingsChangedEvent, handleFontSettingsChanged)
-      changeSubscription.dispose()
-      originalSelectionSubscription.dispose()
-      modifiedSelectionSubscription.dispose()
-      originalFocusSubscription.dispose()
-      modifiedFocusSubscription.dispose()
-      originalScrollSubscription.dispose()
-      modifiedScrollSubscription.dispose()
-      layoutSubscription.dispose()
-      editorLayoutSubscription.dispose()
+      for (const subscription of subscriptions) subscription.dispose()
       editor.dispose()
       originalModel.dispose()
       modifiedModel.dispose()
@@ -393,11 +353,12 @@ export const EditableUnifiedDiff = ({
       highlightedReviewComments
         .filter((comment) => comment.side === side)
         .map((comment) => ({
-          startLine: Math.max(1, Math.min(comment.line, model.getLineCount())),
-          endLine: Math.max(1, Math.min(getReviewCommentEndLine(comment), model.getLineCount()))
-        }))
-        .map(({ startLine, endLine }) => ({
-          range: new monaco.Range(startLine, 1, endLine, 1),
+          range: new monaco.Range(
+            Math.max(1, Math.min(comment.line, model.getLineCount())),
+            1,
+            Math.max(1, Math.min(getReviewCommentEndLine(comment), model.getLineCount())),
+            1
+          ),
           options: {
             className: 'editable-unified-diff__review-line-highlight',
             isWholeLine: true

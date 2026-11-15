@@ -12,19 +12,8 @@ import { reconcileModelSelection, reconcileReasoningSelection } from '../../mode
 import { providerApi } from '../../providerApi'
 import { getFallbackModels } from '../../providerSettings'
 import { getErrorMessage, modelSupportsServiceTier } from '../chatControllerUtils'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspacePreferenceState } from '../state/useWorkspacePreferenceState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
 import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
-
-type WorkspaceModelCatalogsDependencies = {
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  preferences: ReturnType<typeof useWorkspacePreferenceState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceModelCatalogs({
   provider,
@@ -32,7 +21,9 @@ export function useWorkspaceModelCatalogs({
   chatState,
   preferences,
   sourceState
-}: WorkspaceModelCatalogsDependencies) {
+}: WorkspaceState & {
+  provider: ReturnType<typeof useWorkspaceProviderContext>
+}) {
   useEffect(() => {
     let active = true
     const fallbackModels = getFallbackModels(provider.configProviderId)

@@ -14,8 +14,8 @@ type AxNode = {
 export type BrowserTreeOptions = {
   filter?: 'all' | 'interactive'
   depth?: number
-  ref?: string
-  maxLength?: number
+  ref_id?: string
+  max_chars?: number
 }
 const interactiveRoles = new Set([
   'button',
@@ -51,18 +51,14 @@ export class BrowserAccessibility {
     this.reverse.clear()
   }
 
-  private backend(ref: string): number {
+  backendNodeId(ref: string): number {
     const id = this.refs.get(ref)
     if (!id) throw new Error('Stale or unknown element reference; call read_page or find again')
     return id
   }
 
-  backendNodeId(ref: string): number {
-    return this.backend(ref)
-  }
-
-  async read(options: BrowserTreeOptions = {}, query?: string): Promise<string> {
-    const rootBackend = options.ref ? this.backend(options.ref) : undefined
+  async read(options: BrowserTreeOptions, query?: string): Promise<string> {
+    const rootBackend = options.ref_id ? this.backendNodeId(options.ref_id) : undefined
     const { nodes } = await this.cdp<{ nodes: AxNode[] }>('Accessibility.getFullAXTree')
     const index = new Map(nodes.map((node) => [node.nodeId, node]))
     const root = rootBackend
@@ -104,13 +100,13 @@ export class BrowserAccessibility {
     }
     walk(root, 0)
     const text = (query ? lines.slice(0, 20) : lines).join('\n') || 'No matching elements.'
-    const limit = options.maxLength ?? 50000
+    const limit = options.max_chars ?? 50000
     return text.length > limit ? `${text.slice(0, limit)}\n[truncated]` : text
   }
 
-  async withElement<T>(ref: string, declaration: string, args: unknown[] = []): Promise<T> {
+  private async withElement<T>(ref: string, declaration: string, args: unknown[]): Promise<T> {
     const { object } = await this.cdp<{ object: { objectId?: string } }>('DOM.resolveNode', {
-      backendNodeId: this.backend(ref)
+      backendNodeId: this.backendNodeId(ref)
     })
     if (!object.objectId) throw new Error('Element is no longer available; read the page again')
     try {
@@ -140,9 +136,9 @@ export class BrowserAccessibility {
   }
 
   async point(ref: string): Promise<BrowserPoint> {
-    await this.cdp('DOM.scrollIntoViewIfNeeded', { backendNodeId: this.backend(ref) })
+    await this.cdp('DOM.scrollIntoViewIfNeeded', { backendNodeId: this.backendNodeId(ref) })
     const { quads } = await this.cdp<{ quads: number[][] }>('DOM.getContentQuads', {
-      backendNodeId: this.backend(ref)
+      backendNodeId: this.backendNodeId(ref)
     })
     const quad = quads.find((q) => q.length === 8 && Math.abs((q[2] - q[0]) * (q[5] - q[1])) > 1)
     if (!quad) throw new Error('Element has no visible click target')

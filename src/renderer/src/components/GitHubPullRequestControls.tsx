@@ -35,6 +35,20 @@ export function GitHubPullRequestControls({
             .filter((value) => state.states.includes(value))
             .map((value) => gitHubPullRequestStateLabels[value])
             .join(', ')
+  const search = (
+    <Input
+      type="search"
+      aria-label="Search pull requests"
+      placeholder="Search pull requests"
+      maxLength={256}
+      value={state.search}
+      disabled={disabled}
+      onChange={(event) => state.setSearch(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') state.setSearch('')
+      }}
+    />
+  )
   return (
     <>
       <div
@@ -65,18 +79,7 @@ export function GitHubPullRequestControls({
       </div>
       {compact ? (
         <div className="changes-sidebar__pull-request-search">
-          <Input
-            type="search"
-            aria-label="Search pull requests"
-            placeholder="Search pull requests"
-            maxLength={256}
-            value={state.search}
-            disabled={disabled}
-            onChange={(event) => state.setSearch(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') state.setSearch('')
-            }}
-          />
+          {search}
           <Button
             theme="secondary"
             aria-label="Clear pull request search"
@@ -86,18 +89,7 @@ export function GitHubPullRequestControls({
           />
         </div>
       ) : (
-        <Input
-          type="search"
-          aria-label="Search pull requests"
-          placeholder="Search pull requests"
-          maxLength={256}
-          value={state.search}
-          disabled={disabled}
-          onChange={(event) => state.setSearch(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') state.setSearch('')
-          }}
-        />
+        search
       )}
     </>
   )

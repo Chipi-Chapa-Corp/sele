@@ -126,13 +126,11 @@ export const withProviderNetworkRetries = (
 
   const retry = async (chatId: string, state: RetryState): Promise<void> => {
     try {
-      const detail = adapter.getChatWindow
-        ? await adapter.getChatWindow(
-            chatId,
-            { startIndex: null, limit: 1 },
-            { container: state.options?.container }
-          )
-        : await adapter.getChat(chatId, { container: state.options?.container })
+      const detail = await adapter.getChatWindow(
+        chatId,
+        { startIndex: null, limit: 1 },
+        { container: state.options?.container }
+      )
       if (disposed || states.get(chatId) !== state) return
       if (getFailedStep(detail)?.id !== state.failedStepId) {
         cancel(chatId)
@@ -229,11 +227,11 @@ export const withProviderNetworkRetries = (
     publish(detail, metadata)
   })
 
-  const run = async (
+  const run = async <T>(
     chatId: string,
     options: ProviderTurnOptions | undefined,
-    operation: () => Promise<ProviderChatDetail>
-  ): Promise<ProviderChatDetail> => {
+    operation: () => Promise<T>
+  ): Promise<T> => {
     begin(chatId, options)
     try {
       return await operation()
@@ -275,17 +273,10 @@ export const withProviderNetworkRetries = (
         listeners.delete(listener)
       }
     },
-    enqueueLimitResetMessage: adapter.enqueueLimitResetMessage
-      ? async (id, message, messageId, options, commit) => {
-          begin(id, options)
-          try {
-            await adapter.enqueueLimitResetMessage!(id, message, messageId, options, commit)
-          } catch (error) {
-            cancel(id)
-            throw error
-          }
-        }
-      : undefined,
+    enqueueLimitResetMessage: (id, message, messageId, options, commit) =>
+      run(id, options, () =>
+        adapter.enqueueLimitResetMessage(id, message, messageId, options, commit)
+      ),
     getChats: async (options) => {
       const page = await adapter.getChats(options)
       return {

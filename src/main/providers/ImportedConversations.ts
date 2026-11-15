@@ -150,9 +150,8 @@ export class ImportedConversations {
     const record = await this.record(providerId, id)
     container ??= record?.container
     const adapter = this.native[providerId]
-    const native = await (adapter.getChatWindow?.(id, fullWindow, { container }) ??
-      adapter.getChat(id, { container }))
-    return record ? this.project(record, native, true) : native
+    const native = await adapter.getChatWindow(id, fullWindow, { container })
+    return record ? this.project(record, native) : native
   }
   private view(record: ImportedConversation): ImportedHistoryView {
     let view = this.views.get(record)
@@ -194,16 +193,12 @@ export class ImportedConversations {
       ...native
     ]
   }
-  private project(
-    record: ImportedConversation,
-    detail: ProviderChatDetail,
-    replace = false
-  ): ProviderChatDetail {
+  private project(record: ImportedConversation, detail: ProviderChatDetail): ProviderChatDetail {
     const idKey = key(record.providerId, record.chatId)
     const cached = this.projections.get(idKey)
     if (cached && cached.revision > detail.revision) return cached.detail
     const baseline = new Set(record.baseline)
-    const next = detail.items
+    const tail = detail.items
       .filter((item) => !baseline.has(item.id))
       .map((item) =>
         item.type === 'message' &&
@@ -212,18 +207,6 @@ export class ImportedConversations {
           ? { ...item, content: item.content.slice(migrationNote.length + 1) }
           : item
       )
-    const old = cached?.detail.items.filter((item) => !item.id.startsWith('archive:')) ?? []
-    const first = next.length ? old.findIndex((item) => item.id === next[0]!.id) : -1
-    const tail = replace
-      ? next
-      : next.length
-        ? [
-            ...old
-              .slice(0, first < 0 ? old.length : first)
-              .filter((item) => item.type !== 'pendingMessage'),
-            ...next
-          ]
-        : old
     let prefix = this.prefixes.get(record)
     if (!prefix) {
       prefix = archivedItems(record.archive.chat.items, 'archive:')
@@ -311,9 +294,9 @@ export class ImportedConversations {
       )
       if (!record) throw new Error('Provider did not register the imported session.')
       if (cancelled()) return null
-      const detail = await (adapter.getChatWindow?.(id, fullWindow, {
+      const detail = await adapter.getChatWindow(id, fullWindow, {
         container: options.container
-      }) ?? adapter.getChat(id, { container: options.container }))
+      })
       record.baseline = detail.items.map((item) => item.id)
       if (cancelled()) return null
       await this.store.save({ ...record, state: 'ready' })
@@ -425,13 +408,7 @@ export class ImportedConversations {
               }
             return { ...page, chats }
           }
-        const method =
-          Reflect.get(target, property) ??
-          (property === 'getChatCursorWindow'
-            ? () => {
-                throw new Error('Cursor history is unavailable for this provider.')
-              }
-            : undefined)
+        const method = Reflect.get(target, property)
         if (
           typeof method !== 'function' ||
           typeof property !== 'string' ||

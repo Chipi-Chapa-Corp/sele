@@ -99,6 +99,18 @@ if (!process.versions.electron) {
                 contents: 'export const AppUpdatePrompt=()=>null'
               }))
             }
+          },
+          {
+            name: 'unused-workers',
+            setup(build) {
+              build.onResolve({ filter: /\?worker$/ }, (args) => ({
+                path: args.path,
+                namespace: 'worker'
+              }))
+              build.onLoad({ filter: /.*/, namespace: 'worker' }, () => ({
+                contents: 'export default class {}'
+              }))
+            }
           }
         ]
       })

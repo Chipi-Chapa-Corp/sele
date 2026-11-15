@@ -22,13 +22,7 @@ import {
 } from './diffReview'
 import 'react-diff-view/style/index.css'
 import './UnifiedDiff.css'
-export { getOriginalContents } from './diffOriginalContents'
-export {
-  groupReviewComments,
-  ReviewMarkers,
-  type ReviewMarker,
-  type DiffReviewLocation
-} from './diffReview'
+export type { DiffReviewLocation } from './diffReview'
 
 const maxStructuredDiffLength = 200_000
 const maxStructuredDiffLines = 4_000
@@ -86,6 +80,18 @@ const getChangeLineNumber = (
 
   return side === 'new' ? change.lineNumber : null
 }
+
+const findChangeByLineNumber = (
+  { hunks }: FileData,
+  side: ProviderReviewComment['side'],
+  lineNumber: number
+): ChangeData | undefined =>
+  side === 'old'
+    ? findChangeByOldLineNumber(hunks, lineNumber)
+    : findChangeByNewLineNumber(hunks, lineNumber)
+
+const getElement = (node: Node | null): Element | null | undefined =>
+  node instanceof Element ? node : node?.parentElement
 
 const getDiffLineTarget = (
   files: readonly { file: FileData }[],
@@ -164,25 +170,12 @@ export const UnifiedDiff = ({
     files.forEach(({ file }) => {
       file.hunks.forEach((hunk) => {
         hunk.changes.forEach((change) => {
-          if (change.type === 'delete') {
-            locations.set(getChangeKey(change), {
-              line: change.lineNumber,
-              endLine: change.lineNumber,
-              side: 'old'
-            })
-          } else if (change.type === 'insert') {
-            locations.set(getChangeKey(change), {
-              line: change.lineNumber,
-              endLine: change.lineNumber,
-              side: 'new'
-            })
-          } else {
-            locations.set(getChangeKey(change), {
-              line: change.newLineNumber,
-              endLine: change.newLineNumber,
-              side: 'new'
-            })
-          }
+          const line = change.type === 'normal' ? change.newLineNumber : change.lineNumber
+          locations.set(getChangeKey(change), {
+            line,
+            endLine: line,
+            side: change.type === 'delete' ? 'old' : 'new'
+          })
         })
       })
     })
@@ -200,10 +193,7 @@ export const UnifiedDiff = ({
             lineNumber <= getReviewCommentEndLine(comment);
             lineNumber += 1
           ) {
-            const change =
-              comment.side === 'old'
-                ? findChangeByOldLineNumber(file.hunks, lineNumber)
-                : findChangeByNewLineNumber(file.hunks, lineNumber)
+            const change = findChangeByLineNumber(file, comment.side, lineNumber)
             if (change) changeKeys.add(getChangeKey(change))
           }
         })
@@ -279,10 +269,7 @@ export const UnifiedDiff = ({
           let changeKey: string | null = null
 
           for (const { file } of files) {
-            const change =
-              group.side === 'old'
-                ? findChangeByOldLineNumber(file.hunks, group.line)
-                : findChangeByNewLineNumber(file.hunks, group.line)
+            const change = findChangeByLineNumber(file, group.side, group.line)
             if (change) {
               changeKey = getChangeKey(change)
               break
@@ -354,14 +341,8 @@ export const UnifiedDiff = ({
     const selection = window.getSelection()
     if (!host || !selection || selection.isCollapsed || selection.rangeCount === 0) return
 
-    const anchorElement =
-      selection.anchorNode instanceof Element
-        ? selection.anchorNode
-        : selection.anchorNode?.parentElement
-    const focusElement =
-      selection.focusNode instanceof Element
-        ? selection.focusNode
-        : selection.focusNode?.parentElement
+    const anchorElement = getElement(selection.anchorNode)
+    const focusElement = getElement(selection.focusNode)
     if (
       !anchorElement ||
       !focusElement ||
@@ -452,16 +433,11 @@ export const UnifiedDiff = ({
       <pre className="unified-diff__fallback">{fileDiff.diff}</pre>
     ) : (
       files.map(({ file, tokens }, index) => {
-        const targetChangeKeys = lineTarget?.fileIndex === index ? lineTarget.changeKeys : undefined
-        const targetAnchorChangeKey =
-          lineTarget?.fileIndex === index ? lineTarget.anchorChangeKey : undefined
+        const target = lineTarget?.fileIndex === index ? lineTarget : undefined
+        const targetAnchorChangeKey = target?.anchorChangeKey
         const hoveredChangeKeys = highlightedChangeKeys[index] ?? []
         const selectedChanges =
-          hoveredChangeKeys.length > 0
-            ? hoveredChangeKeys
-            : targetChangeKeys
-              ? targetChangeKeys
-              : []
+          hoveredChangeKeys.length > 0 ? hoveredChangeKeys : (target?.changeKeys ?? [])
 
         return (
           <Diff

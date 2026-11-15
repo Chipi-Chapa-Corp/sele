@@ -1,5 +1,6 @@
 import type { ProviderChatItem, ProviderSubagent } from '../../../shared/provider'
 import { getCodexSubagentTimelineAnchorId, type CodexTurn } from './CodexItemRenderers.ts'
+import { getString } from '../providerValues.ts'
 
 export type CodexSubagentThread = {
   id: string
@@ -21,9 +22,6 @@ const getRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
-
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
 
 const getThreadSpawn = (source: unknown): Record<string, unknown> | null => {
   const sourceRecord = getRecord(source)

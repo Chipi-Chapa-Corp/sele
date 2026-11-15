@@ -109,114 +109,23 @@ export function useComposerKeyboard({
         return
       }
     }
-    if (mentions.projectMentionMenuOpen && !event.nativeEvent.isComposing) {
+    for (const menu of mentions.mentionMenus) {
+      if (!menu.open || event.nativeEvent.isComposing) continue
       if (event.key === 'Escape') {
         event.preventDefault()
-        mentions.setProjectMention(null)
+        menu.close()
         return
       }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
-        if (mentions.projectMentionResults.length === 0) return
+        if (menu.count === 0) return
         const direction = event.key === 'ArrowDown' ? 1 : -1
-        mentions.setActiveProjectMentionIndex(
-          (index) =>
-            (index + direction + mentions.projectMentionResults.length) %
-            mentions.projectMentionResults.length
-        )
+        menu.setActiveIndex((index) => (index + direction + menu.count) % menu.count)
         return
       }
-      if (
-        event.key === 'Enter' ||
-        (event.key === 'Tab' && mentions.projectMentionResults.length > 0)
-      ) {
+      if (event.key === 'Enter' || (event.key === 'Tab' && menu.count > 0)) {
         event.preventDefault()
-        const project =
-          mentions.projectMentionResults[
-            Math.min(mentions.activeProjectMentionIndex, mentions.projectMentionResults.length - 1)
-          ]
-        if (project) mentions.handleSelectProjectMention(project)
-        return
-      }
-    }
-    if (mentions.skillMentionMenuOpen && !event.nativeEvent.isComposing) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        mentions.setSkillMention(null)
-        return
-      }
-
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault()
-        if (mentions.composerResults.length === 0) return
-
-        const direction = event.key === 'ArrowDown' ? 1 : -1
-        mentions.setActiveSkillMentionIndex(
-          (currentIndex) =>
-            (currentIndex + direction + mentions.composerResults.length) %
-            mentions.composerResults.length
-        )
-        return
-      }
-
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        const selectedResult =
-          mentions.composerResults[
-            Math.min(mentions.activeSkillMentionIndex, mentions.composerResults.length - 1)
-          ]
-        if (selectedResult) mentions.handleSelectComposerMention(selectedResult)
-        return
-      }
-
-      if (event.key === 'Tab' && mentions.composerResults.length > 0) {
-        event.preventDefault()
-        mentions.handleSelectComposerMention(
-          mentions.composerResults[
-            Math.min(mentions.activeSkillMentionIndex, mentions.composerResults.length - 1)
-          ]
-        )
-        return
-      }
-    }
-
-    if (mentions.fileMentionMenuOpen && !event.nativeEvent.isComposing) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        mentions.setFileMention(null)
-        return
-      }
-
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault()
-        if (mentions.fileMentionResults.length === 0) return
-
-        const direction = event.key === 'ArrowDown' ? 1 : -1
-        mentions.setActiveFileMentionIndex(
-          (currentIndex) =>
-            (currentIndex + direction + mentions.fileMentionResults.length) %
-            mentions.fileMentionResults.length
-        )
-        return
-      }
-
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        const selectedFile =
-          mentions.fileMentionResults[
-            Math.min(mentions.activeFileMentionIndex, mentions.fileMentionResults.length - 1)
-          ]
-        if (selectedFile) mentions.handleSelectFileMention(selectedFile)
-        return
-      }
-
-      if (event.key === 'Tab' && mentions.fileMentionResults.length > 0) {
-        event.preventDefault()
-        mentions.handleSelectFileMention(
-          mentions.fileMentionResults[
-            Math.min(mentions.activeFileMentionIndex, mentions.fileMentionResults.length - 1)
-          ]
-        )
+        menu.select(Math.min(menu.activeIndex, menu.count - 1))
         return
       }
     }
@@ -241,9 +150,7 @@ export function useComposerKeyboard({
 
       setPromptDraftsByScope((drafts) => addPromptDraft(drafts, draftScopeKey, draft))
       setMessage('')
-      mentions.setFileMention(null)
-      mentions.setSkillMention(null)
-      mentions.setProjectMention(null)
+      mentions.closeMentions()
       return
     }
 
@@ -260,9 +167,7 @@ export function useComposerKeyboard({
   const handlePopPromptDraft = (draft: PromptDraft): void => {
     setPromptDraftsByScope((drafts) => removePromptDraft(drafts, draftScopeKey, draft.id))
     setMessage((currentMessage) => appendPromptDraft(currentMessage, draft.prompt))
-    mentions.setFileMention(null)
-    mentions.setSkillMention(null)
-    mentions.setProjectMention(null)
+    mentions.closeMentions()
 
     window.requestAnimationFrame(() => {
       const textarea = textareaRef.current

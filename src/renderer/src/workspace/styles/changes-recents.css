@@ -480,13 +480,6 @@ button.changes-sidebar__recent-row:not(:disabled) {
   margin: 0;
 }
 
-.changes-sidebar__pull-request-review-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
 .changes-sidebar__pull-request-ci {
   display: flex;
   flex: none;

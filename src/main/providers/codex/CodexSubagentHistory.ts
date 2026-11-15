@@ -18,11 +18,16 @@ type CatalogEntry = {
   instructionResolved: boolean
 }
 
-export type CodexSubagentHistoryPage = {
-  turns: CodexTurn[]
-  instruction: string | null
-  itemsStartTurnIndex: number
-  turnCount: number
+type ReadOptions = {
+  request: Request
+  key: string
+  threadId: string
+  createdAt: number
+  updatedAt: number
+  parentInstruction: string | null
+  filterTurns: (turns: CodexTurn[]) => CodexTurn[]
+  window?: ProviderChatTurnWindow
+  itemId?: string
 }
 
 /** Metadata shells are cached; only the requested child turns receive full item payloads. */
@@ -41,11 +46,7 @@ export class CodexSubagentHistory {
   }
 
   private getCatalog = async (
-    request: Request,
-    key: string,
-    threadId: string,
-    createdAt: number,
-    updatedAt: number,
+    { request, key, threadId, createdAt, updatedAt }: ReadOptions,
     forceRefresh: boolean
   ): Promise<CatalogEntry> => {
     const cached = this.entries.get(key)
@@ -141,45 +142,18 @@ export class CodexSubagentHistory {
     return entry.inheritedInstruction
   }
 
-  read = async (options: {
-    request: Request
-    key: string
-    threadId: string
-    createdAt: number
-    updatedAt: number
-    parentInstruction: string | null
-    filterTurns: (turns: CodexTurn[]) => CodexTurn[]
-    window?: ProviderChatTurnWindow
-    itemId?: string
-  }): Promise<CodexSubagentHistoryPage> => {
+  read = async (options: ReadOptions) => {
+    const { request, threadId } = options
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const entry = await this.getCatalog(
-        options.request,
-        options.key,
-        options.threadId,
-        options.createdAt,
-        options.updatedAt,
-        attempt > 0
-      )
+      const entry = await this.getCatalog(options, attempt > 0)
       try {
         const renderable = options
           .filterTurns(entry.catalog)
           .filter((turn) => turn.status !== 'queued')
-        const boundary = await this.findBoundary(
-          options.request,
-          options.threadId,
-          renderable,
-          entry
-        )
+        const boundary = await this.findBoundary(request, threadId, renderable, entry)
         const instruction =
           options.parentInstruction ??
-          (await this.resolveInheritedInstruction(
-            options.request,
-            options.threadId,
-            renderable,
-            boundary,
-            entry
-          ))
+          (await this.resolveInheritedInstruction(request, threadId, renderable, boundary, entry))
         const instructionCount = instruction ? 1 : 0
         const turnCount = renderable.length - boundary + instructionCount
         let startIndex: number
@@ -204,8 +178,8 @@ export class CodexSubagentHistory {
         const firstRawIndex = boundary + Math.max(0, startIndex - instructionCount)
         const endRawIndex = boundary + Math.max(0, endIndex - instructionCount)
         const turns = await hydrateCodexTurnRange(
-          options.request,
-          options.threadId,
+          request,
+          threadId,
           renderable,
           firstRawIndex,
           endRawIndex

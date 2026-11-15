@@ -6,10 +6,7 @@ import type {
   ProviderChatUpdateSummary,
   ProviderId
 } from '../../../../shared/provider'
-import {
-  preserveOptimisticChatDetail,
-  shouldPreserveOptimisticTurnUntilUserMessage
-} from '../../chatDetailWindow'
+import { preserveOptimisticChatDetail } from '../../chatDetailWindow'
 import { reuseChatSnapshotItems } from '../../chatSnapshotItems'
 import { mergeChatUpdate } from '../../chatListUpdates'
 import { isContainerTargetAvailable, normalizeContainerTarget } from '../../containerSelection'
@@ -24,19 +21,8 @@ import {
   isChatDetailSnapshotStale
 } from '../chatControllerUtils'
 import { type ApplyChatDetailOptions } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceGitState } from '../state/useWorkspaceGitState'
-import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
 import { useWorkspaceChatCache } from './useWorkspaceChatCache'
-
-type WorkspaceChatProjectionDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  chatCache: ReturnType<typeof useWorkspaceChatCache>
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  gitState: ReturnType<typeof useWorkspaceGitState>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceChatProjection({
   chatState,
@@ -44,7 +30,9 @@ export function useWorkspaceChatProjection({
   searchState,
   sourceState,
   gitState
-}: WorkspaceChatProjectionDependencies) {
+}: WorkspaceState & {
+  chatCache: ReturnType<typeof useWorkspaceChatCache>
+}) {
   const applyChatDetail = useCallback(
     (
       providerId: ProviderId,
@@ -65,8 +53,7 @@ export function useWorkspaceChatProjection({
       }
       const appliedDetail = reuseChatSnapshotItems(
         currentDetail,
-        shouldPreserveOptimisticTurnUntilUserMessage(providerId) &&
-          isActiveChatStatus(detail.status) &&
+        isActiveChatStatus(detail.status) &&
           currentDetail?.id === detail.id &&
           (options.select || chatState.selectedChatKeyRef.current === detailKey)
           ? preserveOptimisticChatDetail(currentDetail, detail)

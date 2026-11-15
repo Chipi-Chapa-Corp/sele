@@ -116,7 +116,7 @@ const SidebarEntry = memo(function SidebarEntry({
       style={kind === 'header' ? { paddingBottom: '0.5rem' } : undefined}
     >
       {kind === 'header' ? (
-        <ChatListGroup {...p} headerOnly />
+        <ChatListGroup {...p} />
       ) : (
         <div
           className="chat-list-group__items"
@@ -167,10 +167,7 @@ export const ChatSidebarGroups = memo(function ChatSidebarGroups({
   const entries = useMemo(() => {
     const result: Entry[] = []
     for (const group of groups) {
-      const element = renderChatGroup(
-        group,
-        `chat-group-${encodeURIComponent(group.key)}`
-      ) as ReactElement<ChatListGroupProps>
+      const element = renderChatGroup(group) as ReactElement<ChatListGroupProps>
       const p = element.props
       const chats = visiblePrefix(group.chats, p.visibleChatCount)
       const base = { group, props: p, chats, index: 0, mountPolicy }

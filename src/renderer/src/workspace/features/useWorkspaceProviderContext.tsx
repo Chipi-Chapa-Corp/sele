@@ -2,21 +2,13 @@ import { useEffect, useMemo, useRef } from 'react'
 import { getContainerTargetKey, normalizeContainerTarget } from '../../containerSelection'
 import { filterOpenCodeModels } from '../../openCodeProviderPreferences'
 import { useOpenCodeProviders } from '../../useOpenCodeProviders'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-
-type WorkspaceProviderContextDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceProviderContext({
   chatState,
   sourceState,
   providerState
-}: WorkspaceProviderContextDependencies) {
+}: WorkspaceState) {
   const configProviderId = chatState.selectedChat?.providerId ?? sourceState.newSessionProvider
 
   const configProviderHasSelectedChat = Boolean(chatState.selectedChat)

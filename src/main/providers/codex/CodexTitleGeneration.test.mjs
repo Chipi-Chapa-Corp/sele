@@ -60,7 +60,7 @@ const fixture = () => {
         names.push(params.name)
       }
     },
-    commitThreadAction: (id, action) => {
+    patchThread: (id, action) => {
       adapter.threads.get(id).name = action.name
     },
     emitChatUpdated: (id) => updates.push(id)

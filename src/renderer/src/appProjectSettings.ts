@@ -8,7 +8,6 @@ import type {
   AppSettings
 } from './settings'
 import { isAppProjectSettingsOverridesEmpty, normalizeAppProjectSettingsCwd } from './settings'
-import type { AppGitCommitModels } from './gitCommitModels'
 
 export type ChatBooleanSettingKey = {
   [Key in keyof AppSettings['chat']]: AppSettings['chat'][Key] extends boolean ? Key : never
@@ -52,299 +51,92 @@ const hasSettingKey = (value: object | null | undefined, key: PropertyKey): bool
 export const getProjectSettingPathId = (path: AppProjectSettingPath): string =>
   `settings-project-action-${path.section}-${path.key}`
 
+const dropEmptyGroups = <Value extends object>(
+  value: Value,
+  groupKeys: readonly (keyof Value)[]
+): Value => {
+  const nextValue = { ...value }
+  for (const key of groupKeys) {
+    const group = nextValue[key]
+    if (group && Object.keys(group).length === 0) delete nextValue[key]
+  }
+  return nextValue
+}
+
 const cleanProjectSettingsOverrides = (
   overrides: AppProjectSettingsOverrides
-): AppProjectSettingsOverrides => {
-  const nextOverrides: AppProjectSettingsOverrides = { ...overrides }
+): AppProjectSettingsOverrides =>
+  dropEmptyGroups(
+    overrides.git
+      ? {
+          ...overrides,
+          git: dropEmptyGroups(overrides.git, [
+            'commitPrompt',
+            'commitMessageGeneration',
+            'quickActions',
+            'worktree'
+          ])
+        }
+      : overrides,
+    ['appearance', 'chat', 'browser', 'links', 'performance', 'git']
+  )
 
-  if (nextOverrides.appearance && Object.keys(nextOverrides.appearance).length === 0) {
-    delete nextOverrides.appearance
-  }
-  if (nextOverrides.chat && Object.keys(nextOverrides.chat).length === 0) {
-    delete nextOverrides.chat
-  }
-  if (nextOverrides.browser && Object.keys(nextOverrides.browser).length === 0) {
-    delete nextOverrides.browser
-  }
-  if (nextOverrides.links && Object.keys(nextOverrides.links).length === 0) {
-    delete nextOverrides.links
-  }
-  if (nextOverrides.performance && Object.keys(nextOverrides.performance).length === 0) {
-    delete nextOverrides.performance
-  }
+const gitGroupSections = {
+  gitCommitPrompt: 'commitPrompt',
+  gitCommitMessageGeneration: 'commitMessageGeneration',
+  gitQuickActions: 'quickActions',
+  gitWorktree: 'worktree'
+} as const
 
-  if (nextOverrides.git) {
-    const gitOverrides = { ...nextOverrides.git }
-    if (gitOverrides.commitPrompt && Object.keys(gitOverrides.commitPrompt).length === 0) {
-      delete gitOverrides.commitPrompt
-    }
-    if (
-      gitOverrides.commitMessageGeneration &&
-      Object.keys(gitOverrides.commitMessageGeneration).length === 0
-    ) {
-      delete gitOverrides.commitMessageGeneration
-    }
-    if (gitOverrides.quickActions && Object.keys(gitOverrides.quickActions).length === 0) {
-      delete gitOverrides.quickActions
-    }
-    if (gitOverrides.worktree && Object.keys(gitOverrides.worktree).length === 0) {
-      delete gitOverrides.worktree
-    }
+type SettingSection = AppProjectSettingPath['section']
 
-    if (Object.keys(gitOverrides).length === 0) {
-      delete nextOverrides.git
-    } else {
-      nextOverrides.git = gitOverrides
-    }
-  }
+const isGitGroupSection = (section: SettingSection): section is keyof typeof gitGroupSections =>
+  section in gitGroupSections
 
-  return nextOverrides
-}
+const getSettingGroup = (
+  settings: AppProjectSettingsOverrides,
+  section: SettingSection
+): Record<string, unknown> | undefined =>
+  isGitGroupSection(section) ? settings.git?.[gitGroupSections[section]] : settings[section]
+
+const setSettingGroup = (
+  overrides: AppProjectSettingsOverrides,
+  section: SettingSection,
+  group: Record<string, unknown>
+): AppProjectSettingsOverrides =>
+  cleanProjectSettingsOverrides(
+    isGitGroupSection(section)
+      ? { ...overrides, git: { ...overrides.git, [gitGroupSections[section]]: group } }
+      : { ...overrides, [section]: group }
+  )
 
 export const getAppProjectSettingValue = (
   settings: AppSettings,
   path: AppProjectSettingPath
-): unknown => {
-  switch (path.section) {
-    case 'appearance':
-      return settings.appearance[path.key]
-    case 'chat':
-      return settings.chat[path.key]
-    case 'browser':
-      return settings.browser[path.key]
-    case 'links':
-      return settings.links[path.key]
-    case 'performance':
-      return settings.performance[path.key]
-    case 'git':
-      return settings.git[path.key]
-    case 'gitCommitPrompt':
-      return settings.git.commitPrompt[path.key]
-    case 'gitCommitMessageGeneration':
-      return settings.git.commitMessageGeneration[path.key]
-    case 'gitQuickActions':
-      return settings.git.quickActions[path.key]
-    case 'gitWorktree':
-      return settings.git.worktree[path.key]
-  }
-}
+): unknown => getSettingGroup(settings, path.section)?.[path.key]
 
 export const isAppProjectSettingOverridden = (
   overrides: AppProjectSettingsOverrides | null | undefined,
   path: AppProjectSettingPath
-): boolean => {
-  switch (path.section) {
-    case 'appearance':
-      return hasSettingKey(overrides?.appearance, path.key)
-    case 'chat':
-      return hasSettingKey(overrides?.chat, path.key)
-    case 'browser':
-      return hasSettingKey(overrides?.browser, path.key)
-    case 'links':
-      return hasSettingKey(overrides?.links, path.key)
-    case 'performance':
-      return hasSettingKey(overrides?.performance, path.key)
-    case 'git':
-      return hasSettingKey(overrides?.git, path.key)
-    case 'gitCommitPrompt':
-      return hasSettingKey(overrides?.git?.commitPrompt, path.key)
-    case 'gitCommitMessageGeneration':
-      return hasSettingKey(overrides?.git?.commitMessageGeneration, path.key)
-    case 'gitQuickActions':
-      return hasSettingKey(overrides?.git?.quickActions, path.key)
-    case 'gitWorktree':
-      return hasSettingKey(overrides?.git?.worktree, path.key)
-  }
-}
+): boolean => hasSettingKey(overrides && getSettingGroup(overrides, path.section), path.key)
 
 export const setAppProjectSettingOverrideValue = (
   overrides: AppProjectSettingsOverrides,
   path: AppProjectSettingPath,
   value: unknown
-): AppProjectSettingsOverrides => {
-  switch (path.section) {
-    case 'appearance':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        appearance: {
-          ...overrides.appearance,
-          [path.key]: value
-        } as Partial<AppSettings['appearance']>
-      })
-    case 'chat':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        chat: {
-          ...overrides.chat,
-          [path.key]: value
-        } as Partial<AppSettings['chat']>
-      })
-    case 'browser':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        browser: {
-          ...overrides.browser,
-          [path.key]: value
-        } as Partial<AppSettings['browser']>
-      })
-    case 'links':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        links: {
-          ...overrides.links,
-          [path.key]: value
-        } as Partial<AppSettings['links']>
-      })
-    case 'performance':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        performance: {
-          ...overrides.performance,
-          [path.key]: value
-        } as Partial<AppSettings['performance']>
-      })
-    case 'git':
-      if (path.key === 'enablePullRequests') {
-        return cleanProjectSettingsOverrides({
-          ...overrides,
-          git: {
-            ...overrides.git,
-            enablePullRequests: value as boolean
-          }
-        })
-      }
-      if (path.key !== 'commitModels') {
-        return cleanProjectSettingsOverrides({
-          ...overrides,
-          git: {
-            ...overrides.git,
-            [path.key]: value as string
-          }
-        })
-      }
-
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: {
-          ...overrides.git,
-          commitModels: value as AppGitCommitModels
-        }
-      })
-    case 'gitCommitPrompt':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: {
-          ...overrides.git,
-          commitPrompt: {
-            ...overrides.git?.commitPrompt,
-            [path.key]: value
-          } as Partial<AppGitCommitPromptSettings>
-        }
-      })
-    case 'gitCommitMessageGeneration':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: {
-          ...overrides.git,
-          commitMessageGeneration: {
-            ...overrides.git?.commitMessageGeneration,
-            [path.key]: value
-          } as Partial<AppGitCommitMessageGenerationSettings>
-        }
-      })
-    case 'gitQuickActions':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: {
-          ...overrides.git,
-          quickActions: {
-            ...overrides.git?.quickActions,
-            [path.key]: value
-          } as Partial<AppGitQuickActionsSettings>
-        }
-      })
-    case 'gitWorktree':
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: {
-          ...overrides.git,
-          worktree: {
-            ...overrides.git?.worktree,
-            [path.key]: value
-          } as Partial<AppGitWorktreeSettings>
-        }
-      })
-  }
-}
+): AppProjectSettingsOverrides =>
+  setSettingGroup(overrides, path.section, {
+    ...getSettingGroup(overrides, path.section),
+    [path.key]: value
+  })
 
 export const clearAppProjectSettingOverrideValue = (
   overrides: AppProjectSettingsOverrides,
   path: AppProjectSettingPath
 ): AppProjectSettingsOverrides => {
-  switch (path.section) {
-    case 'appearance': {
-      const appearance = { ...(overrides.appearance ?? {}) }
-      delete appearance[path.key]
-      return cleanProjectSettingsOverrides({ ...overrides, appearance })
-    }
-    case 'chat': {
-      const chat = { ...(overrides.chat ?? {}) }
-      delete chat[path.key]
-      return cleanProjectSettingsOverrides({ ...overrides, chat })
-    }
-    case 'browser': {
-      const browser = { ...(overrides.browser ?? {}) }
-      delete browser[path.key]
-      return cleanProjectSettingsOverrides({ ...overrides, browser })
-    }
-    case 'links': {
-      const links = { ...(overrides.links ?? {}) }
-      delete links[path.key]
-      return cleanProjectSettingsOverrides({ ...overrides, links })
-    }
-    case 'performance': {
-      const performance = { ...(overrides.performance ?? {}) }
-      delete performance[path.key]
-      return cleanProjectSettingsOverrides({ ...overrides, performance })
-    }
-    case 'git': {
-      const git = { ...(overrides.git ?? {}) }
-      delete git[path.key]
-      return cleanProjectSettingsOverrides({ ...overrides, git })
-    }
-    case 'gitCommitPrompt': {
-      const commitPrompt = { ...(overrides.git?.commitPrompt ?? {}) }
-      delete commitPrompt[path.key]
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: { ...(overrides.git ?? {}), commitPrompt }
-      })
-    }
-    case 'gitCommitMessageGeneration': {
-      const commitMessageGeneration = { ...(overrides.git?.commitMessageGeneration ?? {}) }
-      delete commitMessageGeneration[path.key]
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: { ...(overrides.git ?? {}), commitMessageGeneration }
-      })
-    }
-    case 'gitQuickActions': {
-      const quickActions = { ...(overrides.git?.quickActions ?? {}) }
-      delete quickActions[path.key]
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: { ...(overrides.git ?? {}), quickActions }
-      })
-    }
-    case 'gitWorktree': {
-      const worktree = { ...(overrides.git?.worktree ?? {}) }
-      delete worktree[path.key]
-      return cleanProjectSettingsOverrides({
-        ...overrides,
-        git: { ...(overrides.git ?? {}), worktree }
-      })
-    }
-  }
+  const group = { ...getSettingGroup(overrides, path.section) }
+  delete group[path.key]
+  return setSettingGroup(overrides, path.section, group)
 }
 
 export const setAppProjectSettingsForCwd = (

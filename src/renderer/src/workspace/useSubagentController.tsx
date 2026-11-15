@@ -18,41 +18,55 @@ import { providerSubagentTurnPageSize } from '../../../shared/provider'
 import { providerApi } from '../providerApi'
 import { ChatCommitMarkerItem, type ChatCommitMarker } from '../components/AppStatusStates'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
-import type { SubagentControllerDependencies } from './controllerDependencies'
+import type { useCommitController } from './useCommitController'
 import { beginSubagentPageNavigation, getWorkingSubagentIds } from '../subagentUi'
+import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
 
 const subagentPageRequests = new WeakMap<object, number>()
 
 // Return shape is inferred from the controller declarations below.
-export function useSubagentController(dependencies: SubagentControllerDependencies) {
+export function useSubagentController({
+  viewportState,
+  chatRead,
+  session,
+  subagentState,
+  searchState,
+  chatState,
+  scroll,
+  gitState,
+  commits
+}: WorkspaceChat & {
+  commits: ReturnType<typeof useCommitController>
+}) {
   const {
-    activeSubagentChatView,
-    subagents = [],
-    selectedProviderId,
-    selectedChatId,
-    selectedChatKey,
-    subagentChatLoadRequestRef,
-    resetChatSearch,
-    setEditingMessage,
-    setSubagentChatView,
-    selectedChatKeyRef,
-    subagentContentRef,
-    scrollChatContentToBottom,
-    cancelingSubagentIds,
-    setCancelingSubagentIds,
-    setSubagentListState,
-    contentRef,
     chatAutoScrollEnabledRef,
     chatViewportAnchorRef,
     chatScrollAdjustmentTargetRef,
     previousChatScrollTopRef,
-    markSelectedChatSeen,
+    contentRef
+  } = viewportState
+  const { markSelectedChatSeen } = chatRead
+  const {
+    activeSubagentChatView,
+    selectedProviderId,
+    selectedChatId,
+    selectedChatKey,
     scopedCommitActivitiesByMarkerId,
-    cancelingAiCommitKeys,
-    openingAiCommitChatIds,
-    handleCancelAiCommit,
-    handleOpenAiCommitChat
-  } = dependencies
+    selectedChatSubagents: subagents
+  } = session
+  const {
+    subagentChatLoadRequestRef,
+    setSubagentChatView,
+    subagentContentRef,
+    cancelingSubagentIds,
+    setCancelingSubagentIds,
+    setSubagentListState
+  } = subagentState
+  const { resetChatSearch } = searchState
+  const { setEditingMessage, selectedChatKeyRef } = chatState
+  const { scrollChatContentToBottom } = scroll
+  const { cancelingAiCommitKeys, openingAiCommitChatIds } = gitState
+  const { handleCancelAiCommit, handleOpenAiCommitChat } = commits
 
   // Navigation belongs to the root conversation. Keep each opened viewport (and
   // a child's loaded history page) until the user leaves that conversation.

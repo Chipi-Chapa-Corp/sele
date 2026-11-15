@@ -66,7 +66,7 @@ if (!process.versions.electron) {
                 handleManageChatAccounts={() => window.managed++}
                 selectedChat={window.newChatMode ? null : { providerId: 'claude', id: 'fixture' }}
                 newChatOpen={window.newChatMode}
-                worktreeCreationState="idle"
+                worktreeCreationState="idle" providerUpdateSuggestions={[]}
                 newSessionProvider="claude" newSessionProviderOptions={[{value:'claude', label:'Claude'}]}
                 projectOptions={[{value:'/fixture', label:'Fixture project'}]} newSessionProjectValue="/fixture"
                 newSessionLocationOptions={[{value:'folder', label:'Folder'}]} newSessionLocation="folder"

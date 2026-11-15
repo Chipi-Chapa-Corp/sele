@@ -2,26 +2,16 @@ import { Bot, MessageSquare } from 'lucide-react'
 import { useMemo } from 'react'
 import type { DropdownOption } from '../../components/Dropdown'
 import { getAppGitCommitModel } from '../../gitCommitModels'
-import { formatModelLabel } from '../../messageBoxPreferences'
+import { formatModelLabel } from '../../composer/configPresentation'
 import { gitCurrentChatModelValue } from '../controllerTypes'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
-import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
-import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
-
-type WorkspaceGitModelsDependencies = {
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-}
+import type { WorkspaceSession } from '../useWorkspaceSelection'
 
 export function useWorkspaceGitModels({
   provider,
   providerState,
   settings,
   sourceState
-}: WorkspaceGitModelsDependencies) {
+}: WorkspaceSession) {
   const gitSettingsModelsCurrent = provider.gitSettingsUsesConfigProviderModels
     ? providerState.displayedModelCatalogKey === provider.gitSettingsModelCatalogKey
     : providerState.displayedGitSettingsModelCatalogKey === provider.gitSettingsModelCatalogKey

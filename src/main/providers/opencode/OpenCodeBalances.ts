@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { ProviderAccountBalance } from '../../../shared/provider'
 import { estimateModelCost, type ModelTokenUsage } from '../modelPricing/TokenPricing.ts'
+import { isRecord } from '../providerValues.ts'
 
 const balanceRequestTimeoutMs = 15_000
 const successCacheMs = 60_000
@@ -37,9 +38,6 @@ type BalanceSource = {
   adminOnly?: boolean
   fetch: (context: BalanceContext) => Promise<ProviderAccountBalance[]>
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const toNumber = (value: unknown): number | null => {
   const number =
@@ -122,16 +120,14 @@ const openRouter: BalanceSource = {
         { authorization: `Bearer ${context.key}` },
         context
       )
-      const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null
-      const total = toNumber(data?.total_credits)
-      const used = toNumber(data?.total_usage)
-      if (total == null || used == null) throw invalid(name)
+      const amount = unusedCredits(payload)
+      if (amount == null) throw invalid(name)
       return [
         balance('openrouter', name, {
           id: 'openrouter:credits',
           label: 'Credits',
           kind: 'remaining',
-          amount: total - used,
+          amount,
           currency: 'USD'
         })
       ]
@@ -194,124 +190,6 @@ const openRouter: BalanceSource = {
   }
 }
 
-const deepSeek: BalanceSource = {
-  name: 'DeepSeek',
-  fetch: async (context) => {
-    const name = 'DeepSeek'
-    const payload = await requestJson(
-      name,
-      'https://api.deepseek.com/user/balance',
-      { authorization: `Bearer ${context.key}` },
-      context,
-      { forbiddenIsUnavailable: false }
-    )
-    if (!isRecord(payload) || !Array.isArray(payload.balance_infos)) throw invalid(name)
-    return payload.balance_infos.flatMap((info) => {
-      if (!isRecord(info)) return []
-      const amount = toNumber(info.total_balance)
-      const currency = typeof info.currency === 'string' ? info.currency.toUpperCase() : null
-      if (amount == null || !currency) return []
-      return [
-        balance('deepseek', name, {
-          id: `deepseek:${currency}`,
-          label: 'Balance',
-          kind: 'remaining',
-          amount,
-          currency
-        })
-      ]
-    })
-  }
-}
-
-const moonshot = (
-  providerId: string,
-  name: string,
-  host: string,
-  currency: string
-): BalanceSource => ({
-  name,
-  fetch: async (context) => {
-    const payload = await requestJson(
-      name,
-      `https://${host}/v1/users/me/balance`,
-      { authorization: `Bearer ${context.key}` },
-      context,
-      { forbiddenIsUnavailable: false }
-    )
-    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null
-    const amount = toNumber(data?.available_balance)
-    if (amount == null) throw invalid(name)
-    return [
-      balance(providerId, name, {
-        id: `${providerId}:balance`,
-        label: 'Balance',
-        kind: 'remaining',
-        amount,
-        currency
-      })
-    ]
-  }
-})
-
-const siliconFlow = (
-  providerId: string,
-  name: string,
-  host: string,
-  currency: string
-): BalanceSource => ({
-  name,
-  fetch: async (context) => {
-    const payload = await requestJson(
-      name,
-      `https://${host}/v1/user/info`,
-      { authorization: `Bearer ${context.key}` },
-      context,
-      { forbiddenIsUnavailable: false }
-    )
-    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null
-    const amount = toNumber(data?.totalBalance) ?? toNumber(data?.balance)
-    if (amount == null) throw invalid(name)
-    return [
-      balance(providerId, name, {
-        id: `${providerId}:balance`,
-        label: 'Balance',
-        kind: 'remaining',
-        amount,
-        currency
-      })
-    ]
-  }
-})
-
-const abliteration: BalanceSource = {
-  name: 'abliteration.ai',
-  fetch: async (context) => {
-    const name = 'abliteration.ai'
-    const payload = await requestJson(
-      name,
-      'https://api.abliteration.ai/v1/credits',
-      { authorization: `Bearer ${context.key}` },
-      context,
-      { forbiddenIsUnavailable: false }
-    )
-    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null
-    // Same shape as OpenRouter's credits: purchased total and finalized usage, both in USD.
-    const total = toNumber(data?.total_credits)
-    const used = toNumber(data?.total_usage)
-    if (total == null || used == null) throw invalid(name)
-    return [
-      balance('abliteration-ai', name, {
-        id: 'abliteration-ai:credits',
-        label: 'Credits',
-        kind: 'remaining',
-        amount: total - used,
-        currency: 'USD'
-      })
-    ]
-  }
-}
-
 const at = (value: unknown, path: string): unknown =>
   path
     .split('.')
@@ -322,9 +200,29 @@ const read = (payload: unknown, path: string): unknown =>
   at(payload, path) ?? at(payload, `data.${path}`)
 const readNumber = (payload: unknown, path: string): number | null => toNumber(read(payload, path))
 
-type SimpleAmount = Omit<ProviderAccountBalance, 'id' | 'modelProviderId' | 'modelProviderName'>
+const scaled = (payload: unknown, path: string, divisor: number): number | null => {
+  const value = readNumber(payload, path)
+  return value == null ? null : value / divisor
+}
+
+type SimpleAmount = Omit<ProviderAccountBalance, 'id' | 'modelProviderId' | 'modelProviderName'> & {
+  id?: string
+}
 const credits = (amount: number | null, currency = 'USD'): SimpleAmount[] | null =>
   amount == null ? null : [{ label: 'Credits', kind: 'remaining', amount, currency }]
+const creditsIn = (payload: unknown, amountPath: string, currencyPath: string) => {
+  const currency = read(payload, currencyPath)
+  return credits(
+    readNumber(payload, amountPath),
+    typeof currency === 'string' ? currency.toUpperCase() : 'USD'
+  )
+}
+/** Purchased total minus finalized usage, both in USD. */
+const unusedCredits = (payload: unknown): number | null => {
+  const total = toNumber(at(payload, 'data.total_credits'))
+  const used = toNumber(at(payload, 'data.total_usage'))
+  return total == null || used == null ? null : total - used
+}
 
 /**
  * A provider whose documented billing endpoint returns its balance in one request.
@@ -363,51 +261,70 @@ const simple = (
     const amounts = readAmounts(payload)
     if (!amounts) throw invalid(name)
     return amounts.map((amount, index) =>
-      balance(providerId, name, { ...amount, id: `${providerId}:${index}` })
+      balance(providerId, name, { ...amount, id: amount.id ?? `${providerId}:${index}` })
     )
   }
 })
+
+const prepaid = (
+  providerId: string,
+  name: string,
+  url: string,
+  currency: string,
+  fields: string[]
+): BalanceSource =>
+  simple(providerId, name, url, (payload) => {
+    const amount = fields
+      .map((field) => toNumber(at(payload, `data.${field}`)))
+      .find((value) => value != null)
+    return amount == null
+      ? null
+      : [{ id: `${providerId}:balance`, label: 'Balance', kind: 'remaining', amount, currency }]
+  })
+
+/** Daily or hourly report buckets, following pagination up to `maxCostPages`. */
+async function* reportBuckets(
+  name: string,
+  url: string,
+  query: URLSearchParams,
+  headers: Record<string, string>,
+  context: BalanceContext
+): AsyncGenerator<[bucket: Record<string, unknown>, results: unknown[]]> {
+  for (let index = 0; index < maxCostPages; index += 1) {
+    const payload = await requestJson(name, `${url}?${query}`, headers, context)
+    if (!isRecord(payload) || !Array.isArray(payload.data)) throw invalid(name)
+    for (const bucket of payload.data)
+      if (isRecord(bucket) && Array.isArray(bucket.results)) yield [bucket, bucket.results]
+    if (payload.has_more !== true || typeof payload.next_page !== 'string' || !payload.next_page)
+      return
+    query.set('page', payload.next_page)
+  }
+}
 
 const anthropic: BalanceSource = {
   name: 'Anthropic',
   fetch: async (context) => {
     const name = 'Anthropic'
     const startingAt = startOfUtcMonth(context.now).toISOString()
-    let page: string | null = null
     let cents = 0
     let currency = 'USD'
     let reportedUntil = Date.parse(startingAt)
-    for (let index = 0; index < maxCostPages; index += 1) {
-      const query = new URLSearchParams({
-        starting_at: startingAt,
-        bucket_width: '1d',
-        limit: '31'
-      })
-      if (page) query.set('page', page)
-      const payload = await requestJson(
-        name,
-        `https://api.anthropic.com/v1/organizations/cost_report?${query}`,
-        { 'x-api-key': context.key, 'anthropic-version': '2023-06-01' },
-        context
-      )
-      if (!isRecord(payload) || !Array.isArray(payload.data)) throw invalid(name)
-      for (const bucket of payload.data) {
-        if (!isRecord(bucket) || !Array.isArray(bucket.results)) continue
-        const endingAt = toTimestamp(bucket.ending_at)
-        if (endingAt != null) reportedUntil = Math.max(reportedUntil, endingAt)
-        for (const result of bucket.results) {
-          if (!isRecord(result)) continue
-          // Amounts are decimal strings in the lowest currency unit (cents).
-          const amount = toNumber(result.amount)
-          if (amount != null) cents += amount
-          if (typeof result.currency === 'string') currency = result.currency.toUpperCase()
-        }
+    for await (const [bucket, results] of reportBuckets(
+      name,
+      'https://api.anthropic.com/v1/organizations/cost_report',
+      new URLSearchParams({ starting_at: startingAt, bucket_width: '1d', limit: '31' }),
+      { 'x-api-key': context.key, 'anthropic-version': '2023-06-01' },
+      context
+    )) {
+      const endingAt = toTimestamp(bucket.ending_at)
+      if (endingAt != null) reportedUntil = Math.max(reportedUntil, endingAt)
+      for (const result of results) {
+        if (!isRecord(result)) continue
+        // Amounts are decimal strings in the lowest currency unit (cents).
+        const amount = toNumber(result.amount)
+        if (amount != null) cents += amount
+        if (typeof result.currency === 'string') currency = result.currency.toUpperCase()
       }
-      page =
-        payload.has_more === true && typeof payload.next_page === 'string'
-          ? payload.next_page
-          : null
-      if (!page) break
     }
     // The cost report only has finished UTC days. Price the rest from the hourly token report.
     const recent = await estimateAnthropicRecentCost(context, reportedUntil)
@@ -431,51 +348,40 @@ const estimateAnthropicRecentCost = async (
   since: number
 ): Promise<number | null> => {
   if (!context.priceModels || since >= context.now) return null
-  const name = 'Anthropic'
   const models = new Map<string, ModelTokenUsage>()
-  let page: string | null = null
-  for (let index = 0; index < maxCostPages; index += 1) {
-    const query = new URLSearchParams({
-      starting_at: new Date(since).toISOString(),
-      bucket_width: '1h',
-      limit: '168'
-    })
-    query.append('group_by[]', 'model')
-    if (page) query.set('page', page)
-    const payload = await requestJson(
-      name,
-      `https://api.anthropic.com/v1/organizations/usage_report/messages?${query}`,
-      { 'x-api-key': context.key, 'anthropic-version': '2023-06-01' },
-      context
-    )
-    if (!isRecord(payload) || !Array.isArray(payload.data)) throw invalid(name)
-    for (const bucket of payload.data) {
-      if (!isRecord(bucket) || !Array.isArray(bucket.results)) continue
-      for (const result of bucket.results) {
-        if (!isRecord(result) || typeof result.model !== 'string') continue
-        const cache = isRecord(result.cache_creation) ? result.cache_creation : {}
-        const write5m = toNumber(cache.ephemeral_5m_input_tokens) ?? 0
-        const write1h = toNumber(cache.ephemeral_1h_input_tokens) ?? 0
-        const model = models.get(result.model) ?? {
-          modelId: result.model,
-          pricingProvider: 'anthropic',
-          usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
-          cacheWriteTokens: 0,
-          cacheWrite1hTokens: 0
-        }
-        // Sele's token model counts cache writes as input tokens.
-        model.usage.inputTokens += (toNumber(result.uncached_input_tokens) ?? 0) + write5m + write1h
-        model.usage.cachedInputTokens += toNumber(result.cache_read_input_tokens) ?? 0
-        model.usage.outputTokens += toNumber(result.output_tokens) ?? 0
-        model.cacheWriteTokens = (model.cacheWriteTokens ?? 0) + write5m + write1h
-        model.cacheWrite1hTokens = (model.cacheWrite1hTokens ?? 0) + write1h
-        models.set(result.model, model)
+  const query = new URLSearchParams({
+    starting_at: new Date(since).toISOString(),
+    bucket_width: '1h',
+    limit: '168'
+  })
+  query.append('group_by[]', 'model')
+  for await (const [, results] of reportBuckets(
+    'Anthropic',
+    'https://api.anthropic.com/v1/organizations/usage_report/messages',
+    query,
+    { 'x-api-key': context.key, 'anthropic-version': '2023-06-01' },
+    context
+  ))
+    for (const result of results) {
+      if (!isRecord(result) || typeof result.model !== 'string') continue
+      const cache = isRecord(result.cache_creation) ? result.cache_creation : {}
+      const write5m = toNumber(cache.ephemeral_5m_input_tokens) ?? 0
+      const write1h = toNumber(cache.ephemeral_1h_input_tokens) ?? 0
+      const model = models.get(result.model) ?? {
+        modelId: result.model,
+        pricingProvider: 'anthropic',
+        usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+        cacheWriteTokens: 0,
+        cacheWrite1hTokens: 0
       }
+      // Sele's token model counts cache writes as input tokens.
+      model.usage.inputTokens += (toNumber(result.uncached_input_tokens) ?? 0) + write5m + write1h
+      model.usage.cachedInputTokens += toNumber(result.cache_read_input_tokens) ?? 0
+      model.usage.outputTokens += toNumber(result.output_tokens) ?? 0
+      model.cacheWriteTokens = (model.cacheWriteTokens ?? 0) + write5m + write1h
+      model.cacheWrite1hTokens = (model.cacheWrite1hTokens ?? 0) + write1h
+      models.set(result.model, model)
     }
-    page =
-      payload.has_more === true && typeof payload.next_page === 'string' ? payload.next_page : null
-    if (!page) break
-  }
   if (models.size === 0) return null
   let total = 0
   let priced = false
@@ -493,38 +399,21 @@ const openAi: BalanceSource = {
   fetch: async (context) => {
     const name = 'OpenAI'
     const startTime = Math.floor(startOfUtcMonth(context.now).getTime() / 1_000)
-    let page: string | null = null
     let total = 0
     let currency = 'USD'
-    for (let index = 0; index < maxCostPages; index += 1) {
-      const query = new URLSearchParams({
-        start_time: String(startTime),
-        bucket_width: '1d',
-        limit: '31'
-      })
-      if (page) query.set('page', page)
-      const payload = await requestJson(
-        name,
-        `https://api.openai.com/v1/organization/costs?${query}`,
-        { authorization: `Bearer ${context.key}` },
-        context
-      )
-      if (!isRecord(payload) || !Array.isArray(payload.data)) throw invalid(name)
-      for (const bucket of payload.data) {
-        if (!isRecord(bucket) || !Array.isArray(bucket.results)) continue
-        for (const result of bucket.results) {
-          const amount = isRecord(result) && isRecord(result.amount) ? result.amount : null
-          const value = toNumber(amount?.value)
-          if (value != null) total += value
-          if (typeof amount?.currency === 'string') currency = amount.currency.toUpperCase()
-        }
+    for await (const [, results] of reportBuckets(
+      name,
+      'https://api.openai.com/v1/organization/costs',
+      new URLSearchParams({ start_time: String(startTime), bucket_width: '1d', limit: '31' }),
+      { authorization: `Bearer ${context.key}` },
+      context
+    ))
+      for (const result of results) {
+        const amount = isRecord(result) && isRecord(result.amount) ? result.amount : null
+        const value = toNumber(amount?.value)
+        if (value != null) total += value
+        if (typeof amount?.currency === 'string') currency = amount.currency.toUpperCase()
       }
-      page =
-        payload.has_more === true && typeof payload.next_page === 'string'
-          ? payload.next_page
-          : null
-      if (!page) break
-    }
     return [
       balance('openai', name, {
         id: 'openai:month',
@@ -541,26 +430,72 @@ const openAi: BalanceSource = {
 /** Billing endpoints by OpenCode provider ID (the models.dev catalog ID). */
 export const openCodeBalanceSources: Record<string, BalanceSource> = {
   openrouter: openRouter,
-  deepseek: deepSeek,
-  moonshotai: moonshot('moonshotai', 'Moonshot AI', 'api.moonshot.ai', 'USD'),
-  'moonshotai-cn': moonshot('moonshotai-cn', 'Moonshot AI (China)', 'api.moonshot.cn', 'CNY'),
-  siliconflow: siliconFlow('siliconflow', 'SiliconFlow', 'api.siliconflow.com', 'USD'),
-  'siliconflow-cn': siliconFlow(
+  deepseek: simple('deepseek', 'DeepSeek', 'https://api.deepseek.com/user/balance', (payload) =>
+    isRecord(payload) && Array.isArray(payload.balance_infos)
+      ? payload.balance_infos.flatMap((info): SimpleAmount[] => {
+          if (!isRecord(info)) return []
+          const amount = toNumber(info.total_balance)
+          const currency = typeof info.currency === 'string' ? info.currency.toUpperCase() : null
+          if (amount == null || !currency) return []
+          return [
+            { id: `deepseek:${currency}`, label: 'Balance', kind: 'remaining', amount, currency }
+          ]
+        })
+      : null
+  ),
+  moonshotai: prepaid(
+    'moonshotai',
+    'Moonshot AI',
+    'https://api.moonshot.ai/v1/users/me/balance',
+    'USD',
+    ['available_balance']
+  ),
+  'moonshotai-cn': prepaid(
+    'moonshotai-cn',
+    'Moonshot AI (China)',
+    'https://api.moonshot.cn/v1/users/me/balance',
+    'CNY',
+    ['available_balance']
+  ),
+  siliconflow: prepaid(
+    'siliconflow',
+    'SiliconFlow',
+    'https://api.siliconflow.com/v1/user/info',
+    'USD',
+    ['totalBalance', 'balance']
+  ),
+  'siliconflow-cn': prepaid(
     'siliconflow-cn',
     'SiliconFlow (China)',
-    'api.siliconflow.cn',
-    'CNY'
+    'https://api.siliconflow.cn/v1/user/info',
+    'CNY',
+    ['totalBalance', 'balance']
   ),
-  'abliteration-ai': abliteration,
+  // Same shape as OpenRouter's credits.
+  'abliteration-ai': simple(
+    'abliteration-ai',
+    'abliteration.ai',
+    'https://api.abliteration.ai/v1/credits',
+    (payload) => {
+      const amount = unusedCredits(payload)
+      return amount == null
+        ? null
+        : [
+            {
+              id: 'abliteration-ai:credits',
+              label: 'Credits',
+              kind: 'remaining',
+              amount,
+              currency: 'USD'
+            }
+          ]
+    }
+  ),
   anthropic,
   openai: openAi,
-  aiand: simple('aiand', 'ai&', 'https://api.aiand.com/billing/balance', (payload) => {
-    const currency = read(payload, 'currency')
-    return credits(
-      readNumber(payload, 'balance'),
-      typeof currency === 'string' ? currency.toUpperCase() : 'USD'
-    )
-  }),
+  aiand: simple('aiand', 'ai&', 'https://api.aiand.com/billing/balance', (payload) =>
+    creditsIn(payload, 'balance', 'currency')
+  ),
   aimlapi: simple('aimlapi', 'AI/ML API', 'https://api.aimlapi.com/v2/billing', (payload) =>
     credits(readNumber(payload, 'current_balance'))
   ),
@@ -574,32 +509,20 @@ export const openCodeBalanceSources: Record<string, BalanceSource> = {
     'crossmodel',
     'CrossModel',
     'https://api.crossmodel.ai/v1/credits',
-    (payload) => {
-      const micro = readNumber(payload, 'balance_micro')
-      return credits(micro == null ? null : micro / 1_000_000)
-    }
+    (payload) => credits(scaled(payload, 'balance_micro', 1_000_000))
   ),
   // A negative Stripe balance is money ready to spend; a positive one is money owed.
   deepinfra: simple(
     'deepinfra',
     'Deep Infra',
     'https://api.deepinfra.com/payment/checklist',
-    (payload) => {
-      const stripe = readNumber(payload, 'stripe_balance')
-      return credits(stripe == null ? null : -stripe)
-    }
+    (payload) => credits(scaled(payload, 'stripe_balance', -1))
   ),
   empiriolabs: simple(
     'empiriolabs',
     'EmpirioLabs AI',
     'https://api.empiriolabs.ai/v1/account/usage',
-    (payload) => {
-      const currency = read(payload, 'balance.currency')
-      return credits(
-        readNumber(payload, 'balance.amount'),
-        typeof currency === 'string' ? currency.toUpperCase() : 'USD'
-      )
-    }
+    (payload) => creditsIn(payload, 'balance.amount', 'balance.currency')
   ),
   frogbot: simple('frogbot', 'FrogBot', 'https://app.frogbot.ai/api/v1/quota', (payload) =>
     credits(readNumber(payload, 'balanceUSD'))
@@ -612,10 +535,7 @@ export const openCodeBalanceSources: Record<string, BalanceSource> = {
     'kenari',
     'Kenari',
     'https://kenari.id/v1/account/balance',
-    (payload) => {
-      const micro = readNumber(payload, 'available_micro_idr')
-      return credits(micro == null ? null : micro / 1_000_000, 'IDR')
-    },
+    (payload) => credits(scaled(payload, 'available_micro_idr', 1_000_000), 'IDR'),
     { forbiddenIsUnavailable: true }
   ),
   llmgateway: llmGateway('llmgateway', 'DevPass (LLM Gateway)'),
@@ -634,18 +554,11 @@ export const openCodeBalanceSources: Record<string, BalanceSource> = {
     'novita-ai',
     'Novita AI',
     'https://api.novita.ai/openapi/v1/billing/balance/detail',
-    (payload) => {
-      const units = readNumber(payload, 'availableBalance')
-      return credits(units == null ? null : units / 10_000)
-    }
+    (payload) => credits(scaled(payload, 'availableBalance', 10_000))
   ),
-  ofox: simple('ofox', 'Ofox', 'https://api.ofox.ai/v1/user/balance', (payload) => {
-    const currency = read(payload, 'currency')
-    return credits(
-      readNumber(payload, 'balance'),
-      typeof currency === 'string' ? currency.toUpperCase() : 'USD'
-    )
-  }),
+  ofox: simple('ofox', 'Ofox', 'https://api.ofox.ai/v1/user/balance', (payload) =>
+    creditsIn(payload, 'balance', 'currency')
+  ),
   'ollama-cloud': simple(
     'ollama-cloud',
     'Ollama Cloud',
@@ -700,10 +613,9 @@ export const openCodeBalanceSources: Record<string, BalanceSource> = {
       ]
     }
   ),
-  runinfra: simple('runinfra', 'RunInfra', 'https://api.runinfra.ai/v1/credits', (payload) => {
-    const cents = readNumber(payload, 'available_cents')
-    return credits(cents == null ? null : cents / 100)
-  }),
+  runinfra: simple('runinfra', 'RunInfra', 'https://api.runinfra.ai/v1/credits', (payload) =>
+    credits(scaled(payload, 'available_cents', 100))
+  ),
   stepfun: simple('stepfun', 'StepFun (China)', 'https://api.stepfun.com/v1/accounts', (payload) =>
     credits(readNumber(payload, 'balance'), 'CNY')
   ),
@@ -717,20 +629,14 @@ export const openCodeBalanceSources: Record<string, BalanceSource> = {
     'umans-ai',
     'Umans AI',
     'https://app.umans.ai/api/v1/wallet/summary',
-    (payload) => {
-      const cents = readNumber(payload, 'balance.balanceCents')
-      return credits(cents == null ? null : cents / 100)
-    }
+    (payload) => credits(scaled(payload, 'balance.balanceCents', 100))
   ),
   // Quota units: 500,000 = $1.
   unorouter: simple(
     'unorouter',
     'UnoRouter',
     'https://api.unorouter.com/api/usage/token/',
-    (payload) => {
-      const units = readNumber(payload, 'total_available')
-      return credits(units == null ? null : units / 500_000)
-    }
+    (payload) => credits(scaled(payload, 'total_available', 500_000))
   ),
   venice: simple('venice', 'Venice AI', 'https://api.venice.ai/api/v1/billing/balance', (payload) =>
     credits(readNumber(payload, 'balances.usd'))
@@ -765,24 +671,15 @@ export const openCodeBalanceSources: Record<string, BalanceSource> = {
     'aihubmix',
     'AIHubMix',
     'https://aihubmix.com/api/user/self',
-    (payload) => {
-      // Quota units: 500,000 = $1.
-      const units = readNumber(payload, 'quota')
-      return credits(units == null ? null : units / 500_000)
-    },
+    // Quota units: 500,000 = $1.
+    (payload) => credits(scaled(payload, 'quota', 500_000)),
     { adminOnly: true }
   ),
   cortecs: simple(
     'cortecs',
     'Cortecs',
     'https://api.cortecs.ai/v1/manage/balance',
-    (payload) => {
-      const currency = read(payload, 'currency')
-      return credits(
-        readNumber(payload, 'current_balance'),
-        typeof currency === 'string' ? currency.toUpperCase() : 'USD'
-      )
-    },
+    (payload) => creditsIn(payload, 'current_balance', 'currency'),
     { adminOnly: true }
   ),
   'merge-gateway': simple(

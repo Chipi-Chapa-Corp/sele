@@ -205,10 +205,6 @@
   background: var(--muted);
 }
 
-.chat-list-item__status--waitingOnApproval {
-  background: var(--menu-option-check-color);
-}
-
 .chat-list-item__status--waitingOnUserInput {
   background: var(--info);
 }

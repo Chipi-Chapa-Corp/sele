@@ -15,7 +15,6 @@ const MarkdownMessage = lazy(() =>
   import('./MarkdownMessage').then(({ MarkdownMessage }) => ({ default: MarkdownMessage }))
 )
 
-type RecentReferenceListItem = PinnedRecentReference
 type RecentReferenceFile = RecentChatFileReference | RecentlyOpenedFile
 
 type RecentReferencesListProps = {
@@ -39,9 +38,8 @@ type RecentReferenceRowProps = {
   container?: AppContainerTarget | null
   cwd?: string | null
   pinned: boolean
-  pinnable: boolean
   recordAsOpened: boolean
-  reference: RecentReferenceListItem
+  reference: PinnedRecentReference
   onDragEnd?: () => void
   onDragOver?: (event: React.DragEvent<HTMLLIElement>) => void
   onDragStart?: (event: React.DragEvent<HTMLLIElement>) => void
@@ -57,7 +55,6 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
   container,
   cwd,
   pinned,
-  pinnable,
   recordAsOpened,
   reference,
   onDragEnd,
@@ -68,16 +65,22 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
   onTogglePinned
 }) => {
   const [textExpanded, setTextExpanded] = useState(false)
-  const itemClassName = [
-    'changes-sidebar__recent-item',
-    pinnable ? 'changes-sidebar__recent-item--pinnable' : null,
-    reference.kind === 'text' ? 'changes-sidebar__recent-item--text' : null,
-    pinned ? 'changes-sidebar__recent-item--pinned' : null,
-    dragging ? 'changes-sidebar__recent-item--dragging' : null,
-    dropPosition ? `changes-sidebar__recent-item--drop-${dropPosition}` : null
-  ]
-    .filter(Boolean)
-    .join(' ')
+  const itemProps = {
+    className: [
+      'changes-sidebar__recent-item',
+      'changes-sidebar__recent-item--pinnable',
+      reference.kind === 'text' ? 'changes-sidebar__recent-item--text' : null,
+      pinned ? 'changes-sidebar__recent-item--pinned' : null,
+      dragging ? 'changes-sidebar__recent-item--dragging' : null,
+      dropPosition ? `changes-sidebar__recent-item--drop-${dropPosition}` : null
+    ]
+      .filter(Boolean)
+      .join(' '),
+    draggable: pinned,
+    onDragEnd,
+    onDragOver,
+    onDragStart
+  }
 
   if (reference.kind === 'text') {
     const content = reference.content.trim()
@@ -104,13 +107,7 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
       : undefined
 
     return (
-      <li
-        className={itemClassName}
-        draggable={pinned}
-        onDragEnd={onDragEnd}
-        onDragOver={onDragOver}
-        onDragStart={onDragStart}
-      >
+      <li {...itemProps}>
         <span className="changes-sidebar__recent-drag-handle" title="Drag to reorder">
           <GripVertical aria-hidden="true" />
         </span>
@@ -187,13 +184,7 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
   )
 
   return (
-    <li
-      className={itemClassName}
-      draggable={pinned}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragStart={onDragStart}
-    >
+    <li {...itemProps}>
       {pinned && (
         <span className="changes-sidebar__recent-drag-handle" title="Drag to reorder">
           <GripVertical aria-hidden="true" />
@@ -222,18 +213,16 @@ const RecentReferenceRow: React.FC<RecentReferenceRowProps> = ({
           {content}
         </a>
       )}
-      {pinnable && (
-        <span className="changes-sidebar__recent-actions">
-          <Button
-            theme="transparent"
-            size="small"
-            aria-label={pinned ? `Unpin ${reference.label}` : `Pin ${reference.label}`}
-            title={pinned ? 'Unpin' : 'Pin'}
-            callback={() => onTogglePinned(reference)}
-            icon={pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-          />
-        </span>
-      )}
+      <span className="changes-sidebar__recent-actions">
+        <Button
+          theme="transparent"
+          size="small"
+          aria-label={pinned ? `Unpin ${reference.label}` : `Pin ${reference.label}`}
+          title={pinned ? 'Unpin' : 'Pin'}
+          callback={() => onTogglePinned(reference)}
+          icon={pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+        />
+      </span>
     </li>
   )
 }
@@ -316,6 +305,8 @@ export const RecentReferencesList: React.FC<RecentReferencesListProps> = ({
     resetDrag()
   }
 
+  const rowProps = { canOpenFiles, container, cwd, onOpenFile, onGoToText, onTogglePinned }
+
   return (
     <div className="changes-sidebar__recent-groups">
       {pinnedReferences.length > 0 && (
@@ -355,21 +346,15 @@ export const RecentReferencesList: React.FC<RecentReferencesListProps> = ({
               return (
                 <RecentReferenceRow
                   key={referenceKey}
-                  canOpenFiles={canOpenFiles}
-                  container={container}
-                  cwd={cwd}
+                  {...rowProps}
                   dragging={referenceKey === draggedReferenceKey}
                   dropPosition={dropPosition}
                   pinned
-                  pinnable
                   recordAsOpened
                   reference={reference}
                   onDragEnd={resetDrag}
                   onDragOver={(event) => handleDragOver(event, reference)}
                   onDragStart={(event) => handleDragStart(event, reference)}
-                  onOpenFile={onOpenFile}
-                  onGoToText={onGoToText}
-                  onTogglePinned={onTogglePinned}
                 />
               )
             })}
@@ -387,18 +372,12 @@ export const RecentReferencesList: React.FC<RecentReferencesListProps> = ({
             {recentReferences.map((reference) => (
               <RecentReferenceRow
                 key={getRecentChatReferenceKey(reference)}
-                canOpenFiles={canOpenFiles}
-                container={container}
-                cwd={cwd}
+                {...rowProps}
                 dragging={false}
                 dropPosition={null}
                 pinned={false}
-                pinnable
                 recordAsOpened
                 reference={reference}
-                onOpenFile={onOpenFile}
-                onGoToText={onGoToText}
-                onTogglePinned={onTogglePinned}
               />
             ))}
           </ul>
@@ -413,18 +392,12 @@ export const RecentReferencesList: React.FC<RecentReferencesListProps> = ({
             {openedFiles.map((file) => (
               <RecentReferenceRow
                 key={getRecentChatReferenceKey(file)}
-                canOpenFiles={canOpenFiles}
-                container={container}
-                cwd={cwd}
+                {...rowProps}
                 dragging={false}
                 dropPosition={null}
                 pinned={false}
-                pinnable
                 recordAsOpened={false}
                 reference={file}
-                onOpenFile={onOpenFile}
-                onGoToText={onGoToText}
-                onTogglePinned={onTogglePinned}
               />
             ))}
           </ul>

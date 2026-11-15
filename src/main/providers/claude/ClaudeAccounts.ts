@@ -15,7 +15,6 @@ import { ClaudeAccountLogin } from './ClaudeAccountLogin'
 import { ClaudeAccountStore, getClaudeAccountEnvironment } from './ClaudeAccountStore'
 import { createClaudeAccountStorage, runClaudeAccountCommand } from './ClaudeAccountStorage'
 import { getClaudeExecutable } from './ClaudeExecutable'
-import { parseClaudeVersion } from './ClaudeVersion'
 import { fetchClaudeRateLimits } from './ClaudeUsage'
 import {
   consumeClaudeResetCredit,
@@ -23,6 +22,7 @@ import {
   readClaudeResetAccount
 } from './ClaudeResetCredits'
 import { claudeAccountDisplayName } from '../AccountDisplayName'
+import { parseProviderVersion } from '../providerUpdate'
 import { ClaudeAuthenticationError, isClaudeAuthenticationError } from './ClaudeAuthentication'
 
 const usageFallbackCacheMs = 60_000
@@ -145,21 +145,6 @@ export class ClaudeAccounts {
     return `${getContainerTargetKey(options.container)}:${active}`
   }
 
-  /** Records limits Claude returned directly, so later failures can still show them. */
-  rememberUsage = async (
-    options: ProviderSourceOptions,
-    limits: ClaudeUsageCacheEntry['limits']
-  ): Promise<void> => {
-    if (!limits) return
-    const key = await this.usageCacheKey(options)
-    await this.saveUsageCache(key, (current) => ({
-      ...current,
-      at: Date.now(),
-      limits,
-      retryAt: 0
-    }))
-  }
-
   /** The last limits for the active account, if recent enough to show. */
   getLastUsage = async (
     options: ProviderSourceOptions = {}
@@ -205,7 +190,7 @@ export class ClaudeAccounts {
     if (!check) {
       check = (async () => {
         const output = await runClaudeAccountCommand(await this.command(['--version'], options))
-        const version = parseClaudeVersion(output)
+        const version = parseProviderVersion(output)
         if (!version || !supportsClaudeAccounts(version)) {
           throw new Error(
             `Claude account switching requires Claude Code ${minimumVersion} or newer. Update Claude to continue.`

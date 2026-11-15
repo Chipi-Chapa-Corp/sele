@@ -71,7 +71,6 @@ export const DropdownButton = forwardRef<HTMLButtonElement, ButtonProps>(functio
     if (open) setMenuStyle(menuLayout.current())
   }, [open])
   const enabledDropdownActions = dropdownActions?.filter((action) => !action.disabled) ?? []
-  const hasDropdown = Boolean(dropdownActions?.length || dropdownContent)
   const dropdownDisabled = !dropdownContent && enabledDropdownActions.length === 0
 
   useEffect(() => {
@@ -101,9 +100,12 @@ export const DropdownButton = forwardRef<HTMLButtonElement, ButtonProps>(functio
   useEffect(() => {
     if (!open) return
 
-    const closeMenu = (): void => {
-      setOpen(false)
-      setMenuStyle(null)
+    const resizeMenu = (): void => {
+      if (menuOnly || compact) setMenuStyle(menuLayout.current())
+      else {
+        setOpen(false)
+        setMenuStyle(null)
+      }
     }
 
     const handleScroll = (event: Event): void => {
@@ -115,13 +117,7 @@ export const DropdownButton = forwardRef<HTMLButtonElement, ButtonProps>(functio
         if (root && !target.contains(root)) return
       }
 
-      if (menuOnly || compact) setMenuStyle(menuLayout.current())
-      else closeMenu()
-    }
-
-    const resizeMenu = (): void => {
-      if (menuOnly || compact) setMenuStyle(menuLayout.current())
-      else closeMenu()
+      resizeMenu()
     }
     window.addEventListener('resize', resizeMenu)
     window.addEventListener('scroll', handleScroll, true)
@@ -135,10 +131,9 @@ export const DropdownButton = forwardRef<HTMLButtonElement, ButtonProps>(functio
   const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
     const viewportInset = 9.6
     const menuOffset = 4.8
-    const maxMenuWidth = dropdownWidth
     const startLeft = Math.min(
       Math.max(viewportInset, buttonRect.left),
-      Math.max(viewportInset, window.innerWidth - maxMenuWidth - viewportInset)
+      Math.max(viewportInset, window.innerWidth - dropdownWidth - viewportInset)
     )
     const nextMenuStyle: CSSProperties = {
       minWidth: menuOnly
@@ -153,7 +148,7 @@ export const DropdownButton = forwardRef<HTMLButtonElement, ButtonProps>(functio
     }
 
     if (dropdownContent) {
-      const width = Math.min(maxMenuWidth, window.innerWidth - 2 * viewportInset)
+      const width = Math.min(dropdownWidth, window.innerWidth - 2 * viewportInset)
       const left = dropdownMenuAlign === 'end' ? buttonRect.right - width : buttonRect.left
       nextMenuStyle.width = toCssRem(width)
       if (compact) nextMenuStyle.minWidth = toCssRem(width)
@@ -189,7 +184,7 @@ export const DropdownButton = forwardRef<HTMLButtonElement, ButtonProps>(functio
   }
 
   const openMenu = (): void => {
-    if (dropdownDisabled || typeof window === 'undefined') return
+    if (dropdownDisabled) return
 
     const buttonRect = rootRef.current?.getBoundingClientRect()
     if (!buttonRect) return
@@ -255,108 +250,145 @@ export const DropdownButton = forwardRef<HTMLButtonElement, ButtonProps>(functio
     }
   }
 
-  const handleActionClick = (action: ButtonDropdownAction): void => {
+  const handleActionClick = (action: ButtonDropdownAction | ButtonDropdownInlineAction): void => {
     if (action.disabled) return
 
     closeMenu()
     void action.callback()
   }
 
-  const handleInlineActionClick = (action: ButtonDropdownInlineAction): void => {
-    if (action.disabled) return
-
-    closeMenu()
-    void action.callback()
-  }
-
-  if (hasDropdown) {
-    const menu =
-      open && (dropdownActions || dropdownContent) ? (
-        <div
-          ref={menuRef}
-          className={getMenuRootClassName(theme, size, dropdownPlacement, dropdownMenuAlign)}
-          style={menuStyle ?? undefined}
-        >
-          <MotionSurface
-            className="ui-button-menu"
-            id={menuId}
-            role={dropdownContent ? 'dialog' : 'menu'}
-            aria-label={dropdownContent ? dropdownLabel : undefined}
-            aria-labelledby={dropdownContent ? undefined : buttonId}
-            onKeyDown={handleMenuKeyDown}
-          >
-            {dropdownContent?.(closeMenu)}
-            {dropdownActions?.map((action) =>
-              action.inlineActions?.length ? (
-                <ButtonMenuRow
-                  disabled={action.disabled}
-                  icon={action.icon}
-                  inlineActionRole="menuitem"
-                  inlineActions={action.inlineActions.map((inlineAction) => ({
-                    ...inlineAction,
-                    callback: () => handleInlineActionClick(inlineAction)
-                  }))}
-                  key={action.id}
-                  label={action.label}
-                  mainRole="menuitem"
-                  title={action.title}
-                  onSelect={() => handleActionClick(action)}
-                />
-              ) : action.buttonTheme ? (
-                <button
-                  className={`${getButtonClassName(
-                    action.buttonTheme,
-                    'small',
-                    action.icon,
-                    action.label,
-                    true
-                  )} ui-button-menu__button-item`}
-                  disabled={action.disabled}
-                  key={action.id}
-                  role="menuitem"
-                  title={action.title}
-                  type="button"
-                  onClick={() => handleActionClick(action)}
-                >
-                  {renderIcon(action.icon, 'ui-button__icon')}
-                  <span className="ui-button__label">{action.label}</span>
-                </button>
-              ) : (
-                <button
-                  className="ui-button-menu__item"
-                  disabled={action.disabled}
-                  key={action.id}
-                  role="menuitem"
-                  title={action.title}
-                  type="button"
-                  onClick={() => handleActionClick(action)}
-                >
-                  {renderIcon(action.icon, 'ui-button-menu__icon')}
-                  <span className="ui-button-menu__label">{action.label}</span>
-                </button>
-              )
-            )}
-          </MotionSurface>
-        </div>
-      ) : null
-
-    return (
-      <span
-        className={getButtonGroupClassName(theme, size, fill, open)}
-        ref={rootRef}
-        data-button-menu-root="true"
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      className={getMenuRootClassName(theme, size, dropdownPlacement, dropdownMenuAlign)}
+      style={menuStyle ?? undefined}
+    >
+      <MotionSurface
+        className="ui-button-menu"
+        id={menuId}
+        role={dropdownContent ? 'dialog' : 'menu'}
+        aria-label={dropdownContent ? dropdownLabel : undefined}
+        aria-labelledby={dropdownContent ? undefined : buttonId}
+        onKeyDown={handleMenuKeyDown}
       >
-        {menuOnly ? (
+        {dropdownContent?.(closeMenu)}
+        {dropdownActions?.map((action) =>
+          action.inlineActions?.length ? (
+            <ButtonMenuRow
+              disabled={action.disabled}
+              icon={action.icon}
+              inlineActionRole="menuitem"
+              inlineActions={action.inlineActions.map((inlineAction) => ({
+                ...inlineAction,
+                callback: () => handleActionClick(inlineAction)
+              }))}
+              key={action.id}
+              label={action.label}
+              mainRole="menuitem"
+              title={action.title}
+              onSelect={() => handleActionClick(action)}
+            />
+          ) : action.buttonTheme ? (
+            <button
+              className={`${getButtonClassName(
+                action.buttonTheme,
+                'small',
+                action.icon,
+                action.label,
+                true
+              )} ui-button-menu__button-item`}
+              disabled={action.disabled}
+              key={action.id}
+              role="menuitem"
+              title={action.title}
+              type="button"
+              onClick={() => handleActionClick(action)}
+            >
+              {renderIcon(action.icon, 'ui-button__icon')}
+              <span className="ui-button__label">{action.label}</span>
+            </button>
+          ) : (
+            <button
+              className="ui-button-menu__item"
+              disabled={action.disabled}
+              key={action.id}
+              role="menuitem"
+              title={action.title}
+              type="button"
+              onClick={() => handleActionClick(action)}
+            >
+              {renderIcon(action.icon, 'ui-button-menu__icon')}
+              <span className="ui-button-menu__label">{action.label}</span>
+            </button>
+          )
+        )}
+      </MotionSurface>
+    </div>
+  ) : null
+
+  return (
+    <span
+      className={getButtonGroupClassName(theme, size, fill, open)}
+      ref={rootRef}
+      data-button-menu-root="true"
+    >
+      {menuOnly ? (
+        <button
+          {...buttonProps}
+          ref={toggleRef}
+          id={buttonId}
+          type="button"
+          className={getButtonClassName(theme, size, icon, label, fill)}
+          aria-controls={open ? menuId : undefined}
+          aria-expanded={open}
+          aria-haspopup={dropdownContent ? 'dialog' : 'menu'}
+          disabled={disabled || dropdownDisabled}
+          onClick={handleToggleClick}
+          onPointerDown={preserveTouchEditing}
+          onPointerUp={handleTouchEnd}
+          onPointerMove={handleTouchMove}
+          onPointerCancel={handleTouchCancel}
+          onKeyDown={handleToggleKeyDown}
+        >
+          {renderIcon(icon, 'ui-button__icon')}
+          {label && <span className="ui-button__label">{label}</span>}
+        </button>
+      ) : (
+        <>
           <button
             {...buttonProps}
-            ref={toggleRef}
+            onPointerDown={preserveTouchEditing}
+            onPointerUp={handleTouchEnd}
+            onPointerMove={handleTouchMove}
+            onPointerCancel={handleTouchCancel}
+            aria-haspopup={undefined}
+            className={getButtonClassName(theme, size, icon, label, false, 'main')}
+            disabled={disabled}
             id={buttonId}
+            ref={forwardedRef}
             type="button"
-            className={getButtonClassName(theme, size, icon, label, fill)}
+            onClick={handleClick}
+          >
+            {renderIcon(icon, 'ui-button__icon')}
+            {label && <span className="ui-button__label">{label}</span>}
+          </button>
+          <button
             aria-controls={open ? menuId : undefined}
             aria-expanded={open}
             aria-haspopup={dropdownContent ? 'dialog' : 'menu'}
-            disabled={disabled || dropdownDisabled}
+            aria-label={dropdownLabel}
+            className={getButtonClassName(
+              theme,
+              size,
+              <ChevronDown aria-hidden="true" />,
+              null,
+              false,
+              'toggle'
+            )}
+            disabled={dropdownDisabled}
+            ref={toggleRef}
+            title={dropdownLabel}
+            type="button"
             onClick={handleToggleClick}
             onPointerDown={preserveTouchEditing}
             onPointerUp={handleTouchEnd}
@@ -364,77 +396,11 @@ export const DropdownButton = forwardRef<HTMLButtonElement, ButtonProps>(functio
             onPointerCancel={handleTouchCancel}
             onKeyDown={handleToggleKeyDown}
           >
-            {renderIcon(icon, 'ui-button__icon')}
-            {label && <span className="ui-button__label">{label}</span>}
+            {renderIcon(<ChevronDown aria-hidden="true" />, 'ui-button__icon')}
           </button>
-        ) : (
-          <>
-            <button
-              {...buttonProps}
-              onPointerDown={preserveTouchEditing}
-              onPointerUp={handleTouchEnd}
-              onPointerMove={handleTouchMove}
-              onPointerCancel={handleTouchCancel}
-              aria-haspopup={undefined}
-              className={getButtonClassName(theme, size, icon, label, false, 'main')}
-              disabled={disabled}
-              id={buttonId}
-              ref={forwardedRef}
-              type="button"
-              onClick={handleClick}
-            >
-              {renderIcon(icon, 'ui-button__icon')}
-              {label && <span className="ui-button__label">{label}</span>}
-            </button>
-            <button
-              aria-controls={open ? menuId : undefined}
-              aria-expanded={open}
-              aria-haspopup={dropdownContent ? 'dialog' : 'menu'}
-              aria-label={dropdownLabel}
-              className={getButtonClassName(
-                theme,
-                size,
-                <ChevronDown aria-hidden="true" />,
-                null,
-                false,
-                'toggle'
-              )}
-              disabled={dropdownDisabled}
-              ref={toggleRef}
-              title={dropdownLabel}
-              type="button"
-              onClick={handleToggleClick}
-              onPointerDown={preserveTouchEditing}
-              onPointerUp={handleTouchEnd}
-              onPointerMove={handleTouchMove}
-              onPointerCancel={handleTouchCancel}
-              onKeyDown={handleToggleKeyDown}
-            >
-              {renderIcon(<ChevronDown aria-hidden="true" />, 'ui-button__icon')}
-            </button>
-          </>
-        )}
-        {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
-      </span>
-    )
-  }
-
-  return (
-    <button
-      {...buttonProps}
-      onPointerDown={preserveTouchEditing}
-      onPointerUp={handleTouchEnd}
-      onPointerMove={handleTouchMove}
-      onPointerCancel={handleTouchCancel}
-      className={getButtonClassName(theme, size, icon, label, fill)}
-      disabled={disabled}
-      id={buttonProps.id}
-      ref={forwardedRef}
-      type="button"
-      onClick={handleClick}
-    >
-      {renderIcon(icon, 'ui-button__icon')}
-      {label && <span className="ui-button__label">{label}</span>}
-    </button>
+        </>
+      )}
+      {createPortal(<AnimatePresence>{menu}</AnimatePresence>, document.body)}
+    </span>
   )
 })

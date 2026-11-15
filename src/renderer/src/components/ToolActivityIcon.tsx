@@ -46,19 +46,19 @@ import type { ProviderToolActivity, ProviderToolIcon } from '../../../shared/pro
 import './ChatDetailItem.css'
 import './UnifiedDiff.css'
 
-export type AnimatedIconHandle = {
+type AnimatedIconHandle = {
   startAnimation: () => void
   stopAnimation: () => void
 }
 
-export type AnimatedIconComponent = ForwardRefExoticComponent<
+type AnimatedIconComponent = ForwardRefExoticComponent<
   HTMLAttributes<HTMLDivElement> & {
     size?: number
     animateOnHover?: boolean
   } & RefAttributes<AnimatedIconHandle>
 >
 
-export const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent | null> = {
+const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconComponent | null> = {
   'image-view': AnimatedEyeIcon,
   skill: AnimatedZapIcon,
   read: AnimatedFileTextIcon,
@@ -74,7 +74,7 @@ export const animatedActivityIcons: Record<ProviderToolActivity, AnimatedIconCom
   other: AnimatedWrenchIcon
 }
 
-export const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
+const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
   app: AnimatedBoxIcon,
   skill: AnimatedZapIcon,
   'image-view': AnimatedEyeIcon,
@@ -87,7 +87,7 @@ export const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> 
   browser: AnimatedEarthIcon
 }
 
-export const ToolTypeIcon: React.FC<{
+const ToolTypeIcon: React.FC<{
   activity: ProviderToolActivity
   icon?: ProviderToolIcon | null
 }> = ({ activity, icon }) => {
@@ -115,23 +115,14 @@ export const ToolTypeIcon: React.FC<{
   return <Wrench aria-hidden="true" />
 }
 
-export const ActiveAnimatedIcon: React.FC<{
-  Icon: AnimatedIconComponent
-  active: boolean
-}> = ({ Icon, active }) => {
+const ActiveAnimatedIcon: React.FC<{ Icon: AnimatedIconComponent }> = ({ Icon }) => {
   const iconRef = useRef<AnimatedIconHandle | null>(null)
 
   useEffect(() => {
     const icon = iconRef.current
-
-    if (!active) {
-      icon?.stopAnimation()
-      return undefined
-    }
-
     icon?.startAnimation()
     return () => icon?.stopAnimation()
-  }, [active])
+  }, [])
 
   return (
     <Icon
@@ -151,7 +142,7 @@ export const ToolStatusIcon: React.FC<{
 }> = ({ activity, active, icon }) => {
   if (active) {
     const Icon = icon ? animatedToolIcons[icon] : animatedActivityIcons[activity]
-    if (Icon) return <ActiveAnimatedIcon Icon={Icon} active={active} />
+    if (Icon) return <ActiveAnimatedIcon Icon={Icon} />
   }
 
   return <ToolTypeIcon activity={activity} icon={icon} />

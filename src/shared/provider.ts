@@ -396,8 +396,6 @@ export type ProviderManagedAccount = {
   active: boolean
 }
 
-export const providerDefaultAccountId = 'default'
-
 export type ProviderAccountConfiguration = {
   available: boolean
   unavailableMessage: string | null
@@ -1323,12 +1321,6 @@ export type ProviderApi = {
     value: ProviderConfigValue,
     options?: ProviderSourceOptions
   ) => Promise<ProviderConfig>
-  setConfigFeature: (
-    providerId: ProviderId,
-    name: string,
-    enabled: boolean,
-    options?: ProviderSourceOptions
-  ) => Promise<ProviderConfig>
   getApps: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderApp[]>
   setSkillEnabled: (
     providerId: ProviderId,
@@ -1658,7 +1650,6 @@ export const providerIpcChannels = {
   deleteConnection: 'provider:delete-connection',
   getConfig: 'provider:get-config',
   setConfigValue: 'provider:set-config-value',
-  setConfigFeature: 'provider:set-config-feature',
   getApps: 'provider:get-apps',
   setSkillEnabled: 'provider:set-skill-enabled',
   setSkillsEnabled: 'provider:set-skills-enabled',

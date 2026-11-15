@@ -122,7 +122,7 @@ for (const flatpak of [false, true]) {
 test('wrapper command lookup stays inside a remote target or host bridge', async () => {
   for (const [settings, options] of [
     [{}, { container: { kind: 'container', tool: 'ssh', name: 'fixture' } }],
-    [{ bridge: { file: 'host-spawn', argsPrefix: [] } }, {}]
+    [{ bridge: { file: 'host-spawn' } }, {}]
   ]) {
     const h = harness(settings)
     const env = { CODEX_HOME: '/remote/codex' }

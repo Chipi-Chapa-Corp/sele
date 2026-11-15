@@ -11,21 +11,9 @@ import { conversationViews } from '../../conversationViews'
 import { providerApi } from '../../providerApi'
 import { areContainerTargetsEqual, getChatKey, mergeChats } from '../chatControllerUtils'
 import { chatListFetchPageSize, type LoadState } from '../controllerTypes'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceSearchState } from '../state/useWorkspaceSearchState'
-import { useWorkspaceSourceState } from '../state/useWorkspaceSourceState'
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
-type WorkspaceChatDiscoveryDependencies = {
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  searchState: ReturnType<typeof useWorkspaceSearchState>
-  sourceState: ReturnType<typeof useWorkspaceSourceState>
-}
-
-export function useWorkspaceChatDiscovery({
-  chatState,
-  searchState,
-  sourceState
-}: WorkspaceChatDiscoveryDependencies) {
+export function useWorkspaceChatDiscovery({ chatState, searchState, sourceState }: WorkspaceState) {
   // Discovery can return thousands of summaries at once. Its state updates
   // must remain interruptible while the first workspace controls are mounting.
   const publishChats = useCallback(

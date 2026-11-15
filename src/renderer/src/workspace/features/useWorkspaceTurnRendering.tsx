@@ -9,93 +9,8 @@ import {
   type SubagentChatTurnInputs
 } from '../chatTurnRendering'
 import { useLatestHandler, useStableProps } from '../stableProps'
-import { useWorkspaceChatState } from '../state/useWorkspaceChatState'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
-import { useWorkspaceChatErrors } from './useWorkspaceChatErrors'
-import { useWorkspaceEffectiveSelection } from './useWorkspaceEffectiveSelection'
-import { useWorkspaceScroll } from './useWorkspaceScroll'
-import { useWorkspaceSettingsContext } from './useWorkspaceSettingsContext'
 import { useWorkspaceSubagentPresentation } from './useWorkspaceSubagentPresentation'
-
-import type { useWorkspaceConversation } from '../wiring/useWorkspaceConversation'
-import type { useWorkspaceFiles } from '../wiring/useWorkspaceFiles'
-import type { useWorkspaceInteractions } from '../wiring/useWorkspaceInteractions'
-import type { useWorkspaceMessaging } from '../wiring/useWorkspaceMessaging'
-import type { useWorkspaceSession } from '../wiring/useWorkspaceSession'
-import type { useWorkspaceSubagents } from '../wiring/useWorkspaceSubagents'
-type WorkspaceTurnRenderingDependencies = {
-  subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
-  effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
-  settings: ReturnType<typeof useWorkspaceSettingsContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-  scroll: ReturnType<typeof useWorkspaceScroll>
-  chatState: ReturnType<typeof useWorkspaceChatState>
-  chatErrors: ReturnType<typeof useWorkspaceChatErrors>
-  session: Pick<
-    ReturnType<typeof useWorkspaceSession>,
-    | 'accountUsage'
-    | 'changesContainer'
-    | 'changesCwd'
-    | 'changesProjectCwd'
-    | 'selectedChatKey'
-    | 'refreshAccountUsage'
-    | 'resetAccountRateLimits'
-    | 'activeSubagentChatView'
-  >
-  messaging: Pick<
-    ReturnType<typeof useWorkspaceMessaging>,
-    | 'handleLoadWorkingStep'
-    | 'handleLoadWorkingItem'
-    | 'handleLoadWorkingToolPage'
-    | 'handleDeletePendingMessage'
-    | 'handleEditPendingMessage'
-    | 'handleSteerPendingMessage'
-    | 'handleInterruptPendingMessage'
-    | 'handleContinueStoppedTurn'
-    | 'handleEditMessage'
-    | 'handleRetryStoppedTurn'
-    | 'handleStartGoalChat'
-  >
-  interactions: Pick<
-    ReturnType<typeof useWorkspaceInteractions>,
-    'chatHasActiveTurn' | 'chatHasPendingSteeringMessage' | 'handleForkMessage'
-  >
-  conversation: Pick<
-    ReturnType<typeof useWorkspaceConversation>,
-    | 'chatItemIndexesById'
-    | 'visibleChatItems'
-    | 'followingWorkingStepsById'
-    | 'workingStepIdsWithNextWorkingStep'
-    | 'steeredWorkingStepDisclosureTargets'
-    | 'renderedChatTurns'
-    | 'effectiveChatTurnWindow'
-    | 'firstPendingChatItemId'
-    | 'chatCommitMarkersByBeforeItemId'
-    | 'chatCommitMarkersByAfterItemId'
-    | 'trailingChatCommitMarkers'
-    | 'canEditOwnMessages'
-    | 'stoppedTurnActionDisabled'
-    | 'continuedStoppedWorkingStepIds'
-    | 'pinnedChatMessageIds'
-    | 'canRetryStoppedTurns'
-    | 'stoppedTurnRetryMessages'
-    | 'streamingChatItemId'
-    | 'subagentChatItemIndexesById'
-    | 'subagentVisibleChatItems'
-    | 'subagentChatConversationModel'
-  >
-  files: Pick<
-    ReturnType<typeof useWorkspaceFiles>,
-    'handleOpenFileLink' | 'handleToggleChatMessagePinned'
-  >
-  subagents: Pick<
-    ReturnType<typeof useWorkspaceSubagents>,
-    | 'renderChatCommitMarker'
-    | 'handleLoadSubagentWorkingStep'
-    | 'handleLoadSubagentWorkingItem'
-    | 'handleLoadSubagentWorkingToolPage'
-  >
-}
+import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function useWorkspaceTurnRendering({
   subagentPresentation,
@@ -111,7 +26,9 @@ export function useWorkspaceTurnRendering({
   conversation,
   files,
   subagents
-}: WorkspaceTurnRenderingDependencies) {
+}: WorkspaceChanges & {
+  subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
+}) {
   const {
     accountUsage,
     changesContainer,

@@ -320,8 +320,6 @@ export type AppContainerSuggestion = {
   current?: boolean
 }
 
-export type AppGitChangeSource = 'branch' | 'uncommitted'
-
 export type AppGitChangeKind = 'edit' | 'create' | 'delete' | 'rename' | 'untracked'
 
 export type AppGitCommitAction = 'commit' | 'amend'
@@ -331,12 +329,6 @@ export type AppGitFileChange = {
   previousPath?: string | null
   kind: AppGitChangeKind
   status: string
-}
-
-export type AppGitPatchChange = {
-  path: string
-  kind: Extract<AppGitChangeKind, 'edit' | 'create' | 'delete'>
-  diff: string
 }
 
 export type AppFileTreeFile = {
@@ -362,7 +354,6 @@ export type AppSourceAvailability = {
 
 export type AppGitChangesOptions = AppContainerOptions & {
   cwd?: string | null
-  source: AppGitChangeSource
   fetchRemote?: boolean
 }
 
@@ -520,7 +511,6 @@ export type AppFileTreeOptions = AppContainerOptions & {
 export type AppGitChangesResult = {
   repositoryRoot: string
   branchName: string | null
-  baseRef: string | null
   unpulledCount: number
   unpushedCount: number
   remoteFetchError?: string
@@ -568,7 +558,6 @@ export type AppWriteFileContentsResult = {
 export type AppGitCommitOptions = AppContainerOptions & {
   cwd?: string | null
   action?: AppGitCommitAction
-  patches?: AppGitPatchChange[]
   message?: string | null
 }
 
@@ -583,10 +572,6 @@ export type AppGitRecentCommitMessagesResult = {
 
 export type AppGitDiffOptions = AppContainerOptions & {
   cwd?: string | null
-}
-
-export type AppGitDiffResult = {
-  diff: string
 }
 
 export const appGitCommitMessageLargeChangeLineThreshold = 1_000
@@ -612,15 +597,6 @@ export type AppGitFileDiffOptions = AppFileContentsOptions & {
 
 export type AppGitFileDiffResult = {
   diff: string
-}
-
-export type AppGitUncommittedPatchChangesOptions = AppContainerOptions & {
-  cwd?: string | null
-  patches: AppGitPatchChange[]
-}
-
-export type AppGitUncommittedPatchChangesResult = {
-  patches: AppGitPatchChange[]
 }
 
 export type AppGitCommitResult = {
@@ -741,14 +717,10 @@ export type AppApi = {
   getRecentGitCommitMessages: (
     options?: AppGitRecentCommitMessagesOptions
   ) => Promise<AppGitRecentCommitMessagesResult>
-  getUncommittedGitDiff: (options?: AppGitDiffOptions) => Promise<AppGitDiffResult>
   getGitCommitMessageContext: (
     options?: AppGitDiffOptions
   ) => Promise<AppGitCommitMessageContextResult>
   getGitFileDiff: (options: AppGitFileDiffOptions) => Promise<AppGitFileDiffResult>
-  getUncommittedGitPatchChanges: (
-    options: AppGitUncommittedPatchChangesOptions
-  ) => Promise<AppGitUncommittedPatchChangesResult>
   commitGitChanges: (options: AppGitCommitOptions) => Promise<AppGitCommitResult>
   pullGitChanges: (options?: AppGitPullOptions) => Promise<AppGitPullResult>
   pushGitChanges: (options?: AppGitPushOptions) => Promise<AppGitPushResult>
@@ -832,10 +804,8 @@ export const appIpcChannels = {
   showFileInFolder: 'app:show-file-in-folder',
   writeFileContents: 'app:write-file-contents',
   getRecentGitCommitMessages: 'app:get-recent-git-commit-messages',
-  getUncommittedGitDiff: 'app:get-uncommitted-git-diff',
   getGitCommitMessageContext: 'app:get-git-commit-message-context',
   getGitFileDiff: 'app:get-git-file-diff',
-  getUncommittedGitPatchChanges: 'app:get-uncommitted-git-patch-changes',
   commitGitChanges: 'app:commit-git-changes',
   pullGitChanges: 'app:pull-git-changes',
   pushGitChanges: 'app:push-git-changes',

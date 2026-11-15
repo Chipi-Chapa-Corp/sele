@@ -128,20 +128,17 @@ export class ImportedHistoryView {
     readLimit = limit
   ): Promise<ProviderChatDetail> {
     const source = { container: this.record.container }
-    const detail =
-      cursor && this.adapter.getChatCursorWindow
-        ? await this.adapter.getChatCursorWindow(
-            this.record.chatId,
-            { cursor, direction: 'older', limit },
-            source
-          )
-        : this.adapter.getChatWindow
-          ? await this.adapter.getChatWindow(
-              this.record.chatId,
-              { startIndex: startIndex ?? null, limit: readLimit },
-              source
-            )
-          : await this.adapter.getChat(this.record.chatId, source)
+    const detail = cursor
+      ? await this.adapter.getChatCursorWindow(
+          this.record.chatId,
+          { cursor, direction: 'older', limit },
+          source
+        )
+      : await this.adapter.getChatWindow(
+          this.record.chatId,
+          { startIndex: startIndex ?? null, limit: readLimit },
+          source
+        )
     return this.fromNative(detail, limit, newer)
   }
   fromNative(
@@ -249,11 +246,11 @@ export class ImportedHistoryView {
       if (index < 0) throw new Error('Archived chat item not found.')
       const turn = this.starts.findLastIndex((start) => start <= index)
       const start = Math.max(0, turn - Math.floor(limit / 2))
-      const detail = await (this.adapter.getChatWindow?.(
+      const detail = await this.adapter.getChatWindow(
         this.record.chatId,
         { startIndex: null, limit: 1 },
         { container: this.record.container }
-      ) ?? this.adapter.getChat(this.record.chatId, { container: this.record.container }))
+      )
       return {
         ...this.decorate(detail, this.range(start, start + limit, true)),
         itemsStartTurnIndex: start,
@@ -261,9 +258,9 @@ export class ImportedHistoryView {
         turnPagination: undefined
       }
     }
-    const detail = await (this.adapter.getChatWindowForItem?.(this.record.chatId, id, limit, {
+    const detail = await this.adapter.getChatWindowForItem(this.record.chatId, id, limit, {
       container: this.record.container
-    }) ?? this.adapter.getChat(this.record.chatId, { container: this.record.container }))
+    })
     return this.fromNative(detail, limit)
   }
   // Numeric compatibility is bounded for archive-only views. Normal navigation uses cursors.

@@ -60,15 +60,28 @@ if (!process.versions.electron) {
                 })
               )
             }
+          },
+          {
+            name: 'unused-workers',
+            setup(build) {
+              build.onResolve({ filter: /\?worker$/ }, (args) => ({
+                path: args.path,
+                namespace: 'worker'
+              }))
+              build.onLoad({ filter: /.*/, namespace: 'worker' }, () => ({
+                contents: 'export default class {}'
+              }))
+            }
           }
         ],
         platform: 'browser',
         jsx: 'automatic',
+        loader: { '.ttf': 'dataurl' },
         outfile: path.join(directory, 'files.js')
       })
       await fs.writeFile(
         path.join(directory, 'files.html'),
-        '<!doctype html><div id="root"></div><script src="files.js"></script>'
+        '<!doctype html><meta charset="utf-8"><div id="root"></div><script src="files.js"></script>'
       )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE

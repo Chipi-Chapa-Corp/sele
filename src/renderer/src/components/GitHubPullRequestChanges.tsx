@@ -68,14 +68,7 @@ export function GitHubPullRequestChanges({
     setLoading(true)
     setError(null)
     Promise.resolve()
-      .then(() =>
-        appApi.getGitHubPullRequestChanges({
-          cwd: state.cwd,
-          container: state.container,
-          repository: pr.repository,
-          number: pr.number
-        })
-      )
+      .then(() => appApi.getGitHubPullRequestChanges(options))
       .then((result) => {
         if (current) {
           setChanges(result)
@@ -100,12 +93,7 @@ export function GitHubPullRequestChanges({
         .then(() => {
           if (!appApi.getGitHubPullRequestManagement)
             throw new Error('Restart Sele to load the updated GitHub controls.')
-          return appApi.getGitHubPullRequestManagement({
-            cwd: state.cwd,
-            container: state.container,
-            repository: pr.repository,
-            number: pr.number
-          })
+          return appApi.getGitHubPullRequestManagement(options)
         })
         .then((result) => {
           if (current) {

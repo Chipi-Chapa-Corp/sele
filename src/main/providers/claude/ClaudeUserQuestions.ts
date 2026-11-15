@@ -1,15 +1,10 @@
 import type { ProviderPendingUserInput, ProviderUserInputChoice } from '../../../shared/provider'
+import { getString, isRecord } from '../providerValues.ts'
 
 export type ClaudeUserQuestion = Pick<
   ProviderPendingUserInput,
   'question' | 'choices' | 'allowFreeform'
 >
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const getString = (value: unknown): string | null =>
-  typeof value === 'string' && value.trim() ? value.trim() : null
 
 const getChoice = (value: unknown): ProviderUserInputChoice | null => {
   if (!isRecord(value)) return null

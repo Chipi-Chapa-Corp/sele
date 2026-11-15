@@ -50,7 +50,6 @@ import './ActionsButton.css'
 type ActionsButtonProps = {
   triggerLabel?: string
   actions: AppAction[]
-  disabled?: boolean
   label: string
   lastActionId?: string | null
   projectCwd?: string | null
@@ -112,11 +111,14 @@ const emptyActionDraft: ActionDraft = {
   type: 'command'
 }
 
+const getActionContent = (action: AppAction): string =>
+  action.type === 'prompt' ? action.prompt : action.command
+
 const getDraftFromAction = (action: AppAction | null, defaultScope: AppActionScope): ActionDraft =>
   action
     ? {
         id: action.id,
-        content: action.type === 'prompt' ? action.prompt : action.command,
+        content: getActionContent(action),
         closeTerminalOnFinish: action.type === 'command' ? action.closeTerminalOnFinish : false,
         icon: action.icon,
         keybinding: action.keybinding,
@@ -145,9 +147,6 @@ const actionTypeOptions: SegmentedControlOption<AppActionType>[] = [
   { value: 'prompt', label: 'Prompt' }
 ]
 
-const getActionContent = (action: AppAction): string =>
-  action.type === 'prompt' ? action.prompt : action.command
-
 const renderActionMenuLabel = (action: AppAction): ReactNode => (
   <span className="cwd-actions-menu-label">
     <span className="cwd-actions-menu-label__name">{action.name}</span>
@@ -158,11 +157,10 @@ const renderActionMenuLabel = (action: AppAction): ReactNode => (
 export const ActionsButton = ({
   triggerLabel,
   actions,
-  disabled = false,
   label,
-  lastActionId = null,
-  projectCwd = null,
-  showLabel = false,
+  lastActionId,
+  projectCwd,
+  showLabel,
   onActionsChange,
   onLastActionChange,
   onRunAction
@@ -534,7 +532,7 @@ export const ActionsButton = ({
         theme="secondary"
         aria-label={primaryAction ? `Run ${primaryAction.name}` : 'Create action'}
         title={primaryAction ? primaryAction.name : 'Create action'}
-        disabled={disabled || Boolean(runningActionId)}
+        disabled={Boolean(runningActionId)}
         dropdownActions={showDropdown ? dropdownActions : undefined}
         dropdownLabel="Actions"
         dropdownMenuAlign="end"

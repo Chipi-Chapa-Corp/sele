@@ -45,6 +45,18 @@ export const ButtonMenuRow = ({
         } as CSSProperties)
       : undefined
 
+  const mainContent = (
+    <>
+      {renderIcon(icon, 'ui-button-menu__icon')}
+      <span className={labelClassNames}>{label}</span>
+      {endAdornment && (
+        <span className="ui-button-menu__end-adornment" aria-hidden="true">
+          {endAdornment}
+        </span>
+      )}
+    </>
+  )
+
   const handleSelect = (): void => {
     if (!onSelect || disabled) return
 
@@ -65,23 +77,11 @@ export const ButtonMenuRow = ({
           type="button"
           onClick={handleSelect}
         >
-          {renderIcon(icon, 'ui-button-menu__icon')}
-          <span className={labelClassNames}>{label}</span>
-          {endAdornment && (
-            <span className="ui-button-menu__end-adornment" aria-hidden="true">
-              {endAdornment}
-            </span>
-          )}
+          {mainContent}
         </button>
       ) : (
         <span className={mainClassName} style={mainStyle} title={title}>
-          {renderIcon(icon, 'ui-button-menu__icon')}
-          <span className={labelClassNames}>{label}</span>
-          {endAdornment && (
-            <span className="ui-button-menu__end-adornment" aria-hidden="true">
-              {endAdornment}
-            </span>
-          )}
+          {mainContent}
         </span>
       )}
       {inlineActions.length > 0 && (

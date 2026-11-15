@@ -3,6 +3,7 @@ import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/
 import type { McpAppsApi, McpAppScope as AppScope, McpAppView } from '../../../shared/mcpApps'
 import { appApi } from '../appApi'
 import { Button } from './Button'
+import { getErrorMessage } from '../workspace/chatControllerUtils'
 import './McpApp.css'
 
 const api = (): McpAppsApi => (window as unknown as { mcpAppsApi: McpAppsApi }).mcpAppsApi
@@ -158,12 +159,7 @@ export function McpAppContent({
       currentView.current = value
       setView(value)
     } catch (reason) {
-      if (mounted.current)
-        setError(
-          reason instanceof Error
-            ? reason.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
-            : String(reason)
-        )
+      if (mounted.current) setError(getErrorMessage(reason, String(reason)))
     } finally {
       if (mounted.current) setBusy(false)
     }

@@ -35,7 +35,7 @@ if (!process.versions.electron) {
               const state = useOpenCodeProviders({enabled:true, container, models:window.pickerModels, model, revision})
               const models = filterOpenCodeModels(window.pickerModels, state.selectedId)
               const effectiveModel = models.some(m=>m.id===model) ? model : models[0]?.id ?? ''
-              const failure = useOpenCodeConnectionHealth({providerId:'opencode',container,available:true,model:effectiveModel,revision,chatKey:null})
+              const failure = useOpenCodeConnectionHealth({providerId:'opencode-v2',container,available:true,model:effectiveModel,revision,chatKey:null})
               const onManage = () => setManageOpen(true)
               return <><SidebarOpenCodeProvider {...state} manageOpen={manageOpen} onManage={onManage} onClose={() => setManageOpen(false)} onSelect={id => {state.select(id);setModel(filterOpenCodeModels(window.pickerModels,id)[0]?.id ?? '')}} onChanged={id => {if(id)state.select(id);refresh(r=>r+1)}} container={container} available={true} />
                 <Dropdown aria-label="Model" value={models.some(m=>m.id===model) ? model : models[0]?.id ?? ''} options={models.map(m=>({value:m.id,label:m.label}))} onChange={setModel} />
@@ -47,8 +47,8 @@ if (!process.versions.electron) {
               const failure = useOpenCodeConnectionHealth(props)
               return <><button disabled={!!failure}>Send</button>{failure && <OpenCodeConnectionError failure={failure} onManage={() => window.managed++} />}</>
             }
-            window.renderHealth = (props = {}) => flushSync(() => root.render(<React.StrictMode><HealthFixture providerId="opencode" container={{kind:'host'}} available={true} model="openai/test" revision={0} chatKey={null} {...props} /></React.StrictMode>))
-            window.render = (id = 'opencode', container = {kind:'host'}) => flushSync(() => root.render(
+            window.renderHealth = (props = {}) => flushSync(() => root.render(<React.StrictMode><HealthFixture providerId="opencode-v2" container={{kind:'host'}} available={true} model="openai/test" revision={0} chatKey={null} {...props} /></React.StrictMode>))
+            window.render = (id = 'opencode-v2', container = {kind:'host'}) => flushSync(() => root.render(
               <React.StrictMode><ProviderSettingsContent key={id + JSON.stringify(container)} providerId={id} container={container} onConnectionsChanged={() => window.changed++}>
                 <p>General settings</p>{() => <p>Skills</p>}
               </ProviderSettingsContent></React.StrictMode>
@@ -263,7 +263,7 @@ if (!process.versions.electron) {
         await run(
           'catalog.forEach(p=>p.connections.forEach(c=>{c.status={state:"verified",checkedAt:Date.now()}}));window.checksBefore=calls.filter(c=>c[0]==="list"&&c[1].forceRefresh).length'
         )
-        await run('window.render("opencode", {kind:"container",tool:"toolbox",name:"fixture"})')
+        await run('window.render("opencode-v2", {kind:"container",tool:"toolbox",name:"fixture"})')
         await tick()
         assert.equal(await run('calls.filter(c=>c[0]==="cancel").length'), 2)
         await click('Connections')

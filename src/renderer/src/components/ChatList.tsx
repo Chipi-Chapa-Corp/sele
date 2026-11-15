@@ -21,7 +21,6 @@ type ChatListProps = {
   /** Virtual rows keep only their own chat in props; drag ordering reads the group on demand. */
   getReorderChats?: () => ProviderChat[]
   reorderOffset?: number
-  ariaLabel?: string
   chats: ProviderChat[]
   selectedChatKey: string | null
   workingSubagentChatKeys?: ReadonlySet<string>
@@ -75,7 +74,6 @@ const ChatListRow = memo(
 export const ChatList = memo(function ChatList({
   getReorderChats,
   reorderOffset = 0,
-  ariaLabel = 'Chats',
   chats,
   selectedChatKey,
   workingSubagentChatKeys,
@@ -243,7 +241,6 @@ export const ChatList = memo(function ChatList({
         canMarkDone={canMarkDone}
         canMarkUndone={canMarkUndone}
         draggable={reorderable}
-        linkDraggable
         dragging={chatKey === draggedChatKey}
         dropPosition={dropPosition}
         approvalDecisionInFlight={
@@ -273,7 +270,7 @@ export const ChatList = memo(function ChatList({
   return (
     <section
       className={`chat-list${draggedChatKey ? ' chat-list--dragging' : ''}`}
-      aria-label={ariaLabel}
+      aria-label="Chats"
       onDragOver={(event) => {
         if (!draggedChatKey) return
         event.preventDefault()

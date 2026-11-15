@@ -7,18 +7,15 @@ import { normalizeContainerTarget } from '../../containerSelection'
 import { providerApi } from '../../providerApi'
 import { getDefaultApprovalMode, getDefaultSandboxMode } from '../appearanceControllerUtils'
 import { fallbackDefaultApprovalMode, fallbackDefaultSandboxMode } from '../controllerTypes'
-import { useWorkspaceProviderState } from '../state/useWorkspaceProviderState'
 import { useWorkspaceProviderContext } from './useWorkspaceProviderContext'
-
-type WorkspaceProviderModesDependencies = {
-  provider: ReturnType<typeof useWorkspaceProviderContext>
-  providerState: ReturnType<typeof useWorkspaceProviderState>
-}
+import type { WorkspaceState } from '../composition/useWorkspaceState'
 
 export function useWorkspaceProviderModes({
   provider,
   providerState
-}: WorkspaceProviderModesDependencies) {
+}: WorkspaceState & {
+  provider: ReturnType<typeof useWorkspaceProviderContext>
+}) {
   useEffect(() => {
     let active = true
 

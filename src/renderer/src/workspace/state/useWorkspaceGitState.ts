@@ -4,7 +4,6 @@ import type {
   AppGitBranchesResult,
   AppGitChangesResult
 } from '../../../../shared/app'
-import { type PatchFilterScope } from '../../changeTree'
 import {
   readStoredChatCommitMarkers,
   readStoredContinuedStoppedWorkingSteps,
@@ -17,7 +16,6 @@ import type { FileTreeIndex } from '../../fileTreeIndex'
 import { usePreferenceState } from '../../usePreferenceState'
 import {
   readGitCommitMode,
-  type CachedPatchChangedFiles,
   type CommitChatReturnTarget,
   type DirectCommitActivity,
   type FileTreeScope,
@@ -30,8 +28,7 @@ import {
   type LoadState,
   type ScopedGitOperationError,
   type SendState,
-  type SourceAvailabilityState,
-  type UncommittedPatchFilter
+  type SourceAvailabilityState
 } from '../controllerTypes'
 
 export function useWorkspaceGitState() {
@@ -43,8 +40,7 @@ export function useWorkspaceGitState() {
 
   const [gitChangeLoadScope, setGitChangeLoadScope] = useState<GitChangesScope | null>(null)
 
-  const [gitChangeLoadError, setGitChangeLoadError] =
-    useState<ScopedGitOperationError<GitChangesScope> | null>(null)
+  const [gitChangeLoadError, setGitChangeLoadError] = useState<ScopedGitOperationError | null>(null)
 
   const [gitChangeLoadErrorDismissed, setGitChangeLoadErrorDismissed] = useState(false)
 
@@ -82,17 +78,6 @@ export function useWorkspaceGitState() {
   const [lastGitAvailable, setLastGitAvailable] = useState<boolean | null>(null)
 
   const [gitAvailabilityChangeId, setGitAvailabilityChangeId] = useState(0)
-
-  const [uncommittedPatchFilter, setUncommittedPatchFilter] =
-    useState<UncommittedPatchFilter | null>(null)
-
-  const [uncommittedPatchFilterState, setUncommittedPatchFilterState] = useState<LoadState>('ready')
-
-  const [uncommittedPatchFilterError, setUncommittedPatchFilterError] =
-    useState<ScopedGitOperationError<PatchFilterScope> | null>(null)
-
-  const [cachedPatchChangedFiles, setCachedPatchChangedFiles] =
-    useState<CachedPatchChangedFiles | null>(null)
 
   const [fileTree, setFileTree] = useState<FileTreeIndex | null>(null)
 
@@ -222,14 +207,6 @@ export function useWorkspaceGitState() {
     setLastGitAvailable,
     gitAvailabilityChangeId,
     setGitAvailabilityChangeId,
-    uncommittedPatchFilter,
-    setUncommittedPatchFilter,
-    uncommittedPatchFilterState,
-    setUncommittedPatchFilterState,
-    uncommittedPatchFilterError,
-    setUncommittedPatchFilterError,
-    cachedPatchChangedFiles,
-    setCachedPatchChangedFiles,
     fileTree,
     setFileTree,
     fileTreeScope,
