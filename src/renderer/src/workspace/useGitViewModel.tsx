@@ -1,5 +1,5 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, type SetStateAction } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { isChatCommitProjectLocked } from '../chatCommitPolicy'
 import { type ButtonDropdownAction } from '../components/Button'
@@ -34,7 +34,8 @@ export function useGitViewModel({
   handleSyncChanges: (action: GitSyncAction) => Promise<void>
 }) {
   const {
-    commitInput,
+    commitInputsByProjectKey,
+    setCommitInputsByProjectKey,
     gitCommitMode,
     visibleGitErrorProjectKeyRef,
     setCommitErrorsByProjectKey,
@@ -80,12 +81,28 @@ export function useGitViewModel({
   const { newSessionProviderAvailable } = sourceState
   const { changesPaneView } = panes
 
+  const currentProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
+  const commitInput = commitInputsByProjectKey[currentProjectKey] ?? ''
+  // Capture the project so asynchronous completions update their original draft after navigation.
+  const setCommitInput = useCallback(
+    (update: SetStateAction<string>) => {
+      setCommitInputsByProjectKey((currentInputs) => {
+        const currentInput = currentInputs[currentProjectKey] ?? ''
+        const nextInput = typeof update === 'function' ? update(currentInput) : update
+        if (nextInput === currentInput) return currentInputs
+        const nextInputs = { ...currentInputs }
+        if (nextInput) nextInputs[currentProjectKey] = nextInput
+        else delete nextInputs[currentProjectKey]
+        return nextInputs
+      })
+    },
+    [currentProjectKey, setCommitInputsByProjectKey]
+  )
   const commitInputValue = commitInput.trim()
   const { showManualCommit, showAiInstructionsInput } = effectiveAppSettings.git.quickActions
   const showCommitInput = showManualCommit || showAiInstructionsInput
   const aiCommitInstructions = showAiInstructionsInput ? commitInputValue : ''
   const pushAfterCommit = gitCommitMode === 'push'
-  const currentProjectKey = getChatCwdGroupKey(changesProjectCwd ?? changesCwd)
   useEffect(() => {
     const previousProjectKey = visibleGitErrorProjectKeyRef.current
     visibleGitErrorProjectKeyRef.current = currentProjectKey
@@ -306,6 +323,7 @@ export function useGitViewModel({
     changeTree,
     changesEmptyMessage,
     commitDisabled,
+    commitInput,
     commitInputLabel,
     commitInputValue,
     commitMessageGenerationDisabled,
@@ -324,6 +342,7 @@ export function useGitViewModel({
     pushAfterCommit,
     refreshSidebarLabel,
     repositoryFileTree,
+    setCommitInput,
     showCommitInput,
     showManualCommit,
     syncDisabled,

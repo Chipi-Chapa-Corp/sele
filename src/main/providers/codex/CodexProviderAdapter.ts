@@ -3922,7 +3922,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
       'edit'
     )
     assertSupportedCodexHistory(thread)
-    await this.stopActiveTurn(chatId)
+    // Accepted steering belongs to the same turn as the work preceding it. Resolve
+    // its identity before interrupting: a whole-turn revert would erase that work.
+    if (!targetItemId && !targetClientId) await this.stopActiveTurn(chatId)
     thread = this.threads.get(chatId) ?? thread
 
     const previousTurnCatalog = this.filterRolledBackTurns(
@@ -3942,6 +3944,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     let targetTurn = thread.turns.find((turn) => turn.id === targetTurnId)
     if (
       !targetTurn ||
+      (targetItemId && !targetTurn.items.some((item) => item.id === targetItemId)) ||
       (targetClientId &&
         !targetTurn.items.some((item) => getCodexUserMessageClientId(item) === targetClientId))
     ) {
@@ -3966,16 +3969,37 @@ export class CodexProviderAdapter implements ProviderAdapter {
         (item) => getCodexUserMessageClientId(item) === targetClientId
       )
       if (targetIndex < 0) throw new Error('The submitted message is unavailable in chat history.')
-      targetItemId = targetIndex === 0 ? null : userMessages[targetIndex].id
+      const target = userMessages[targetIndex]
+      // A goal continuation can do work before its first user message, which is
+      // still steering. Only a turn's actual opening user message permits revert.
+      const isOpeningMessage =
+        targetIndex === 0 && !targetTurn?.goalPrompt && targetTurn?.items[0] === target
+      targetItemId = isOpeningMessage ? null : target.id
     }
     const steeringIndex = targetItemId
       ? userMessages.findIndex((item) => item.id === targetItemId)
       : -1
-    if (targetItemId && steeringIndex < 1) {
+    if (targetItemId && steeringIndex < 0) {
       throw new Error('Steering message cannot be edited safely because its history is unavailable')
     }
-    const originalInput = steeringIndex >= 1 ? userMessages[0].content : null
-    const precedingSteeringMessages = steeringIndex >= 1 ? userMessages.slice(1, steeringIndex) : []
+    if (steeringIndex >= 0) {
+      // Codex can only revert before a turn, not before an item within it. Send a
+      // correction with its own history entry instead of replaying accepted input.
+      const previousText = getUserInputContent(userMessages[steeringIndex].content)
+      return this.steerActiveChat(
+        chatId,
+        `Please replace my earlier instruction with this revision.\n\nEarlier instruction:\n${previousText}\n\nRevised instruction:\n${text}`,
+        options,
+        undefined,
+        undefined,
+        true
+      )
+    }
+    if (targetClientId) {
+      // A queue edit can race delivery of the opening message. Once resolved, use
+      // the ordinary whole-turn edit path, including its stop/catalog ordering.
+      return this.editMessageInContext(chatId, targetTurnId, text, options)
+    }
 
     const firstLoadedPersistedTurn = thread.turns.find(
       (turn) => turn.status !== 'queued' && turn.local !== true
@@ -4048,13 +4072,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     })
 
     this.pausedQueuedTurnThreads.delete(chatId)
-    const pendingTurn = await this.addSubmittedPendingTurn(
-      chatId,
-      originalInput ? getUserInputContent(originalInput) : text,
-      options,
-      undefined,
-      originalInput ?? undefined
-    )
+    const pendingTurn = await this.addSubmittedPendingTurn(chatId, text, options)
     if (pendingTurn) this.emitChatUpdated(chatId)
 
     try {
@@ -4062,9 +4080,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
         this.client.request<TurnStartResponse>('turn/start', {
           threadId: chatId,
           clientUserMessageId: pendingTurn.id,
-          input:
-            originalInput ??
-            createUserInput(text, options?.images, options?.files, options?.skills),
+          input: createUserInput(text, options?.images, options?.files, options?.skills),
           ...getTurnModelOptions(options),
           ...getTurnAccessOptions(options)
         })
@@ -4073,21 +4089,6 @@ export class CodexProviderAdapter implements ProviderAdapter {
       this.removePendingTurn(chatId, pendingTurn.id)
       throw error
     }
-
-    const replayOptions = options
-      ? { ...options, images: undefined, files: undefined, skills: undefined }
-      : undefined
-    for (const precedingMessage of precedingSteeringMessages) {
-      await this.steerActiveChat(
-        chatId,
-        getUserInputContent(precedingMessage.content),
-        replayOptions,
-        precedingMessage.content,
-        undefined,
-        true
-      )
-    }
-    if (originalInput) await this.steerActiveChat(chatId, text, options, undefined, undefined, true)
 
     const detail = this.getCachedChatDetail(chatId)
     if (!detail) throw new Error('Unable to edit message')
@@ -4340,7 +4341,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     options?: ProviderTurnOptions,
     input?: CodexUserInput[],
     clientMessageId?: string,
-    replayHistory = false
+    allowPendingSteering = false
   ): Promise<ProviderChatDetail> => {
     const text = message.trim()
     if (!text && !hasAttachmentInput(options) && !input?.length) {
@@ -4351,15 +4352,15 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     const turnId = this.getActiveTurnId(chatId)
     if (!turnId)
-      return replayHistory
+      return allowPendingSteering
         ? this.continueChatImmediately(chatId, text, options, clientMessageId, input)
         : this.continueChatInContext(chatId, text, options, true, undefined, input)
 
     // Final-tagged text does not end a turn. Let the active turn accept steering;
     // processWaitingSteeringMessage already handles a concurrent turn completion.
-    // Edit replay awaits each steer RPC in order. Its accepted messages can still be
-    // waiting for their history echoes, which must not push the remaining replay into Queue.
-    if (!replayHistory && this.hasPendingSteeringMessage(chatId)) {
+    // A revision must reach the active turn even if earlier accepted steering is
+    // still waiting for its history echo.
+    if (!allowPendingSteering && this.hasPendingSteeringMessage(chatId)) {
       return this.queueChatMessage(chatId, text, options, input)
     }
 

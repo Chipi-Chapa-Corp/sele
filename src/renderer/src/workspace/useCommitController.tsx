@@ -57,8 +57,6 @@ export function useCommitController({
     setStartingScopedCommitActivities,
     setCommitErrorsByProjectKey,
     setChatCommitMarkers,
-    changesCwdRef,
-    setCommitInput,
     setScopedCommitActivities,
     setCommitMessageGenerationProjectKeys,
     setDirectCommitActivities,
@@ -87,6 +85,7 @@ export function useCommitController({
     commitMessageGenerationDisabled,
     aiCommitInstructions,
     commitInputValue,
+    setCommitInput,
     getCommitActionDisabled,
     pushAfterCommit,
     getAiCommitActionDisabled
@@ -336,7 +335,7 @@ export function useCommitController({
       const commitMessage = normalizeGeneratedCommitMessage(generatedMessage)
       if (!commitMessage) throw new Error('AI did not return a commit name.')
 
-      if (changesCwdRef.current === generationCwd) setCommitInput(commitMessage)
+      setCommitInput(commitMessage)
       return commitMessage
     } catch (error) {
       console.error('[caught:useCommitController:generateCommitMessage]', error)
@@ -403,9 +402,8 @@ export function useCommitController({
         cwd: changesCwd,
         message: action === 'amend' ? null : commitMessage
       })
-      // The input is shared across projects. Clear the submitted text even after navigation,
-      // while preserving anything typed during the operation. Quick commits may replace the
-      // original instructions with a generated message before reaching this point.
+      // Clear only this project's submitted text, preserving edits made during the operation.
+      // Quick commits may replace the original instructions with a generated message.
       setCommitInput((currentInput) =>
         currentInput.trim() === commitInputValue || currentInput.trim() === commitMessage
           ? ''

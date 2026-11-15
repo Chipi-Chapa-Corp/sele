@@ -69,7 +69,7 @@ test('resuming for an edit updates the thread model before the replacement turn 
   assert.equal(resumeParams.serviceTier, null)
 })
 
-test('editing a steering message replays the original prompt before revised steering', async () => {
+test('editing accepted steering passes the selected model to the revision without reverting', async () => {
   const adapterClass = source.statements.find(
     (node) => ts.isClassDeclaration(node) && node.name?.text === 'CodexProviderAdapter'
   )
@@ -118,7 +118,7 @@ test('editing a steering message replays the original prompt before revised stee
     pausedQueuedTurnThreads: new Set(),
     rememberThreadContainer() {},
     resumeThread: async () => thread,
-    stopActiveTurn: async () => {},
+    stopActiveTurn: async () => assert.fail('a steering revision must not interrupt the turn'),
     filterRolledBackTurns: (_chat, turns) => turns,
     client: {
       request: async (method, params) => {
@@ -133,8 +133,8 @@ test('editing a steering message replays the original prompt before revised stee
     addSubmittedPendingTurn: async () => ({ id: 'pending' }),
     emitChatUpdated() {},
     startSubmittedCodexTurn: async (_chat, _pending, start) => start(),
-    steerActiveChat: async (_chat, text) => {
-      steering.push(text)
+    steerActiveChat: async (_chat, text, options) => {
+      steering.push({ text, options })
     },
     getCachedChatDetail: () => ({ id: 'chat' })
   })
@@ -143,11 +143,13 @@ test('editing a steering message replays the original prompt before revised stee
     model: 'gpt-6-sol'
   })
 
-  assert.equal(requests[0].method, 'thread/revert')
-  assert.equal(requests[1].method, 'turn/start')
-  assert.equal(requests[1].params.input, originalInput)
-  assert.equal(requests[1].params.model, 'gpt-6-sol')
-  assert.deepEqual(steering, ['Revised steering'])
+  assert.deepEqual(requests, [])
+  assert.deepEqual(steering, [
+    {
+      text: 'Please replace my earlier instruction with this revision.\n\nEarlier instruction:\nOld steering\n\nRevised instruction:\nRevised steering',
+      options: { model: 'gpt-6-sol' }
+    }
+  ])
 })
 
 for (const purpose of ['edit', 'mutation']) {

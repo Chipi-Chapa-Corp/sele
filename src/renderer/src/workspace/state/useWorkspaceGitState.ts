@@ -99,7 +99,9 @@ export function useWorkspaceGitState() {
     {}
   )
 
-  const [commitInput, setCommitInput] = useState('')
+  const [commitInputsByProjectKey, setCommitInputsByProjectKey] = useState<Record<string, string>>(
+    {}
+  )
 
   const [gitCommitMode, setGitCommitMode] = usePreferenceState<GitCommitMode>(readGitCommitMode)
 
@@ -223,8 +225,8 @@ export function useWorkspaceGitState() {
     setCollapsedChangeTreeFolders,
     collapsedFileTreeFolders,
     setCollapsedFileTreeFolders,
-    commitInput,
-    setCommitInput,
+    commitInputsByProjectKey,
+    setCommitInputsByProjectKey,
     gitCommitMode,
     setGitCommitMode,
     commitMessageGenerationProjectKeys,

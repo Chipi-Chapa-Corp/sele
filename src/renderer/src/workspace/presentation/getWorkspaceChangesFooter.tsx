@@ -12,7 +12,7 @@ export function getWorkspaceChangesFooter({
   return {
     visible: panes.changesPaneView === 'git' && panes.gitPaneView === 'changes',
     commitDisabled: gitPresentation.commitDisabled,
-    commitInput: gitState.commitInput,
+    commitInput: gitPresentation.commitInput,
     commitInputLabel: gitPresentation.commitInputLabel,
     commitMessageGenerationDisabled: gitPresentation.commitMessageGenerationDisabled,
     commitMessageGenerationInProgress: gitPresentation.commitMessageGenerationInProgress,
@@ -41,7 +41,7 @@ export function getWorkspaceChangesFooter({
     pushAfterCommit: gitPresentation.pushAfterCommit,
     renderGitAiResolutionButton: gitSync.renderGitAiResolutionButton,
     setCommitErrorsByProjectKey: gitState.setCommitErrorsByProjectKey,
-    setCommitInput: gitState.setCommitInput,
+    setCommitInput: gitPresentation.setCommitInput,
     showCommitInput: gitPresentation.showCommitInput,
     showManualCommit: gitPresentation.showManualCommit,
     syncButtonTitle: changes.syncButtonTitle,

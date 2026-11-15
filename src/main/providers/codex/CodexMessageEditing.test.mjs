@@ -515,7 +515,7 @@ for (const images of [[image, { path: '/added.png' }], []]) {
   })
 }
 
-test('delivered steering resolves its authoritative item id and replays earlier screenshots intact', async () => {
+test('delivered steering resolves its authoritative item id without replaying earlier screenshots', async () => {
   const initialInput = [
     { type: 'text', text: 'original' },
     { type: 'localImage', path: '/original.png' }
@@ -537,29 +537,37 @@ test('delivered steering resolves its authoritative item id and replays earlier 
     ]
   }
   const fixture = createHistoryAdapter(loaded, full)
+  fixture.adapter.stopActiveTurn = () => assert.fail('a steering revision must not stop the turn')
   const options = { images: [{ path: '/new.png' }], files: [] }
   await fixture.adapter.editMessageInContext('chat', 'turn', '', options, 'client-item')
   assert.deepEqual(fixture.hydrated, [[0, 1]])
-  assert.equal(fixture.requests[1].params.input, initialInput)
-  assert.equal(fixture.steering[0][3], earlierInput)
-  assert.equal(fixture.steering[1][2], options)
+  assert.deepEqual(fixture.requests, [], 'no history revert or original prompt resubmission')
+  assert.equal(fixture.steering.length, 1)
+  assert.equal(fixture.steering[0][2], options)
+  assert.equal(full.items[0].content, initialInput)
+  assert.equal(full.items[1].content, earlierInput)
 })
 
-test('editing a later steer submits every earlier steer and the edit before their history echoes', async () => {
+test('editing a later steer preserves previous answers and sends only its revision before history echoes', async () => {
   const input = (text) => [{ type: 'text', text }]
   const originalInput = input('Original prompt')
-  const fixture = createHistoryAdapter({
+  const turn = {
     id: 'turn',
     status: 'inProgress',
     items: [
       { type: 'userMessage', id: 'original', content: originalInput },
-      ...['first', 'second', 'third', 'target', 'later'].map((id) => ({
-        type: 'userMessage',
-        id,
-        content: input(id)
-      }))
+      { type: 'agentMessage', id: 'answer', text: 'Work already done', phase: 'final_answer' },
+      ...['first', 'second', 'third', 'target', 'later'].flatMap((id) => [
+        { type: 'userMessage', id, content: input(id) },
+        { type: 'agentMessage', id: `${id}-answer`, text: `Response to ${id}` }
+      ])
     ]
-  })
+  }
+  const originalItems = [...turn.items]
+  const fixture = createHistoryAdapter(turn)
+  fixture.adapter.stopActiveTurn = () => assert.fail('must preserve the running turn')
+  fixture.adapter.cacheThread = () => assert.fail('must not replace existing history')
+  fixture.adapter.hasPendingSteeringMessage = () => true
   const delivered = []
   let inFlight = false
   fixture.adapter.processWaitingSteeringMessage = async (_chat, id) => {
@@ -568,20 +576,23 @@ test('editing a later steer submits every earlier steer and the edit before thei
     await new Promise((resolve) => setImmediate(resolve))
     delivered.push(id)
     inFlight = false
-    // Deliberately leave every accepted message awaiting its history echo.
+    // Deliberately leave the accepted revision awaiting its history echo.
   }
 
   await fixture.adapter.editMessageInContext('chat', 'turn:target', 'Revised target')
 
-  assert.equal(fixture.requests[1].params.input, originalInput)
+  assert.deepEqual(fixture.requests, [])
+  assert.deepEqual(turn.items, originalItems)
   assert.deepEqual(
     fixture.steering.map((args) => args[1]),
-    ['first', 'second', 'third', 'Revised target']
+    [
+      'Please replace my earlier instruction with this revision.\n\nEarlier instruction:\ntarget\n\nRevised instruction:\nRevised target'
+    ]
   )
-  assert.deepEqual(delivered, ['steer-1', 'steer-2', 'steer-3', 'steer-4'])
+  assert.deepEqual(delivered, ['steer-1'])
 })
 
-test('edit replay continues immediately if the replacement turn finishes before replay starts', async () => {
+test('a steering revision continues immediately if the active turn has finished', async () => {
   const fixture = createHistoryAdapter({
     id: 'turn',
     status: 'completed',
@@ -591,11 +602,111 @@ test('edit replay continues immediately if the replacement turn finishes before 
     ]
   })
   fixture.adapter.getActiveTurnId = () => null
-  fixture.adapter.continueChatInContext = () => assert.fail('replay must not join existing Queue')
+  fixture.adapter.continueChatInContext = () =>
+    assert.fail('a revision must not join existing Queue')
   const continued = []
   fixture.adapter.continueChatImmediately = async (_chat, text) => continued.push(text)
   await fixture.adapter.editMessageInContext('chat', 'turn:target', 'Revised')
-  assert.deepEqual(continued, ['Revised'])
+  assert.deepEqual(continued, [
+    'Please replace my earlier instruction with this revision.\n\nEarlier instruction:\nOld\n\nRevised instruction:\nRevised'
+  ])
+  assert.deepEqual(fixture.requests, [])
+})
+
+for (const clientId of [undefined, 'client']) {
+  test(`the first user message in a goal continuation can be revised without reverting its work (${clientId})`, async () => {
+    const turn = {
+      id: 'turn',
+      status: 'inProgress',
+      goalPrompt: 'Keep working',
+      items: [
+        { type: 'agentMessage', id: 'progress', text: 'Existing progress' },
+        {
+          type: 'userMessage',
+          id: 'target',
+          clientId: 'client',
+          content: [{ type: 'text', text: 'Old' }]
+        }
+      ]
+    }
+    const fixture = createHistoryAdapter(turn)
+    fixture.adapter.stopActiveTurn = () => assert.fail('must preserve goal progress')
+    await fixture.adapter.editMessageInContext(
+      'chat',
+      clientId ? 'turn' : 'turn:target',
+      'Revised',
+      undefined,
+      clientId
+    )
+    assert.deepEqual(fixture.requests, [])
+    assert.equal(fixture.steering.length, 1)
+    assert.match(fixture.steering[0][1], /Revised instruction:\nRevised$/)
+    assert.equal(turn.items[0].text, 'Existing progress')
+  })
+}
+
+test('a failed steering revision preserves history and accepted input for retry', async () => {
+  const turn = {
+    id: 'turn',
+    status: 'inProgress',
+    items: [
+      { type: 'userMessage', id: 'original', content: [{ type: 'text', text: 'Original' }] },
+      { type: 'agentMessage', id: 'answer', text: 'Existing answer' },
+      { type: 'userMessage', id: 'target', content: [{ type: 'text', text: 'Old' }] }
+    ]
+  }
+  const fixture = createHistoryAdapter(turn)
+  fixture.adapter.stopActiveTurn = () => assert.fail('must not interrupt on failure')
+  const failure = new Error('Connection lost')
+  fixture.adapter.processWaitingSteeringMessage = async () => {
+    throw failure
+  }
+  fixture.adapter.removeSteeringMessage = () => true
+  await assert.rejects(
+    fixture.adapter.editMessageInContext('chat', 'turn:target', 'Revised'),
+    (error) => error === failure
+  )
+  assert.deepEqual(fixture.requests, [])
+  assert.equal(turn.items[1].text, 'Existing answer')
+  assert.equal(turn.items[2].content[0].text, 'Old')
+})
+
+test('an unavailable steering target fails before interrupting or reverting history', async () => {
+  const fixture = createHistoryAdapter({ id: 'turn', status: 'inProgress', items: [] })
+  fixture.adapter.stopActiveTurn = () => assert.fail('must resolve the target before stopping')
+  await assert.rejects(
+    fixture.adapter.editMessageInContext('chat', 'turn:missing', 'Revised'),
+    /history is unavailable/
+  )
+  assert.deepEqual(fixture.requests, [])
+  assert.deepEqual(fixture.steering, [])
+})
+
+test('a delivered opening message still uses the ordinary whole-turn edit path', async () => {
+  const fixture = createHistoryAdapter({
+    id: 'turn',
+    status: 'inProgress',
+    items: [
+      {
+        type: 'userMessage',
+        id: 'original',
+        clientId: 'client',
+        content: [{ type: 'text', text: 'Original' }]
+      }
+    ]
+  })
+  let stopped = 0
+  fixture.adapter.stopActiveTurn = async () => {
+    stopped++
+  }
+  await fixture.adapter.editMessageInContext('chat', 'turn', 'Revised', undefined, 'client')
+  assert.equal(stopped, 1)
+  assert.deepEqual(
+    fixture.requests.map(({ method }) => method),
+    ['thread/revert', 'turn/start']
+  )
+  assert.equal(fixture.requests[1].params.input[0].text, 'Revised')
+  assert.deepEqual(fixture.steering, [])
 })
 
 test('a pending edit holds automatic Codex delivery and saves in place before resuming', async () => {

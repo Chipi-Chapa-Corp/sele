@@ -25,11 +25,11 @@ vm.runInNewContext(bundled.outputFiles[0].text, {
       : require(name)
 })
 
-function model({ sendState = 'idle', sendInFlightProjectKey, ...gitState } = {}) {
+function model({ sendState = 'idle', sendInFlightProjectKey, session, ...gitState } = {}) {
   // biome-ignore lint/correctness/useHookAtTopLevel: hooks are stubbed to evaluate the actual view model without a GUI.
   return module.exports.useGitViewModel({
     gitState: {
-      commitInput: 'Fix bug',
+      commitInputsByProjectKey: { 'cwd:/project-b': 'Fix bug' },
       syncProjectKeys: new Set(),
       branchActionProjectKeys: new Set(),
       syncErrorsByProjectKey: {},
@@ -51,7 +51,8 @@ function model({ sendState = 'idle', sendInFlightProjectKey, ...gitState } = {})
     session: {
       changesCwd: '/project-b/worktree',
       changesProjectCwd: '/project-b',
-      gitAvailableForCurrentSource: true
+      gitAvailableForCurrentSource: true,
+      ...session
     },
     chatState: { sendState, sendInFlightProjectKey, selectedChat: null },
     interactions: { chatIsBusy: false },
@@ -66,6 +67,40 @@ function model({ sendState = 'idle', sendInFlightProjectKey, ...gitState } = {})
     panes: {}
   })
 }
+
+test('commit drafts are separate per project and restored when returning', () => {
+  let drafts = {}
+  const setDrafts = (update) => {
+    drafts = update(drafts)
+  }
+  const render = (cwd, projectCwd = cwd) =>
+    model({
+      commitInputsByProjectKey: drafts,
+      setCommitInputsByProjectKey: setDrafts,
+      session: { changesCwd: cwd, changesProjectCwd: projectCwd }
+    })
+
+  const projectA = render('/project-a')
+  projectA.setCommitInput('  Project A draft\n')
+  assert.equal(render('/project-a').commitInput, '  Project A draft\n')
+  assert.equal(render('/project-a/worktree', '/project-a').commitInput, '  Project A draft\n')
+
+  const projectB = render('/project-b')
+  assert.equal(projectB.commitInput, '')
+  assert.equal(projectB.commitDisabled, true)
+  projectB.setCommitInput('Project B draft')
+  assert.equal(render('/project-b').commitInputValue, 'Project B draft')
+  assert.equal(render('/project-a').commitInput, '  Project A draft\n')
+  assert.equal(render(null).commitInput, '')
+
+  // A handler captured before switching must still update only its original project.
+  projectA.setCommitInput((current) => `${current}updated`)
+  assert.equal(render('/project-a').commitInput, '  Project A draft\nupdated')
+  assert.equal(render('/project-b').commitInput, 'Project B draft')
+  projectA.setCommitInput('')
+  assert.equal(render('/project-a').commitInput, '')
+  assert.equal(render('/project-b').commitInput, 'Project B draft')
+})
 
 const locks = {
   branch: (key) => ({ branchActionProjectKeys: new Set([key]) }),

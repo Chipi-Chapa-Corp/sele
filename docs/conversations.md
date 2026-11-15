@@ -40,6 +40,11 @@ steering so it is not submitted twice. Attachments remain local paths.
 Restored messages stay paused until the user acts. Steering retains priority over queued
 messages. Sending resumes the queue; edit, delete, and per-message send controls still apply.
 
+Editing an accepted Codex steering message sends a new revision that identifies the earlier
+instruction. It preserves the running turn and existing responses: Codex only supports history
+reverts at whole-turn boundaries. Editing an opening prompt still reverts that turn and starts
+its replacement; editing a still-local queued message updates it in place.
+
 ## Linked chats
 
 Drag up to five other chats into the composer. Loading or failed context chips block Send;
