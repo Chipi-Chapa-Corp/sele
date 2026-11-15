@@ -1,3 +1,5 @@
+import { isRemoteClient } from '../runtimeCapabilities'
+import { visualizationFramePath } from '../../../shared/visualizationShell'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Maximize2, RotateCw } from 'lucide-react'
 import { Button } from './Button'
@@ -249,7 +251,7 @@ function VisualizationContent({
                 }
                 aria-hidden={!active}
                 inert={!active}
-                src="sele-visualize://frame/"
+                src={isRemoteClient() ? visualizationFramePath : 'sele-visualize://frame/'}
                 sandbox="allow-scripts"
                 referrerPolicy="no-referrer"
                 title={reference.title || 'Interactive visualization'}

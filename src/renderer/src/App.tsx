@@ -269,9 +269,10 @@ export const App: React.FC = () => {
     compact,
     (direction) => {
       if (sidebarOpen) setSidebarOpen(false)
-      else if (direction === 'previous') openMobilePane('chats')
+      else openMobilePane(direction === 'previous' ? 'chats' : 'workspace')
     },
-    (direction) => (sidebarOpen ? direction === 'next' : direction === 'previous')
+    (direction) =>
+      sidebarOpen ? direction === 'next' : direction === 'previous' || mobilePage === 'conversation'
   )
   const chatSidebar = useStableProps(workspace.chatSidebar, sidebarOptions)
   const setSettingsOpen = workspace.dialogs.setSettingsOpen

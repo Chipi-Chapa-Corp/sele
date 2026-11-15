@@ -1,3 +1,4 @@
+import { resolveRemoteUrl } from '../../remoteUrl'
 import { useCallback, useEffect } from 'react'
 import type { BrowserOpenRequest } from '../../../../shared/browser'
 import { isExpectedUrlParseError } from '../../../../shared/expectedAbsence.ts'
@@ -17,6 +18,7 @@ export function useWorkspaceBrowser({
 }) {
   const handleOpenBrowserRequest = useCallback(
     (request: BrowserOpenRequest): void => {
+      request = { ...request, url: resolveRemoteUrl(request.url) }
       if (!settings.effectiveAppSettings.browser.enabled) {
         void appApi
           .handleExternalLink({ url: request.url, action: 'open' })

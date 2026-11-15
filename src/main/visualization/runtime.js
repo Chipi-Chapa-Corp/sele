@@ -120,7 +120,7 @@
       if (script.type === 'module' && !script.src) {
         // Inline modules do not emit a load event. Signal from their final statement,
         // after any top-level await, before telling the host the frame can be shown.
-        const completionEvent = 'sele-visualization-module-' + crypto.randomUUID()
+        const completionEvent = 'sele-visualization-module-' + String(++nextId)
         loaded = new Promise((resolve) => {
           addEventListener(completionEvent, resolve, { once: true })
           script.onerror = () => {

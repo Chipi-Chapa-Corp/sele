@@ -1,3 +1,4 @@
+import { MobileLinkActions } from './components/MobileLinkActions'
 import './assets/main.css'
 
 import { MotionConfig } from 'motion/react'
@@ -52,6 +53,7 @@ startTransition(() =>
       <RendererErrorBoundary>
         <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: 'easeOut' }}>
           <App />
+          <MobileLinkActions />
         </MotionConfig>
       </RendererErrorBoundary>
     </StrictMode>

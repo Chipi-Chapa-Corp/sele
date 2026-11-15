@@ -95,7 +95,7 @@ module.exports = async (ui, output) => {
   await pane('chats')
   await horizontal('next')
   await pane('conversation')
-  await nav('Workspace')
+  await horizontal('next')
   await pane('workspace')
   await horizontal('previous')
   await pane('chats')

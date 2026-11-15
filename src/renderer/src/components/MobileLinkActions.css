@@ -1,0 +1,20 @@
+.mobile-link-actions {
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: 0;
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-surface);
+  color: var(--lead);
+}
+.mobile-link-actions::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+.mobile-link-actions__content {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+.mobile-link-actions p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

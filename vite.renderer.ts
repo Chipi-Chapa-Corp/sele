@@ -1,3 +1,4 @@
+import { visualizationFrame } from './vite.visualization'
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { hookRefresh } from './vite.hook-refresh'
@@ -16,6 +17,7 @@ export const rendererViteConfig = {
     }
   },
   plugins: [
+    visualizationFrame(),
     animatedIcons(),
     staticIcons(),
     react({

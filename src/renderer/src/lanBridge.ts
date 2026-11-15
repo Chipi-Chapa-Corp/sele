@@ -1,3 +1,4 @@
+import { mobileLinkUrl } from './mobileBrowserUrl'
 import { createRendererBridge } from '../../shared/rendererBridge'
 import { localAccessChannels } from '../../shared/localAccess'
 import type { AppLocalMedia, AppSelectedAttachment } from '../../shared/app'
@@ -363,6 +364,7 @@ export const initializeLanBridge = async (): Promise<void> => {
   bridge.appApi.handleExternalLink = async ({ url, action = 'open' }) => {
     if (!['http:', 'https:', 'mailto:', 'tel:'].includes(new URL(url).protocol))
       throw new Error('Unsupported link.')
+    url = mobileLinkUrl(url, transport.endpoint.replace(/^ws/, 'http'))
     if (action === 'copy') await copyText(url)
     else window.open(url, '_blank', 'noopener,noreferrer')
     return { action, always: false }
@@ -422,6 +424,7 @@ export const initializeLanBridge = async (): Promise<void> => {
   }
   Object.assign(window, bridge, {
     seleRemoteClient: true,
+    seleHostOrigin: () => new URL(transport.endpoint.replace(/^ws/, 'http')).origin,
     preferencesApi: {
       initialize: async (): Promise<PreferenceResult> => {
         const result = await shared.initialize()

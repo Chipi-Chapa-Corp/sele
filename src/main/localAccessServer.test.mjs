@@ -591,3 +591,25 @@ test('a device document resumes host ownership after socket loss; revocation des
   await thirdClosed
   assert.ok(destroyed.includes(owner))
 })
+
+test('only the fixed visualization frame gets its own script policy and may be embedded', async (t) => {
+  const f = await fixture(t)
+  await writeFile(
+    join(f.directory, 'sele-visualization.html'),
+    '<meta http-equiv="Content-Security-Policy" content="default-src none"><div id="visualization-root"></div>'
+  )
+  const shell = await fetch(f.origin + '/sele-visualization.html')
+  assert.equal(shell.status, 200)
+  assert.equal(shell.headers.get('x-frame-options'), null)
+  assert.match(shell.headers.get('content-security-policy'), /script-src 'unsafe-inline'/)
+  assert.match(shell.headers.get('content-security-policy'), /connect-src 'none'/)
+  assert.match(shell.headers.get('content-security-policy'), /frame-src 'none'/)
+  assert.match(await shell.text(), /http-equiv="Content-Security-Policy"/)
+  const page = await fetch(f.origin)
+  assert.equal(page.headers.get('x-frame-options'), 'DENY')
+  assert.match(page.headers.get('content-security-policy'), /frame-src 'self'/)
+  assert.doesNotMatch(
+    page.headers.get('content-security-policy'),
+    /script-src 'self' 'unsafe-inline'/
+  )
+})

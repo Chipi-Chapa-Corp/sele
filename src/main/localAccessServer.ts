@@ -1,3 +1,4 @@
+import { visualizationCsp, visualizationFramePath } from '../shared/visualizationShell.ts'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { readFile, stat } from 'node:fs/promises'
@@ -129,6 +130,8 @@ export const startLocalAccessServer = async (options: Options) => {
       return
     }
     const url = new URL(request.url ?? '/', 'http://localhost')
+    const visualization = url.pathname === visualizationFramePath
+    if (visualization) response.removeHeader('X-Frame-Options')
     let data: Buffer
     let contentType: string
     if (options.devRendererUrl) {
@@ -141,6 +144,7 @@ export const startLocalAccessServer = async (options: Options) => {
       const allowed =
         path === null
           ? url.pathname === '/' ||
+            visualization ||
             ['/src/', '/node_modules/', '/@id/'].some((prefix) =>
               url.pathname.startsWith(prefix)
             ) ||
@@ -186,7 +190,7 @@ export const startLocalAccessServer = async (options: Options) => {
       data = await readFile(path)
       contentType = contentTypes[extname(path)]
     }
-    if (contentType.startsWith('text/html')) {
+    if (!visualization && contentType.startsWith('text/html')) {
       // Replace the desktop custom-protocol policy with the LAN policy below.
       data = Buffer.from(
         data
@@ -196,20 +200,22 @@ export const startLocalAccessServer = async (options: Options) => {
     }
     response.setHeader(
       'Content-Security-Policy',
-      [
-        "default-src 'self'",
-        `script-src 'self'${options.devRendererUrl ? " 'unsafe-inline'" : ''}`,
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob: https:",
-        "media-src 'self' blob:",
-        "font-src 'self' data:",
-        "worker-src 'self' blob:",
-        `connect-src 'self' ws://${request.headers.host}`,
-        "frame-src 'none'",
-        "frame-ancestors 'none'",
-        "object-src 'none'",
-        "base-uri 'self'"
-      ].join('; ')
+      visualization
+        ? visualizationCsp
+        : [
+            "default-src 'self'",
+            `script-src 'self'${options.devRendererUrl ? " 'unsafe-inline'" : ''}`,
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob: https:",
+            "media-src 'self' blob:",
+            "font-src 'self' data:",
+            "worker-src 'self' blob:",
+            `connect-src 'self' ws://${request.headers.host}`,
+            "frame-src 'self'",
+            "frame-ancestors 'none'",
+            "object-src 'none'",
+            "base-uri 'self'"
+          ].join('; ')
     )
     response.writeHead(200, { 'Content-Type': contentType, 'Content-Length': data.length })
     response.end(request.method === 'HEAD' ? undefined : data)

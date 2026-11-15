@@ -2,6 +2,9 @@ package com.chipichapa.sele.android;
 
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.graphics.Outline;
 import android.net.Uri;
 import android.view.View;
@@ -21,6 +24,7 @@ public class MobileBrowserPlugin extends Plugin {
     private final LinkedHashMap<String, Page> pages = new LinkedHashMap<>(16,.75f,true);
     private FrameLayout surface;
     private String selected;
+    private String pairedHost;
     private ValueCallback<Uri[]> fileChoice;
     private int radius;
     private boolean resumed = true;
@@ -37,6 +41,20 @@ public class MobileBrowserPlugin extends Plugin {
         if (value==null || value.length()>8192) return false;
         Uri uri=Uri.parse(value);
         return ("http".equals(uri.getScheme()) || "https".equals(uri.getScheme())) && uri.getHost()!=null;
+    }
+    private void updateHost(PluginCall call) {
+        String origin = call.getString("hostOrigin");
+        if (validUrl(origin)) pairedHost = Uri.parse(origin).getHost();
+    }
+    private String deviceUrl(String value) {
+        if (!validUrl(value) || pairedHost == null) return value;
+        Uri uri = Uri.parse(value);
+        String host = uri.getHost().toLowerCase(java.util.Locale.ROOT);
+        if (!(host.equals("localhost") || host.endsWith(".localhost") || host.startsWith("127.") || host.equals("[::1]") || host.equals("::1"))) return value;
+        String authority = pairedHost.contains(":") && !pairedHost.startsWith("[") ? "[" + pairedHost + "]" : pairedHost;
+        if (uri.getPort() != -1) authority += ":" + uri.getPort();
+        if (uri.getEncodedUserInfo() != null) authority = uri.getEncodedUserInfo() + "@" + authority;
+        return uri.buildUpon().encodedAuthority(authority).build().toString();
     }
     private void emit(Page page) {
         JSObject state=new JSObject();
@@ -70,8 +88,13 @@ public class MobileBrowserPlugin extends Plugin {
         page.view.setContentDescription("Browser page");
         page.view.setWebViewClient(new WebViewClient(){
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
-                String url=request.getUrl().toString();
-                if(validUrl(url)){if(request.isForMainFrame()&&request.hasGesture())opened(page,url);return false;}
+                String original=request.getUrl().toString();
+                String url=deviceUrl(original);
+                if(validUrl(url)){
+                    if(request.isForMainFrame()&&request.hasGesture())opened(page,url);
+                    if(request.isForMainFrame()&&!url.equals(original)&&"GET".equals(request.getMethod())){view.loadUrl(url);return true;}
+                    return false;
+                }
                 if(request.hasGesture())external(url);
                 return true;
             }
@@ -99,9 +122,20 @@ public class MobileBrowserPlugin extends Plugin {
             @Override public boolean onJsConfirm(WebView view,String url,String message,JsResult result){new AlertDialog.Builder(getActivity()).setMessage(message).setPositiveButton(android.R.string.ok,(d,w)->result.confirm()).setNegativeButton(android.R.string.cancel,(d,w)->result.cancel()).setOnCancelListener(d->result.cancel()).show();return true;}
             @Override public boolean onCreateWindow(WebView view,boolean dialog,boolean userGesture,android.os.Message message){
                 if(!userGesture)return false;
-                WebView popup=new WebView(getContext());popup.setWebViewClient(new WebViewClient(){@Override public boolean shouldOverrideUrlLoading(WebView popup,WebResourceRequest request){String url=request.getUrl().toString();if(validUrl(url)){opened(page,url);page.view.loadUrl(url);}popup.destroy();return true;}});
+                WebView popup=new WebView(getContext());popup.setWebViewClient(new WebViewClient(){@Override public boolean shouldOverrideUrlLoading(WebView popup,WebResourceRequest request){String url=deviceUrl(request.getUrl().toString());if(validUrl(url)){opened(page,url);page.view.loadUrl(url);}popup.destroy();return true;}});
                 ((WebView.WebViewTransport)message.obj).setWebView(popup);message.sendToTarget();return true;
             }
+        });
+        page.view.setOnLongClickListener(view -> {
+            WebView.HitTestResult hit = page.view.getHitTestResult();
+            if (hit == null || (hit.getType() != WebView.HitTestResult.SRC_ANCHOR_TYPE && hit.getType() != WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) || hit.getExtra() == null) return false;
+            String address = deviceUrl(hit.getExtra());
+            new AlertDialog.Builder(getActivity()).setTitle("Link actions").setMessage(address)
+                .setPositiveButton("Copy address", (dialog, which) -> {
+                    ClipboardManager clipboard = (ClipboardManager)getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Link address", address));
+                }).setNegativeButton(android.R.string.cancel, null).show();
+            return true;
         });
         page.view.setDownloadListener((url,agent,disposition,mime,length)->external(url));
         pages.put(id,page);
@@ -110,20 +144,22 @@ public class MobileBrowserPlugin extends Plugin {
         return page;
     }
     private void external(String url){
-        Uri uri=Uri.parse(url);String scheme=uri.getScheme();
+        if(url==null)return;
+        Uri uri=Uri.parse(deviceUrl(url));String scheme=uri.getScheme();
         if(!java.util.Arrays.asList("http","https","mailto","tel").contains(scheme))return;
         try{getActivity().startActivity(new Intent(Intent.ACTION_VIEW,uri));}catch(Exception ignored){}
     }
     private void destroy(String id){Page page=pages.remove(id);if(page==null)return;if(page.view.getParent() instanceof ViewGroup)((ViewGroup)page.view.getParent()).removeView(page.view);page.view.stopLoading();page.view.destroy();if(id.equals(selected)){selected=null;if(surface!=null)surface.setVisibility(View.GONE);}}
     private String id(PluginCall call){String id=call.getString("id","");return id.length()>0&&id.length()<=200?id:null;}
-    @PluginMethod public void open(PluginCall call){String id=id(call),url=call.getString("url");if(id==null||!validUrl(url)){call.reject("Enter an HTTP or HTTPS address.");return;}getActivity().runOnUiThread(()->{Page page=pages.get(id);if(page==null)page=create(id);page.error=null;page.view.loadUrl(url);call.resolve();});}
+    @PluginMethod public void open(PluginCall call){String id=id(call),url=call.getString("url");if(id==null||!validUrl(url)){call.reject("Enter an HTTP or HTTPS address.");return;}getActivity().runOnUiThread(()->{updateHost(call);Page page=pages.get(id);if(page==null)page=create(id);page.error=null;page.view.loadUrl(deviceUrl(url));call.resolve();});}
     @PluginMethod public void viewport(PluginCall call){
         String id=call.getString("id","");double width=call.getDouble("width",0d),height=call.getDouble("height",0d),viewportWidth=call.getDouble("viewportWidth",0d),x=call.getDouble("x",0d),y=call.getDouble("y",0d);
         if(!Double.isFinite(width)||!Double.isFinite(height)||!Double.isFinite(x)||!Double.isFinite(y)||viewportWidth<=0||!Double.isFinite(viewportWidth)){call.reject("Invalid browser bounds.");return;}
         getActivity().runOnUiThread(()->{
+            updateHost(call);
             Page page=pages.get(id);ensureSurface();
             requestedVisible=call.getBoolean("visible",false);
-            if(page==null && requestedVisible && validUrl(call.getString("url"))){page=create(id);page.view.loadUrl(call.getString("url"));}
+            if(page==null && requestedVisible && validUrl(call.getString("url"))){page=create(id);page.view.loadUrl(deviceUrl(call.getString("url")));}
             boolean visible=call.getBoolean("visible",false)&&resumed&&page!=null&&page.error==null&&width>0&&height>0;
             if(!visible){surface.setVisibility(View.GONE);call.resolve();return;}
             if(!id.equals(selected)||page.view.getParent()!=surface){Page previous=pages.get(selected);if(previous!=null)previous.view.onPause();surface.removeAllViews();selected=id;surface.addView(page.view,new FrameLayout.LayoutParams(-1,-1));}

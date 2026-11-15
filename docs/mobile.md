@@ -69,7 +69,7 @@ uses the same shell surface as the area around the chat pane and a panel-layout 
 keeps live chat/sleep filters at the top, then account selection and four icon actions at the
 bottom: New Chat, projectless chat, search and Settings. Usage badges fill the available space beside Chat tools in the composer, reducing their font size and then hiding percentage text on narrow screens. Limits details and the reset queue remain in Chat tools.
 There is no bottom navigation strip or duplicate section heading. The same shared controls and theme tokens style both desktop and mobile.
-A right swipe opens the sidebar; a left swipe, backdrop tap, Escape, or native Back closes it.
+From the conversation, a left swipe opens workspace tools and a right swipe opens the sidebar. A left swipe, backdrop tap, Escape, or native Back closes the sidebar.
 A right swipe also opens the drawer from workspace tools. Back leaves workspace tools for the conversation; switching tool tabs does not create navigation history.
 Vertical and nested horizontal scrolling, text selection, editors, terminals and browser input
 retain their native gestures.
@@ -119,11 +119,18 @@ The Android Browser panel shares the desktop tab strip and navigation controls. 
 
 The mobile workspace uses a bounded grid column so Git labels and browser tabs cannot widen the pane. Git actions wrap by their content width, keeping pull/push labels whole. Browser tabs scroll inside their rail and bring the selected tab into view; these overrides take precedence over lazy-loaded browser styles. The new-chat symbol uses the same SVG paths, stroke timing and input rotation on mobile, avoiding an offscreen canvas surface that Android can discard while the pane is hidden. Wide desktop keeps its canvas worker.
 
-Desktop HTTP/HTTPS tab URLs appear automatically in the matching phone workspace. Explicit phone URL opens and page links also reach the computer when that workspace's Browser is active; otherwise they queue until it opens. The current tab, keyboard input, cookies and scroll stay local. URL acknowledgments prevent echo reloads. Desktop loopback URLs use the paired computer's reachable LAN hostname on the phone, preserving port, path, query and fragment; phone URLs keep their hostname. Sharing polls only small URL metadata, never screenshots. Older hosts have a metadata compatibility read. The non-Android web companion retains its remote preview implementation.
+Desktop HTTP/HTTPS tab URLs appear automatically in the matching phone workspace. Explicit phone URL opens and page links also reach the computer when that workspace's Browser is active; otherwise they queue until it opens. The current tab, keyboard input, cookies and scroll stay local. URL acknowledgments prevent echo reloads. Loopback URLs in chat links, external opens, copied addresses, synced tabs, the address bar and native page links use the paired computer's current reachable LAN hostname on the phone, preserving port, path, query and fragment. Sharing polls only small URL metadata, never screenshots. Older hosts have a metadata compatibility read. The non-Android web companion retains its remote preview implementation.
 
 Compact layouts suppress programmatic input focus except search; tapping an editor still opens the native keyboard. Back hides an active keyboard before changing sections and dismisses the highest popup before workspace navigation. Configuration Back closes its popup. A first chat hold reveals its actions, and only a subsequent gesture on that revealed row can drag. Preset actions share their selection row, and the active selection uses the existing menu surface instead of a tick.
 
 Android system bar colors and icons have a single native owner. Drawer transitions no longer invoke Capacitor's style setter, which resets the background; Activity resume restores the selected palette before a frame is drawn. Native video checks cover drawer animation frames. Mobile footer actions fill four equal columns, icons scale with the larger controls, and recent rows contain their action buttons without clipping.
+
+HTML visualizations render locally in an opaque, script-only sandbox using the same fixed shell,
+utility styles and runtime as desktop. The shell is bundled in Android and served over HTTP for
+LAN companions; its own CSP permits the supported CDN libraries while blocking arbitrary network
+requests and nested frames. The app retains its separate script policy. Inline modules also work
+on plain HTTP hosts. A hold on a chat or native Browser page link offers **Copy address**; movement
+cancels a chat link hold, and Back or a tap outside dismisses its dialog.
 
 Desktop automation, interactive MCP widgets, and chat archive import/export require desktop Sele.
 

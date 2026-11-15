@@ -10,7 +10,7 @@ export type NativeBrowserState = {
   error?: string | null
 }
 export const nativeBrowser = registerPlugin<{
-  open(options: { id: string; url: string }): Promise<void>
+  open(options: { id: string; url: string; hostOrigin: string }): Promise<void>
   viewport(options: {
     id: string
     url: string
@@ -18,6 +18,7 @@ export const nativeBrowser = registerPlugin<{
     y: number
     width: number
     height: number
+    hostOrigin: string
     viewportWidth: number
     visible: boolean
     radius: number
@@ -28,7 +29,10 @@ export const nativeBrowser = registerPlugin<{
   }): Promise<void>
   hide(): Promise<void>
   dispose(): Promise<void>
-  addListener(event:'urlOpened',listener:(event:{id:string;url:string})=>void):Promise<PluginListenerHandle>
+  addListener(
+    event: 'urlOpened',
+    listener: (event: { id: string; url: string }) => void
+  ): Promise<PluginListenerHandle>
   addListener(
     event: 'stateChanged',
     listener: (state: NativeBrowserState) => void

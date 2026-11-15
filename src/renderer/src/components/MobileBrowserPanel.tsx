@@ -11,7 +11,7 @@ import {
   writeStoredBrowserWorkspaces,
   type StoredBrowserSession
 } from '../browserTabs'
-import { readMobileConnection } from '../mobileConnection'
+import { resolveRemoteUrl, remoteHostOrigin } from '../remoteUrl'
 import { nativeBrowser, type NativeBrowserState } from '../nativeBrowser'
 import { BrowserChrome } from './BrowserChrome'
 import { Button } from './Button'
@@ -114,6 +114,7 @@ export function MobileBrowserPanel({
   )
   const add = useCallback(
     (url = '', key = workspaceKey) => {
+      if (url) url = resolveRemoteUrl(url)
       const next = { ...blank(), url, title: url ? getBrowserPageLabel(url) : 'New tab' }
       updateSession(key, (current) => ({
         tabs: [...current.tabs.filter((tab) => tab.url || tab.id !== current.activeTabId), next],
@@ -207,7 +208,7 @@ export function MobileBrowserPanel({
           }
         }
         if (stopped) return
-        const update = sync.receive(snapshot, readMobileConnection()?.origin ?? location.origin)
+        const update = sync.receive(snapshot, remoteHostOrigin())
         if (update.tabs.length) {
           setRemoteLoads((current) => ({
             ...current,
@@ -264,14 +265,16 @@ export function MobileBrowserPanel({
     if (!ready || !active || !tab?.url) return
     if (opened.current.has(tab.id) && !loadRequest) return
     opened.current.add(tab.id)
-    const url = loadRequest?.url ?? tab.url
+    const url = resolveRemoteUrl(loadRequest?.url ?? tab.url)
     if (loadRequest)
       setRemoteLoads((current) => {
         const next = { ...current }
         delete next[tab.id]
         return next
       })
-    void nativeBrowser.open({ id: tab.id, url }).catch((error) => setError(String(error)))
+    void nativeBrowser
+      .open({ id: tab.id, url, hostOrigin: remoteHostOrigin() })
+      .catch((error) => setError(String(error)))
   }, [ready, active, tab?.id, tab?.url, loadRequest])
   useEffect(() => {
     const element = viewport.current
@@ -304,7 +307,8 @@ export function MobileBrowserPanel({
         )
         const options = {
           id: tabId ?? '',
-          url: tab?.url ?? '',
+          url: tab?.url ? resolveRemoteUrl(tab.url) : '',
+          hostOrigin: remoteHostOrigin(),
           x: rect.x,
           y: rect.y,
           width: rect.width,
@@ -350,7 +354,8 @@ export function MobileBrowserPanel({
   }, [ready, active, tabId, tab?.url, error, tabId ? runtime[tabId]?.error : null])
   const navigate = (): void => {
     if (!tab) return
-    const url = normalizeBrowserAddress(drafts[tab.id] ?? tab.url)
+    const address = normalizeBrowserAddress(drafts[tab.id] ?? tab.url)
+    const url = address ? resolveRemoteUrl(address) : null
     if (!url) {
       setError('Enter an HTTP or HTTPS address.')
       return
@@ -365,7 +370,9 @@ export function MobileBrowserPanel({
       ...current,
       tabs: current.tabs.map((t) => (t.id === tab.id ? { ...t, url } : t))
     }))
-    void nativeBrowser.open({ id: tab.id, url }).catch((error) => setError(String(error)))
+    void nativeBrowser
+      .open({ id: tab.id, url, hostOrigin: remoteHostOrigin() })
+      .catch((error) => setError(String(error)))
   }
   return (
     <section className="browser-panel browser-panel--mobile" aria-label="Browser">
@@ -410,7 +417,12 @@ export function MobileBrowserPanel({
               theme="secondary"
               callback={() => {
                 setError(null)
-                if (tab) void nativeBrowser.open({ id: tab.id, url: tab.url })
+                if (tab)
+                  void nativeBrowser.open({
+                    id: tab.id,
+                    url: resolveRemoteUrl(tab.url),
+                    hostOrigin: remoteHostOrigin()
+                  })
               }}
             />
           </div>
