@@ -490,3 +490,46 @@ test('offline unshare and explicit reshare remove the old host owner', async (t)
   await fresh.attach(tab.id)
   assert.deepEqual(await old.listTabs(), [])
 })
+
+test('owned CDP commands skip inventory scans but still reject a revoked extension grant', async (t) => {
+  const service = new ChromeAutomation()
+  t.after(() => service.close())
+  await service.pair()
+  const extension = new WebSocket(extensionUrl(service), {
+    origin: `chrome-extension://${'a'.repeat(32)}`
+  })
+  const tab = { id: 1, url: 'https://example.com', active: false }
+  const requests = []
+  let revoked = false
+  extension.on('message', (raw) => {
+    const request = JSON.parse(String(raw))
+    requests.push(request.method)
+    let result = null
+    if (request.method === 'getTabs') result = [tab]
+    if (request.method === 'claimTab') {
+      if (revoked) {
+        extension.send(JSON.stringify({ id: request.id, error: 'Tab grant was revoked.' }))
+        return
+      }
+      tab.owner = request.params.owner
+    }
+    extension.send(JSON.stringify({ id: request.id, result }))
+  })
+  await once(extension, 'open')
+  const client = service.createClient({
+    providerId: 'codex',
+    sessionId: 'owner',
+    cwd: '',
+    containerKey: 'host'
+  })
+  t.after(() => client.close())
+  await client.attach(1)
+  requests.length = 0
+  for (let i = 0; i < 10; i++) await client.executeCdp(1, 'Runtime.evaluate', { expression: '1' })
+  assert.equal(requests.filter((method) => method === 'getTabs').length, 0)
+  assert.equal(requests.filter((method) => method === 'claimTab').length, 10)
+  assert.equal(requests.filter((method) => method === 'executeCdp').length, 10)
+  revoked = true
+  await assert.rejects(client.executeCdp(1, 'Runtime.evaluate'), /grant was revoked/)
+  assert.equal(requests.filter((method) => method === 'executeCdp').length, 10)
+})

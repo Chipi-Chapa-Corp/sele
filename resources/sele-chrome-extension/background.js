@@ -18,6 +18,7 @@ const SESSION_KEY = 'seleSharingV1'
 const RECONNECT_ALARM = 'sele-reconnect'
 let storageError = null
 let writes = Promise.resolve()
+let savedSession = ''
 function validEndpoint(endpoint) {
   const url = new URL(endpoint)
   if (
@@ -40,6 +41,9 @@ function persistSession() {
     owners: [...tabOwners],
     blocked: [...blocked]
   }
+  const snapshot = JSON.stringify(value)
+  if (snapshot === savedSession) return writes
+  savedSession = snapshot
   const write = writes.then(() => chrome.storage.session.set({ [SESSION_KEY]: value }))
   writes = write.catch((error) => {
     storageError = error
@@ -85,6 +89,7 @@ async function bootstrap() {
       throw new Error('Invalid saved Chrome sharing session. Reconnect the extension explicitly.')
     if (new Set(session.owners.map(([id]) => id)).size !== session.owners.length)
       throw new Error('Duplicate saved Chrome ownership. Reconnect the extension explicitly.')
+    savedSession = JSON.stringify(session)
     sharingEpoch = session.epoch
     for (const id of session.tabs) shared.add(id)
     for (const [id, owner] of session.owners) tabOwners.set(id, owner)
@@ -280,21 +285,21 @@ function handle(method, params) {
 async function perform(method, params) {
   const revision = generation
   if (method === 'getTabs') {
-    const inventory = await discoverTabs()
-    const existing = new Set(inventory.map((tab) => tab.id))
+    const inventory = new Map((await discoverTabs()).map((tab) => [tab.id, tab]))
     const tabs = []
     for (const id of shared) {
-      let current
-      try {
-        current = navigationTab(await chrome.tabs.get(id))
-      } catch (error) {
-        // A sleeping/reloaded worker can retain a closed tab. Remove its grant
-        // only when Chrome's actual inventory also confirms it is absent.
-        if (existing.has(id)) throw error
-        shared.delete(id)
-        tabOwners.delete(id)
-        continue
+      let current = inventory.get(id)
+      if (!current) {
+        try {
+          current = await chrome.tabs.get(id)
+        } catch {
+          // Remove restored closed-tab grants only after inventory and lookup agree.
+          shared.delete(id)
+          tabOwners.delete(id)
+          continue
+        }
       }
+      current = navigationTab(current)
       if (!shared.has(id) || !isPageUrl(current.url)) continue
       const tab = summary(current)
       if (tabOwners.has(id)) tab.owner = tabOwners.get(id)
@@ -324,8 +329,11 @@ async function perform(method, params) {
   if (method === 'claimTab') {
     if (typeof params.owner !== 'string' || !params.owner || params.owner.length > 2048)
       throw new Error('A conversation owner is required to claim a Chrome tab.')
-    if (tabOwners.has(id) && tabOwners.get(id) !== params.owner)
-      throw new Error('Chrome tab belongs to another conversation.')
+    if (tabOwners.has(id)) {
+      if (tabOwners.get(id) !== params.owner)
+        throw new Error('Chrome tab belongs to another conversation.')
+      return null
+    }
     tabOwners.set(id, params.owner)
     await persistSession()
     return null
@@ -524,10 +532,10 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       await disconnect()
       ready = Promise.resolve()
     }
-    await discoverTabs()
+    const inventory = await discoverTabs()
     // Status polling must never revoke ownership after a transient lookup error.
     // Only onRemoved and explicit user revocation remove a tab's grant.
-    const tabs = (await chrome.tabs.query({})).filter((tab) => shared.has(tab.id)).map(summary)
+    const tabs = inventory.filter((tab) => shared.has(tab.id)).map(summary)
     await persistSession()
     return {
       connected: socket?.readyState === WebSocket.OPEN,

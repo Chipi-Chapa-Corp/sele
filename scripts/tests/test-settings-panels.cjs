@@ -179,7 +179,7 @@ if (!process.versions.electron) {
       await settle()
       assert.equal(
         await run(
-          'document.querySelector("#settings-panel-browser > section").getAttribute("aria-label")'
+          'document.querySelector("#settings-panel-browser .browser-settings > section").getAttribute("aria-label")'
         ),
         'Browser connections'
       )

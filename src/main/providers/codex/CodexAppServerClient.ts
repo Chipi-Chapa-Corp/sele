@@ -179,6 +179,25 @@ export class CodexAppServerClient {
       )
   )
   private readonly operaConfiguredThreads = new Set<string>()
+  // Actual runtime catalogs, distinct from the local handlers rebound on resume.
+  private readonly browserDynamicThreads = new Set<string>()
+
+  private hasPairedBrowserCatalog(catalog: unknown): boolean {
+    if (!Array.isArray(catalog)) return false
+    return ['chrome', 'opera'].every((name) => {
+      const expected = this.dynamicTools.specs.find(
+        (spec) => spec.type === 'namespace' && spec.name === name
+      )
+      const actual = catalog.find((spec) => spec?.type === 'namespace' && spec.name === name)
+      return (
+        expected?.type === 'namespace' &&
+        Array.isArray(actual?.tools) &&
+        expected.tools.every((tool) =>
+          actual.tools.some((entry: { name?: string } | null) => entry?.name === tool.name)
+        )
+      )
+    })
+  }
 
   private process: CodexProcess | null = null
   private initialized = false
@@ -322,6 +341,14 @@ export class CodexAppServerClient {
       )?.thread
       if (typeof thread?.id === 'string') {
         this.ownedThreadIds.add(thread.id)
+        if (
+          method === 'thread/start'
+            ? this.hasPairedBrowserCatalog((params as Record<string, unknown>)?.dynamicTools)
+            : method === 'thread/fork' &&
+              typeof input.threadId === 'string' &&
+              this.browserDynamicThreads.has(input.threadId)
+        )
+          this.browserDynamicThreads.add(thread.id)
         if (method === 'thread/fork' && typeof input.threadId === 'string')
           this.dynamicTools.inherit(thread.id, input.threadId)
         else {
@@ -338,6 +365,7 @@ export class CodexAppServerClient {
         registerBrowserUseSession(this, thread.id, cwd, this.container)
         if (
           method === 'thread/resume' &&
+          !this.browserDynamicThreads.has(thread.id) &&
           thread.status?.type !== 'active' &&
           input.ephemeral !== true &&
           input.sandbox !== 'read-only' &&
@@ -418,6 +446,7 @@ export class CodexAppServerClient {
     this.browserTools?.close()
     void this.operaMcp.close()
     this.operaConfiguredThreads.clear()
+    this.browserDynamicThreads.clear()
     this.dynamicTools.clear()
     this.ownedThreadIds.clear()
     removeBrowserUseSessions(this)
@@ -583,6 +612,7 @@ export class CodexAppServerClient {
         ({ thread }) => thread.ephemeral !== true
       )
       for (const { thread, dynamicTools, readOnly } of restored) {
+        if (this.hasPairedBrowserCatalog(dynamicTools)) this.browserDynamicThreads.add(thread.id)
         this.ownedThreadIds.add(thread.id)
         this.browserSessionCwds.set(thread.id, thread.cwd ?? '')
         // Runtime snapshots may predate the current host catalog, or follow an

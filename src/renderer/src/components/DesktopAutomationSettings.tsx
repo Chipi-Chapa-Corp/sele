@@ -8,6 +8,7 @@ import {
 } from '../../../shared/desktop'
 import { appApi } from '../appApi'
 import { Button } from './Button'
+import { getErrorMessage } from '../workspace/chatControllerUtils'
 
 const api = (): DesktopApi => (window as unknown as { desktopApi: DesktopApi }).desktopApi
 
@@ -55,11 +56,7 @@ export function DesktopAutomationSettings(): React.ReactElement {
     try {
       await operation()
     } catch (failure) {
-      setError(
-        failure instanceof Error
-          ? failure.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
-          : String(failure)
-      )
+      setError(getErrorMessage(failure, String(failure)))
     } finally {
       setBusy(null)
     }

@@ -170,6 +170,8 @@ test('client ownership lasts through idle turns and clears on disposal or proces
     [
       'ownedThreadIds',
       'operaConfiguredThreads',
+      'browserDynamicThreads',
+      'hasPairedBrowserCatalog',
       'recoveryThreadIds',
       'lifecycle',
       'reconnectTimer',
@@ -210,6 +212,8 @@ const releaseFixture = (globals = {}) => {
     [
       'ownedThreadIds',
       'operaConfiguredThreads',
+      'browserDynamicThreads',
+      'hasPairedBrowserCatalog',
       'browserSessionCwds',
       'notificationListeners',
       'stoppedListeners',

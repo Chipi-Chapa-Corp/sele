@@ -10,6 +10,7 @@ import { type DropdownOption } from './Dropdown'
 import { Input } from './Input'
 import { SegmentedControl } from './SegmentedControl'
 import type { SettingsPanelProps } from './SettingsPanel.types'
+import { createSettingsFields } from './settingsFields'
 import { Switch } from './Switch'
 import './SettingsBrowserPanel.css'
 
@@ -19,23 +20,7 @@ const browserViewOptions = [
   { value: 'global', label: 'Global' }
 ] satisfies readonly DropdownOption<AppBrowserView>[]
 
-type SettingsBrowserPanelProps = Pick<
-  SettingsPanelProps,
-  | 'browserDefaultScaleInput'
-  | 'changesContainer'
-  | 'changesContainerKey'
-  | 'getSettingsFieldClassName'
-  | 'handleBrowserDefaultScaleChange'
-  | 'handleBrowserEnabledChange'
-  | 'handleBrowserViewChange'
-  | 'handleNativeChromeChange'
-  | 'isScopedSettingControlDisabled'
-  | 'renderProjectSettingAction'
-  | 'setBrowserDefaultScaleInputDraft'
-  | 'settingsPanelSettings'
->
-
-export function SettingsBrowserPanel(props: SettingsBrowserPanelProps): React.ReactNode {
+export function SettingsBrowserPanel(props: SettingsPanelProps): React.ReactNode {
   const {
     browserDefaultScaleInput,
     changesContainer,
@@ -50,10 +35,6 @@ export function SettingsBrowserPanel(props: SettingsBrowserPanelProps): React.Re
     setBrowserDefaultScaleInputDraft,
     settingsPanelSettings
   } = props
-  const browserEnabledPath = {
-    section: 'browser',
-    key: 'enabled'
-  } satisfies AppProjectSettingPath
   const browserDefaultScalePath = {
     section: 'browser',
     key: 'defaultScale'
@@ -63,31 +44,20 @@ export function SettingsBrowserPanel(props: SettingsBrowserPanelProps): React.Re
     key: 'view'
   } satisfies AppProjectSettingPath
   return (
-    <section
-      className="settings-dialog__panel browser-settings"
-      id="settings-panel-browser"
-      role="tabpanel"
-      aria-label="Browser settings"
-    >
+    <div className="browser-settings">
       <DesktopAutomationSettings />
       <section className="settings-dialog__section" aria-labelledby="settings-browser-behavior">
         <h2 className="settings-dialog__section-heading" id="settings-browser-behavior">
           Built-in browser
         </h2>
-        <div className={getSettingsFieldClassName('browser-settings__compact-row')}>
-          <div className="settings-dialog__field-header">
-            <h3 id="settings-browser-enabled">Open links inside Sele</h3>
-            <p>Use Browser tabs in the app.</p>
-          </div>
-          {renderProjectSettingAction(browserEnabledPath, 'Built-in browser')}
-          <Switch
-            className="settings-switch"
-            aria-labelledby="settings-browser-enabled"
-            checked={settingsPanelSettings.browser.enabled}
-            disabled={isScopedSettingControlDisabled(browserEnabledPath)}
-            onChange={(event) => handleBrowserEnabledChange(event.currentTarget.checked)}
-          />
-        </div>
+        {createSettingsFields(props).switchField(
+          { section: 'browser', key: 'enabled' },
+          'settings-browser-enabled',
+          'Open links inside Sele',
+          'Use Browser tabs in the app.',
+          settingsPanelSettings.browser.enabled,
+          handleBrowserEnabledChange
+        )}
         <details className="browser-settings__disclosure">
           <summary>Browser options</summary>
           <div className="browser-settings__disclosure-body">
@@ -191,6 +161,6 @@ export function SettingsBrowserPanel(props: SettingsBrowserPanelProps): React.Re
           </div>
         </div>
       </details>
-    </section>
+    </div>
   )
 }

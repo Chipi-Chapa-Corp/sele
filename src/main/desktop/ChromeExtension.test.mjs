@@ -598,17 +598,18 @@ test('navigation and temporary tab lookup failures never discard conversation ow
   t.after(() => h.stopWorker())
   await h.handle('getTabs', {})
   await h.handle('claimTab', { tabId: 91, owner: 'original-chat' })
-  h.chrome.tabs.get = async () => ({ id: 91, pendingUrl: 'https://example.com/next' })
+  h.browserTabs[0] = { id: 91, pendingUrl: 'https://example.com/next' }
   const pending = await h.handle('getTabs', {})
   assert.equal(pending[0]?.owner, 'original-chat')
   assert.equal(pending[0]?.url, 'https://example.com/next')
-  h.chrome.tabs.get = async () => {
+  h.chrome.tabs.query = async () => {
     throw new Error('Temporary browser lookup failure')
   }
   await assert.rejects(h.handle('getTabs', {}), /Temporary browser lookup failure/)
-  h.chrome.tabs.get = async () => ({ id: 91, url: 'chrome://extensions' })
+  h.chrome.tabs.query = async () => h.browserTabs
+  h.browserTabs[0] = { id: 91, url: 'chrome://extensions' }
   assert.equal((await h.handle('getTabs', {})).length, 0)
-  h.chrome.tabs.get = async () => ({ id: 91, url: 'https://example.com/next' })
+  h.browserTabs[0] = { id: 91, url: 'https://example.com/next' }
   assert.equal((await h.handle('getTabs', {}))[0].owner, 'original-chat')
   await assert.rejects(
     h.handle('claimTab', { tabId: 91, owner: 'other-chat' }),
@@ -634,4 +635,46 @@ test('a closed tab left in restored session state cannot break discovery of othe
     [92]
   )
   assert.equal(h.shared.has(91), false)
+})
+
+test('unchanged discovery, repeat claims and popup polling reuse inventory without storage writes', async (t) => {
+  const h = await fixture({
+    ...automaticSocket(),
+    local: { selePairingV1: 'ws://127.0.0.1:12345/extension?token=fixture' },
+    browserTabs: Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      url: 'https://example.com'
+    }))
+  })
+  t.after(() => h.stopWorker())
+  await h.handle('getTabs', {})
+  await h.handle('claimTab', { tabId: 1, owner: 'owner' })
+  const counts = { query: 0, get: 0, write: 0 }
+  for (const [target, name, metric] of [
+    [h.chrome.tabs, 'query', 'query'],
+    [h.chrome.tabs, 'get', 'get'],
+    [h.chrome.storage.session, 'set', 'write']
+  ]) {
+    const original = target[name]
+    target[name] = async (...args) => {
+      counts[metric]++
+      return original(...args)
+    }
+  }
+  for (let i = 0; i < 10; i++) {
+    assert.equal((await h.handle('getTabs', {})).length, 100)
+    await h.handle('claimTab', { tabId: 1, owner: 'owner' })
+  }
+  assert.deepEqual(counts, { query: 10, get: 10, write: 0 })
+  counts.query = counts.get = 0
+  const status = await new Promise((resolve) =>
+    h.listeners.message({ action: 'status' }, {}, resolve)
+  )
+  assert.equal(status.tabs.length, 100)
+  assert.deepEqual(counts, { query: 1, get: 0, write: 0 })
+  h.browserTabs.push({ id: 101, url: 'https://example.com/new' })
+  assert.equal((await h.handle('getTabs', {})).length, 101)
+  assert.equal(counts.write, 1, 'newly discovered grants remain durable')
+  await h.handle('getTabs', {})
+  assert.equal(counts.write, 1)
 })

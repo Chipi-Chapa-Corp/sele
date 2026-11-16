@@ -256,7 +256,9 @@ export class ChromeAutomation implements BrowserAutomationService {
         .map(({ owner: _allocationOwner, ...tab }) => tab)
     }
     const claim = async (id: number): Promise<void> => {
-      if (!(await tabs()).some((tab) => tab.id === id))
+      // Known claims are revalidated by the extension's compare-and-set below.
+      // Only a newly claimed tab needs a full browser inventory lookup.
+      if (this.owners.get(id) !== owner && !(await tabs()).some((tab) => tab.id === id))
         throw new Error(
           `This ${this.browserName} tab is unavailable or belongs to another conversation.`
         )

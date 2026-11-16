@@ -213,6 +213,8 @@ test('app-server transport advertises and dispatches host tools and answers the 
   )
   const names = [
     'request',
+    'hasPairedBrowserCatalog',
+    'browserDynamicThreads',
     'dynamicTools',
     'ownedThreadIds',
     'browserSessionCwds',

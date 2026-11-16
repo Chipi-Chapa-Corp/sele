@@ -37,6 +37,8 @@ const fixture = (
     pluginError = null,
     processScope = undefined,
     resumedThread = null,
+    startedThread = null,
+    forkedThread = null,
     restoredOpera = false,
     mcpTools = []
   } = {}
@@ -98,6 +100,10 @@ const fixture = (
       isReadOnly(id) {
         return this.readOnly.get(id) === true
       }
+      inherit(id, parentId) {
+        this.bindings.set(id, this.bindings.get(parentId))
+        this.setReadOnly(id, this.isReadOnly(parentId))
+      }
       setReadOnly(id, value) {
         this.readOnly.set(id, value)
       }
@@ -157,9 +163,13 @@ const fixture = (
                             }
                           : message.method === 'thread/unsubscribe' && resumedThread
                             ? { status: 'notLoaded' }
-                            : message.method === 'thread/resume' && resumedThread
-                              ? { thread: resumedThread }
-                              : {}
+                            : message.method === 'thread/start' && startedThread
+                              ? { thread: startedThread }
+                              : message.method === 'thread/fork' && forkedThread
+                                ? { thread: forkedThread }
+                                : message.method === 'thread/resume' && resumedThread
+                                  ? { thread: resumedThread }
+                                  : {}
                 })}\n`
               )
             })
@@ -922,4 +932,76 @@ test('reattachment refreshes an Opera-only cached catalog but preserves a curren
     const releases = children[0].requests.filter((r) => r.method === 'thread/unsubscribe')
     assert.equal(releases.length, mcpTools.includes('chrome_tabs_context') ? 0 : 1)
   }
+})
+
+test('current retained dynamic catalogs avoid duplicate MCP; incomplete catalogs still migrate', async (t) => {
+  const specs = ['chrome', 'opera'].map((name) => ({
+    type: 'namespace',
+    name,
+    tools: [
+      { type: 'function', name: 'tabs_context' },
+      { type: 'function', name: 'navigate' }
+    ]
+  }))
+  for (const actual of [
+    specs,
+    specs.slice(0, 1),
+    specs.map((spec) => ({ ...spec, tools: spec.tools.slice(0, 1) })),
+    undefined
+  ]) {
+    const thread = { id: 'retained-browser-chat', cwd: '/project' }
+    const { client, context, children } = fixture(t, {
+      resumedThread: thread,
+      initializeResult: {
+        seleRuntime: { threads: [{ thread, dynamicTools: actual, readOnly: false }] }
+      }
+    })
+    client.container = null
+    client.dynamicTools.specs = specs
+    context.chromeAutomation.status.pairingUrl = 'saved-chrome'
+    await client.request('thread/resume', { threadId: thread.id })
+    const migrated = children[0].requests.some(
+      (request) => request.params?.config?.['mcp_servers.sele_opera']
+    )
+    assert.equal(
+      migrated,
+      actual !== specs,
+      'only the actual complete runtime catalog can skip migration'
+    )
+    assert.equal(
+      children[0].requests.filter((request) => request.method === 'thread/resume').length,
+      actual === specs ? 1 : 2
+    )
+  }
+})
+
+test('new chats and their forks retain complete browser catalogs without adding MCP on resume', async (t) => {
+  const thread = { id: 'new-browser-chat', cwd: '/project' }
+  const fork = { id: 'forked-browser-chat', cwd: '/project' }
+  const resumedThread = { ...thread }
+  const { client, context, children } = fixture(t, {
+    startedThread: thread,
+    resumedThread,
+    forkedThread: fork
+  })
+  client.container = null
+  client.dynamicTools.specs = ['chrome', 'opera'].map((name) => ({
+    type: 'namespace',
+    name,
+    tools: [{ type: 'function', name: 'tabs_context' }]
+  }))
+  context.chromeAutomation.status.pairingUrl = 'saved-chrome'
+  await client.request('thread/start', { cwd: '/project' })
+  await client.request('thread/resume', { threadId: thread.id })
+  await client.request('thread/fork', { threadId: thread.id })
+  resumedThread.id = fork.id
+  await client.request('thread/resume', { threadId: fork.id })
+  assert.equal(
+    children[0].requests.some((request) => request.method === 'thread/unsubscribe'),
+    false
+  )
+  assert.equal(
+    children[0].requests.some((request) => request.params?.config?.['mcp_servers.sele_opera']),
+    false
+  )
 })
