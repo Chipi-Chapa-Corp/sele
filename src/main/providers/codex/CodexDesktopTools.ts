@@ -42,7 +42,7 @@ export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(
     },
     async (args, context) => {
       if (context.signal.aborted) throw new Error('Tool canceled.')
-      return toCodexToolResult(await executeComputerTool(args))
+      return convert(await executeComputerTool(args))
     },
     'sele'
   )
