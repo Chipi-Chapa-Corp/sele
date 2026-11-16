@@ -5,8 +5,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import type { BrowserAutomationScope } from '../../shared/browser'
+import type { PairedBrowserId } from '../../shared/desktop'
 import type { BrowserAutomationService } from './BrowserAutomation'
 import { createProviderBrowserTools, providerBrowserToolInstructions } from './ProviderBrowserTools'
+import { validatePairing, type ChromePairing } from '../desktop/ChromePairingStore'
 
 export type BrowserMcpIntegration = {
   url: string
@@ -19,6 +21,10 @@ export type BrowserMcpIntegration = {
 }
 
 export type BrowserMcpOptions = {
+  /** Restore an existing authenticated endpoint for a retained runtime client. */
+  binding?: ChromePairing
+  /** Limit both discovery and execution to this explicit host-selected catalog. */
+  pairedBrowsers?: readonly PairedBrowserId[]
   /** OpenCode shares MCP configuration across sessions, so its caller metadata is mandatory. */
   requireSessionMetadata?: boolean
   authorizeTool?: (name: string, args: Record<string, unknown>) => void | Promise<void>
@@ -33,11 +39,13 @@ export async function createBrowserMcpServer(
   scope: BrowserAutomationScope,
   options: BrowserMcpOptions = {}
 ): Promise<BrowserMcpIntegration> {
+  const binding = options.binding === undefined ? undefined : validatePairing(options.binding)
   // Snapshot the scope: a caller cannot widen an existing endpoint by mutating its input.
   const boundScope = { ...scope }
   let browser: ReturnType<typeof createProviderBrowserTools> | null = createProviderBrowserTools(
     service,
-    boundScope
+    boundScope,
+    options.pairedBrowsers
   )
   const definitions = browser.tools.map((tool) => ({
     name: tool.name,
@@ -48,7 +56,7 @@ export async function createBrowserMcpServer(
       required?: string[]
     }
   }))
-  const token = randomBytes(32).toString('base64url')
+  const token = binding?.token ?? randomBytes(32).toString('base64url')
   const expectedAuthorization = Buffer.from(`Bearer ${token}`)
   const connections = new Set<Server>()
   let closed = false
@@ -140,7 +148,7 @@ export async function createBrowserMcpServer(
   try {
     await new Promise<void>((resolve, reject) => {
       http.once('error', reject)
-      http.listen(0, '127.0.0.1', resolve)
+      http.listen(binding?.port ?? 0, '127.0.0.1', resolve)
     })
   } catch (error) {
     browser.close()
@@ -163,7 +171,7 @@ export async function createBrowserMcpServer(
     suspend,
     resume: () => {
       if (closed) throw new Error('Browser MCP endpoint closed')
-      browser ??= createProviderBrowserTools(service, boundScope)
+      browser ??= createProviderBrowserTools(service, boundScope, options.pairedBrowsers)
     },
     close: async () => {
       if (closed) return

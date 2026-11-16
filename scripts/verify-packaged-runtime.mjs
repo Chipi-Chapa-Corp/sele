@@ -3,6 +3,7 @@ import { builtinModules } from 'node:module'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { sep } from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 export function verifyPackagedRuntime(archive, platform = process.platform, arch = process.arch) {
   const { header } = getRawHeader(archive)
@@ -33,6 +34,31 @@ export function verifyPackagedRuntime(archive, platform = process.platform, arch
   for (const name of ['monaco-editor', 'mermaid', 'lucide-react', 'react-virtuoso']) {
     if (entry(`node_modules/${name}`))
       throw new Error(`Renderer build dependency was unnecessarily packaged: ${name}`)
+  }
+  if (platform === 'darwin') {
+    const plugin = `${archive}.unpacked/node_modules/@github/copilot-sdk-darwin-${arch}/plugins/computer-use`
+    for (const name of ['computer-use-mcp', 'Copilot Computer Use.app']) {
+      const path = `${plugin}/${name}`
+      const verified = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', path], {
+        encoding: 'utf8'
+      })
+      if (verified.error || verified.status !== 0)
+        throw new Error(
+          `Bundled GitHub signature is invalid (${name}): ${verified.error?.message ?? verified.stderr}`
+        )
+      const identity = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=2', path], {
+        encoding: 'utf8'
+      })
+      if (
+        identity.error ||
+        identity.status !== 0 ||
+        !identity.stderr.split('\n').includes('TeamIdentifier=VEKTX9H2N7')
+      )
+        throw new Error(
+          `Bundled GitHub identity was replaced (${name}); preserve the vendor signature when packaging.`
+        )
+    }
+    console.log('Verified original GitHub Computer Use signatures.')
   }
   console.log(
     `Verified ${modules.size} packaged runtime dependencies and native SQLite (${platform}/${arch}).`

@@ -9,9 +9,10 @@ import { DesktopAutomationSettings } from './DesktopAutomationSettings'
 import { type DropdownOption } from './Dropdown'
 import { Input } from './Input'
 import { SegmentedControl } from './SegmentedControl'
-import { createSettingsFields, SettingsSection } from './settingsFields'
 import type { SettingsPanelProps } from './SettingsPanel.types'
+import { createSettingsFields } from './settingsFields'
 import { Switch } from './Switch'
+import './SettingsBrowserPanel.css'
 
 const browserViewOptions = [
   { value: 'chat', label: 'Per chat' },
@@ -43,87 +44,99 @@ export function SettingsBrowserPanel(props: SettingsPanelProps): React.ReactNode
     key: 'view'
   } satisfies AppProjectSettingPath
   return (
-    <>
-      <SettingsSection id="settings-browser-behavior" title="Browser">
+    <div className="browser-settings">
+      <DesktopAutomationSettings />
+      <section className="settings-dialog__section" aria-labelledby="settings-browser-behavior">
+        <h2 className="settings-dialog__section-heading" id="settings-browser-behavior">
+          Built-in browser
+        </h2>
         {createSettingsFields(props).switchField(
           { section: 'browser', key: 'enabled' },
           'settings-browser-enabled',
-          'Built-in browser',
-          'Open web links in Browser tabs inside Sele. When off, links open in your default browser.',
+          'Open links inside Sele',
+          'Use Browser tabs in the app.',
           settingsPanelSettings.browser.enabled,
           handleBrowserEnabledChange
         )}
-        <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-          <div className="settings-dialog__field-header">
-            <h3>View</h3>
-            <p>Choose which conversations share a set of Browser tabs.</p>
-          </div>
-          {renderProjectSettingAction(browserViewPath, 'Browser view')}
-          <SegmentedControl<AppBrowserView>
-            aria-label="Browser view"
-            className="settings-dialog__appearance-toggle"
-            disabled={isScopedSettingControlDisabled(browserViewPath)}
-            options={browserViewOptions}
-            value={settingsPanelSettings.browser.view}
-            onChange={handleBrowserViewChange}
-          />
-        </div>
-      </SettingsSection>
-      <SettingsSection id="settings-browser-accessibility" title="Accessibility">
-        <div className={getSettingsFieldClassName('settings-dialog__field--inline')}>
-          <label className="settings-dialog__field-header" htmlFor="settings-browser-default-scale">
-            <h3>Default Scale</h3>
-            <p>Set the default zoom for Browser pages.</p>
-          </label>
-          {renderProjectSettingAction(browserDefaultScalePath, 'Default Scale')}
-          <div className="settings-dialog__number-with-unit">
-            <Input
-              aria-label="Default browser scale percentage"
-              className="settings-dialog__number-input"
-              id="settings-browser-default-scale"
-              type="number"
-              min={appBrowserDefaultScaleMin}
-              max={appBrowserDefaultScaleMax}
-              step={5}
-              disabled={isScopedSettingControlDisabled(browserDefaultScalePath)}
-              value={browserDefaultScaleInput}
-              onBlur={() => setBrowserDefaultScaleInputDraft(null)}
-              onChange={(event) => handleBrowserDefaultScaleChange(event.currentTarget.value)}
+        <details className="browser-settings__disclosure">
+          <summary>Browser options</summary>
+          <div className="browser-settings__disclosure-body">
+            <div className="settings-dialog__section-cards">
+              <div
+                className={getSettingsFieldClassName(
+                  'settings-dialog__field--inline',
+                  'browser-settings__wide-control'
+                )}
+              >
+                <div className="settings-dialog__field-header">
+                  <h3>Tab sharing</h3>
+                  <p>Choose where built-in tabs are shared.</p>
+                </div>
+                {renderProjectSettingAction(browserViewPath, 'Browser view')}
+                <SegmentedControl<AppBrowserView>
+                  aria-label="Browser view"
+                  className="settings-dialog__appearance-toggle"
+                  disabled={isScopedSettingControlDisabled(browserViewPath)}
+                  options={browserViewOptions}
+                  value={settingsPanelSettings.browser.view}
+                  onChange={handleBrowserViewChange}
+                />
+              </div>
+              <div
+                className={getSettingsFieldClassName(
+                  'settings-dialog__field--inline',
+                  'browser-settings__compact-row'
+                )}
+              >
+                <label
+                  className="settings-dialog__field-header"
+                  htmlFor="settings-browser-default-scale"
+                >
+                  <h3>Default zoom</h3>
+                </label>
+                {renderProjectSettingAction(browserDefaultScalePath, 'Default Scale')}
+                <div className="settings-dialog__number-with-unit">
+                  <Input
+                    aria-label="Default browser scale percentage"
+                    className="settings-dialog__number-input"
+                    id="settings-browser-default-scale"
+                    type="number"
+                    min={appBrowserDefaultScaleMin}
+                    max={appBrowserDefaultScaleMax}
+                    step={5}
+                    disabled={isScopedSettingControlDisabled(browserDefaultScalePath)}
+                    value={browserDefaultScaleInput}
+                    onBlur={() => setBrowserDefaultScaleInputDraft(null)}
+                    onChange={(event) => handleBrowserDefaultScaleChange(event.currentTarget.value)}
+                  />
+                  <span aria-hidden="true" className="settings-dialog__number-unit">
+                    %
+                  </span>
+                </div>
+              </div>
+            </div>
+            <BrowserImportSettings
+              key={changesContainerKey}
+              currentEnvironment={changesContainer}
             />
-            <span aria-hidden="true" className="settings-dialog__number-unit">
-              %
-            </span>
           </div>
-        </div>
-      </SettingsSection>
-      <section className="settings-dialog__section" aria-labelledby="settings-native-chrome">
-        <h2 className="settings-dialog__section-heading" id="settings-native-chrome">
-          Your Chrome
-        </h2>
-        <p>
-          Keep using your existing browser setup, including connections without an extension.
-          Official Chrome extensions are optional and keep other browser connections available.
-        </p>
-        <details
-          open={
-            settingsPanelSettings.providers.claude.nativeChrome ||
-            settingsPanelSettings.providers.codex.nativeChrome
-          }
-        >
-          <summary>Official Chrome extensions (optional)</summary>
+        </details>
+      </section>
+      <details className="browser-settings__disclosure browser-settings__section-disclosure">
+        <summary id="settings-native-chrome">Official Chrome integrations</summary>
+        <div className="browser-settings__disclosure-body">
+          <p className="browser-settings__note">
+            Optional provider extensions, configured separately from Sele’s extension.
+          </p>
           <div className="settings-dialog__section-cards">
             {(['claude', 'codex'] as const).map((provider) => (
-              <div className="settings-dialog__field" key={provider}>
+              <div className="settings-dialog__field browser-settings__compact-row" key={provider}>
                 <div className="settings-dialog__field-header">
                   <h3 id={`settings-native-chrome-${provider}`}>
                     {provider === 'claude' ? 'Claude in Chrome' : 'Codex in Chrome'}
                   </h3>
-                  <p>
-                    {provider === 'claude'
-                      ? 'Add the official Claude in Chrome integration for local, writable chats on their next turn. Requires Anthropic’s Chrome extension. When off, Claude follows its existing configuration.'
-                      : 'Enable installed official Chrome plugins for local, writable chats on their next turn. Uses the official extension setup. When off, Codex follows its existing configuration.'}
-                  </p>
                   <a
+                    className="browser-settings__help-link"
                     href={
                       provider === 'claude'
                         ? 'https://code.claude.com/docs/en/chrome'
@@ -132,7 +145,7 @@ export function SettingsBrowserPanel(props: SettingsPanelProps): React.ReactNode
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Optional integration setup
+                    Setup instructions
                   </a>
                 </div>
                 <Switch
@@ -146,10 +159,8 @@ export function SettingsBrowserPanel(props: SettingsPanelProps): React.ReactNode
               </div>
             ))}
           </div>
-        </details>
-      </section>
-      <BrowserImportSettings key={changesContainerKey} currentEnvironment={changesContainer} />
-      <DesktopAutomationSettings />
-    </>
+        </div>
+      </details>
+    </div>
   )
 }

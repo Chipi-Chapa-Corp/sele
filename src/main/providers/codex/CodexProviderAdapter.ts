@@ -35,6 +35,7 @@ import {
 } from '../transcriptProjection/recordChanges.ts'
 import { BufferedSnapshotMap } from '../transcriptProjection/BufferedSnapshotMap'
 import { isBrowserPermissionRequest } from './CodexBrowserPermissions'
+import { getCodexApprovalPolicy } from './CodexApprovalPolicy'
 import { codexFeatureSchemas } from './CodexFeatureSchemas'
 import { updateConfigFeatureValue } from './CodexConfigValues'
 import type {
@@ -1145,7 +1146,7 @@ const getAccessOptions = (options?: ProviderTurnOptions) => {
   const approvalPolicy = options?.approvalPolicy ?? 'on-request'
   const runtimeWorkspaceRoots = getRuntimeWorkspaceRoots(options)
   return {
-    approvalPolicy,
+    approvalPolicy: getCodexApprovalPolicy(approvalPolicy),
     ...(runtimeWorkspaceRoots.length > 0 ? { runtimeWorkspaceRoots } : {}),
     ...(approvalPolicy === 'never'
       ? {}

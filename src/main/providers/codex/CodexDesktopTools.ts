@@ -5,7 +5,9 @@ import {
   computerToolDescription,
   executeComputerTool
 } from '../../desktop/ComputerTools'
-import { chromeAutomation } from '../../desktop/ChromeAutomation'
+import { pairedBrowserAutomations } from '../../desktop/ChromeAutomation'
+import { pairedBrowserNames, type PairedBrowserId } from '../../../shared/desktop'
+import { browserSelectionInstructions } from '../../browser/BrowserTools'
 import { registerCodexBrowserToolSet, toCodexToolResult } from './CodexBrowserTools'
 
 export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(): void } {
@@ -22,12 +24,17 @@ export function registerCodexDesktopTools(registry: CodexDynamicTools): { close(
     },
     'sele'
   )
-  return registerCodexBrowserToolSet(
-    registry,
-    chromeAutomation,
-    'chrome',
-    'Chrome',
-    (description) =>
-      `Optional Sele Chrome connection: ${description} Only tabs shared using the Sele Chrome extension are available. Use this connection when the user chooses Sele's shared-tab extension. An existing official Chrome connection uses the provider's browser tools and does not require Sele pairing.`
-  )
+  const browsers = Object.entries(pairedBrowserAutomations).map(([browserId, automation]) => {
+    const id = browserId as PairedBrowserId
+    const name = pairedBrowserNames[id]
+    return registerCodexBrowserToolSet(
+      registry,
+      automation,
+      id,
+      name,
+      (description) =>
+        `Optional Sele ${name} connection: ${description} ${browserSelectionInstructions} Only ${name} tabs shared using the Sele extension are available. Tab IDs belong to this browser only; use this namespace for every action on them. Use this connection when the user chooses Sele's shared-tab extension. An existing official Chrome connection uses the provider's browser tools and does not require Sele pairing.`
+    )
+  })
+  return { close: () => browsers.forEach((browser) => browser.close()) }
 }

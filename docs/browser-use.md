@@ -78,9 +78,11 @@ be beneath the active home even when both paths resolve to the same shared direc
 The override applies to the launched process only; shared configuration and credentials
 remain unchanged. It is added only when the app-managed marketplace manifest exists.
 
-Sele's `chrome` namespace and Claude's `chrome_*` tools are advertised only after the user
-starts pairing Sele's optional extension or connects it. Unpaired tools cannot divert the
-agent from its existing native Chrome connection. Pairing updates the catalog on the next turn.
+Codex advertises Sele's scoped `chrome` namespace even before pairing so a chat can use
+a connection established later without losing its tool catalog. Calls without a connection
+report the actual pairing error. Claude's `chrome_*` tools are added after pairing starts,
+on the next turn. Keep the selected browser transport; the presence of a tool is not proof
+that the connection is ready.
 
 Fixture checks cover flags, plugin selection, scope boundaries, settings persistence and the
 settings controls. Real extension pairing and authenticated browsing, including macOS native
@@ -110,10 +112,11 @@ must be absolute, have existing parents, and never overwrite files. Screenshots 
 The browser has a separate profile from personal Chrome. Remote forwarding, secure sign-in
 UI, preview-server management, and a complete cross-frame locator API are unavailable.
 
-## Explicit computer and Chrome connections
+## Explicit computer, Chrome and Opera connections
 
 **Settings → Browser & desktop** connects local writable conversations in all four providers to these
-capabilities. Connections are not restored after restart.
+capabilities. Chrome and Opera have independent pairing restored automatically after restart; the separate
+Linux computer connection requires a new desktop-sharing session.
 
 **Connect computer** starts a Linux host helper. X11 requires `xdotool` and ImageMagick;
 Wayland requires PyGObject, RemoteDesktop/ScreenCast portals, GStreamer Gst/GstApp,
@@ -121,13 +124,48 @@ Wayland requires PyGObject, RemoteDesktop/ScreenCast portals, GStreamer Gst/GstA
 Missing support fails without falling back to unrestricted X11 control. Disconnect or portal
 revocation stops access.
 
-For Sele's optional shared-tab connection, expand **Sele Chrome extension (optional)**,
+For Sele's optional shared-tab connections, expand **Sele browser extension (Chrome and Opera)**,
 open the extension folder from Settings, load it unpacked in
-`chrome://extensions`, pair using Sele's temporary address, and select **Share current tab**.
+the browser's Extensions manager, and connect once using that browser's own pairing address. The folder includes
+`skills/parallel-chrome`, a portable skill to copy into each agent's skill directory; see the
+[README setup](../README.md#parallel-work-in-your-signed-in-chrome-and-opera). Create background tabs
+for concurrent work; use **Share current tab** only for an explicit user handoff.
 Treat the pairing address as a credential. Only shared/created tabs are exposed, each leased
 to one conversation. Unsharing or disconnecting revokes access; regenerating the address
 revokes the old credential. Chrome 125+ is required for flattened iframe sessions.
 This pairing is independent of Claude and Codex's official Chrome connections.
+
+Chrome keeps its existing `desktop-chrome/pairing.enc.json` binding. Opera uses a separate
+`desktop-opera/pairing.enc.json`, listener and ownership map, so both can be connected at
+once. Pairing, disconnecting or reconnecting one never rotates or revokes the other. Codex
+exposes `opera` tools alongside `chrome`; MCP providers expose `opera_*` alongside `chrome_*`.
+Always keep tab IDs with their browser namespace: two browsers can report the same number.
+Restoration errors appear under the affected browser in Settings without disabling the other.
+The same bundled extension can be loaded in both browsers; no reload of an already connected
+Chrome extension is required when adding Opera.
+
+Pairing persists across normal Sele and Chrome restarts. Sele restores the same loopback
+port and token from an encrypted file in its user-data directory; the extension stores the
+endpoint in local storage restricted to trusted extension contexts. A busy saved port,
+invalid credential file, unavailable encryption or storage write error is reported; Sele
+does not silently rotate credentials or fall back to another browser. Close the conflicting
+listener or repair the OS secret store; explicitly generate a new address only when you
+intend to replace the saved pairing. A cold extension retries at least once per minute.
+Reopen its popup to get fresh status; a restored setup page can retain an early startup snapshot.
+
+Chrome's session storage retains tab owners and the sharing epoch across service-worker
+suspension and Sele restarts. Full Chrome restart or extension reload clears that session,
+so old tab IDs cannot inherit old grants. Pairing still reconnects. Explicit Disconnect removes
+the stored binding and revokes live access immediately, even if persistence then fails.
+
+The implementation uses cross-platform Chrome APIs and Electron safeStorage. macOS uses
+Keychain; Windows uses DPAPI; Linux requires GNOME Keyring/libsecret or KWallet. The
+`basic_text` Linux backend is rejected. Sandboxed Linux packages also need a working secret
+service and host loopback access. See [Electron's platform-specific key providers](https://www.electronjs.org/docs/latest/api/safe-storage#platform-specific-key-providers).
+Live restart and shared-profile acceptance is currently macOS-only; Windows/Linux support
+is implemented but has not been accepted on those hosts. Physical system cursor/focus was
+not independently measured by page focus emulation.
+
 
 ## Checks
 

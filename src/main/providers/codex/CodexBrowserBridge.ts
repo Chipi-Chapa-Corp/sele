@@ -28,7 +28,10 @@ function positiveId(value: unknown): number {
 
 export async function startBrowserUseBridge(
   browser: BrowserAutomationService,
-  identity: { type: 'iab' | 'chrome'; name: string } = { type: 'iab', name: 'Sele' }
+  identity: { type: 'iab' | 'chrome'; name: string; endpointId?: 'opera' } = {
+    type: 'iab',
+    name: 'Sele'
+  }
 ): Promise<() => Promise<void>> {
   const sockets = new Set<Socket>()
   const expressionCaches = new WeakMap<BrowserAutomationClient, Map<string, string>>()
@@ -243,7 +246,7 @@ export async function startBrowserUseBridge(
 
   let path: string
   if (process.platform === 'win32')
-    path = `\\\\.\\pipe\\codex-browser-use-sele-${identity.type}-${process.pid}`
+    path = `\\\\.\\pipe\\codex-browser-use-sele-${identity.endpointId ?? identity.type}-${process.pid}`
   else {
     const directory = '/tmp/codex-browser-use'
     await mkdir(directory, { recursive: true, mode: 0o700 })
