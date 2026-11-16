@@ -22,6 +22,7 @@ export class LanTransport implements RendererTransport {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatDeadline: ReturnType<typeof setTimeout> | null = null
+  private heartbeatTimeout = 0
   private heartbeatSupported = false
   private connection: Promise<void> | null = null
   private cancelConnection: (() => void) | null = null
@@ -56,13 +57,14 @@ export class LanTransport implements RendererTransport {
     if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer)
     if (this.heartbeatDeadline) clearTimeout(this.heartbeatDeadline)
     this.heartbeatTimer = this.heartbeatDeadline = null
+    this.heartbeatTimeout = 0
   }
 
   /** A foreground probe detects a half-open Wi-Fi connection without reloading. */
   resume(): void {
     if (this.stopped || this.revoked) return
     if (this.isReady) {
-      if (this.heartbeatSupported) this.probe()
+      if (this.heartbeatSupported) this.probe(2000)
     } else if (!this.connection) {
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -87,13 +89,20 @@ export class LanTransport implements RendererTransport {
     if (!this.isReady) this.updateUrl(endpoints[0])
   }
 
-  private probe(): void {
-    this.clearHeartbeat()
+  private probe(timeout = 10_000): void {
     const socket = this.socket
     if (!socket || !this.isReady) return
+    // Visibility/pageshow/online can arrive together. Keep the earliest probe
+    // instead of postponing recovery on every lifecycle event.
+    if (this.heartbeatDeadline && this.heartbeatTimeout <= timeout) return
+    this.clearHeartbeat()
+    this.heartbeatTimeout = timeout
     this.heartbeatDeadline = setTimeout(() => {
-      if (this.socket === socket) this.cancelConnection?.()
-    }, 10_000)
+      if (this.socket !== socket) return
+      this.cancelConnection?.()
+      // A confirmed stale socket does not need an additional retry backoff.
+      this.resume()
+    }, timeout)
     try {
       socket.send(encodeClientMessage({ type: 'ping' }))
     } catch {

@@ -1,0 +1,13 @@
+.sele-connection-status {
+  position: fixed;
+  top: max(0.5rem, env(safe-area-inset-top));
+  inset-inline: 0.5rem;
+  z-index: 10000;
+}
+
+.sele-connection-status .chat-approval__summary {
+  font-family: inherit;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

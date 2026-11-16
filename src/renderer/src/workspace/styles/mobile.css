@@ -963,21 +963,6 @@
   }
 }
 
-.sele-connection-status {
-  position: fixed;
-  top: max(0.5rem, env(safe-area-inset-top));
-  inset-inline: 0.5rem;
-  z-index: 10000;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--field-border);
-  border-color: var(--secondary-border-colors);
-  border-radius: var(--control-radius);
-  box-shadow: var(--secondary-shadow);
-  background: var(--secondary-surface);
-  color: var(--lead);
-  font: inherit;
-}
-
 @media (max-width: 50rem), (pointer: coarse) and (max-width: 65rem) {
   /* Browser styles load with the lazy pane; keep compact sizing independent of import order. */
   .chat .browser-panel__tab-toolbar { gap: .25rem; }

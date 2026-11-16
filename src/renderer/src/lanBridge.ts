@@ -12,6 +12,9 @@ import { createLocalPreferences } from './localPreferences'
 import { LanAccessRevokedError, LanTransport } from './lanTransport'
 import { isAndroidClient } from './runtimeCapabilities'
 import { Capacitor } from '@capacitor/core'
+import { createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { ConnectionStatus } from './components/ConnectionStatus'
 import { localNetwork } from './nativeLocalNetwork'
 import { watchNearbyComputers } from './mobileDiscovery'
 import {
@@ -44,22 +47,22 @@ export const installLanUuid = (): void => {
   }
 }
 
+let connectionStatusRoot: Root | null = null
 const showConnection = (message: string | null): void => {
-  document.getElementById('sele-connection-status')?.remove()
-  if (!message) return
-  const status = document.createElement('div')
-  status.id = 'sele-connection-status'
-  status.className = 'sele-connection-status'
-  status.setAttribute('role', 'status')
-  status.textContent = message
-  if (isAndroidClient()) {
-    const devices = document.createElement('button')
-    devices.type = 'button'
-    devices.textContent = 'Devices'
-    devices.onclick = () => void forgetMobileConnection().catch(console.error)
-    status.append(devices)
+  if (!connectionStatusRoot) {
+    if (!message) return
+    const container = document.createElement('div')
+    document.body.append(container)
+    connectionStatusRoot = createRoot(container)
   }
-  document.body.append(status)
+  connectionStatusRoot.render(
+    createElement(ConnectionStatus, {
+      message,
+      onChooseDevice: isAndroidClient()
+        ? () => void forgetMobileConnection().catch(console.error)
+        : undefined
+    })
+  )
 }
 
 const requestToken = (error?: string): Promise<string> =>

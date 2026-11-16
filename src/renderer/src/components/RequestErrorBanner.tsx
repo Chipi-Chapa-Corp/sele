@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from 'react'
 import { getRequestErrorPresentation } from '../requestError'
+import { Banner } from './Banner'
 
 export function RequestErrorBanner({
   message,
@@ -12,14 +13,14 @@ export function RequestErrorBanner({
 }): ReactElement {
   const presentation = getRequestErrorPresentation(message)
   return (
-    <section className="chat-approval chat-request-error" aria-label={ariaLabel} role="alert">
-      <div className="chat-approval__main">
-        {presentation.label && <span className="chat-approval__label">{presentation.label}</span>}
-        <span className="chat-approval__summary" title={presentation.summary}>
-          {presentation.summary}
-        </span>
-      </div>
-      {children && <div className="chat-approval__actions">{children}</div>}
-    </section>
+    <Banner
+      className="chat-request-error"
+      ariaLabel={ariaLabel}
+      role="alert"
+      label={presentation.label}
+      summary={presentation.summary}
+    >
+      {children}
+    </Banner>
   )
 }

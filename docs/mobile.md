@@ -42,7 +42,8 @@ large history response does not disconnect a slow phone. Reconnection retains th
 composer, open pickers, and navigation, restores viewed-chat subscriptions, and refreshes chats,
 workspace data, sleep state, and preferences in place. An authenticated per-document session retains
 host ownership for 90 seconds across a dropped socket, including terminals; revocation and server
-shutdown release it immediately. Foreground probes detect half-open connections without reloading.
+shutdown release it immediately. Foreground probes allow two seconds for a response, then replace
+half-open connections immediately without reloading. Repeated lifecycle events do not extend the probe.
 Sent prompts, terminal input, approvals, and other uncertain mutations are never replayed.
 
 Sleep/wake state is owned by the host, loaded before the workspace renders, and broadcast to

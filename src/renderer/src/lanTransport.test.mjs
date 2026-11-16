@@ -102,9 +102,11 @@ test('foreground heartbeat detects half-open sockets and reconnects without repl
   const failed = assert.rejects(pending, /may have completed/)
   transport.resume()
   assert.equal(Socket.sockets[0].sent.at(-1).type, 'ping')
-  t.mock.timers.tick(10000)
+  t.mock.timers.tick(1999)
+  assert.equal(Socket.sockets.length, 1)
+  t.mock.timers.tick(1)
   await failed
-  t.mock.timers.tick(500)
+  assert.equal(Socket.sockets.length, 2, 'foreground recovery skips the retry delay')
   Socket.sockets[1].ready({ heartbeat: true })
   assert.equal(reconnects.length, 1)
   assert.equal(Socket.sockets[1].sent.filter((packet) => packet.type === 'invoke').length, 0)
@@ -113,6 +115,44 @@ test('foreground heartbeat detects half-open sockets and reconnects without repl
     Socket.sockets[1].sent[0].sessionId,
     'a document resumes the same host session'
   )
+})
+
+test('foreground probes keep a responsive socket and do not refresh subscriptions', async (t) => {
+  const { transport, reconnects } = setup(t)
+  const initial = transport.connect()
+  const socket = Socket.sockets[0]
+  socket.ready({ heartbeat: true })
+  await initial
+  transport.resume()
+  socket.onmessage({ data: JSON.stringify({ type: 'pong' }) })
+  t.mock.timers.tick(2000)
+  assert.equal(transport.isReady, true)
+  assert.equal(Socket.sockets.length, 1)
+  assert.equal(reconnects.length, 0)
+})
+
+test('foreground events cannot keep extending a silent probe deadline', async (t) => {
+  const { transport } = setup(t)
+  const initial = transport.connect()
+  Socket.sockets[0].ready({ heartbeat: true })
+  await initial
+  transport.resume()
+  t.mock.timers.tick(1000)
+  transport.resume()
+  t.mock.timers.tick(1000)
+  assert.equal(Socket.sockets.length, 2)
+})
+
+test('foreground recovery shortens an outstanding background probe', async (t) => {
+  const { transport } = setup(t)
+  const initial = transport.connect()
+  Socket.sockets[0].ready({ heartbeat: true })
+  await initial
+  t.mock.timers.tick(15000)
+  assert.equal(Socket.sockets[0].sent.at(-1).type, 'ping')
+  transport.resume()
+  t.mock.timers.tick(2000)
+  assert.equal(Socket.sockets.length, 2)
 })
 
 test('revoked access stops retries and rejects readiness waits', async (t) => {
