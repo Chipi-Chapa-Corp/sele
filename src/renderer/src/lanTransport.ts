@@ -42,7 +42,8 @@ export class LanTransport implements RendererTransport {
     private token: string,
     private onStatus: (message: string | null) => void,
     private onReconnect: () => void,
-    private onAccessRevoked?: () => void
+    private onAccessRevoked?: () => void,
+    private deviceId?: string
   ) {}
 
   get isReady(): boolean {
@@ -188,6 +189,7 @@ export class LanTransport implements RendererTransport {
           type: 'hello',
           version: localAccessProtocolVersion,
           sessionId: this.sessionId,
+          ...(this.deviceId ? { deviceId: this.deviceId } : {}),
           token: this.token
         })
       )

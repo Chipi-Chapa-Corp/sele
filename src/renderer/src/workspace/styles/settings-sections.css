@@ -101,6 +101,10 @@
   align-items: center;
 }
 
+.settings-dialog__field-footer {
+  grid-column: 1 / -1;
+}
+
 .settings-dialog__field--stack {
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;

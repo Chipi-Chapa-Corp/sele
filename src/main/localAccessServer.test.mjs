@@ -398,6 +398,68 @@ test('device pairing requires approval, persists only hashed secrets, and suppor
   assert.deepEqual(pairing.list(), [])
 })
 
+test('authenticated identity migration preserves access and re-pairing replaces the same phone', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'sele-pairing-identity-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'devices.json')
+  const pairing = new LocalAccessPairing(path)
+  t.after(() => pairing.cancel())
+  const firstId = '11111111-1111-1111-1111-111111111111'
+  const secondId = '22222222-2222-2222-2222-222222222222'
+  const stableId = '33333333-3333-3333-3333-333333333333'
+  const firstToken = createLocalAccessToken()
+  const secondToken = createLocalAccessToken()
+  const approve = async (deviceId, token) => {
+    const response = pairing.request(
+      { deviceId, name: 'Same model', token },
+      new AbortController().signal
+    )
+    await pairing.decide(pairing.pending()[0].id, true)
+    assert.equal(await response, true)
+  }
+  await approve(firstId, firstToken)
+  await approve(secondId, secondToken)
+  await pairing.identify(createLocalAccessToken(), stableId)
+  await pairing.identify(firstToken, secondId)
+  assert.deepEqual(
+    pairing.list().map((device) => device.id),
+    [firstId, secondId]
+  )
+  let migration
+  const f = await fixture(t, {
+    authorize: (token) => pairing.authorize(token),
+    identifyDevice: (token, id) => (migration = pairing.identify(token, id))
+  })
+  const socket = new WebSocket(`${f.origin.replace('http:', 'ws:')}/sele/ws`, {
+    origin: 'http://sele.localhost'
+  })
+  t.after(() => socket.terminate())
+  await once(socket, 'open')
+  const ready = once(socket, 'message')
+  socket.send(JSON.stringify({ type: 'hello', version: 1, token: firstToken, deviceId: stableId }))
+  assert.equal(JSON.parse((await ready)[0]).type, 'ready')
+  await migration
+  assert.deepEqual(
+    pairing.list().map((device) => device.id),
+    [firstId, secondId]
+  )
+  assert.equal(pairing.authorize(firstToken), true)
+  const replacementToken = createLocalAccessToken()
+  await approve(stableId, replacementToken)
+  const restored = new LocalAccessPairing(path)
+  await restored.load()
+  assert.equal(restored.list().length, 2, 'separate phones with the same model remain separate')
+  assert.equal(restored.authorize(firstToken), false)
+  assert.equal(restored.authorize(replacementToken), true)
+  assert.equal(restored.authorize(secondToken), true)
+  await restored.revoke(firstId)
+  assert.equal(
+    restored.authorize(replacementToken),
+    false,
+    'the existing Remove device action stays valid'
+  )
+})
+
 test('declined, canceled, invalid, and concurrent pairing requests cannot gain unintended access', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'sele-pairing-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

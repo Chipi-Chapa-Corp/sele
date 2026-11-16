@@ -18,6 +18,7 @@ type Options = {
   port: number
   token: string
   authorize?(token: string): boolean
+  identifyDevice?(token: string, id: string): Promise<void>
   pair?(request: unknown, signal: AbortSignal): Promise<boolean>
   identity?: { id: string; name: string }
   assetsDirectory: string
@@ -451,6 +452,11 @@ export const startLocalAccessServer = async (options: Options) => {
             return
           }
           authenticated = true
+          if (typeof hello.deviceId === 'string' && /^[a-f0-9-]{36}$/.test(hello.deviceId)) {
+            void options.identifyDevice?.(hello.token, hello.deviceId).catch((error) => {
+              console.warn('Unable to update paired-device identity.', error)
+            })
+          }
           if (typeof hello.sessionId === 'string' && /^[a-f0-9-]{36}$/.test(hello.sessionId)) {
             sessionKey = `${hello.token}:${hello.sessionId}`
             session = sessions.get(sessionKey)

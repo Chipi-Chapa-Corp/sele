@@ -79,6 +79,7 @@ const start = async (assets: RendererAssets): Promise<void> => {
       port: configuration.port,
       token: configuration.token,
       authorize: (token) => pairing.authorize(token),
+      identifyDevice: (token, id) => pairing.identify(token, id),
       pair: (request, signal) => pairing.request(request, signal),
       identity: { id: configuration.computerId, name: hostname() },
       ...assets,

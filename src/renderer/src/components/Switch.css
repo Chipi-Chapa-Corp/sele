@@ -15,7 +15,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.6rem;
-  place-items: initial;
+  justify-items: stretch;
 }
 
 :where(.ui-switch:has(input:not(:disabled))) {

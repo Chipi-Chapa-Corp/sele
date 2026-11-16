@@ -23,7 +23,10 @@ identity; the router still needs to permit communication between the devices.
 The phone generates an independent device credential. `LocalAccessPairing` exposes a bounded,
 expiring request to the desktop approval dialog and persists only the credential hash. Device
 removal revokes existing connections and future access. Resetting browser links is independent
-of device approvals. The phone keeps approved connections and per-host preferences/drafts in
+of device approvals. Android pairing identity derives from the app-scoped Android ID, so clearing
+app data or reinstalling with the same signing key does not add another device entry. An authenticated
+connection migrates its existing approval to that identity without changing its credential. Phones
+with the same model name remain separate. The phone keeps approved connections and per-host preferences/drafts in
 private native storage, with acknowledged writes before a flush succeeds. Stable host IDs allow
 saved connections to follow a computer whose LAN address changes.
 Native storage replies return on Android's UI queue, after Capacitor updates its page reply

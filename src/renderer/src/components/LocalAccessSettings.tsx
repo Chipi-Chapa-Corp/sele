@@ -129,12 +129,15 @@ export function LocalAccessSettings(): React.ReactElement {
                   disabled={busy}
                   onChange={(event) => setPort(event.currentTarget.value)}
                 />
-                <Button
-                  label="Apply"
-                  theme="secondary"
-                  disabled={busy || !state}
-                  callback={() => configure(state!.enabled)}
-                />
+                <div className="settings-dialog__field-footer">
+                  <Button
+                    label="Apply"
+                    theme="secondary"
+                    fill
+                    disabled={busy || !state}
+                    callback={() => configure(state!.enabled)}
+                  />
+                </div>
               </div>
             </div>
             {state?.enabled && (

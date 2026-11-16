@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import type { LocalAccessDevice, LocalAccessPairingRequest } from '../shared/localAccess'
 
-type Device = LocalAccessDevice & { tokenHash: string }
+type Device = LocalAccessDevice & { tokenHash: string; identity?: string }
 type Request = LocalAccessPairingRequest & {
   device: Device
   finish(approved: boolean): void
@@ -26,7 +26,8 @@ export class LocalAccessPairing {
             typeof device.id !== 'string' ||
             typeof device.name !== 'string' ||
             !Number.isFinite(device.pairedAt) ||
-            !/^[a-f0-9]{64}$/.test(device.tokenHash)
+            !/^[a-f0-9]{64}$/.test(device.tokenHash) ||
+            (device.identity !== undefined && !/^[a-f0-9-]{36}$/.test(device.identity))
         )
       )
         throw new Error('Invalid saved paired devices.')
@@ -46,6 +47,20 @@ export class LocalAccessPairing {
       /^[a-f0-9]{64}$/.test(token) &&
       this.devices.some((device) => device.tokenHash === hash(token))
     )
+  }
+  identify(token: string, id: string): Promise<void> {
+    const tokenHash = hash(token)
+    const device = this.devices.find((entry) => entry.tokenHash === tokenHash)
+    if (!device || device.id === id || device.identity === id || !/^[a-f0-9-]{36}$/.test(id))
+      return Promise.resolve()
+    return this.persist((devices) => {
+      // Only an authenticated credential may migrate its own identity. Never
+      // merge another approval just because its name or claimed ID matches.
+      if (devices.some((entry) => entry.id === id || entry.identity === id)) return devices
+      return devices.map((entry) =>
+        entry.tokenHash === tokenHash ? { ...entry, identity: id } : entry
+      )
+    })
   }
   request(value: unknown, signal: AbortSignal): Promise<boolean> {
     const data = value as Record<string, unknown> | null
@@ -68,7 +83,12 @@ export class LocalAccessPairing {
       [...this.requests.values()].some((entry) => entry.device.id === data.deviceId)
     )
       return Promise.reject(new Error('A pairing request is already waiting. Try again shortly.'))
-    if (this.devices.length >= 20)
+    if (
+      this.devices.length >= 20 &&
+      !this.devices.some(
+        (device) => device.id === data.deviceId || device.identity === data.deviceId
+      )
+    )
       return Promise.reject(
         new Error('Remove an old device in Sele settings before pairing another.')
       )
@@ -125,20 +145,27 @@ export class LocalAccessPairing {
     decision.promise = Promise.resolve()
       .then(async () => {
         if (approve) {
+          let pairedId = request.device.id
           await this.persist((devices) => {
             if (this.requests.get(id) !== request || request.expiresAt <= Date.now())
               throw new Error('This pairing request has expired.')
             // Capacity belongs to the serialized commit, not the earlier request admission.
-            if (devices.length >= 20 && !devices.some((device) => device.id === request.device.id))
+            const previous = devices.find(
+              (device) => device.id === request.device.id || device.identity === request.device.id
+            )
+            if (devices.length >= 20 && !previous)
               throw new Error('Remove an old device in Sele settings before pairing another.')
-            return [...devices.filter((device) => device.id !== request.device.id), request.device]
+            pairedId = previous?.id ?? request.device.id
+            return [
+              ...devices.filter((device) => device !== previous),
+              { ...request.device, id: pairedId, identity: previous?.identity }
+            ]
           })
           // A canceled request must not authorize access or revoke a newer pairing for this device.
           if (this.requests.get(id) !== request) {
             await this.persist((devices) =>
               devices.filter(
-                (device) =>
-                  device.id !== request.device.id || device.tokenHash !== request.device.tokenHash
+                (device) => device.id !== pairedId || device.tokenHash !== request.device.tokenHash
               )
             )
             return

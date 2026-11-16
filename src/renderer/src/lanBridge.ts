@@ -152,6 +152,7 @@ export const initializeLanBridge = async (): Promise<void> => {
     }
   }
   let mobileConnection = android ? readMobileConnection() : null
+  const deviceId = nativeStorage ? (await localNetwork.deviceInfo()).id : undefined
   const parameters = new URLSearchParams(location.hash.slice(1))
   let token =
     mobileConnection?.token ??
@@ -176,7 +177,9 @@ export const initializeLanBridge = async (): Promise<void> => {
         : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/sele/ws`,
       token!,
       showConnection,
-      () => resynchronize()
+      () => resynchronize(),
+      undefined,
+      deviceId
     )
     const current = transport
     const abortConnection = (): void => current.close()

@@ -12,6 +12,7 @@ import android.net.wifi.WifiManager;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.os.Build;
+import android.provider.Settings;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -27,7 +28,6 @@ import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
-import java.util.UUID;
 
 @CapacitorPlugin(name = "LocalNetwork")
 public class LocalNetworkPlugin extends Plugin {
@@ -205,11 +205,9 @@ public class LocalNetworkPlugin extends Plugin {
     @PluginMethod
     public void deviceInfo(PluginCall call) {
         SharedPreferences preferences = getContext().getSharedPreferences("sele-device", Context.MODE_PRIVATE);
-        String id = preferences.getString("id", null);
-        if (id == null) {
-            id = UUID.randomUUID().toString();
-            preferences.edit().putString("id", id).apply();
-        }
+        String androidId = Settings.Secure.getString(getContext().getContentResolver(), Settings.Secure.ANDROID_ID);
+        String id = DeviceIdentity.resolve(androidId, preferences.getString("id", null));
+        preferences.edit().putString("id", id).apply();
         JSObject info = new JSObject();
         info.put("id", id);
         info.put("name", Build.MODEL);
