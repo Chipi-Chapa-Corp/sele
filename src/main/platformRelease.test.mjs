@@ -114,7 +114,8 @@ test('publication gates only on validation and its own platform; compatibility w
   }
   for (const [name, own] of [
     ['release-windows', 'windows'],
-    ['release-macos', 'macos']
+    ['release-macos', 'macos'],
+    ['release-android', 'android']
   ]) {
     const needs = dependencies(name)
     assert.ok(needs.has('validate'))
@@ -124,6 +125,7 @@ test('publication gates only on validation and its own platform; compatibility w
   }
   for (const platform of ['windows', 'macos', 'linux'])
     assert.ok(dependencies('legacy-release').has(platform))
+  assert.equal(dependencies('legacy-release').has('android'), false)
   assert.ok(dependencies('release-linux').has('flatpak-pages'))
   assert.equal(dependencies('release-linux').has('linux-bundle'), false)
   assert.equal(dependencies('flatpak-pages').has('linux-bundle'), false)
@@ -140,6 +142,14 @@ test('publication gates only on validation and its own platform; compatibility w
     assert.equal(dependencies(name).has('bundle'), false)
     assert.ok(jobs[name].steps.some((step) => step.run?.includes('wait-for-bundle.mjs')))
   }
+  assert.equal(dependencies('android').has('bundle'), false)
+  assert.ok(jobs.android.steps.some((step) => step.run === 'npm run build:android'))
+  const signing = jobs.android.steps.find((step) => step.env?.ANDROID_DEBUG_KEYSTORE_BASE64)
+  assert.equal(signing.if, "github.event_name != 'pull_request'")
+  assert.equal(jobs['release-android'].permissions.contents, 'write')
+  assert.ok(jobs['release-android'].if.includes("github.event_name == 'push'"))
+  const workflow = load(await readFile('.github/workflows/build.yml', 'utf8'))
+  assert.ok(workflow.on.push.tags.includes('!v*-android'))
 })
 
 test('Linux update discovery does not wait for the standalone installer and still accepts older releases', () => {
@@ -294,6 +304,48 @@ test('publisher uploads a complete draft before publishing a platform entry with
     /Missing release asset/
   )
   assert.equal(calls.length, 0)
+})
+
+test('Android publishes its APK and checksum independently and requires both before publication', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'sele-android-release-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const { version } = JSON.parse(await readFile('package.json', 'utf8'))
+  const [apk, checksum] = releaseFiles(version, 'android')
+  await writeFile(join(directory, apk), 'fixture APK')
+  const calls = []
+  let exists = false
+  const run = (file, args) => {
+    calls.push([file, ...args])
+    if (file === 'git') return 'source-sha'
+    if (args[0] === 'api') return `v${version}`
+    if (args[1] === 'view') return exists ? '{"isDraft":false}' : null
+    return ''
+  }
+  await assert.rejects(
+    publishRelease(`v${version}`, 'android', directory, run),
+    /Missing release asset.*\.sha256/
+  )
+  assert.equal(calls.length, 0, 'incomplete Android builds never touch GitHub releases')
+  await writeFile(join(directory, checksum), 'fixture checksum')
+  await publishRelease(`v${version}`, 'android', directory, run)
+  const create = calls.find((args) => args[2] === 'create')
+  assert.equal(create[3], `v${version}-android`)
+  assert.ok(create.some((arg) => arg.endsWith(apk)))
+  assert.ok(create.some((arg) => arg.endsWith(checksum)))
+  assert.ok(create.includes('--draft'))
+  assert.ok(calls.at(-1).includes('--draft=false'))
+  assert.ok(calls.at(-1).includes('--latest=false'))
+  calls.length = 0
+  exists = true
+  await publishRelease(`v${version}`, 'android', directory, run)
+  const upload = calls.find((args) => args[2] === 'upload')
+  assert.equal(upload[3], `v${version}-android`)
+  assert.ok(upload.includes('--clobber'))
+  assert.ok(calls.at(-1).includes('--latest=false'))
+  assert.equal(
+    releaseFiles(version, 'legacy').some((file) => file.includes('android')),
+    false
+  )
 })
 
 test('compatibility reruns preserve the latest release and cannot mark an older version latest', async (t) => {

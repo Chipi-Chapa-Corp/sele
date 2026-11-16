@@ -13,10 +13,11 @@ predictions in the composer. Press Tab to accept a suggestion or Escape to dismi
 
 ## Install
 
-Download the latest Windows, macOS, or Linux package from
+Download the latest Windows, macOS, Linux, or Android package from
 [GitHub Releases](https://github.com/Chipi-Chapa-Corp/sele/releases).
 Each platform has its own release entry and becomes available as soon as its build
-finishes. Installed apps check their platform's releases independently.
+finishes. Desktop apps check their platform's releases independently; Android APKs
+are installed manually.
 
 Install the Linux Flatpak from Sele's update repository:
 
@@ -200,6 +201,12 @@ For development, `npm run dev` proxies the existing Vite renderer through the LA
 server; reload the phone page after source changes. Packaged builds serve bundled assets.
 
 ## Android APK
+
+Download the APK and SHA-256 checksum from the separate `v<version>-android` entry in
+[GitHub Releases](https://github.com/Chipi-Chapa-Corp/sele/releases). CI publishes it
+after validation and the Android build succeed, independently of desktop packaging.
+Published APKs reuse the same debug signing key so subsequent versions can update
+an existing installation.
 
 Build an installable Android debug APK with **JDK 21**, **Android SDK platform 36**,
 and **Android SDK Build-Tools 35.0.0** installed:

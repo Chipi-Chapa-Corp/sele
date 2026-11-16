@@ -9,6 +9,7 @@ on:
       - '!v*-windows-*'
       - '!v*-macos-*'
       - '!v*-linux-*'
+      - '!v*-android'
   pull_request:
   workflow_dispatch:
 
@@ -329,6 +330,82 @@ jobs:
         with:
           path: dist/flatpak-pages
 
+  android:
+    name: Android APK
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Prepare Android user directory
+        run: |
+          install -d -m 700 "$RUNNER_TEMP/sele-android"
+          echo "ANDROID_USER_HOME=$RUNNER_TEMP/sele-android" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Set up JDK 21 and Gradle cache
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            android/**/*.gradle
+            android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Keep update compatibility across fresh runners. PRs use a disposable
+      # debug key and never receive the key used for published APKs.
+      - name: Restore persistent Android signing key
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$ANDROID_DEBUG_KEYSTORE_BASE64" ]]; then
+            echo '::error::Configure the ANDROID_DEBUG_KEYSTORE_BASE64 repository secret before building Android releases.'
+            exit 1
+          fi
+          install -d -m 700 "$ANDROID_USER_HOME"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_USER_HOME/debug.keystore"
+          chmod 600 "$ANDROID_USER_HOME/debug.keystore"
+          keytool -list -keystore "$ANDROID_USER_HOME/debug.keystore" -storepass android -alias androiddebugkey > /dev/null
+
+      - name: Build Android APK
+        run: npm run build:android
+
+      - name: Android unit tests
+        working-directory: android
+        run: ./gradlew --no-daemon --max-workers=2 testDebugUnitTest
+
+      - name: Verify APK signature and checksum
+        run: |
+          apk="sele-$(node -p "require('./package.json').version")-android-debug.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "dist/$apk"
+          (cd dist && sha256sum --check "$apk.sha256")
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: sele-android
+          path: |
+            dist/*-android-debug.apk
+            dist/*-android-debug.apk.sha256
+          if-no-files-found: error
+          compression-level: 0
+
   flatpak-pages:
     name: Publish Flatpak repository
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -454,6 +531,31 @@ jobs:
           fi
           git commit -m "Update Homebrew cask for ${GITHUB_REF_NAME}"
           git push origin HEAD:main
+
+  release-android:
+    name: Publish Android release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [validate, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Download Android artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: sele-android
+          path: release-artifacts
+      - name: Publish Android release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/publish-release.mjs "$RELEASE_TAG" android release-artifacts
 
   legacy-release:
     name: Publish compatibility release for older updaters

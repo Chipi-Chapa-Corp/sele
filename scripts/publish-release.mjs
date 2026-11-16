@@ -3,7 +3,8 @@ import { readdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const platforms = ['windows-x64', 'macos-arm64', 'linux-x64']
+const desktopPlatforms = ['windows-x64', 'macos-arm64', 'linux-x64']
+export const platforms = [...desktopPlatforms, 'android']
 
 export function releaseFiles(version, platform) {
   const channel = version.includes('-') ? version.split('-')[1].split('.')[0] : 'latest'
@@ -20,10 +21,11 @@ export function releaseFiles(version, platform) {
       `${channel}-mac.yml`
     ],
     'linux-x64': ['sele-linux-x64.tar.gz', 'sele.flatpakrepo', 'sele.flatpakref'],
+    android: [`sele-${version}-android-debug.apk`, `sele-${version}-android-debug.apk.sha256`],
     'linux-bundle': ['sele-linux-x64.flatpak'],
     'legacy-bundle': ['sele-linux-x64.flatpak']
   }
-  if (platform === 'legacy') return platforms.flatMap((key) => files[key])
+  if (platform === 'legacy') return desktopPlatforms.flatMap((key) => files[key])
   if (!files[platform]) throw new Error(`Unsupported release platform: ${platform}`)
   return files[platform]
 }
