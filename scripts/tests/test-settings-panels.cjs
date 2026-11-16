@@ -17,9 +17,12 @@ if (!process.versions.electron) {
             import React from 'react'
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
-            import { renderSettingsPanel } from './src/renderer/src/components/SettingsPanel'
+            import './src/renderer/src/assets/main.css'
+            import './src/renderer/src/App.css'
+            import { SettingsDialog } from './src/renderer/src/components/SettingsDialog'
             import { defaultAppSettings } from './src/renderer/src/settings'
             const root = createRoot(document.getElementById('root'))
+            const closeButtonRef = React.createRef()
             window.calls = []
             window.settings = structuredClone(defaultAppSettings)
             const record = name => (...args) => window.calls.push([name,...args])
@@ -88,7 +91,12 @@ if (!process.versions.electron) {
             ])}) props[name] = record(name)
             window.renderPanel = (tab, patch={}) => {
               Object.assign(props,patch)
-              flushSync(()=>root.render(renderSettingsPanel({...props,settingsTab:tab})))
+              flushSync(()=>root.render(<SettingsDialog
+                open closeButtonRef={closeButtonRef} panelProps={{...props,settingsTab:tab}}
+                projectCwd="/" projectLabel="/" tab={tab} viewIsProject={false}
+                onClose={()=>{}} onScopeChange={record('scope')}
+                onTabChange={next=>window.renderPanel(next)}
+              />))
             }
           `
         },
@@ -101,6 +109,8 @@ if (!process.versions.electron) {
       await fs.writeFile(
         path.join(directory, 'index.html'),
         `<!doctype html>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="fixture.css">
         <div id="root"></div><script>
           const values = new Map();
           window.preferencesApi = {
@@ -145,7 +155,13 @@ if (!process.versions.electron) {
   app.setPath('userData', path.join(process.argv[2], 'profile'))
   app.disableHardwareAcceleration()
   app.whenReady().then(async () => {
-    const win = new BrowserWindow({ show: false, webPreferences: { backgroundThrottling: false } })
+    const win = new BrowserWindow({
+      width: 1280,
+      height: 900,
+      useContentSize: true,
+      show: true,
+      webPreferences: { backgroundThrottling: false }
+    })
     let code = 0
     try {
       const errors = []
@@ -277,9 +293,74 @@ if (!process.versions.electron) {
         Array.from(document.querySelectorAll('[aria-label="Theme"] button')).find(button=>button.textContent==='Dark').click()`)
       await settle()
       assert.deepEqual(await run('window.calls'), [['handleThemePreferenceChange', 'dark']])
+      await run("renderPanel('browser', {isScopedSettingControlDisabled:()=>false})")
+      for (const scheme of ['light', 'dark']) {
+        await run(`document.documentElement.dataset.colorScheme=${JSON.stringify(scheme)}`)
+        for (const [width, height] of [
+          [1280, 900],
+          [820, 720],
+          [600, 780],
+          [375, 812]
+        ]) {
+          win.setContentSize(width, height)
+          await run('new Promise(resolve=>setTimeout(resolve,220))')
+          const layout = await run(`(() => {
+            const panel = document.querySelector('#settings-panel-browser')
+            const content = panel.querySelector('.browser-settings')
+            const row = panel.querySelector('[aria-label="Chrome connection"]')
+            const title = row.querySelector('h3')
+            const style = getComputedStyle(panel)
+            return {
+              available: panel.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+              content: content.getBoundingClientRect().width,
+              row: row.getBoundingClientRect().width,
+              titleHeight: title.getBoundingClientRect().height,
+              fontSize: parseFloat(getComputedStyle(title).fontSize),
+              overflow: panel.scrollWidth - panel.clientWidth
+            }
+          })()`)
+          if (process.env.SELE_SETTINGS_SCREENSHOT_DIR) {
+            await fs.mkdir(process.env.SELE_SETTINGS_SCREENSHOT_DIR, { recursive: true })
+            await fs.writeFile(
+              path.join(process.env.SELE_SETTINGS_SCREENSHOT_DIR, `browser-${width}-${scheme}.png`),
+              (await win.webContents.capturePage()).toPNG()
+            )
+          }
+          assert.ok(
+            Math.abs(layout.content - layout.available) <= 2,
+            `${scheme} ${width}px: browser content must fill panel: ${JSON.stringify(layout)}`
+          )
+          assert.ok(
+            Math.abs(layout.row - layout.content) <= 2,
+            `${scheme} ${width}px: connection cards must fill content`
+          )
+          assert.ok(
+            layout.titleHeight < layout.fontSize * 2,
+            `${scheme} ${width}px: Chrome label must not wrap into a column`
+          )
+          assert.ok(
+            layout.overflow <= 1,
+            `${scheme} ${width}px: panel must not overflow horizontally`
+          )
+        }
+      }
+      if (process.env.SELE_SETTINGS_SCREENSHOT_DIR) {
+        win.setContentSize(1280, 900)
+        for (const scheme of ['light', 'dark']) {
+          await run(`document.documentElement.dataset.colorScheme=${JSON.stringify(scheme)}`)
+          for (const tab of ['git', 'providers']) {
+            await run(`renderPanel(${JSON.stringify(tab)}, {newSessionProvider:'codex'})`)
+            await run('new Promise(resolve=>setTimeout(resolve,220))')
+            await fs.writeFile(
+              path.join(process.env.SELE_SETTINGS_SCREENSHOT_DIR, `${tab}-1280-${scheme}.png`),
+              (await win.webContents.capturePage()).toPNG()
+            )
+          }
+        }
+      }
       assert.deepEqual(errors, [])
       console.log(
-        'Settings panel checks passed: all eight tabs, shared chat controls, project overrides and theme changes.'
+        'Settings panel checks passed: all eight tabs, shared chat controls, project overrides, themes and styled browser layouts at four viewport widths.'
       )
     } catch (error) {
       console.error(error)

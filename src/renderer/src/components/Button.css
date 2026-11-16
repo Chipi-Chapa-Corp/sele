@@ -27,7 +27,7 @@
 }
 
 :where(.ui-button::before) {
-  content: '';
+  content: "";
   pointer-events: none;
   position: absolute;
   inset: 0;
@@ -45,7 +45,7 @@
 
 @media (pointer: coarse) {
   :where(.ui-button::after) {
-    content: '';
+    content: "";
     pointer-events: none;
     position: absolute;
     top: 50%;
@@ -278,6 +278,11 @@
   background: transparent;
 }
 
+/* Keep split actions distinct without relying on the face's inner bevel. */
+:where(:root:not([data-color-scheme="dark"]) .ui-button-group--secondary .ui-button--split-toggle) {
+  border-left-color: var(--glass-edge);
+}
+
 :where(
   .ui-button-group--primary
     .ui-button--split-main:not(:disabled)
@@ -416,11 +421,11 @@
 }
 
 .ui-button-menu__item:not(.ui-button-menu__item--row-main):not(
-    .ui-button-menu__item--row-static
-  ):not(:disabled):hover,
+  .ui-button-menu__item--row-static
+):not(:disabled):hover,
 .ui-button-menu__item:not(.ui-button-menu__item--row-main):not(
-    .ui-button-menu__item--row-static
-  ):focus-visible {
+  .ui-button-menu__item--row-static
+):focus-visible {
   color: var(--ink);
   background: var(--menu-option-active-bg);
   outline: 0;

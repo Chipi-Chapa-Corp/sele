@@ -1,4 +1,6 @@
 .browser-settings {
+  width: 100%;
+  min-width: 0;
   container: browser-settings / inline-size;
 }
 
