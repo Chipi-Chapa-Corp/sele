@@ -1346,7 +1346,6 @@ export function useWorkspaceSelection({
     const focusInput = (): void => {
       if (!searchInput.isConnected) return
 
-      window.focus()
       searchInput.focus({ preventScroll: true })
       const caretPosition = searchInput.value.length
       searchInput.setSelectionRange(caretPosition, caretPosition)

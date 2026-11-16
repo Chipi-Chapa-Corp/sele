@@ -83,6 +83,16 @@ if (!process.versions.electron) {
     console.error(error)
     process.exitCode = 1
   })
+} else if (process.argv.includes('--focus-peer')) {
+  const { app, BrowserWindow } = require('electron')
+  app.setPath('userData', path.join(process.argv[2], 'focus-peer'))
+  app.whenReady().then(async () => {
+    const peer = new BrowserWindow({ show: false })
+    await peer.loadURL('data:text/html,<input autofocus value="Other app">')
+    peer.once('focus', () => process.stdout.write('FOCUS_PEER_READY\n'))
+    peer.show()
+    peer.focus()
+  })
 } else {
   const { app, BrowserWindow, ipcMain } = require('electron')
   const net = require('node:net')
@@ -386,6 +396,59 @@ if (!process.versions.electron) {
       console.log(
         'PASS: prompt focus, selection and user typing survive browser tabs, visible/hidden input, concurrent commands and failures'
       )
+      // A separate process represents another app; a second window in this
+      // process would also become a candidate for Sele's browser IPC routing.
+      const otherApp = require('node:child_process').spawn(
+        process.execPath,
+        [
+          __filename,
+          process.argv[2],
+          '--focus-peer',
+          '--no-sandbox',
+          ...(process.platform === 'linux' ? ['--ozone-platform=x11'] : [])
+        ],
+        { stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+      try {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('Focus peer did not start')), 5000)
+          otherApp.once('error', (error) => {
+            clearTimeout(timer)
+            reject(error)
+          })
+          otherApp.stdout.on('data', (data) => {
+            if (data.toString().includes('FOCUS_PEER_READY')) {
+              clearTimeout(timer)
+              resolve()
+            }
+          })
+        })
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        assert.equal(window.isFocused(), false, 'other app starts with native focus')
+        let activations = 0
+        window.on('focus', () => activations++)
+        await click('#name')
+        await cdp('Input.insertText', { text: ' background' })
+        await cdp('Page.captureScreenshot', { format: 'png' })
+        assert.equal(activations, 0, 'background browser tools never activate Sele')
+        assert.equal(window.isFocused(), false, 'browser tools preserve the other app focus')
+        if (process.platform === 'linux') {
+          const state = require('node:child_process').execFileSync(
+            'xprop',
+            ['-id', String(window.getNativeWindowHandle().readUInt32LE()), '_NET_WM_STATE', 'WM_HINTS'],
+            { encoding: 'utf8' }
+          )
+          assert.doesNotMatch(
+            state,
+            /DEMANDS_ATTENTION|urgency/i,
+            'background browser tools never request desktop attention'
+          )
+        }
+        console.log('PASS: browser input and screenshots preserve focus in another native window')
+      } finally {
+        otherApp.kill()
+        window.focus()
+      }
       assert.ok(events.some((event) => event.method === 'onCDPEvent'))
       await assert.rejects(cdp('Browser.close'), /Unsupported/)
       for (const target of [

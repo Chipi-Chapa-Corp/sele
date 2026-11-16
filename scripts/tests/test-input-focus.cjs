@@ -17,6 +17,9 @@ if (!process.versions.electron) {
             import { MessageSelectionQuoteButton } from './src/renderer/src/components/MessageSelectionQuoteButton'
             import { installMiddleClickPasteGuard } from './src/renderer/src/middleClickPaste'
             window.installMiddleClickPasteGuard = installMiddleClickPasteGuard
+            window.focusRequests = 0
+            const focusWindow = window.focus.bind(window)
+            window.focus = () => { window.focusRequests++; focusWindow() }
             const root = createRoot(document.getElementById('root'))
             window.inputRef = React.createRef()
             window.renderInput = (options = {}) => flushSync(() => root.render(<React.StrictMode>
@@ -181,6 +184,64 @@ if (!process.versions.electron) {
         'BODY',
         'detached input does not regain focus'
       )
+      assert.equal(
+        await run('window.focusRequests'),
+        0,
+        'caret repair and branch search never request desktop window focus'
+      )
+      // Use ordinary native windows: focus emulation/offscreen rendering cannot
+      // reveal a background autofocus stealing attention from another application.
+      const background = new BrowserWindow({
+        show: false,
+        webPreferences: { backgroundThrottling: false }
+      })
+      const foreground = new BrowserWindow({ show: false })
+      try {
+        await background.loadFile(path.join(process.argv[2], 'input.html'))
+        await foreground.loadURL('data:text/html,<input autofocus value="Other app">')
+        background.show()
+        foreground.show()
+        foreground.focus()
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        assert.equal(foreground.isFocused(), true, 'other window starts with native focus')
+        let activations = 0
+        background.on('focus', () => activations++)
+        await background.webContents.executeJavaScript(`
+          window.renderInput({ autoFocus: true });
+          new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        `)
+        await background.webContents.executeJavaScript(`
+          window.renderBranches(); document.getElementById('branches').click();
+          new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        `)
+        assert.equal(
+          await background.webContents.executeJavaScript('window.focusRequests'),
+          0,
+          'background autofocus and branch search do not request desktop attention'
+        )
+        assert.equal(activations, 0, 'background updates never activate the window')
+        assert.equal(foreground.isFocused(), true, 'other window retains native focus')
+        if (process.platform === 'linux') {
+          const state = require('node:child_process').execFileSync(
+            'xprop',
+            [
+              '-id',
+              String(background.getNativeWindowHandle().readUInt32LE()),
+              '_NET_WM_STATE',
+              'WM_HINTS'
+            ],
+            { encoding: 'utf8' }
+          )
+          assert.doesNotMatch(
+            state,
+            /DEMANDS_ATTENTION|urgency/i,
+            'background input updates never set desktop attention hints'
+          )
+        }
+      } finally {
+        background.destroy()
+        foreground.destroy()
+      }
       if (process.platform === 'linux') {
         await run(`
           document.body.innerHTML = '<input id="input"><textarea id="textarea"></textarea><div id="editable" contenteditable="true"><span id="nested">hello</span></div><a id="link" href="#target">Link</a>'

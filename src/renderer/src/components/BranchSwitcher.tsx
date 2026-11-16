@@ -181,7 +181,6 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
       const input = inputRef.current
       if (!input || input.disabled) return
 
-      window.focus()
       input.focus({ preventScroll: true })
     }
 

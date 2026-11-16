@@ -20,14 +20,20 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           cancelFocusRetryRef.current?.()
           if (window && !window.matchMedia('(pointer: coarse)').matches) {
             // Electron can show DOM focus while keyboard focus remains in another view.
-            window.focus()
             const frame = window.requestAnimationFrame(() => {
               cancelFocusRetryRef.current = null
               // Let this one-shot callback discard detached inputs itself. Effect cleanup
               // also runs on Strict Mode's simulated unmount and would cancel live repairs.
-              if (!input.isConnected || input.disabled || document.activeElement !== input) return
+              if (
+                !input.isConnected ||
+                input.disabled ||
+                document.activeElement !== input ||
+                !document.hasFocus()
+              )
+                return
 
-              window.focus()
+              // Repair the caret only inside the active document. Requesting window
+              // focus here also asks the desktop for attention on background updates.
               input.focus({ preventScroll: true })
               // Selection cleanup elsewhere can remove Chromium's editing caret without
               // blurring the input. Focusing an already focused input does not restore it.
