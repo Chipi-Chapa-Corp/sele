@@ -40,7 +40,12 @@ export class LocalAccessPairing {
     return this.devices.map(({ id, name, pairedAt }) => ({ id, name, pairedAt }))
   }
   pending(): LocalAccessPairingRequest[] {
-    return [...this.requests.values()].map(({ id, name, expiresAt }) => ({ id, name, expiresAt }))
+    return [...this.requests.values()].map(({ id, name, expiresAt, securityCode }) => ({
+      id,
+      name,
+      expiresAt,
+      ...(securityCode ? { securityCode } : {})
+    }))
   }
   authorize(token: string): boolean {
     return (
@@ -62,7 +67,7 @@ export class LocalAccessPairing {
       )
     })
   }
-  request(value: unknown, signal: AbortSignal): Promise<boolean> {
+  request(value: unknown, signal: AbortSignal, securityCode?: string): Promise<boolean> {
     const data = value as Record<string, unknown> | null
     if (
       !data ||
@@ -104,6 +109,7 @@ export class LocalAccessPairing {
       const timer = setTimeout(aborted, 120_000)
       this.requests.set(id, {
         id,
+        ...(securityCode ? { securityCode } : {}),
         name: (data.name as string).trim(),
         expiresAt: Date.now() + 120_000,
         finish,

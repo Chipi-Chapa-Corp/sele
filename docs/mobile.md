@@ -5,14 +5,15 @@ Git operations, terminals, and conversation storage run in desktop Sele. The pho
 on the local network; it does not run a second provider backend.
 
 Enable **Settings → Local network → Allow local network access** on the computer. Choose the
-computer in the Android app and approve the request in desktop Sele. Approved devices reconnect
+computer in the Android app and approve the request only when the security codes match
+on both devices. Approved devices reconnect
 without entering a code or copying a link. The computer must remain awake with Sele running.
 
 ## Connection and pairing
 
-`registerLocalAccess.ts` starts the opt-in HTTP/WebSocket server and advertises `_sele._tcp`
+`registerLocalAccess.ts` starts the opt-in HTTPS/encrypted-WebSocket server and advertises `_sele._tcp`
 using DNS-SD. Its public TXT record contains a stable computer ID, display name, and protocol
-version. Credentials are never advertised. The Android `LocalNetworkPlugin` uses NsdManager
+version and TLS support. Credentials are never advertised. The Android `LocalNetworkPlugin` uses NsdManager
 to discover computers. The device picker merges nearby computers with saved pairings by stable
 computer ID; addresses and connection links are not shown. The last connected computer is tried
 immediately while discovery runs in the background. Switching computers preserves previous pairings.
@@ -60,8 +61,34 @@ survive a new document. Host snapshots merge with outstanding local edits. Phone
 used to initialize the host's settings.
 Project changes, order, runtime configuration, notes and icons also notify connected clients.
 
-HTTP and WebSocket traffic is unencrypted. Use a trusted LAN and do not expose this listener
-to the internet. This implementation has no hosted relay.
+The desktop persists an ECDSA P-256, SHA-256 self-signed certificate and private key in
+`local-access-tls.json` in its profile, with owner-only file permissions. The listener
+requires TLS 1.2 or newer; plaintext requests cannot dispatch operations. Do not delete
+this identity as a reconnect workaround: replacing it requires fresh device approval.
+
+Android's `SecureLanPlugin` inspects the public certificate without trusting that
+inspection connection or sending application data. Pairing displays a 12-hex-digit code derived with SHA-256 from a domain separator,
+the actual certificate fingerprint and this request’s random credential. This binds
+approval to both the computer and the particular request. The desktop computes its
+own code rather than accepting one supplied by the requester. The user must compare these
+codes before allowing access. The phone then remembers the full certificate fingerprint
+with the host credential. Its native TLS client checks the exact certificate and validity
+before opening a WebSocket or sending credentials. DNS/IP hints can change without
+changing that trust. There is no shared/global trust manager or blanket SSL-error bypass.
+Hostname-based PKI verification is replaced only on this per-connection native socket by
+verification of the exact approved certificate. Browser clients use the browser's TLS
+certificate trust instead; test sessions accept only their own exact fixture certificate.
+
+Both desktop and Android must be updated together. Legacy HTTP or unpinned Android
+pairings are not reused automatically; the user pairs once more and compares codes.
+A certificate mismatch stops reconnect retries and requires explicit pairing. Discovery
+never overwrites the saved certificate, and does not interrupt a healthy connection.
+
+The bundled Capacitor origin remains `http://sele.localhost`; it serves app-local assets,
+not the desktop connection. Android's cleartext allowance remains for user-opened HTTP
+web/preview pages. Those pages have their own transport/security; Sele control, prompts,
+files, terminal actions and settings travel over the pinned TLS channel. Use a trusted
+LAN and do not expose the listener to the internet. This implementation has no hosted relay.
 
 ## Adaptive renderer
 

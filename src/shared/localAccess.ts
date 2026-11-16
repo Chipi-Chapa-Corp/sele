@@ -7,13 +7,19 @@ export type LocalAccessState = {
   error: string | null
   computerName?: string
   computerId?: string
+  certificateFingerprint?: string
   devices?: LocalAccessDevice[]
   pairingRequests?: LocalAccessPairingRequest[]
   discoveryError?: string | null
 }
 
 export type LocalAccessDevice = { id: string; name: string; pairedAt: number }
-export type LocalAccessPairingRequest = { id: string; name: string; expiresAt: number }
+export type LocalAccessPairingRequest = {
+  id: string
+  name: string
+  expiresAt: number
+  securityCode?: string
+}
 
 export type LocalAccessOptions = { enabled: boolean; port: number; resetToken?: boolean }
 export type LocalAccessApi = {
@@ -36,8 +42,34 @@ export const localAccessChannels = {
 } as const
 
 export const localAccessDefaultPort = 4589
-export const localAccessProtocolVersion = 1
+export const localAccessProtocolVersion = 2
 export const localAccessAndroidOrigin = 'http://sele.localhost'
+
+export const localAccessSecurityCode = (fingerprint: string): string => {
+  if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error('Invalid computer certificate.')
+  return fingerprint.slice(0, 12).toUpperCase().match(/.{4}/g)!.join(' ')
+}
+
+/** Bind approval to this credential as well as the TLS peer. A static certificate
+ * code would also match an unrelated, concurrent request to the same computer. */
+export const localAccessPairingCode = async (
+  fingerprint: string,
+  token: string
+): Promise<string> => {
+  if (
+    !/^[a-f0-9]{64}$/.test(fingerprint) ||
+    typeof token !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(token)
+  )
+    throw new Error('Invalid pairing identity.')
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`sele-pair-v2:${fingerprint}:${token}`)
+  )
+  return localAccessSecurityCode(
+    Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  )
+}
 
 // Electron's structured clone supports ArrayBuffer; JSON does not. Keep media
 // payloads portable without turning arbitrary objects into executable values.

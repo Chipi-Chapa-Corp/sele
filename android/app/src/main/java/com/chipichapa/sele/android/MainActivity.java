@@ -7,6 +7,7 @@ public class MainActivity extends BridgeActivity {
     @SuppressWarnings("deprecation")
     @Override public void onCreate(Bundle savedInstanceState) {
         registerPlugin(LocalNetworkPlugin.class);
+        registerPlugin(SecureLanPlugin.class);
         registerPlugin(MobileBrowserPlugin.class);
         super.onCreate(savedInstanceState);
         android.content.SharedPreferences bars = getSharedPreferences("sele-system-bars", MODE_PRIVATE);

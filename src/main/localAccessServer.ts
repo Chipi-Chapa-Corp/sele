@@ -1,8 +1,9 @@
 import { visualizationCsp, visualizationFramePath } from '../shared/visualizationShell.ts'
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes, timingSafeEqual, X509Certificate } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { readFile, stat } from 'node:fs/promises'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createServer } from 'node:https'
 import { hostname, networkInterfaces } from 'node:os'
 import { extname, isAbsolute, relative, resolve } from 'node:path'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -15,6 +16,7 @@ import {
 } from '../shared/localAccess'
 
 type Options = {
+  tls: { key: string; cert: string }
   port: number
   token: string
   authorize?(token: string): boolean
@@ -66,6 +68,8 @@ const authenticate = (candidate: unknown, token: string): boolean => {
 }
 
 export const startLocalAccessServer = async (options: Options) => {
+  if (!options.tls?.key || !options.tls.cert)
+    throw new Error('Encrypted local access requires a certificate.')
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 48 * 1024 * 1024 })
   const hotSockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
   let port = options.port
@@ -131,6 +135,18 @@ export const startLocalAccessServer = async (options: Options) => {
       return
     }
     const url = new URL(request.url ?? '/', 'http://localhost')
+    if (url.pathname === '/sele/identity') {
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          ...options.identity,
+          fingerprint: new X509Certificate(options.tls.cert).fingerprint256
+            .replaceAll(':', '')
+            .toLowerCase()
+        })
+      )
+      return
+    }
     const visualization = url.pathname === visualizationFramePath
     if (visualization) response.removeHeader('X-Frame-Options')
     let data: Buffer
@@ -211,7 +227,7 @@ export const startLocalAccessServer = async (options: Options) => {
             "media-src 'self' blob:",
             "font-src 'self' data:",
             "worker-src 'self' blob:",
-            `connect-src 'self' ws://${request.headers.host}`,
+            `connect-src 'self' wss://${request.headers.host}`,
             "frame-src 'self'",
             "frame-ancestors 'none'",
             "object-src 'none'",
@@ -222,7 +238,7 @@ export const startLocalAccessServer = async (options: Options) => {
     response.end(request.method === 'HEAD' ? undefined : data)
   }
 
-  const server = createServer((request, response) => {
+  const server = createServer({ ...options.tls, minVersion: 'TLSv1.2' }, (request, response) => {
     void serve(request, response).catch((error: NodeJS.ErrnoException) => {
       if (!['ENOENT', 'ENOTDIR', 'EISDIR'].includes(error.code ?? ''))
         console.warn('Unable to serve local-access assets.', error)
@@ -234,7 +250,7 @@ export const startLocalAccessServer = async (options: Options) => {
     if (
       stopping ||
       !allowedHost(request) ||
-      (request.headers.origin !== `http://${request.headers.host}` &&
+      (request.headers.origin !== `https://${request.headers.host}` &&
         !(request.url === '/sele/ws' && request.headers.origin === localAccessAndroidOrigin)) ||
       sockets.clients.size + hotSockets.clients.size >= 64
     ) {

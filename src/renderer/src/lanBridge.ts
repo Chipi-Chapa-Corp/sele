@@ -16,6 +16,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { localNetwork } from './nativeLocalNetwork'
+import { createLanSocket } from './secureLanSocket'
 import { watchNearbyComputers } from './mobileDiscovery'
 import {
   createAndroidPreferences,
@@ -48,7 +49,11 @@ export const installLanUuid = (): void => {
 }
 
 let connectionStatusRoot: Root | null = null
+let connectionChooserOpen = false
 const showConnection = (message: string | null): void => {
+  // The chooser owns progress and errors while pairing. An old workspace banner
+  // must not obscure its identity check or show a stale certificate warning.
+  if (connectionChooserOpen) message = null
   if (!connectionStatusRoot) {
     if (!message) return
     const container = document.createElement('div')
@@ -179,7 +184,8 @@ export const initializeLanBridge = async (): Promise<void> => {
       showConnection,
       () => resynchronize(),
       undefined,
-      deviceId
+      deviceId,
+      (url) => createLanSocket(url, candidate?.fingerprint)
     )
     const current = transport
     const abortConnection = (): void => current.close()
@@ -222,7 +228,10 @@ export const initializeLanBridge = async (): Promise<void> => {
     }
   }
   if (android) {
-    let error: string | undefined
+    let error: string | undefined =
+      !mobileConnection && localStorage.getItem(mobileConnectionStorageKey)
+        ? 'Pair your computer again to verify its encrypted connection. Update desktop Sele first.'
+        : undefined
     if (mobileConnection) {
       try {
         await connect(mobileConnection)
@@ -234,9 +243,14 @@ export const initializeLanBridge = async (): Promise<void> => {
     if (!transport?.isReady) {
       showConnection(null)
       const previous = mobileConnection
-      await requestMobileConnection(error, previous, async (candidate, signal) => {
-        await connect(candidate, signal)
-      })
+      connectionChooserOpen = true
+      try {
+        await requestMobileConnection(error, previous, async (candidate, signal) => {
+          await connect(candidate, signal)
+        })
+      } finally {
+        connectionChooserOpen = false
+      }
     }
   } else {
     for (;;) {

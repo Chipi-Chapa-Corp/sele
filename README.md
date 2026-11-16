@@ -224,16 +224,18 @@ then `upstream`, or the only remaining GitHub repository. This view currently su
 
 In **Settings → Local network**, enable **Allow local network access**. Open the
 Android app on the same Wi-Fi, choose your computer, and approve its request in
-desktop Sele. No connection link or code is needed. Nearby discovery advertises
+desktop Sele only when its security code matches the code on your phone. Nearby discovery advertises
 only the computer’s identity and port; each approved device gets its own credential.
-The advanced **Browser access links** section also supports a phone browser.
+Browser connections use HTTPS and require trusting the computer’s certificate in the browser.
 Keep Sele open and the computer awake. The default TCP port is **4589**; allow the
 selected port through your computer's firewall if the phone cannot connect. Guest
 Wi-Fi and access-point client isolation can prevent devices from reaching each other.
 
 Access is off by default. A connection link grants control of the host's projects,
-agents, files, Git, and terminals. HTTP and WebSocket traffic is unencrypted, so use
-this mode only on a trusted local network and do not forward its port to the internet.
+agents, files, Git, and terminals. The control connection uses HTTPS and encrypted
+WebSockets. Android pins the approved computer certificate; a changed certificate
+requires pairing again. Keep this mode on your local network and do not forward
+its port to the internet.
 **Remove device** immediately revokes that device, including saved access after
 restart. **Reset connection links** revokes browser links independently of paired
 Android devices. Turning access off stops the server and discovery. Settings and
@@ -287,9 +289,12 @@ version detection, set `JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport` for the buil
 
 Install the APK, enable **Settings → Local network** in desktop Sele, choose your
 computer in the Android app, and approve the request on your computer. The app
-bundles the shared UI; only the authenticated WebSocket connects to your computer.
+bundles the shared UI; only the authenticated, certificate-pinned encrypted WebSocket
+connects to your computer.
 The approved connection and per-host drafts use Android’s private durable storage. Keep both devices on the same trusted LAN, Sele open, and the computer
-awake. Restart the updated desktop app before pairing the APK.
+awake. This transport requires updated desktop and Android builds; older HTTP
+pairings require one new approval with matching security codes. Restart the updated
+desktop app before pairing the APK.
 
 Use **Settings → Local network → Connect to another computer** in the Android app
 to change hosts. Drafts and UI preferences stay separate for each host. The desktop
@@ -297,6 +302,11 @@ features and limitations listed above also apply to Android.
 
 `npm run build:mobile:web` builds the shared renderer; `npm run sync:android` also
 copies it into the native project. No hosted server URL is embedded in the APK.
+
+Google Play uses a separately signed release app bundle. See
+[Google Play preparation](docs/google-play-release.md) for signing, store metadata,
+verification and the production submission blockers. `npm run build:android:play`
+requires the four `SELE_ANDROID_*` upload-signing environment variables documented there.
 
 ## Development
 

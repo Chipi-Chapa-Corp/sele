@@ -34,7 +34,7 @@ class Socket {
   ready(options = {}) {
     this.readyState = 1
     this.onopen?.()
-    this.onmessage?.({ data: JSON.stringify({ type: 'ready', version: 1, ...options }) })
+    this.onmessage?.({ data: JSON.stringify({ type: 'ready', version: 2, ...options }) })
   }
   disconnect(code = 1006) {
     this.readyState = 3
@@ -60,6 +60,18 @@ const setup = (t) => {
   })
   return { transport, reconnects }
 }
+
+test('a changed certificate stops retries before credentials can reach another computer', async (t) => {
+  const { transport } = setup(t)
+  const connecting = transport.connect()
+  const rejected = assert.rejects(connecting, /certificate changed/)
+  Socket.sockets[0].disconnect(4003)
+  await rejected
+  assert.deepEqual(Socket.sockets[0].sent, [])
+  t.mock.timers.tick(60_000)
+  assert.equal(Socket.sockets.length, 1)
+  assert.equal(transport.isReady, false)
+})
 
 test('a silent handshake times out and closes cleanly; saved devices keep retrying', async (t) => {
   const { transport } = setup(t)

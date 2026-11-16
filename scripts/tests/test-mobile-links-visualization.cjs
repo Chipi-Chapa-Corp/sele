@@ -10,7 +10,7 @@ if (!process.versions.electron) {
     await build({
       stdin: {
         resolveDir: project,
-        contents: `export {startLocalAccessServer} from './src/main/localAccessServer'; export {visualizationFrame} from './vite.visualization'`,
+        contents: `export {startLocalAccessServer} from './src/main/localAccessServer'; export {loadLocalAccessTls} from './src/main/localAccessTls'; export {visualizationFrame} from './vite.visualization'`,
         loader: 'ts'
       },
       bundle: true,
@@ -92,8 +92,14 @@ if (!process.versions.electron) {
   app
     .whenReady()
     .then(async () => {
-      const { startLocalAccessServer } = require(path.join(directory, 'server.cjs'))
+      const { startLocalAccessServer, loadLocalAccessTls } = require(path.join(directory, 'server.cjs'))
+      const tls = await loadLocalAccessTls(path.join(directory, 'test-tls.json'))
+      require('electron').session.defaultSession.setCertificateVerifyProc((request, done) => {
+        const actual = new (require('node:crypto').X509Certificate)(request.certificate.data).fingerprint256.replaceAll(':', '').toLowerCase()
+        done(actual === tls.fingerprint ? 0 : -2)
+      })
       server = await startLocalAccessServer({
+        tls,
         port: 0,
         host: '127.0.0.1',
         token: 'fixture',
@@ -107,7 +113,7 @@ if (!process.versions.electron) {
         show: true,
         webPreferences: { backgroundThrottling: false }
       })
-      await window.loadURL(`http://127.0.0.1:${server.port}`)
+      await window.loadURL(`https://127.0.0.1:${server.port}`)
       const run = (script) => window.webContents.executeJavaScript(script)
       const wait = async (expression) => {
         for (let i = 0; i < 100; i++) {
@@ -181,7 +187,7 @@ if (!process.versions.electron) {
       await end()
       await wait('opens===1')
       console.log(
-        'PASS: mobile HTTP visualization renders and runs modules in an opaque sandbox; touch hold copies rewritten addresses, drag cancels, Back dismisses, tap opens'
+        'PASS: mobile HTTPS visualization renders and runs modules in an opaque sandbox; touch hold copies rewritten addresses, drag cancels, Back dismisses, tap opens'
       )
     })
     .catch((error) => {

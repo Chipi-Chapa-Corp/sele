@@ -10,13 +10,18 @@ import {
 } from './mobileConnection.ts'
 
 const token = 'a'.repeat(64)
+const fingerprint = 'c'.repeat(64)
 
 test('Android connection links select the LAN host independently of the packaged app origin', () => {
-  const connection = parseMobileConnection(`http://192.168.1.20:4589/#token=${token}`)
-  assert.deepEqual(connection, { origin: 'http://192.168.1.20:4589', token })
-  assert.equal(mobileWebSocketUrl(connection), 'ws://192.168.1.20:4589/sele/ws')
+  const connection = parseMobileConnection(
+    `https://192.168.1.20:4589/#token=${token}&fingerprint=${fingerprint}`
+  )
+  assert.deepEqual(connection, { origin: 'https://192.168.1.20:4589', token, fingerprint })
+  assert.equal(mobileWebSocketUrl(connection), 'wss://192.168.1.20:4589/sele/ws')
   assert.equal(
-    mobileWebSocketUrl(parseMobileConnection(`https://workstation.local/#token=${token}`)),
+    mobileWebSocketUrl(
+      parseMobileConnection(`https://workstation.local/#token=${token}&fingerprint=${fingerprint}`)
+    ),
     'wss://workstation.local/sele/ws'
   )
   for (const hostname of [
@@ -27,22 +32,26 @@ test('Android connection links select the LAN host independently of the packaged
     'desktop.local',
     '[fd00::1]'
   ]) {
-    assert.ok(parseMobileConnection(`http://${hostname}:4589/#token=${token}`))
+    assert.ok(
+      parseMobileConnection(`https://${hostname}:4589/#token=${token}&fingerprint=${fingerprint}`)
+    )
   }
 })
 
 test('connection setup rejects missing keys, external hosts, credentials and unrelated URLs', () => {
   for (const link of [
     token,
-    'http://192.168.1.20:4589/',
-    `http://192.168.1.20:4589/#token=bad`,
-    `https://example.com/#token=${token}`,
-    `http://8.8.8.8/#token=${token}`,
-    `http://172.32.0.1/#token=${token}`,
-    `http://user:password@192.168.1.20/#token=${token}`,
-    `file:///tmp/index.html#token=${token}`,
-    `http://192.168.1.20/admin#token=${token}`,
-    `http://192.168.1.20/?redirect=x#token=${token}`
+    `http://192.168.1.20:4589/#token=${token}&fingerprint=${fingerprint}`,
+    `https://192.168.1.20:4589/#token=${token}`,
+    'https://192.168.1.20:4589/',
+    `https://192.168.1.20:4589/#token=bad`,
+    `https://example.com/#token=${token}&fingerprint=${fingerprint}`,
+    `https://8.8.8.8/#token=${token}&fingerprint=${fingerprint}`,
+    `https://172.32.0.1/#token=${token}&fingerprint=${fingerprint}`,
+    `https://user:password@192.168.1.20/#token=${token}&fingerprint=${fingerprint}`,
+    `file:///tmp/index.html#token=${token}&fingerprint=${fingerprint}`,
+    `https://192.168.1.20/admin#token=${token}&fingerprint=${fingerprint}`,
+    `https://192.168.1.20/?redirect=x#token=${token}&fingerprint=${fingerprint}`
   ]) {
     assert.throws(() => parseMobileConnection(link), undefined, link)
   }
@@ -55,7 +64,9 @@ test('host selection survives app restart and invalid saved values require a new
     setItem: (key, value) => values.set(key, value)
   }
   assert.equal(readMobileConnection(storage), null)
-  const connection = parseMobileConnection(`http://10.0.0.5:4589/#token=${token}`)
+  const connection = parseMobileConnection(
+    `https://10.0.0.5:4589/#token=${token}&fingerprint=${fingerprint}`
+  )
   saveMobileConnection(connection, storage)
   assert.deepEqual(readMobileConnection(storage), connection)
   assert.deepEqual(
@@ -99,21 +110,23 @@ test('saved devices retain their credentials and follow stable identity across a
     setItem: (key, value) => values.set(key, value)
   }
   const first = {
-    origin: 'http://192.168.1.2:4589',
+    origin: 'https://192.168.1.2:4589',
     token,
+    fingerprint,
     hostId: '11111111-1111-1111-1111-111111111111',
     name: 'Desktop'
   }
   const second = {
-    origin: 'http://192.168.1.3:4589',
+    origin: 'https://192.168.1.3:4589',
     token: 'b'.repeat(64),
+    fingerprint,
     hostId: '22222222-2222-2222-2222-222222222222',
     name: 'Laptop'
   }
   saveMobileConnection(first, storage)
   saveMobileConnection(second, storage)
   assert.deepEqual(readMobileDevices(storage), [second, first])
-  const moved = { ...first, origin: 'http://192.168.1.50:4589' }
+  const moved = { ...first, origin: 'https://192.168.1.50:4589' }
   saveMobileConnection(moved, storage)
   assert.deepEqual(readMobileDevices(storage), [moved, second])
   values.delete(mobileConnectionStorageKey)

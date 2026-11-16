@@ -332,15 +332,19 @@ public class LocalNetworkPlugin extends Plugin {
                             String displayName = advertisedName == null ? "" : new String(advertisedName, StandardCharsets.UTF_8).trim();
                             result.put("name", displayName.isEmpty() || displayName.length() > 80
                                 ? value.getServiceName().replaceFirst("^Sele on ", "") : displayName);
-                            result.put("origin", "http://" + host + ":" + value.getPort());
+                            byte[] encrypted = value.getAttributes().get("tls");
+                            if (encrypted == null || !"1".equals(new String(encrypted, StandardCharsets.UTF_8))) {
+                                resolving = false; resolveNext(run); return;
+                            }
+                            result.put("origin", "https://" + host + ":" + value.getPort());
                             JSArray origins = new JSArray();
-                            origins.put("http://" + host + ":" + value.getPort());
+                            origins.put("https://" + host + ":" + value.getPort());
                             if (Build.VERSION.SDK_INT >= 34) {
                                 for (InetAddress candidate : value.getHostAddresses()) {
                                     if (candidate.equals(address) || candidate.isLinkLocalAddress()) continue;
                                     String alternate = candidate.getHostAddress();
                                     if (alternate.contains(":")) alternate = "[" + alternate + "]";
-                                    origins.put("http://" + alternate + ":" + value.getPort());
+                                    origins.put("https://" + alternate + ":" + value.getPort());
                                 }
                             }
                             result.put("origins", origins);

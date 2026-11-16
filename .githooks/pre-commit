@@ -1,4 +1,13 @@
 #!/bin/sh
 set -eu
 
+# Hooks in linked worktrees export repository-local Git variables. Tests create
+# temporary repositories; inheriting those variables can target this checkout's
+# index, refs and config instead of the fixture's repository.
+git_local_env=$(git rev-parse --local-env-vars)
+for git_local_name in $git_local_env; do
+  unset "$git_local_name"
+done
+unset git_local_env git_local_name
+
 npm run check

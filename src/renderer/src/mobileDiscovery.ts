@@ -1,7 +1,8 @@
 import { Capacitor } from '@capacitor/core'
 import { localNetwork, type NearbyComputer } from './nativeLocalNetwork'
 export { localNetwork, type NearbyComputer } from './nativeLocalNetwork'
-import { localAccessProtocolVersion } from '../../shared/localAccess'
+import { localAccessProtocolVersion, localAccessPairingCode } from '../../shared/localAccess'
+import { createLanSocket, inspectComputerCertificate } from './secureLanSocket'
 import {
   mobileWebSocketUrl,
   parseMobileConnection,
@@ -12,12 +13,15 @@ export const nativeDiscoveryAvailable = (): boolean => Capacitor.isNativePlatfor
 
 export const pairComputer = async (
   computer: NearbyComputer,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onSecurityCode?: (code: string) => void
 ): Promise<MobileConnection> => {
+  const fingerprint = await inspectComputerCertificate(computer.origin, signal)
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  onSecurityCode?.(await localAccessPairingCode(fingerprint, token))
   const connection: MobileConnection = {
-    ...parseMobileConnection(`${computer.origin}/#token=${token}`),
+    ...parseMobileConnection(`${computer.origin}/#token=${token}&fingerprint=${fingerprint}`),
     name: computer.name,
     ...(/^[a-f0-9-]{36}$/.test(computer.id) ? { hostId: computer.id } : {})
   }
@@ -29,7 +33,7 @@ export const pairComputer = async (
       }
   if (signal.aborted) throw new Error('Pairing canceled.')
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(mobileWebSocketUrl(connection))
+    const socket = createLanSocket(mobileWebSocketUrl(connection), fingerprint)
     let settled = false
     const finish = (error?: Error): void => {
       if (settled) return

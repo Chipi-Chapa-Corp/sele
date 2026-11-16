@@ -15,6 +15,10 @@ module.exports = async ({
   const computer = await getState()
   let discoveryVisible = true
   const browser = session.fromPartition('persist:sele-android-web-fixture')
+  browser.setCertificateVerifyProc((request, done) => {
+    const actual = new (require('node:crypto').X509Certificate)(request.certificate.data).fingerprint256.replaceAll(':', '').toLowerCase()
+    done(actual === computer.certificateFingerprint ? 0 : -2)
+  })
   const directory = path.resolve('out/mobile')
   const types = {
     '.html': 'text/html',
@@ -37,9 +41,30 @@ module.exports = async ({
       window.CapacitorCustomPlatform = { name: 'android' };
       window.fixtureServices = ${JSON.stringify(discoveryVisible ? [{ id: computer.computerId, name: computer.computerName, origin: new URL(link).origin }] : [])};
       const methods = ['startDiscovery','stopDiscovery','getServices','deviceInfo','readStorage','writeStorage','setSystemBars','showKeyboard','consumeKeyboardBack'];
+      const listeners = new Map(), sockets = new Map(); let nextListener = 1;
+      const emit = value => listeners.forEach(callback=>callback(value));
       window.Capacitor = {
-        PluginHeaders: [{ name: 'LocalNetwork', methods: methods.map(name => ({name,rtype:'promise'})) }],
+        nativeCallback: (plugin, method, options, callback) => {
+          const id = String(nextListener++); listeners.set(id, callback); return id;
+        },
+        PluginHeaders: [{ name: 'LocalNetwork', methods: methods.map(name => ({name,rtype:'promise'})) }, {name:'SecureLan',methods:['inspect','open','send','close','removeListener'].map(name=>({name,rtype:'promise'})).concat([{name:'addListener',rtype:'callback'}])}],
         nativePromise: async (plugin, method, options) => {
+          // Native TLS itself is exercised on the emulator. This web fixture uses
+          // Electron's exact-certificate verifier and simulates the plugin bridge.
+          if (plugin === 'SecureLan') {
+            if (method === 'inspect') return {fingerprint:${JSON.stringify(computer.certificateFingerprint)}};
+            if (method === 'removeListener') {listeners.delete(options.callbackId);return {};}
+            if (method === 'open') {
+              if (options.fingerprint !== ${JSON.stringify(computer.certificateFingerprint)}) {emit({id:options.id,type:'certificateError',code:4003});return {};}
+              const socket = new WebSocket(options.url); sockets.set(options.id,socket);
+              socket.onopen=()=>emit({id:options.id,type:'open',code:0});
+              socket.onmessage=e=>emit({id:options.id,type:'message',data:e.data,code:0});
+              socket.onerror=()=>emit({id:options.id,type:'error',code:1006});
+              socket.onclose=e=>{sockets.delete(options.id);emit({id:options.id,type:'close',code:e.code});};return {};
+            }
+            if (method === 'send') {sockets.get(options.id).send(options.data);return {};}
+            if (method === 'close') {sockets.get(options.id)?.close();sockets.delete(options.id);return {};}
+          }
           const storageKey = 'fixture-native-storage';
           const values = JSON.parse(localStorage.getItem(storageKey) || '{}');
           if (method === 'readStorage') return { values };

@@ -1,4 +1,5 @@
 import type { RendererTransport } from '../../shared/rendererBridge'
+import type { LanSocket } from './secureLanSocket'
 import {
   decodeClientMessage,
   encodeClientMessage,
@@ -7,10 +8,11 @@ import {
 
 export class LanConnectionError extends Error {}
 export class LanAccessRevokedError extends LanConnectionError {}
+export class LanCertificateError extends LanAccessRevokedError {}
 
 /** Only connection setup is retried. Sent requests are never replayed. */
 export class LanTransport implements RendererTransport {
-  private socket: WebSocket | null = null
+  private socket: LanSocket | null = null
   private ready = false
   private connectedBefore = false
   private stopped = false
@@ -43,7 +45,8 @@ export class LanTransport implements RendererTransport {
     private onStatus: (message: string | null) => void,
     private onReconnect: () => void,
     private onAccessRevoked?: () => void,
-    private deviceId?: string
+    private deviceId?: string,
+    private socketFactory: (url: string) => LanSocket = (url) => new WebSocket(url)
   ) {}
 
   get isReady(): boolean {
@@ -125,9 +128,9 @@ export class LanTransport implements RendererTransport {
       rejectConnection = reject
     })
     this.connection = connection
-    let socket: WebSocket
+    let socket: LanSocket
     try {
-      socket = new WebSocket(this.url)
+      socket = this.socketFactory(this.url)
     } catch (error) {
       this.connection = null
       rejectConnection(error instanceof Error ? error : new Error(String(error)))
@@ -148,13 +151,17 @@ export class LanTransport implements RendererTransport {
       socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null
       socket.close()
       const error =
-        code === 1008
-          ? new LanAccessRevokedError(
-              'Device access is invalid or was revoked. Request access again on your computer.'
+        code === 4003
+          ? new LanCertificateError(
+              'The computer certificate changed. Pair again and compare the security code on both devices.'
             )
-          : new LanConnectionError(
-              'Connection lost. A request may have completed on your computer; check before trying again.'
-            )
+          : code === 1008
+            ? new LanAccessRevokedError(
+                'Device access is invalid or was revoked. Request access again on your computer.'
+              )
+            : new LanConnectionError(
+                'Connection lost. A request may have completed on your computer; check before trying again.'
+              )
       this.pending.forEach((request) => {
         clearTimeout(request.timer)
         request.reject(error)
@@ -162,7 +169,7 @@ export class LanTransport implements RendererTransport {
       this.pending.clear()
       rejectConnection(error)
       if (this.stopped) return
-      if (code === 1008) {
+      if (code === 1008 || code === 4003) {
         this.revoked = true
         this.readyWaiters.forEach((waiter) => waiter.reject(error))
         this.readyWaiters.clear()

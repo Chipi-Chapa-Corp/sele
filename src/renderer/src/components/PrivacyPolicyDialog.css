@@ -1,0 +1,48 @@
+.privacy-policy-dialog {
+  box-sizing: border-box;
+  width: min(42rem, calc(100vw - 1.5rem));
+  height: min(42rem, calc(100dvh - 1.5rem));
+  max-height: calc(100dvh - 1.5rem);
+  padding: 1rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--panel-radius, 1rem);
+  background: var(--menu-bg);
+  color: var(--lead);
+}
+.privacy-policy-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.privacy-policy-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+.privacy-policy-dialog > .popup-window__resize-handle {
+  right: 0.15rem;
+  bottom: 0.15rem;
+}
+.privacy-policy-dialog header,
+.privacy-policy-dialog footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: none;
+}
+.privacy-policy-dialog h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 1.1rem;
+}
+.privacy-policy-dialog footer {
+  justify-content: flex-end;
+}
+.privacy-policy-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.privacy-policy-dialog__body h3 {
+  font-size: 1rem;
+}

@@ -19,6 +19,7 @@ import {
 import { version as appVersion } from '../../../../package.json'
 import { Button } from './Button'
 import { PopupWindow } from './PopupWindow'
+import { showPrivacyPolicy } from './PrivacyPolicyDialog'
 import { SegmentedControl } from './SegmentedControl'
 import { renderSettingsPanel, type SettingsPanelProps, type SettingsTab } from './SettingsPanel'
 
@@ -211,6 +212,12 @@ export const SettingsDialog = ({
               callback={async () => {
                 await appApi.exportDiagnosticLog()
               }}
+            />
+            <Button
+              label="Privacy policy"
+              size="small"
+              theme="transparent"
+              callback={showPrivacyPolicy}
             />
             <p className="settings-dialog__version">Sele v{appVersion}</p>
           </aside>

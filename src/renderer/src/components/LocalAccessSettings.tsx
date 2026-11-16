@@ -144,8 +144,9 @@ export function LocalAccessSettings(): React.ReactElement {
               <div className="settings-dialog__section-cards">
                 <p>
                   Open Sele on your phone and choose {state.computerName ?? 'this computer'}. Allow
-                  its request when prompted.
+                  its request only if the security codes match.
                 </p>
+
                 {state.discoveryError && <p role="status">{state.discoveryError}</p>}
                 <h3>Paired devices</h3>
                 {!state.devices?.length && <p>No paired devices yet.</p>}

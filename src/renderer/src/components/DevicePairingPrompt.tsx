@@ -66,7 +66,14 @@ export function DevicePairingPrompt(): React.ReactElement | null {
         This device is requesting access to Sele. Allow it to manage chats and files on this
         computer?
       </p>
-      <p className="device-pairing__hint">Approve only a device you are pairing now.</p>
+      {request.securityCode && (
+        <p>
+          Security code: <strong>{request.securityCode}</strong>
+        </p>
+      )}
+      <p className="device-pairing__hint">
+        Only allow access if this code matches the code on your phone.
+      </p>
       {error && <p role="alert">{error}</p>}
       <div className="device-pairing__actions">
         <Button label="Decline" theme="secondary" disabled={busy} callback={() => decide(false)} />

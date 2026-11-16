@@ -1,4 +1,10 @@
-export type MobileConnection = { origin: string; token: string; hostId?: string; name?: string }
+export type MobileConnection = {
+  origin: string
+  token: string
+  fingerprint: string
+  hostId?: string
+  name?: string
+}
 
 export const mobileConnectionStorageKey = 'sele-android-connection-v1'
 export const mobileDevicesStorageKey = 'sele-android-devices-v1'
@@ -38,7 +44,7 @@ export const parseMobileConnection = (link: string): MobileConnection => {
     throw new Error('Paste the full connection link from Sele’s Local network settings.')
   }
   if (
-    !['http:', 'https:'].includes(url.protocol) ||
+    url.protocol !== 'https:' ||
     url.username ||
     url.password ||
     !isLanHostname(url.hostname) ||
@@ -48,16 +54,19 @@ export const parseMobileConnection = (link: string): MobileConnection => {
     throw new Error('Use a connection link for a Sele computer on your local network.')
   }
   const token = new URLSearchParams(url.hash.slice(1)).get('token')
+  const fingerprint = new URLSearchParams(url.hash.slice(1)).get('fingerprint')
+  if (!fingerprint || !/^[a-f0-9]{64}$/.test(fingerprint))
+    throw new Error('Pair this computer again to verify its encrypted connection.')
   if (!token || !/^[a-f0-9]{64}$/.test(token)) {
     throw new Error(
       'The link has no valid access key. Copy a new connection link from Sele Settings.'
     )
   }
-  return { origin: url.origin, token }
+  return { origin: url.origin, token, fingerprint }
 }
 
 export const mobileConnectionLink = (connection: MobileConnection): string =>
-  `${connection.origin}/#token=${connection.token}`
+  `${connection.origin}/#token=${connection.token}&fingerprint=${connection.fingerprint}`
 
 export const mobileWebSocketUrl = (connection: MobileConnection): string =>
   `${connection.origin.replace(/^http/, 'ws')}/sele/ws`

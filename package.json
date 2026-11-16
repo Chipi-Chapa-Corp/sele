@@ -1,6 +1,6 @@
 {
   "name": "sele",
-  "version": "3.34.0",
+  "version": "3.35.0",
   "description": "A lightweight desktop AI harness",
   "author": "ExposedCat",
   "license": "GPL-3.0-only",
@@ -48,7 +48,8 @@
     "benchmark:codex-revisions": "node scripts/benchmarks/benchmark-codex-revisions.mjs",
     "build:mobile:web": "node scripts/build-mobile-web.mjs",
     "sync:android": "npm run build:mobile:web && cap sync android",
-    "build:android": "npm run sync:android && node scripts/build-android.mjs"
+    "build:android": "npm run sync:android && node scripts/build-android.mjs",
+    "build:android:play": "npm run sync:android && node scripts/build-android.mjs --play"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.263",
@@ -64,6 +65,7 @@
     "electron-updater": "^6.8.9",
     "kysely": "^0.29.3",
     "marked": "^18.0.7",
+    "selfsigned": "5.5.0",
     "ws": "^8.22.0",
     "zod": "^4.4.3"
   },

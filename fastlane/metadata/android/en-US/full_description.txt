@@ -1,0 +1,23 @@
+Sele is the Android companion for Sele on your computer. Connect over your local network to continue AI coding conversations, review changes, edit files, and manage your workspace from your phone.
+
+Requires Sele running on an awake computer on the same trusted local network. The Android app does not run coding agents on your phone and does not include an AI service or subscription.
+
+CONTINUE YOUR CONVERSATIONS
+Read replies as they stream, send prompts and attachments, and return to saved conversations. Drafts and settings stay in sync with the paired computer.
+
+KEEP YOUR WORKSPACE CLOSE
+Review Git changes, edit project files, use terminal controls, and open browser pages from the mobile workspace. Select the projects and coding providers already configured on your computer.
+
+PAIR WITH YOUR COMPUTER
+Enable Local network access in desktop Sele, choose your computer in the Android app, and approve the connection on your computer. Saved pairings reconnect automatically.
+
+USE YOUR EXISTING CODING TOOLS
+Desktop Sele supports OpenAI Codex, Anthropic Claude Code, GitHub Copilot, and OpenCode. Install and authenticate your chosen tools on your computer. Provider availability, accounts, usage limits, and charges are governed by those services.
+
+BUILT FOR A LOCAL WORKFLOW
+Sele is open-source software. There is no Sele cloud account or hosted relay. Your computer runs the providers and stores your workspace. The Sele connection is encrypted. Compare the security codes on your phone and computer before approving pairing. Content you send to a coding provider is handled under that provider's terms and privacy policy.
+
+Get desktop Sele and setup instructions:
+https://github.com/Chipi-Chapa-Corp/sele
+
+Support: chipi.chapa.corporation@gmail.com

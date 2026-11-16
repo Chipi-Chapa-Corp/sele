@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { createServer, request as httpRequest } from 'node:http'
+import { createServer, request as plainRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import test from 'node:test'
+import test, { after } from 'node:test'
 import { build } from 'esbuild'
-import { WebSocket, WebSocketServer } from 'ws'
+import { WebSocket as NodeWebSocket, WebSocketServer } from 'ws'
 
 const require = createRequire(import.meta.url)
 const compiled = await build({
@@ -16,6 +17,7 @@ const compiled = await build({
     loader: 'ts',
     contents: `
     export * from './src/main/localAccessServer'
+    export * from './src/main/localAccessTls'
     export * from './src/main/localAccessPairing'
     export * from './src/shared/localAccess'
     export * from './src/renderer/src/lanTransport'
@@ -36,6 +38,7 @@ new Function('require', 'module', 'exports', compiled.outputFiles[0].text)(
 )
 const {
   startLocalAccessServer,
+  loadLocalAccessTls,
   createLocalAccessToken,
   encodeClientMessage,
   decodeClientMessage,
@@ -43,6 +46,39 @@ const {
   createLocalPreferences,
   LocalAccessPairing
 } = module.exports
+
+const tlsDirectory = await mkdtemp(join(tmpdir(), 'sele-lan-tls-'))
+const testTls = await loadLocalAccessTls(join(tlsDirectory, 'identity.json'))
+after(() => rm(tlsDirectory, { recursive: true, force: true }))
+class WebSocket extends NodeWebSocket {
+  constructor(url, protocols, options) {
+    if (protocols && typeof protocols === 'object' && !Array.isArray(protocols)) {
+      options = protocols
+      protocols = undefined
+    }
+    super(url, protocols, { ca: testTls.cert, ...options })
+  }
+}
+const httpRequest = (url, options, callback) =>
+  httpsRequest(url, { ca: testTls.cert, ...options }, callback)
+const fetch = (url, options = {}) =>
+  new Promise((resolve, reject) => {
+    const request = httpRequest(url, options, (response) => {
+      const chunks = []
+      response.on('data', (chunk) => chunks.push(chunk))
+      response.on('error', reject)
+      response.on('end', () =>
+        resolve(
+          new Response(options.method === 'HEAD' ? null : Buffer.concat(chunks), {
+            status: response.statusCode,
+            headers: response.headers
+          })
+        )
+      )
+    })
+    request.on('error', reject)
+    request.end(options.body)
+  })
 
 const fixture = async (t, overrides = {}) => {
   const directory = await mkdtemp(join(tmpdir(), 'sele-lan-'))
@@ -55,6 +91,7 @@ const fixture = async (t, overrides = {}) => {
   const requests = []
   const messages = []
   const server = await startLocalAccessServer({
+    tls: testTls,
     port: 0,
     host: '127.0.0.1',
     token,
@@ -72,17 +109,37 @@ const fixture = async (t, overrides = {}) => {
     await server.stop()
     await rm(directory, { recursive: true, force: true })
   })
-  const origin = `http://127.0.0.1:${server.port}`
+  const origin = `https://127.0.0.1:${server.port}`
   const connect = async (accessToken = token, clientOrigin = origin) => {
-    const ws = new WebSocket(`${origin.replace('http:', 'ws:')}/sele/ws`, { origin: clientOrigin })
+    const ws = new WebSocket(`${origin.replace('https:', 'wss:')}/sele/ws`, {
+      origin: clientOrigin
+    })
     await once(ws, 'open')
     const result = once(ws, accessToken === token ? 'message' : 'close')
-    ws.send(JSON.stringify({ type: 'hello', version: 1, token: accessToken }))
+    ws.send(JSON.stringify({ type: 'hello', version: 2, token: accessToken }))
     await result
     return ws
   }
   return { directory, token, server, origin, connect, requests, messages }
 }
+
+test('requires TLS, refuses plaintext, and publishes only public certificate identity', async (t) => {
+  await assert.rejects(startLocalAccessServer({}), /requires a certificate/)
+  const f = await fixture(t)
+  const identity = await (await fetch(`${f.origin}/sele/identity`)).json()
+  assert.deepEqual(identity, { fingerprint: testTls.fingerprint })
+  assert.doesNotMatch(JSON.stringify(identity), /PRIVATE KEY|token/)
+  const result = await new Promise((resolve) => {
+    plainRequest(f.origin.replace('https:', 'http:'), (response) => {
+      response.resume()
+      resolve(response.statusCode)
+    })
+      .on('error', () => resolve('closed'))
+      .end()
+  })
+  assert.ok(result === 400 || result === 'closed')
+  assert.equal(f.requests.length, 0)
+})
 
 test('serves the renderer with a LAN policy, rejects rebinding and traversal, and exposes no credentials', async (t) => {
   const f = await fixture(t)
@@ -99,10 +156,14 @@ test('serves the renderer with a LAN policy, rejects rebinding and traversal, an
   assert.equal((await fetch(`${f.origin}/local-access.json`)).status, 404)
   assert.equal((await fetch(`${f.origin}/%2e%2e%2fpackage.json`)).status, 404)
   const rebindingStatus = await new Promise((resolve, reject) => {
-    const request = httpRequest(f.origin, { headers: { Host: 'attacker.example' } }, (response) => {
-      response.resume()
-      resolve(response.statusCode)
-    })
+    const request = httpRequest(
+      f.origin,
+      { servername: 'localhost', headers: { Host: 'attacker.example' } },
+      (response) => {
+        response.resume()
+        resolve(response.statusCode)
+      }
+    )
     request.on('error', reject)
     request.end()
   })
@@ -114,12 +175,12 @@ test('rejects unauthorized sockets and cross-origin upgrades before dispatching 
   const f = await fixture(t)
   await f.connect('incorrect')
   assert.equal(f.requests.length, 0)
-  const ws = new WebSocket(`${f.origin.replace('http:', 'ws:')}/sele/ws`, {
+  const ws = new WebSocket(`${f.origin.replace('https:', 'wss:')}/sele/ws`, {
     origin: 'https://attacker.example'
   })
   const [error] = await once(ws, 'error')
   assert.match(error.message, /403/)
-  const unauthenticated = new WebSocket(`${f.origin.replace('http:', 'ws:')}/sele/ws`, {
+  const unauthenticated = new WebSocket(`${f.origin.replace('https:', 'wss:')}/sele/ws`, {
     origin: f.origin
   })
   await once(unauthenticated, 'open')
@@ -179,7 +240,7 @@ test('development proxy limits filesystem access and forwards the Vite HMR conne
   assert.equal((await fetch(`${f.origin}/@fs/etc/passwd`)).status, 404)
   assert.equal((await fetch(`${f.origin}/local-access.json`)).status, 404)
   assert.equal(paths.length, allowedCount, 'forbidden requests must not reach Vite')
-  const ws = new WebSocket(`${f.origin.replace('http:', 'ws:')}/?token=fixture`, 'vite-hmr', {
+  const ws = new WebSocket(`${f.origin.replace('https:', 'wss:')}/?token=fixture`, 'vite-hmr', {
     origin: f.origin
   })
   await once(ws, 'open')
@@ -277,7 +338,7 @@ test('browser transport rejects uncertain mutations and reconnects without repla
   const previous = globalThis.WebSocket
   globalThis.WebSocket = class extends WebSocket {
     constructor(url) {
-      super(url, { origin: new URL(url).origin.replace('ws:', 'http:') })
+      super(url, { origin: new URL(url).origin.replace('wss:', 'https:') })
     }
   }
   t.after(() => {
@@ -288,7 +349,7 @@ test('browser transport rejects uncertain mutations and reconnects without repla
     reconnected = resolve
   })
   const transport = new LanTransport(
-    `${f.origin.replace('http:', 'ws:')}/sele/ws`,
+    `${f.origin.replace('https:', 'wss:')}/sele/ws`,
     f.token,
     () => {},
     reconnected
@@ -303,6 +364,7 @@ test('browser transport rejects uncertain mutations and reconnects without repla
   await rejected
   const attachmentConnection = transport.waitUntilReady()
   const replacement = await startLocalAccessServer({
+    tls: testTls,
     port: f.server.port,
     host: '127.0.0.1',
     token: f.token,
@@ -359,11 +421,11 @@ test('device pairing requires approval, persists only hashed secrets, and suppor
     authorize: (value) => pairing.authorize(value),
     pair: (value, signal) => pairing.request(value, signal)
   })
-  const socket = new WebSocket(`${f.origin.replace('http:', 'ws:')}/sele/ws`, {
+  const socket = new WebSocket(`${f.origin.replace('https:', 'wss:')}/sele/ws`, {
     origin: 'http://sele.localhost'
   })
   await once(socket, 'open')
-  socket.send(JSON.stringify({ type: 'pair', version: 1, ...request }))
+  socket.send(JSON.stringify({ type: 'pair', version: 2, ...request }))
   while (!pairing.pending().length) await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(pairing.authorize(token), false, 'requests do not grant access')
   assert.equal(pairing.pending()[0].name, 'Test Android')
@@ -382,12 +444,12 @@ test('device pairing requires approval, persists only hashed secrets, and suppor
   const restored = new LocalAccessPairing(path)
   await restored.load()
   assert.equal(restored.authorize(token), true)
-  const client = new WebSocket(`${f.origin.replace('http:', 'ws:')}/sele/ws`, {
+  const client = new WebSocket(`${f.origin.replace('https:', 'wss:')}/sele/ws`, {
     origin: 'http://sele.localhost'
   })
   await once(client, 'open')
   let response = once(client, 'message')
-  client.send(JSON.stringify({ type: 'hello', version: 1, token }))
+  client.send(JSON.stringify({ type: 'hello', version: 2, token }))
   assert.equal(JSON.parse((await response)[0]).type, 'ready')
   response = once(client, 'close')
   await pairing.revoke(request.deviceId)
@@ -429,13 +491,13 @@ test('authenticated identity migration preserves access and re-pairing replaces 
     authorize: (token) => pairing.authorize(token),
     identifyDevice: (token, id) => (migration = pairing.identify(token, id))
   })
-  const socket = new WebSocket(`${f.origin.replace('http:', 'ws:')}/sele/ws`, {
+  const socket = new WebSocket(`${f.origin.replace('https:', 'wss:')}/sele/ws`, {
     origin: 'http://sele.localhost'
   })
   t.after(() => socket.terminate())
   await once(socket, 'open')
   const ready = once(socket, 'message')
-  socket.send(JSON.stringify({ type: 'hello', version: 1, token: firstToken, deviceId: stableId }))
+  socket.send(JSON.stringify({ type: 'hello', version: 2, token: firstToken, deviceId: stableId }))
   assert.equal(JSON.parse((await ready)[0]).type, 'ready')
   await migration
   assert.deepEqual(
@@ -618,10 +680,10 @@ test('a device document resumes host ownership after socket loss; revocation des
     }
   })
   const connect = async (sessionId) => {
-    const ws = new WebSocket(`${f.origin.replace('http:', 'ws:')}/sele/ws`, { origin: f.origin })
+    const ws = new WebSocket(`${f.origin.replace('https:', 'wss:')}/sele/ws`, { origin: f.origin })
     await once(ws, 'open')
     const ready = once(ws, 'message')
-    ws.send(JSON.stringify({ type: 'hello', version: 1, token: credential, sessionId }))
+    ws.send(JSON.stringify({ type: 'hello', version: 2, token: credential, sessionId }))
     assert.equal(JSON.parse((await ready)[0]).heartbeat, true)
     return ws
   }

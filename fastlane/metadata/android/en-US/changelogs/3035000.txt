@@ -1,0 +1,3 @@
+First Google Play test build of Sele for Android.
+
+Pair with desktop Sele on your local network to use AI coding conversations, file editing, Git changes, terminal controls, and browser tools. Includes saved pairings, persistent drafts, and automatic reconnection.

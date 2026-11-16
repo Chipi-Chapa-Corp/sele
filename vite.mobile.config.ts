@@ -29,7 +29,7 @@ const config = defineConfig({
       transformIndexHtml: (html) =>
         html.replace(
           'frame-src sele-visualize: sele-mcp-app:;',
-          "frame-src 'self'; connect-src 'self' ws: wss:;"
+          "frame-src 'self'; connect-src 'self' https: wss:;"
         )
     }
   ],

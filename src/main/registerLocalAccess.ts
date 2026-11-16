@@ -11,6 +11,7 @@ import type { AppSelectedAttachment } from '../shared/app'
 import {
   localAccessChannels,
   localAccessDefaultPort,
+  localAccessPairingCode,
   type LocalAccessOptions,
   type LocalAccessState
 } from '../shared/localAccess'
@@ -21,6 +22,7 @@ import {
   getLocalAccessAddresses,
   startLocalAccessServer
 } from './localAccessServer'
+import { loadLocalAccessTls, type LocalAccessTls } from './localAccessTls'
 
 type Configuration = { enabled: boolean; port: number; token: string; computerId: string }
 type RendererAssets = { assetsDirectory: string; devRendererUrl?: string }
@@ -37,6 +39,7 @@ let shuttingDown = false
 let pairing: LocalAccessPairing
 let discovery: Bonjour | null = null
 let discoveryError: string | null = null
+let tls: LocalAccessTls | null = null
 
 const stopDiscovery = async (): Promise<void> => {
   const previous = discovery
@@ -60,12 +63,14 @@ const state = (): LocalAccessState => ({
   port: configuration.port,
   urls: server
     ? getLocalAccessAddresses().map(
-        (address) => `http://${address}:${server!.port}/#token=${configuration.token}`
+        (address) =>
+          `https://${address}:${server!.port}/#token=${configuration.token}&fingerprint=${tls!.fingerprint}`
       )
     : [],
   error: serverError,
   computerName: hostname(),
   computerId: configuration.computerId,
+  certificateFingerprint: tls?.fingerprint,
   devices: pairing?.list() ?? [],
   pairingRequests: pairing?.pending() ?? [],
   discoveryError
@@ -75,12 +80,19 @@ const start = async (assets: RendererAssets): Promise<void> => {
   serverError = null
   if (!configuration.enabled || shuttingDown) return
   try {
+    tls ??= await loadLocalAccessTls(join(app.getPath('userData'), 'local-access-tls.json'))
     server = await startLocalAccessServer({
+      tls,
       port: configuration.port,
       token: configuration.token,
       authorize: (token) => pairing.authorize(token),
       identifyDevice: (token, id) => pairing.identify(token, id),
-      pair: (request, signal) => pairing.request(request, signal),
+      pair: async (request, signal) =>
+        pairing.request(
+          request,
+          signal,
+          await localAccessPairingCode(tls!.fingerprint, (request as { token: string })?.token)
+        ),
       identity: { id: configuration.computerId, name: hostname() },
       ...assets,
       invoke: invokeClientRequest,
@@ -97,7 +109,7 @@ const start = async (assets: RendererAssets): Promise<void> => {
         type: 'sele',
         protocol: 'tcp',
         port: server.port,
-        txt: { version: '1', name: hostname(), id: configuration.computerId }
+        txt: { version: '2', tls: '1', name: hostname(), id: configuration.computerId }
       })
       advertisement.on('error', (error) => {
         discoveryError = 'Nearby discovery is unavailable. Check your network multicast settings.'

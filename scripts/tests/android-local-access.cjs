@@ -290,6 +290,12 @@ module.exports = async ({
   }
   const connect = async (value) => {
     await waitFor('Boolean(document.querySelector(".mobile-connect"))')
+    await run('Array.from(document.querySelectorAll("button")).find(button=>button.textContent.trim()==="Privacy policy").click()')
+    await waitFor('Boolean(document.querySelector(".privacy-policy-dialog[open]"))')
+    assert.ok(await run('document.querySelector(".privacy-policy-dialog").textContent.includes("chipi.chapa.corporation@gmail.com")'), 'privacy disclosure is available before pairing')
+    await fs.mkdir(path.resolve('test-results/google-play'), { recursive: true })
+    await fs.writeFile(path.resolve('test-results/google-play/privacy-before-pairing.png'), adb(['exec-out', 'screencap', '-p'], true))
+    await tap('.privacy-policy-dialog button[aria-label="Close privacy policy"]')
     const state = await getState()
     // Emulator NAT does not forward host multicast. Inject only the discovery
     // result; native NSD itself is covered by LocalDiscoveryTest.
@@ -310,6 +316,12 @@ module.exports = async ({
       await delay(100)
     }
     assert.ok(request, 'Android must request desktop approval')
+    const code = request.securityCode
+    assert.match(code, /^[A-F0-9]{4} [A-F0-9]{4} [A-F0-9]{4}$/, 'desktop supplies a request-bound security code')
+    await waitFor(`document.querySelector('.mobile-connect__waiting')?.textContent.includes(${JSON.stringify(code)})`)
+    assert.equal(await run('Boolean(document.getElementById("sele-connection-status"))'), false, 'workspace banners do not cover the pairing identity check')
+    await fs.mkdir(path.resolve('test-results/android'), {recursive:true})
+    await fs.writeFile(path.resolve('test-results/android/tls-pairing.png'), adb(['exec-out','screencap','-p'], true))
     assert.equal(
       await run('Boolean(window.providerApi)'),
       false,
@@ -336,6 +348,17 @@ module.exports = async ({
     assert.equal(await run('Boolean(document.querySelector(".mobile-connect footer"))'),false,'connection has no extra bottom label')
     assert.ok(await run('(()=>{const r=document.querySelector(".mobile-connect__content.chat-panel").getBoundingClientRect();return r.width>=innerWidth*.85&&r.height>=innerHeight*.85})()'),'connection controls live inside a full-size shared chat pane')
     await connect(link)
+    const certificateRejection = await run(`new Promise(async(resolve,reject)=>{
+      const id=crypto.randomUUID();let listener;const timer=setTimeout(()=>finish('timeout'),8000);
+      const finish=type=>{clearTimeout(timer);Capacitor.nativePromise('SecureLan','close',{id}).catch(()=>{});
+        if(listener)Capacitor.nativePromise('SecureLan','removeListener',{eventName:'socketEvent',callbackId:listener}).catch(()=>{});resolve(type)};
+      listener=Capacitor.nativeCallback('SecureLan','addListener',{eventName:'socketEvent'},event=>{
+        if(event.id===id&&['open','certificateError','error','close'].includes(event.type))finish(event.type)
+      });
+      try{await Capacitor.nativePromise('SecureLan','open',{id,url:${JSON.stringify(new URL(link).origin.replace('https:', 'wss:') + '/sele/ws')},fingerprint:'0'.repeat(64)})}catch(error){finish('open-rejected')}
+    })`)
+    assert.equal(certificateRejection, 'certificateError', 'native TLS refuses an unapproved certificate before opening a WebSocket')
+    console.log('ANDROID TLS PASSED: matching pairing code and rejected certificate substitution')
     const ui = {
         run,
         waitFor,
@@ -420,6 +443,8 @@ module.exports = async ({
       `appApi.getDroppedMessageAttachments([new File(['Android attachment'],'android.txt',{type:'text/plain'})])`
     )
     assert.equal(await fs.readFile(upload[0].path, 'utf8'), 'Android attachment')
+    const largeUpload = await run(`appApi.getDroppedMessageAttachments([new File([new Uint8Array(2*1024*1024).fill(65)],'android-tls-large.txt',{type:'text/plain'})])`)
+    assert.equal((await fs.readFile(largeUpload[0].path)).length, 2*1024*1024, 'large attachments use the pinned encrypted transport')
     // Reopen the Activity and WebView: the selected host and access key must
     // persist without loading the UI from that host or resending the message.
     detach()
@@ -476,6 +501,25 @@ module.exports = async ({
       'Array.from(document.querySelectorAll("button")).find(button=>button.textContent.includes("Connect to another computer")).click()'
     )
     await waitFor('Boolean(document.querySelector(".mobile-connect"))')
+    // A saved device with a changed pin must not trigger automatic trust or trap
+    // the chooser in an endless failed retry. Repair needs a fresh user selection.
+    await run(`(async()=>{
+      const key='sele-android-devices-v1';const devices=JSON.parse(localStorage.getItem(key));
+      devices[0].fingerprint='0'.repeat(64);
+      await Capacitor.nativePromise('LocalNetwork','writeStorage',{key,value:JSON.stringify(devices)});
+    })()`)
+    detach()
+    adb(['shell','am','force-stop',appId])
+    launch()
+    await attach()
+    await waitFor('Boolean(document.querySelector(".mobile-connect__computers button"))')
+    await run('document.querySelector(".mobile-connect__computers button").click()')
+    await waitFor('document.body.innerText.includes("certificate changed") && document.body.innerText.includes("Pair again")')
+    assert.equal((await getState()).pairingRequests.length, 0, 'certificate mismatch never starts approval automatically')
+    await connect(link)
+    assert.equal((await getState()).devices.length, 1, 'verified repair replaces the existing device approval')
+    assert.equal(sends(), 1, 'certificate repair never replays a prompt')
+    console.log('ANDROID TLS REPAIR PASSED: explicit new approval after a certificate mismatch')
     console.log(
       'ANDROID APK PASSED: native WebView, pairing, chat send/stream, upload, saved host, restart, reconnect, revocation, host switching'
     )

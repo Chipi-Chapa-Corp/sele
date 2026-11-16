@@ -444,7 +444,7 @@ if (!process.versions.electron) {
           {},
           { enabled: true, port }
         )
-        assert.ok(state.urls.length, 'an actual LAN address is needed to test insecure HTTP')
+        assert.ok(state.urls.length, 'an actual LAN address is needed to test encrypted LAN access')
         const { Bonjour } = require('bonjour-service')
         const discovery = new Bonjour()
         let browser
@@ -460,7 +460,8 @@ if (!process.versions.electron) {
               resolve(service)
             })
           })
-          assert.equal(advertisement.txt.version, '1')
+          assert.equal(advertisement.txt.version, '2')
+          assert.equal(advertisement.txt.tls, '1')
           assert.match(advertisement.txt.id, /^[a-f0-9-]{36}$/)
           assert.equal(
             Object.keys(advertisement.txt).some((key) => /token|secret|key/i.test(key)),
@@ -473,6 +474,12 @@ if (!process.versions.electron) {
           browser?.stop()
           discovery.destroy()
         }
+        // Trust only this fixture's exact certificate, never all self-signed certificates.
+        const fingerprint = state.certificateFingerprint
+        require('electron').session.defaultSession.setCertificateVerifyProc((request, done) => {
+          const actual = new (require('node:crypto').X509Certificate)(request.certificate.data).fingerprint256.replaceAll(':', '').toLowerCase()
+          done(actual === fingerprint ? 0 : -2)
+        })
         const link = state.urls[0]
         if (process.env.SELE_TEST_MOBILE_WEB) {
           await require('./mobile-web-local-access.cjs')({
@@ -538,8 +545,8 @@ if (!process.versions.electron) {
         await waitFor('Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))')
         assert.equal(
           await run('window.isSecureContext'),
-          false,
-          'test the same HTTP constraints as a phone'
+          true,
+          'the encrypted browser transport is a secure context'
         )
         assert.equal(await run('typeof crypto.randomUUID'), 'function')
         assert.equal(await run('location.hash'), '')
@@ -775,7 +782,7 @@ if (!process.versions.electron) {
           'the unchanged UI must run without unexpected renderer errors'
         )
         console.log(
-          'LOCAL ACCESS UI PASSED: HTTP, chat loading/sending/streaming, uploads, two clients, reconnect, revocation, phone viewport'
+          'LOCAL ACCESS UI PASSED: HTTPS, chat loading/sending/streaming, uploads, two clients, reconnect, revocation, phone viewport'
         )
       } catch (error) {
         console.error(error)
