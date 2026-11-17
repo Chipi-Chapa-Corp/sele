@@ -7,6 +7,7 @@ import {
 import { BrowserAccessibility, type BrowserTreeOptions } from './BrowserAccessibility'
 import { BrowserRecording, saveBrowserArtifact, type BrowserArtifact } from './BrowserArtifacts'
 import { uploadBrowserFiles } from './BrowserFileUploads'
+import { BrowserToolError } from './BrowserToolError'
 import type {
   BrowserAutomationClient,
   BrowserAutomationService,
@@ -98,9 +99,8 @@ export class BrowserWorkspace {
       this.assertOpen()
       return action()
     })
-    this.queue = task.catch((error) => {
-      console.error('[caught:BrowserWorkspace:run]', error)
-    })
+    // Keep the queue usable after a failure while the caller handles the task error.
+    this.queue = task.catch(() => {})
     return task
   }
 
@@ -311,8 +311,8 @@ export class BrowserWorkspace {
       timeout: 10000
     })
     if (result.exceptionDetails)
-      throw new Error(
-        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text
+      throw new BrowserToolError(
+        `Page JavaScript failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text}`
       )
     return result.result.value ?? (result.result.unserializableValue as T)
   }

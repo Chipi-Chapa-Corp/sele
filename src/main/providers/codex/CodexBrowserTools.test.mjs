@@ -130,6 +130,38 @@ test('Codex can discover and open visible Browser pane tabs without plugins or j
   assert.equal(client.activeTab, JSON.parse(result.contentItems[0].text).id)
 })
 
+test('page script exceptions reach Codex without being logged as Sele failures', async (t) => {
+  const { bind, call, clients } = fixture(t)
+  bind('script')
+  const tab = JSON.parse((await call('script', 'tabs_create')).contentItems[0].text)
+  const client = clients.at(-1)
+  client.executeCdp = async (_id, method, params) => {
+    if (method !== 'Runtime.evaluate') return {}
+    if (params.expression === 'transportError') throw new Error('Debugger transport failed')
+    try {
+      return { result: { value: vm.runInNewContext(params.expression) } }
+    } catch (error) {
+      return { exceptionDetails: { text: 'Uncaught', exception: { description: String(error) } } }
+    }
+  }
+  const evaluate = (text) =>
+    call('script', 'javascript_tool', { action: 'javascript_exec', tabId: tab.id, text })
+  const errors = t.mock.method(console, 'error', () => {})
+
+  const rejected = await evaluate('undefined.slice()')
+  assert.equal(rejected.success, false)
+  assert.match(rejected.contentItems[0].text, /^Page JavaScript failed: TypeError:.*slice/)
+  assert.equal(errors.mock.callCount(), 0)
+
+  assert.equal((await evaluate('transportError')).success, false)
+  assert.equal(errors.mock.callCount(), 1)
+  assert.match(errors.mock.calls[0].arguments[1].message, /Debugger transport failed/)
+
+  const recovered = await evaluate('2 + 2')
+  assert.equal(recovered.success, true)
+  assert.equal(recovered.contentItems[0].text, '4')
+})
+
 test('browser clients keep conversation scopes and revoke on scope replacement or disconnect', async (t) => {
   const { bind, call, clients, owner, integration } = fixture(t)
   bind('first', '/first')

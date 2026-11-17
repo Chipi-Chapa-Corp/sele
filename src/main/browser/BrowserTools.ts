@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { BrowserAutomationScope } from '../../shared/browser'
 import type { BrowserAutomationService } from './BrowserAutomation'
+import { BrowserToolError } from './BrowserToolError'
 import { BrowserWorkspace, type BrowserScreenshot } from './BrowserWorkspace'
 
 export const browserToolInstructions =
@@ -72,7 +73,7 @@ export function createBrowserTools(
     try {
       return await browser.run(action)
     } catch (error) {
-      console.error('Browser tool failed.', error)
+      if (!(error instanceof BrowserToolError)) console.error('Browser tool failed.', error)
       return {
         ...textResult(error instanceof Error ? error.message : String(error)),
         isError: true

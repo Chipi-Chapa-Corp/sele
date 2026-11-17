@@ -309,15 +309,6 @@ test('Opera pairing, overlapping tab IDs, reconnect and revocation leave Chrome 
     await once(socket, 'open')
     return { socket, requests, tab }
   }
-  await chrome.pair()
-  const originalAddress = chrome.status.pairingUrl
-  const chromeBinding = join(pairingDirectory, 'desktop-chrome', 'pairing.enc.json')
-  const originalBinding = await readFile(chromeBinding)
-  const c = await connect(chrome, 'chrome')
-  await opera.pair()
-  const operaAddress = opera.status.pairingUrl
-  assert.notEqual(operaAddress, originalAddress)
-  const o = await connect(opera, 'opera')
   const registry = new CodexDynamicTools()
   const tools = api.registerCodexDesktopTools(registry)
   const sessionOwner = {}
@@ -327,8 +318,8 @@ test('Opera pairing, overlapping tab IDs, reconnect and revocation leave Chrome 
     api.removeBrowserUseSessions(sessionOwner)
     tools.close()
   })
-  for (const namespace of ['chrome', 'opera']) {
-    const result = await registry.call({
+  const listTabs = (namespace) =>
+    registry.call({
       threadId: 'dual-routing',
       turnId: 'turn',
       callId: namespace,
@@ -336,6 +327,29 @@ test('Opera pairing, overlapping tab IDs, reconnect and revocation leave Chrome 
       tool: 'tabs_context',
       arguments: {}
     })
+  const errors = t.mock.method(console, 'error', () => {})
+  for (const [namespace, name] of [
+    ['chrome', 'Chrome'],
+    ['opera', 'Opera']
+  ]) {
+    const result = await listTabs(namespace)
+    assert.equal(result.success, false)
+    assert.match(result.contentItems[0].text, new RegExp(`Pair the Sele ${name}`))
+  }
+  assert.equal(errors.mock.callCount(), 0)
+  errors.mock.restore()
+
+  await chrome.pair()
+  const originalAddress = chrome.status.pairingUrl
+  const chromeBinding = join(pairingDirectory, 'desktop-chrome', 'pairing.enc.json')
+  const originalBinding = await readFile(chromeBinding)
+  const c = await connect(chrome, 'chrome')
+  await opera.pair()
+  const operaAddress = opera.status.pairingUrl
+  assert.notEqual(operaAddress, originalAddress)
+  const o = await connect(opera, 'opera')
+  for (const namespace of ['chrome', 'opera']) {
+    const result = await listTabs(namespace)
     assert.equal(result.success, true)
     const visible = JSON.parse(result.contentItems[0].text).tabs
     assert.equal(visible.length, 1)

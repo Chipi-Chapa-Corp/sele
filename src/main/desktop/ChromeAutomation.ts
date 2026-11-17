@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { WebSocket, WebSocketServer } from 'ws'
+import { BrowserToolError } from '../browser/BrowserToolError.ts'
 import type {
   BrowserAutomationClient,
   BrowserAutomationService,
@@ -181,7 +182,7 @@ export class ChromeAutomation implements BrowserAutomationService {
       // Explicit disconnect/pairing still revokes the ownership map below.
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timer)
-        pending.reject(new Error(`${this.browserName} was disconnected.`))
+        pending.reject(new BrowserToolError(`${this.browserName} was disconnected.`))
       }
       this.pending.clear()
     })
@@ -191,7 +192,7 @@ export class ChromeAutomation implements BrowserAutomationService {
     const socket = this.socket
     if (!socket || socket.readyState !== WebSocket.OPEN)
       return Promise.reject(
-        new Error(
+        new BrowserToolError(
           `Pair the Sele ${this.browserName} extension in Settings → Browser & desktop first.`
         )
       )
