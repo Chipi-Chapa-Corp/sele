@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import type { HmrContext } from 'vite'
 
@@ -26,10 +27,17 @@ export function iconImports(packageName: string, forceAll = false) {
     for (const name of names(source)) used.add(name)
   }
   preserveAll ||= used.has('icons')
+  // Vite hashes optimizer plugin names, not the source captured by their hooks.
+  // Include the subset so a fresh server cannot reuse an older icon bundle.
+  const cacheKey = createHash('sha256')
+    .update(JSON.stringify(preserveAll ? '*' : [...used].sort()))
+    .digest('hex')
+    .slice(0, 16)
   return {
     root,
     used,
     preserveAll,
+    cacheKey,
     handleHotUpdate({ file, server }: HmrContext) {
       if (!/\.tsx?$/.test(file)) return undefined
       let source: string

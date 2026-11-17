@@ -20,7 +20,7 @@ const path = require('node:path')
     const modulePath = path.join(directory, 'plugins.cjs')
     await require('esbuild').build({
       stdin: {
-        contents: `export {iconImports} from './vite.icon-imports';export {staticIcons} from './vite.static-icons'`,
+        contents: `export {iconImports} from './vite.icon-imports';export {staticIcons} from './vite.static-icons';export {animatedIcons} from './vite.animated-icons'`,
         resolveDir: root,
         loader: 'ts'
       },
@@ -30,7 +30,7 @@ const path = require('node:path')
       format: 'cjs',
       outfile: modulePath
     })
-    const { iconImports, staticIcons } = require(modulePath)
+    const { iconImports, staticIcons, animatedIcons } = require(modulePath)
     const barrel = path.resolve(
       path.dirname(require.resolve('lucide-react')),
       '../esm/lucide-react.mjs'
@@ -91,6 +91,53 @@ const path = require('node:path')
       })
     )
     assert.ok((await names()).includes('icons'), 'third-party consumers retain the complete API')
+
+    // Reproduce additions made while the dev server is stopped. HMR cannot
+    // invalidate that disk cache, and Vite hashes optimizer plugins by name.
+    await fs.writeFile(path.join(project, 'package-lock.json'), JSON.stringify({ packages: {} }))
+    await fs.writeFile(source, "import { Check } from 'lucide-react'\n")
+    const { resolveConfig, optimizeDeps } = await import('vite')
+    const optimizedNames = async (metadata, name) => {
+      const code = await fs.readFile(metadata.optimized[name].file, 'utf8')
+      const ast = require('@babel/core').parseSync(code, { sourceType: 'module' })
+      return ast.program.body
+        .filter((node) => node.type === 'ExportNamedDeclaration')
+        .flatMap((node) =>
+          node.specifiers.map((specifier) => specifier.exported.name ?? specifier.exported.value)
+        )
+    }
+    const optimize = async () => {
+      const config = await resolveConfig(
+        {
+          configFile: false,
+          root: project,
+          cacheDir: path.join(project, '.vite'),
+          logLevel: 'silent',
+          plugins: [staticIcons(), animatedIcons()],
+          optimizeDeps: { noDiscovery: true, include: ['lucide-react', 'lucide-animated'] }
+        },
+        'serve'
+      )
+      return optimizeDeps(config)
+    }
+    const first = await optimize()
+    assert.ok(!(await optimizedNames(first, 'lucide-react')).includes('MoreHorizontal'))
+    await fs.appendFile(source, "import { MoreHorizontal } from 'lucide-react'\n")
+    const second = await optimize()
+    assert.notEqual(first.configHash, second.configHash)
+    assert.ok(
+      (await optimizedNames(second, 'lucide-react')).includes('MoreHorizontal'),
+      'restarting with a new icon must rebuild the cached dependency'
+    )
+    await fs.appendFile(source, "import { PlusIcon } from 'lucide-animated'\n")
+    const third = await optimize()
+    assert.notEqual(second.configHash, third.configHash)
+    assert.ok(
+      (await optimizedNames(third, 'lucide-animated')).includes('PlusIcon'),
+      'animated icon additions must also rebuild the cached dependency'
+    )
+    const unchanged = await optimize()
+    assert.equal(unchanged.hash, third.hash, 'unchanged imports reuse the dependency cache')
     await fs.rm(source)
     assert.equal(
       imports.handleHotUpdate(context),
@@ -98,7 +145,7 @@ const path = require('node:path')
       'removed source files do not break HMR'
     )
     console.log(
-      'Icon dependency checks passed: aliases, type imports, compatible HMR, new exports, namespace/dynamic imports, third-party consumers, and removed files.'
+      'Icon dependency checks passed: aliases, type imports, HMR, cached restarts, new exports, namespace/dynamic imports, third-party consumers, and removed files.'
     )
   } finally {
     process.chdir(originalCwd)

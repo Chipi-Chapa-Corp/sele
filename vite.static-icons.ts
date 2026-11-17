@@ -47,7 +47,7 @@ export function staticIcons(): Plugin {
       ]
     }).then((result) => result?.code ?? null))
   const dependencyPlugin: EsbuildPlugin = {
-    name: 'sele:static-icons',
+    name: `sele:static-icons:${imports.cacheKey}`,
     setup(build) {
       build.onLoad(
         { filter: /lucide-react[\\/]dist[\\/]esm[\\/]lucide-react\.mjs$/ },

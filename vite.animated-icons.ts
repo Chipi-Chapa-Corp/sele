@@ -101,7 +101,7 @@ export function animatedIcons(): Plugin {
     return cached
   }
   const dependencyPlugin: EsbuildPlugin = {
-    name: 'sele:animated-icons',
+    name: `sele:animated-icons:${imports.cacheKey}`,
     setup(build) {
       build.onLoad({ filter: /lucide-animated[\\/]dist[\\/]index\.js$/ }, async ({ path }) => ({
         contents: (await subset(readFileSync(path, 'utf8'))) ?? readFileSync(path, 'utf8'),
