@@ -819,6 +819,24 @@ test('temporary prediction cleanup cannot restart a disposed app-server', async 
   assert.equal(children.length, 1)
 })
 
+test('an existing-connection request cannot start a replacement if its server exits', async (t) => {
+  const { client, children, logs } = fixture(t)
+  await client.request('model/list')
+  const request = client.request(
+    'thread/backgroundTerminals/list',
+    { threadId: 'chat' },
+    { requireConnection: true }
+  )
+  children[0].stderr.write('MCP worker request failed')
+  children[0].emit('close', 1)
+  await assert.rejects(request, /connection is closed/)
+  assert.equal(children.length, 1)
+  assert.match(
+    logs[0][1].message,
+    /^Codex app-server exited with code 1\.\nRecent stderr:\nMCP worker request failed$/
+  )
+})
+
 test('reattachment ignores ephemeral prediction forks reported by older runtime workers', async (t) => {
   const { client } = fixture(t, {
     initializeResult: {

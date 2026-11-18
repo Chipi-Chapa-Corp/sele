@@ -270,8 +270,13 @@ export class CodexAppServerClient {
     params: unknown,
     options?: RequestOptions
   ): Promise<Result> => {
-    if (options?.requireConnection && !this.process) throw new Error('Codex connection is closed.')
-    await this.start()
+    if (options?.requireConnection) {
+      const connection = this.process
+      if (connection) await (this.startPromise ?? this.runtimeRecovery)
+      if (!connection || this.process !== connection) throw new Error('Codex connection is closed.')
+    } else {
+      await this.start()
+    }
     const input = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
     const nativeChrome =
       options?.nativeChrome === true &&
@@ -578,10 +583,14 @@ export class CodexAppServerClient {
     child.stdin.on('error', handleError)
     child.on('error', handleError)
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       const detail = this.stderr.trim()
-      const message = detail || `Codex app-server exited with code ${code ?? 'unknown'}`
-      handleError(new Error(message))
+      const reason = signal
+        ? `Codex app-server was terminated by ${signal}.`
+        : typeof code === 'number'
+          ? `Codex app-server exited with code ${code}.`
+          : 'Codex app-server connection closed.'
+      handleError(new Error(detail ? `${reason}\nRecent stderr:\n${detail}` : reason))
     })
 
     try {

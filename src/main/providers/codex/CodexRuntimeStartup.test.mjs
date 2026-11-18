@@ -80,8 +80,11 @@ test('provider startup failure drains pending diagnostic messages before closing
   const { child, socket, messages, authenticate } = fixture()
   await authenticate()
   child.stderr.write('Provider failed to start.')
-  child.emit('close', 1)
-  assert.equal(messages.at(-1).runtimeStderr, 'Provider failed to start.')
+  child.emit('close', 1, null)
+  assert.deepEqual(messages.slice(-2), [
+    { runtimeStderr: 'Provider failed to start.' },
+    { runtimeExit: { code: 1, signal: null } }
+  ])
   assert.equal(socket.writableEnded, true)
   assert.equal(socket.destroyed, false, 'queued diagnostics must be flushed before disconnecting')
 })

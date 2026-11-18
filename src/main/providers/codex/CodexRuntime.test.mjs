@@ -74,6 +74,9 @@ createInterface({input:process.stdin}).on('line',line=>{
   return reply({});
  }
  if(m.method==='fixture/delayed')return setTimeout(()=>reply({marker:p.marker}),200);
+ if(m.method==='fixture/exit'){
+  process.stderr.write('MCP worker request failed',()=>process.exit(1));return;
+ }
  if(m.method==='fixture/large')return reply({marker:p.marker,text:'ж'.repeat(p.size)});
  if(m.method==='fixture/complete') {active=false;
   send({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed'}}});return reply({})}
@@ -203,6 +206,22 @@ test('an immediate provider startup failure preserves its actionable error acros
   }
   const client = rpc(await connectRuntime(profile, 'missing-account'))
   assert.ok((await client.initialize()).pid, 'a later valid launch ignores the old failure')
+})
+
+test('a retained runtime forwards the provider exit status alongside recent stderr', async () => {
+  const transport = await connectRuntime(join(directory, 'provider-exit'))
+  const client = rpc(transport)
+  await client.initialize()
+  let stderr = ''
+  transport.stderr.on('data', (chunk) => {
+    stderr += chunk
+  })
+  const closed = once(transport, 'close')
+  client.write({ method: 'fixture/exit' })
+  assert.deepEqual(await closed, [1, null])
+  assert.equal(transport.exitCode, 1)
+  assert.equal(stderr, 'MCP worker request failed')
+  connections.delete(transport)
 })
 
 test('a hard frontend crash leaves the same provider executing the accepted turn exactly once', async () => {

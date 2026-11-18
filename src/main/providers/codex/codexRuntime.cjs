@@ -244,12 +244,15 @@ function startRuntime(config) {
       console.error('Codex runtime could not start the provider.', error.message)
       stop()
     })
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       if (stderr.trim() || !stopping)
         recordStartupError(
           stderr.trim() || `Codex app-server exited with code ${code ?? 'unknown'}`
         )
-      if (!stopping) console.error('Codex provider stopped.', { code, stderr })
+      if (!stopping) {
+        console.error('Codex provider stopped.', { code, signal, stderr })
+        send(client, { runtimeExit: { code, signal } })
+      }
       stop()
     })
     child.stderr.on('data', (chunk) => {

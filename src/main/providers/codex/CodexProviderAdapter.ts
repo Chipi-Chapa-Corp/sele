@@ -1928,12 +1928,22 @@ export class CodexProviderAdapter implements ProviderAdapter {
     )
     const pluginDetails = await Promise.allSettled(
       plugins.map(({ marketplace, plugin }) =>
-        this.client.request<PluginReadResponse>('plugin/read', {
-          pluginName: plugin.name,
-          ...(marketplace.path
-            ? { marketplacePath: marketplace.path }
-            : { remoteMarketplaceName: marketplace.name })
-        })
+        this.client.request<PluginReadResponse>(
+          'plugin/read',
+          {
+            pluginName: plugin.name,
+            ...(marketplace.path
+              ? { marketplacePath: marketplace.path }
+              : { remoteMarketplaceName: marketplace.name })
+          },
+          {
+            // An installed entry can outlive its listing in the remote catalog.
+            isExpectedError: (error) =>
+              /^read remote plugin details: remote plugin catalog request .* failed with status 404\b/.test(
+                error.message
+              )
+          }
+        )
       )
     )
     const skillNamesByAppId = new Map<string, Set<string>>()
@@ -2121,12 +2131,19 @@ export class CodexProviderAdapter implements ProviderAdapter {
         page = await client.request(
           'thread/backgroundTerminals/list',
           { threadId: chatId, cursor, limit: 100 },
-          { isExpectedError: !cursor ? isCodexThreadNotLoadedError : undefined }
+          {
+            requireConnection: true,
+            isExpectedError: !cursor ? isCodexThreadNotLoadedError : undefined
+          }
         )
       } catch (error) {
         // Background terminals live in the app-server process. A thread it has not loaded,
         // such as any chat after a restart until it is opened again, has none.
-        if (!cursor && isCodexThreadNotLoadedError(error)) return []
+        if (
+          client.connectionIdentity !== connection ||
+          (!cursor && isCodexThreadNotLoadedError(error))
+        )
+          return []
         throw error
       }
       terminals.push(...page.data)

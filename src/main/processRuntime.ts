@@ -26,6 +26,8 @@ export const processRuntimeKey = (profile: string, identity: unknown): string =>
 
 const stoppingRuntimes = new Map<string, Promise<void>>()
 
+type RuntimeExit = { code: number | null; signal: NodeJS.Signals | null }
+
 const attach = (directory: string, port: number, token: string): Promise<RuntimeProcess> =>
   new Promise((resolve, reject) => {
     const socket = connect({ host: '127.0.0.1', port })
@@ -33,6 +35,7 @@ const attach = (directory: string, port: number, token: string): Promise<Runtime
     const stderr = new PassThrough()
     const transport = new EventEmitter() as RuntimeProcess
     let authenticated = false
+    let runtimeExit: RuntimeExit | undefined
     const timeout = setTimeout(
       () => socket.destroy(new Error('Process runtime connection timed out.')),
       5000
@@ -66,7 +69,7 @@ const attach = (directory: string, port: number, token: string): Promise<Runtime
     })
     socket.on('close', () => {
       clearTimeout(timeout)
-      transport.exitCode = 0
+      transport.exitCode = runtimeExit?.code ?? 0
       stdout.end()
       stderr.end()
       if (!authenticated)
@@ -75,7 +78,7 @@ const attach = (directory: string, port: number, token: string): Promise<Runtime
             code: 'ERR_PROCESS_RUNTIME_REJECTED'
           })
         )
-      else transport.emit('close', 0)
+      else transport.emit('close', runtimeExit?.code, runtimeExit?.signal)
     })
     const reader = createInterface({ input: socket })
     reader.on('error', () => {}) // The socket's error handler owns connection failures.
@@ -84,6 +87,7 @@ const attach = (directory: string, port: number, token: string): Promise<Runtime
         const message = JSON.parse(line) as {
           runtimeReady?: boolean
           runtimeStderr?: string
+          runtimeExit?: RuntimeExit
           runtimeRejected?: 'authentication' | 'busy'
         }
         if (!authenticated && message.runtimeRejected) {
@@ -101,7 +105,8 @@ const attach = (directory: string, port: number, token: string): Promise<Runtime
           authenticated = true
           clearTimeout(timeout)
           resolve(transport)
-        } else if (typeof message.runtimeStderr === 'string') stderr.write(message.runtimeStderr)
+        } else if (message.runtimeExit) runtimeExit = message.runtimeExit
+        else if (typeof message.runtimeStderr === 'string') stderr.write(message.runtimeStderr)
         else stdout.write(line + '\n')
       } catch (error) {
         socket.destroy(error instanceof Error ? error : new Error(String(error)))

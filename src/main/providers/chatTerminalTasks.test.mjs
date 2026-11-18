@@ -96,7 +96,8 @@ test('Codex lists actual background terminals across pages without opening a cha
       'host',
       {
         connectionIdentity: {},
-        request: async (method, params) => {
+        request: async (method, params, options) => {
+          assert.equal(options.requireConnection, true)
           requests.push({ method, params })
           return params.cursor
             ? { data: [{ processId: 'second' }] }
@@ -170,6 +171,20 @@ test('Codex pagination cannot restart a server or mix tasks from a replacement p
     assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
     assert.equal(requests, 1)
   }
+})
+
+test('Codex discards partial results when the connection closes during a terminal poll', async () => {
+  const adapter = harness('codex')
+  const client = {
+    connectionIdentity: {},
+    request: async (_method, { cursor }) => {
+      if (!cursor) return { data: [{ processId: 'old-task' }], nextCursor: 'next' }
+      client.connectionIdentity = null
+      throw new Error('Codex app-server exited with code 1.')
+    }
+  }
+  adapter.clients = new Map([['host', client]])
+  assert.deepEqual(Array.from(await adapter.getChatTerminalTasks('chat')), [])
 })
 
 test('Claude uses shell-only nonambient task membership and notices its completion while idle', async () => {
