@@ -1064,6 +1064,10 @@ details.chat-detail__tool-group:not([open]) > :not(summary) {
   word-break: break-word;
 }
 
+.chat-detail__activity-content pre > code {
+  font-family: inherit;
+}
+
 .chat-detail__diff-scroll {
   max-height: 21rem;
   margin: 0 -0.7rem -0.6rem;
