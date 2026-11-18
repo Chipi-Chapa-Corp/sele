@@ -5,6 +5,7 @@ import type {
   ProviderWorkingStep
 } from '../../shared/provider'
 import type { ProviderAdapter, ProviderChatUpdateMetadata } from './ProviderAdapter'
+import { getContainerTargetKey } from '../containerTarget.ts'
 
 import {
   normalizeNetworkRetrySettings,
@@ -78,6 +79,7 @@ export const withProviderNetworkRetries = (
   const states = new Map<string, RetryState>()
   const revisionOffsets = new Map<string, number>()
   const listeners = new Set<Parameters<ProviderAdapter['onChatUpdated']>[0]>()
+  const getActiveChatIds = adapter.getActiveChatIds
   let disposed = false
 
   const cancel = (chatId: string): void => {
@@ -261,6 +263,17 @@ export const withProviderNetworkRetries = (
 
   const wrapped: ProviderAdapter = {
     ...adapter,
+    getActiveChatIds: getActiveChatIds
+      ? (options) => {
+          const key = getContainerTargetKey(options?.container)
+          const ids = new Set(getActiveChatIds(options))
+          for (const [id, state] of states) {
+            if (state.timer && getContainerTargetKey(state.failedDetail?.container) === key)
+              ids.add(id)
+          }
+          return [...ids]
+        }
+      : undefined,
     releaseChat: adapter.releaseChat
       ? async (id, options) => {
           cancel(id)

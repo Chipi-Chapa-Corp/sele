@@ -176,6 +176,7 @@ test('adapter enables goals, sets/refocuses using native prompt, and stops with 
     files: [{ path: '/old' }]
   }
   assert.equal((await f.adapter.setChatGoal('chat', 'Checks pass')).status, 'active')
+  assert.deepEqual(f.adapter.getActiveChatIds(), ['chat'])
   assert.equal(f.updates.at(-1).capabilities.setGoal, true)
   assert.deepEqual(f.sent[0], {
     prompt: 'Native directive: Checks pass',
@@ -186,6 +187,7 @@ test('adapter enables goals, sets/refocuses using native prompt, and stops with 
   assert.equal((await f.adapter.setChatGoal('chat', 'Lint passes')).objective, 'Lint passes')
   assert.equal(f.aborts, 1)
   assert.equal((await f.adapter.setChatGoal('chat', null)).status, 'paused')
+  assert.deepEqual(f.adapter.getActiveChatIds(), [])
   assert.equal(f.aborts, 2)
   assert.equal(f.sent.length, 2)
   assert.equal(f.invocations.at(-1).input, 'off')

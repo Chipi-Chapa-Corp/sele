@@ -43,7 +43,7 @@ export function ProviderUpdateBanners({
                 {summary}
               </span>
               {error && (
-                <span className="chat-approval__error" role="status">
+                <span className="chat-approval__error" role="status" tabIndex={0}>
                   {error}
                 </span>
               )}

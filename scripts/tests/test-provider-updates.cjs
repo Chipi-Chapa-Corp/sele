@@ -3,6 +3,13 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 
+const longUpdateError = [
+  'Fixture installation failure',
+  `  at /fixture/${'longpath'.repeat(36)}`,
+  ...Array.from({ length: 10 }, (_, index) => `  at /fixture/installer.js:${index + 1}`),
+  'End of installation output'
+].join('\n')
+
 if (!process.versions.electron) {
   ;(async () => {
     const root = path.resolve(__dirname, '../..')
@@ -36,7 +43,7 @@ if (!process.versions.electron) {
               getProviderUpdateImpact:async(id,options)=>{window.calls.push({method:'impact',id,options});return {activeChatCount:0}},
               updateProvider:async(id,options)=>{
                 window.calls.push({method:'update',id,options})
-                if(window.failUpdate)throw Error('Fixture installation failure')
+                if(window.failUpdate)throw Error(${JSON.stringify(longUpdateError)})
                 if(window.noopUpdate)return {currentVersion:versions[id][0],latestVersion:versions[id][1]}
                 await new Promise(resolve=>window.finishUpdate=resolve)
                 versions[id][0]=versions[id][1];return null
@@ -225,6 +232,43 @@ if (!process.versions.electron) {
       )
       await ready('document.querySelector(".chat-approval__error")')
       assert.equal(await count(), 1, 'failed updates remain retryable')
+      const updateError = 'document.querySelector(".chat-provider-update .chat-approval__error")'
+      win.focus()
+      win.webContents.focus()
+      await ready('document.hasFocus()')
+      const errorMetrics = await run(`(() => {
+        const error = ${updateError}
+        error.focus()
+        return {
+          text: error.textContent,
+          focused: document.activeElement === error,
+          scrollsVertically: error.scrollHeight > error.clientHeight,
+          scrollsHorizontally: error.scrollWidth > error.clientWidth
+        }
+      })()`)
+      assert.deepEqual(errorMetrics, {
+        text: longUpdateError,
+        focused: true,
+        scrollsVertically: true,
+        scrollsHorizontally: false
+      })
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'PageDown' })
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'PageDown' })
+      await ready(`${updateError}.scrollTop > 0`)
+      const errorPoint = await run(`(() => {
+        const rect = ${updateError}.getBoundingClientRect()
+        return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }
+      })()`)
+      win.webContents.sendInputEvent({
+        type: 'mouseWheel',
+        ...errorPoint,
+        deltaX: 0,
+        deltaY: -1000
+      })
+      await ready(`(() => {
+        const error = ${updateError}
+        return error.scrollTop + error.clientHeight >= error.scrollHeight - 1
+      })()`)
       await run(
         'window.failUpdate=false;window.noopUpdate=true;document.querySelector(".chat-provider-update .ui-button--primary").click()'
       )
@@ -372,7 +416,7 @@ if (!process.versions.electron) {
         'skips are scoped to the source'
       )
       console.log(
-        'PASS: v2-only OpenCode, all-provider checks, stacked banners, independent dismissals, update failure/no-op/retry, source scoping, provider/runtime-scoped sending and model selection'
+        'PASS: v2-only OpenCode, all-provider checks, stacked banners, independent dismissals, scrollable errors, update failure/no-op/retry, source scoping, provider/runtime-scoped sending and model selection'
       )
     } catch (error) {
       console.error(error)

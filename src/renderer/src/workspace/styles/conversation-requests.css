@@ -194,6 +194,20 @@ textarea.chat-user-input__input {
   font-weight: 700;
 }
 
+.chat-provider-update .chat-approval__error {
+  max-height: 8rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  scrollbar-color: var(--glass-edge) transparent;
+  text-overflow: clip;
+  white-space: pre-wrap;
+}
+
+.chat-provider-update .chat-approval__error:focus-visible {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: -0.125rem;
+}
+
 .chat-approval__actions {
   display: flex;
   flex: none;

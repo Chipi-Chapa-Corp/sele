@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { getContainerTargetKey } from '../containerTarget.ts'
 import { ProviderProcessStore } from '../ProviderProcessStore.ts'
 import { providerProcessContext } from '../providerProcessContext.ts'
 import { withChatProcessRuntimes } from './ChatProcessRuntimes.ts'
@@ -18,8 +19,17 @@ const setup = async (t, { providerId = 'codex', container = null } = {}) => {
   let next = 0
   const make = () => {
     let listener
+    const activeChats = new Map()
     const adapter = {
       id: providerId,
+      activeChats,
+      getActiveChatIds: (options) =>
+        [...activeChats]
+          .filter(
+            ([, target]) =>
+              getContainerTargetKey(target) === getContainerTargetKey(options?.container)
+          )
+          .map(([id]) => id),
       clearAuthenticationFailure: (container) =>
         calls.push(['clear-auth', container, providerProcessContext.getStore()?.record.id]),
       changeAccount: async (container, change) => {
@@ -162,6 +172,30 @@ test('a new boundary keeps revisions increasing and ignores events from its reti
   const count = updates.length
   h.adapters[1].update({ id: 'a', revision: 999, items: [] })
   assert.equal(updates.length, count)
+})
+
+test('active chat discovery includes current runtimes only and scopes them to the target', async (t) => {
+  const container = { kind: 'container', tool: 'toolbox', name: 'dev' }
+  const h = await setup(t, { providerId: 'copilot', container })
+  const adapter = h.wrap()
+  const base = h.adapters[0]
+  base.activeChats.set('host-chat', null)
+  base.activeChats.set('chat', container)
+  assert.deepEqual(adapter.getActiveChatIds(), ['host-chat'])
+  assert.deepEqual(adapter.getActiveChatIds({ container }), ['chat'])
+
+  await adapter.continueChat('chat', 'work')
+  const previous = h.adapters[1]
+  previous.activeChats.set('chat', container)
+  assert.deepEqual(adapter.getActiveChatIds({ container }), ['chat'])
+  assert.deepEqual(adapter.getActiveChatIds({ container: { kind: 'host' } }), ['host-chat'])
+
+  const scope = await h.store.find('copilot', 'account', 'chat', container)
+  await h.store.stop(scope.record.id)
+  await adapter.continueChat('chat', 'again')
+  assert.deepEqual(adapter.getActiveChatIds({ container }), [])
+  h.adapters[2].activeChats.set('chat', container)
+  assert.deepEqual(adapter.getActiveChatIds({ container }), ['chat'])
 })
 
 test('account lifecycle changes reach every chat runtime and mutate credentials once', async (t) => {

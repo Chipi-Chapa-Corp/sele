@@ -59,6 +59,7 @@ export const withChatProcessRuntimes = <T extends ProviderAdapter>(
 ): T => {
   const { store } = dependencies
   const accountId = dependencies.accountId ?? null
+  const getActiveChatIds = base.getActiveChatIds
   const runtimes = new Map<string, ProviderAdapter>()
   const recoveries = new Map<string, Promise<void>>()
   const listeners = new Set<Parameters<ProviderAdapter['onChatUpdated']>[0]>()
@@ -175,6 +176,19 @@ export const withChatProcessRuntimes = <T extends ProviderAdapter>(
       await callback?.(id)
     }
   const overrides: Partial<ProviderAdapter> = {
+    getActiveChatIds: getActiveChatIds
+      ? (options) => {
+          const ids = getActiveChatIds(options).filter(
+            (id) => (owners.get(id) ?? 'base') === 'base'
+          )
+          for (const [owner, adapter] of runtimes) {
+            for (const id of adapter.getActiveChatIds?.(options) ?? []) {
+              if (owners.get(id) === owner) ids.push(id)
+            }
+          }
+          return ids
+        }
+      : undefined,
     getModels: async (options) => {
       assertOpen()
       if (!options?.chatId) return base.getModels(options)

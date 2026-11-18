@@ -112,7 +112,7 @@ import type {
   ProviderChatUpdateMetadata
 } from './ProviderAdapter'
 import {
-  collectActiveProviderChats,
+  collectActiveProviderChatIds,
   getProviderUpdateImpact,
   stopActiveProviderChats
 } from './providerUpdate'
@@ -1225,16 +1225,16 @@ export const providerApi: ProviderApi = {
   updateProvider: async (providerId, options = {}) => {
     const adapter = adapters[providerId]
     const { stopActiveChats, ...sourceOptions } = options
-    const activeChats = await collectActiveProviderChats(adapter, sourceOptions)
+    const activeChatIds = await collectActiveProviderChatIds(adapter, sourceOptions)
 
-    if (activeChats.length > 0 && !stopActiveChats) {
-      const chatLabel = activeChats.length === 1 ? 'chat is' : 'chats are'
+    if (activeChatIds.length > 0 && !stopActiveChats) {
+      const chatLabel = activeChatIds.length === 1 ? 'chat is' : 'chats are'
       throw new Error(
-        `${activeChats.length} active ${chatLabel} still running. Confirm stopping them before updating ${providerLabels[providerId]}.`
+        `${activeChatIds.length} active ${chatLabel} still running. Confirm stopping them before updating ${providerLabels[providerId]}.`
       )
     }
 
-    if (activeChats.length > 0) await stopActiveProviderChats(adapter, activeChats)
+    if (activeChatIds.length > 0) await stopActiveProviderChats(adapter, activeChatIds)
     return adapter.updateProvider(sourceOptions)
   },
   getApprovalModes: (providerId) => adapters[providerId].getApprovalModes(),

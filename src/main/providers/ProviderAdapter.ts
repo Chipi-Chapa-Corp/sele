@@ -81,6 +81,8 @@ export type ProviderAdapter = {
   getUpdateAvailability: (
     options?: ProviderSourceOptions
   ) => Promise<ProviderUpdateAvailability | null>
+  /** Read live work in the selected environment without starting a runtime or listing history. */
+  getActiveChatIds?: (options?: ProviderSourceOptions) => string[]
   updateProvider: (options?: ProviderSourceOptions) => Promise<ProviderUpdateAvailability | null>
   getApprovalModes: () => Promise<ProviderApprovalModeOption[]>
   getSandboxModes: () => Promise<ProviderSandboxModeOption[]>

@@ -783,6 +783,23 @@ export class CopilotProviderAdapter implements ProviderAdapter {
   ): Promise<ProviderUpdateAvailability | null> =>
     getCopilotUpdateAvailability({ container: options.container, env: process.env })
 
+  getActiveChatIds = (options: ProviderSourceOptions = {}): string[] => {
+    const key = getContainerTargetKey(options.container)
+    const chatIds: string[] = []
+    for (const state of this.states.values()) {
+      if (
+        state.session &&
+        getContainerTargetKey(state.container) === key &&
+        !this.hiddenSessionIds.has(state.id) &&
+        (state.pendingUserInputs.length ||
+          state.pendingPermissions.length ||
+          (state.active && !state.failed))
+      )
+        chatIds.push(state.id)
+    }
+    return chatIds
+  }
+
   updateProvider = async (
     options: ProviderSourceOptions = {}
   ): Promise<ProviderUpdateAvailability | null> => {

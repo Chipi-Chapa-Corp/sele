@@ -128,19 +128,19 @@ export const getInstalledProviderUpdateAvailability = async (
   return getProviderUpdateAvailabilityFromVersions(currentVersion, await getLatestVersion())
 }
 
-type ProviderUpdateAdapter = Pick<ProviderAdapter, 'getChats' | 'stopChat'>
-
 const activeChatStatuses = new Set<NonNullable<ProviderChat['status']>>([
   'active',
   'waitingOnApproval',
   'waitingOnUserInput'
 ])
 
-export const collectActiveProviderChats = async (
-  adapter: ProviderUpdateAdapter,
+export const collectActiveProviderChatIds = async (
+  adapter: Pick<ProviderAdapter, 'getActiveChatIds' | 'getChats'>,
   options: ProviderSourceOptions = {}
-): Promise<ProviderChat[]> => {
-  const activeChats = new Map<string, ProviderChat>()
+): Promise<string[]> => {
+  if (adapter.getActiveChatIds) return adapter.getActiveChatIds(options)
+
+  const activeChatIds = new Set<string>()
   const visitedCursors = new Set<string>()
   let cursor: string | null = null
 
@@ -152,7 +152,7 @@ export const collectActiveProviderChats = async (
     })
 
     page.chats.forEach((chat) => {
-      if (chat.status && activeChatStatuses.has(chat.status)) activeChats.set(chat.id, chat)
+      if (chat.status && activeChatStatuses.has(chat.status)) activeChatIds.add(chat.id)
     })
 
     const nextCursor = page.nextCursor
@@ -161,21 +161,21 @@ export const collectActiveProviderChats = async (
     cursor = nextCursor
   } while (cursor)
 
-  return Array.from(activeChats.values())
+  return Array.from(activeChatIds)
 }
 
 export const getProviderUpdateImpact = async (
-  adapter: ProviderUpdateAdapter,
+  adapter: Pick<ProviderAdapter, 'getActiveChatIds' | 'getChats'>,
   options: ProviderSourceOptions = {}
 ): Promise<ProviderUpdateImpact> => ({
-  activeChatCount: (await collectActiveProviderChats(adapter, options)).length
+  activeChatCount: (await collectActiveProviderChatIds(adapter, options)).length
 })
 
 export const stopActiveProviderChats = async (
-  adapter: ProviderUpdateAdapter,
-  chats: readonly ProviderChat[]
+  adapter: Pick<ProviderAdapter, 'stopChat'>,
+  chatIds: readonly string[]
 ): Promise<void> => {
-  const results = await Promise.allSettled(chats.map((chat) => adapter.stopChat(chat.id)))
+  const results = await Promise.allSettled(chatIds.map((chatId) => adapter.stopChat(chatId)))
   const failures = results.filter((result) => result.status === 'rejected')
   failures.forEach((failure) =>
     console.error('[providerUpdate:stopActiveProviderChats]', failure.reason)
@@ -185,6 +185,6 @@ export const stopActiveProviderChats = async (
   const firstFailure = failures[0].reason
   const detail = firstFailure instanceof Error ? firstFailure.message : String(firstFailure)
   throw new Error(
-    `Unable to stop ${failures.length} of ${chats.length} active chats before updating: ${detail}`
+    `Unable to stop ${failures.length} of ${chatIds.length} active chats before updating: ${detail}`
   )
 }

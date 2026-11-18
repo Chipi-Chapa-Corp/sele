@@ -14,6 +14,7 @@ const [code, sharedCode] = ['./CopilotProviderUpdate.ts', '../providerUpdate.ts'
 )
 function fixture(version = '1.0.20', { executeError, updateOutput, updates = true } = {}) {
   const exports = {}
+  const shared = {}
   const commands = []
   const context = {
     exports,
@@ -26,11 +27,7 @@ function fixture(version = '1.0.20', { executeError, updateOutput, updates = tru
       return { ok: true, json: async () => ({ version: '1.0.26' }) }
     },
     require: (name) => {
-      if (name.includes('providerUpdate')) {
-        const shared = {}
-        vm.runInNewContext(sharedCode, { ...context, exports: shared })
-        return shared
-      }
+      if (name.includes('providerUpdate')) return shared
       if (name.includes('CopilotExecutable'))
         return { getCopilotExecutable: () => '/fixture/copilot' }
       if (name.includes('hostProcess'))
@@ -58,8 +55,9 @@ function fixture(version = '1.0.20', { executeError, updateOutput, updates = tru
       throw Error(name)
     }
   }
+  vm.runInNewContext(sharedCode, { ...context, exports: shared })
   vm.runInNewContext(code, context)
-  return { ...exports, commands }
+  return { ...exports, ...shared, commands }
 }
 test('Copilot checks for updates without downloading anything', async () => {
   const f = fixture()
@@ -78,6 +76,30 @@ test('Copilot uses its native update command in the selected environment', async
   )
   assert.equal(f.commands[0].file, 'copilot')
   assert.deepEqual(Array.from(f.commands[0].args), ['update'])
+})
+
+test('Copilot update checks live chats even when the SDK cannot list history', async () => {
+  const f = fixture('1.0.25')
+  const options = { container: { kind: 'container', tool: 'toolbox', name: 'fixture' } }
+  const adapter = {
+    getActiveChatIds: (source) => {
+      assert.equal(source, options)
+      return []
+    },
+    getChats: async () => {
+      throw new Error(
+        'SDK protocol version mismatch: SDK supports versions 3-3, but server reports version 4.'
+      )
+    }
+  }
+  assert.equal((await f.getProviderUpdateImpact(adapter, options)).activeChatCount, 0)
+  assert.deepEqual(await f.collectActiveProviderChatIds(adapter, options), [])
+  assert.equal(f.commands.length, 0)
+  assert.equal(await f.updateCopilotProvider(options), null)
+  assert.deepEqual(
+    f.commands.map((command) => command.args[0]),
+    ['update', '--version']
+  )
 })
 test('Copilot never suggests downgrading a newer installation', async () => {
   assert.equal(await fixture('1.0.27').getCopilotUpdateAvailability(), null)

@@ -42,6 +42,7 @@ const fixture = (t, providerId = 'codex', queueUsageResetContinuation) => {
   }
   const native = {
     id: providerId,
+    getActiveChatIds: providerId === 'copilot' ? () => [] : undefined,
     onChatUpdated: (fn) => {
       listener = fn
       return () => {
@@ -294,6 +295,17 @@ test('Stop cancels a pending retry', async (t) => {
   t.mock.timers.tick(60000)
   await flush()
   assert.equal(calls.length, 1)
+})
+
+test('a scheduled Copilot retry counts as live work in its own environment', async (t) => {
+  const { adapter, fail } = fixture(t, 'copilot')
+  const container = { kind: 'container', tool: 'toolbox', name: 'dev' }
+  await adapter.startChat('do the task', { container })
+  fail('turn-1', 'HTTP 503 Service Unavailable', { container })
+  assert.deepEqual(adapter.getActiveChatIds(), [])
+  assert.deepEqual(adapter.getActiveChatIds({ container }), ['chat'])
+  await adapter.stopChat('chat')
+  assert.deepEqual(adapter.getActiveChatIds({ container }), [])
 })
 
 test('process cleanup cancels scheduled retries before terminating the boundary', async (t) => {
