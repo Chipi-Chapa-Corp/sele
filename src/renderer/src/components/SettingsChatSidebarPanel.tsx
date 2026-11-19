@@ -39,26 +39,41 @@ export function SettingsChatSidebarPanel(props: SettingsPanelProps): React.React
         </div>
       </SettingsSection>
       <SettingsSection id="settings-chat-sidebar-tabs" title="Header tabs">
-        {chatSidebarFilters.map(({ value, label, description }) => (
-          <div className={getSettingsFieldClassName()} key={value}>
-            <div className="settings-dialog__field-header">
-              <h3 id={`settings-sidebar-tab-${value}`}>{label}</h3>
-              <p>
-                {value === 'sleeping'
-                  ? 'Show the Sleeping tab and Sleep and Wake up buttons.'
-                  : description}
-              </p>
+        {chatSidebarFilters
+          .filter(({ value }) => !props.showWorkingAtBottom || value !== 'working')
+          .map(({ value, label, description }) => (
+            <div className={getSettingsFieldClassName()} key={value}>
+              <div className="settings-dialog__field-header">
+                <h3 id={`settings-sidebar-tab-${value}`}>{label}</h3>
+                <p>
+                  {value === 'sleeping'
+                    ? 'Show the Sleeping tab and Sleep and Wake up buttons.'
+                    : description}
+                </p>
+              </div>
+              <Switch
+                className="settings-switch"
+                aria-labelledby={`settings-sidebar-tab-${value}`}
+                checked={props.chatSidebarTabs[value]}
+                onChange={(event) =>
+                  props.handleChatSidebarTabChange(value, event.currentTarget.checked)
+                }
+              />
             </div>
-            <Switch
-              className="settings-switch"
-              aria-labelledby={`settings-sidebar-tab-${value}`}
-              checked={props.chatSidebarTabs[value]}
-              onChange={(event) =>
-                props.handleChatSidebarTabChange(value, event.currentTarget.checked)
-              }
-            />
+          ))}
+      </SettingsSection>
+      <SettingsSection id="settings-show-working-at-bottom" title="Show working at the bottom">
+        <div className={getSettingsFieldClassName()}>
+          <div className="settings-dialog__field-header">
+            <p>Group working chats by project below Done.</p>
           </div>
-        ))}
+          <Switch
+            className="settings-switch"
+            aria-labelledby="settings-show-working-at-bottom"
+            checked={props.showWorkingAtBottom}
+            onChange={(event) => props.handleShowWorkingAtBottomChange(event.currentTarget.checked)}
+          />
+        </div>
       </SettingsSection>
       <SettingsSection id="settings-chat-sidebar-limits" title="Limits">
         <div className={getSettingsFieldClassName()}>

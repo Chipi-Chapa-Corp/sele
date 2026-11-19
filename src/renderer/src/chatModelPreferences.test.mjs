@@ -98,6 +98,7 @@ test('navigation restores immediately, skips unchanged storage and batches outgo
     messageBoxSelectionProviderRef: ref('codex'),
     messageBoxSelectionChatKeyRef: ref('codex:first'),
     messageBoxSelectionsRef: ref({ codex: first }),
+    savedAccessChatKey: ref(null),
     chatMessageBoxSelectionsRef: ref({ 'codex:first': first, 'codex:second': second }),
     lastMessageBoxSelectionRef: ref(first),
     modelManuallySelectedRef: ref(false),

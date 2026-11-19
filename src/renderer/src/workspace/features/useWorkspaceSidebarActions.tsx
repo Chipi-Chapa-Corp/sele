@@ -79,7 +79,7 @@ export function useWorkspaceSidebarActions({ projectState }: WorkspaceSession) {
   }
 
   const handleSelectProjectIcon = async (group: ChatListGroupData): Promise<void> => {
-    if (group.kind !== 'cwd' || !group.cwd) return
+    if ((group.kind !== 'cwd' && group.kind !== 'working') || !group.cwd) return
     projectState.setEditingProjectCwd(group.cwd)
     projectState.setProjectDialogOpen(true)
   }

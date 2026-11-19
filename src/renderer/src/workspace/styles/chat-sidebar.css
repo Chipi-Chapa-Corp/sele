@@ -20,15 +20,39 @@
   padding-inline: 0.25rem;
 }
 
+.chat-sidebar__lists {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .chat-sidebar__body {
-  /* This grid track has its own size and scrollport. Keep conversation/composer
-     layout changes from traversing every sidebar row during chat navigation. */
+  /* Keep conversation/composer layout changes from traversing sidebar rows. */
   contain: strict;
   min-height: 0;
+  flex: 1 0 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0 0 0 var(--chat-sidebar-x);
   scrollbar-color: var(--glass-edge) transparent;
+}
+
+.chat-sidebar__body[data-has-groups] {
+  /* Leave the main list usable when Working needs most of the sidebar. */
+  min-height: min(4.5rem, 25%);
+}
+
+.chat-sidebar__working {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline-start: var(--chat-sidebar-x);
+  scrollbar-color: var(--glass-edge) transparent;
+}
+
+.chat-sidebar__working > .chat-list-stack {
+  gap: 0;
 }
 
 .chat-sidebar__footer {
@@ -36,15 +60,38 @@
 }
 
 .chat-sidebar__account-row {
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
 }
 
-.chat-sidebar__account-row > :first-child {
+.chat-sidebar__account-row > .chat-sidebar__account {
   min-width: 0;
+  flex: 1 1 max-content;
+}
+
+.chat-sidebar__account-row > .message-box__usage-control {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.chat-sidebar__account-row[data-stacked] > .message-box__usage-control {
+  flex-grow: 1;
+}
+
+.chat-sidebar__account-row[data-stacked]
+  > .message-box__usage-control:has(> .message-box__reset-queue-control) {
+  min-height: var(--control-height);
+  padding-inline-end: calc(var(--control-height) + 0.4rem);
+}
+
+.chat-sidebar__account-row[data-stacked] .message-box__reset-queue-control {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  margin: 0;
 }
 
 .chat-sidebar__loading-state {

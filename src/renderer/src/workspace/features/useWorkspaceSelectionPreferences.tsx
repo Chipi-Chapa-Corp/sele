@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { AppProject } from '../../../../shared/app'
 import { readAccountModelPreferences } from '../../accountModelPreferences'
 import {
@@ -71,6 +71,17 @@ export function useWorkspaceSelectionPreferences({
 
   const messageBoxChatKey = chatState.selectedChat ? getChatKey(chatState.selectedChat) : null
 
+  const savedAccessChatKey = useRef<string | null>(null)
+  const selectedDetail = chatState.chatDetail
+  const pendingCommand =
+    selectedDetail &&
+    selectedDetail.id === chatState.selectedChat?.id &&
+    (selectedDetail.writeAccess === undefined || selectedDetail.writeAccess === 'writable') &&
+    !selectedDetail.historyPreview &&
+    selectedDetail.pendingApproval?.type === 'command'
+      ? selectedDetail.pendingApproval
+      : null
+
   useLayoutEffect(() => {
     const currentSelection: MessageBoxSelection = {
       agentMode: providerState.agentMode,
@@ -86,6 +97,12 @@ export function useWorkspaceSelectionPreferences({
     const previousChatKey = providerState.messageBoxSelectionChatKeyRef.current
 
     if (previousProviderId !== provider.configProviderId || previousChatKey !== chatKey) {
+      // A newly opened chat may inherit a provider default. Only its own saved
+      // access selection can restore permissions for work already in progress.
+      savedAccessChatKey.current =
+        chatKey && providerState.chatMessageBoxSelectionsRef.current[chatKey]?.sandboxMode
+          ? chatKey
+          : null
       let preferencesChanged = false
       if (
         previousChatKey &&
@@ -197,6 +214,8 @@ export function useWorkspaceSelectionPreferences({
         })
         .catch((error) => console.error('Unable to update active chat permissions.', error))
     }
+    if (previousSelection?.sandboxMode !== currentSelection.sandboxMode)
+      savedAccessChatKey.current = chatKey
     providerState.chatMessageBoxSelectionsRef.current = updateChatPreferences(
       providerState.chatMessageBoxSelectionsRef.current,
       chatKey,
@@ -228,6 +247,41 @@ export function useWorkspaceSelectionPreferences({
     providerState.serviceTier,
     settings.effectiveAppSettings.chat.updateExistingChats,
     settings.effectiveAppSettings.chat.updateNewChats
+  ])
+
+  const pendingCommandId = pendingCommand?.id
+  const pendingCommandStartedAt = pendingCommand?.startedAt
+  const selectedChatId = chatState.selectedChat?.id
+  const selectedProviderId = chatState.selectedChat?.providerId
+  useEffect(() => {
+    if (
+      pendingCommandId === undefined ||
+      pendingCommandStartedAt === undefined ||
+      !selectedChatId ||
+      !selectedProviderId ||
+      !messageBoxChatKey ||
+      savedAccessChatKey.current !== messageBoxChatKey
+    )
+      return
+    const saved = providerState.chatMessageBoxSelectionsRef.current[messageBoxChatKey]
+    const forcedAccess = settings.effectiveAppSettings.chat.forceAccess
+    const access = forcedAccess === appChatManualDropdownValue ? saved?.sandboxMode : forcedAccess
+    if (access !== 'danger-full-access') return
+    void providerApi
+      .updateChatPermissions(selectedProviderId, selectedChatId, {
+        ...getApprovalAccessOptions('never', access),
+        sandboxMode: access,
+        restoreForCommand: { id: pendingCommandId, startedAt: pendingCommandStartedAt }
+      })
+      .catch((error) => console.error('Unable to restore active chat permissions.', error))
+  }, [
+    messageBoxChatKey,
+    selectedChatId,
+    selectedProviderId,
+    pendingCommandId,
+    pendingCommandStartedAt,
+    providerState.chatMessageBoxSelectionsRef,
+    settings.effectiveAppSettings.chat.forceAccess
   ])
 
   useEffect(() => {

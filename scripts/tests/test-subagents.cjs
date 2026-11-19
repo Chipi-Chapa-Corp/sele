@@ -23,6 +23,11 @@ if (!process.versions.electron) {
             updatedAt:now,status:null,cwd:'/fixture',cwdKind:'directory',projectCwd:null,
             branchName:null,worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,done:false,
             seenUpdatedAt:now,purpose:null,container:null}
+          const sidebarChats=[chat,
+            {...chat,id:'idle',title:'Idle chat in fixture project',createdAt:now-1},
+            {...chat,id:'done',title:'Completed chat',createdAt:now-2,done:true},
+            {...chat,id:'pinned-working',title:'Pinned working chat',createdAt:now-3,
+              cwd:'/other-project',pinned:true,status:'active'}]
           const message=(id,content,role='assistant')=>({type:'message',id,role,content})
           const detail={...chat,revision:1,capabilities:{editMessages:true,activeMessages:true},
             pendingApproval:null,pendingUserInput:null,contextUsage:null,subagents:[],
@@ -62,7 +67,7 @@ if (!process.versions.electron) {
             rateLimits:[],rateLimitResetCredits:null,errors:[]}
           const defaults={
             getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
-            getChats:()=>({chats:[chat],nextCursor:null}),getChat:()=>detail,
+            getChats:()=>({chats:sidebarChats,nextCursor:null}),getChat:()=>detail,
             getConversationViews:()=>[],getKnownChats:()=>({chats:[],nextCursor:null}),getLimitResetMessages:()=>[],
             markChatSeen:(_provider,_id,seenUpdatedAt)=>{chat.seenUpdatedAt=Math.max(chat.seenUpdatedAt,seenUpdatedAt);return {...chat}},
             getModels:()=>[{id:'fixture',label:'Fixture model',isDefault:true,supportedReasoningEfforts:[],defaultReasoningEffort:'medium'}],
@@ -503,9 +508,107 @@ if (!process.versions.electron) {
         `window.cancelCalls.length===2 && document.querySelectorAll('.chat-subagent-list__item').length===0`
       )
       assert.deepEqual(await run(`window.cancelCalls.sort()`), ['child', 'grandchild'])
+
+      await run(`
+        window.startAgents();window.emitParent();
+        document.querySelector('.chat-home__filter-tabs [aria-label="Active chats"]').click()
+      `)
+      await ready(
+        `document.querySelector('[data-sidebar-group-key="cwd:/fixture"] .chat-list-group__working-icon')`
+      )
+      await run(
+        `document.querySelector('.chat-home__filter-tabs [aria-label="Working chats"]').click()`
+      )
+      await ready(`document.querySelector('[aria-label="Working chats"][aria-pressed="true"]')`)
+      await run(`document.querySelector('button[aria-label="Settings"]').click()`)
+      await ready(`document.getElementById('settings-tab-chatSidebar')`)
+      await run(`document.getElementById('settings-tab-chatSidebar').click()`)
+      const workingSwitch = 'input[aria-labelledby="settings-show-working-at-bottom"]'
+      await ready(`document.querySelector('${workingSwitch}')`)
+      assert.equal(await run(`document.querySelector('${workingSwitch}').checked`), false)
+      assert.equal(
+        await run(`document.getElementById('settings-chat-sidebar-tabs').closest('section')
+          .nextElementSibling.contains(document.querySelector('${workingSwitch}'))`),
+        true
+      )
+      await run(`document.querySelector('${workingSwitch}').click()`)
+      assert.equal(
+        await run('preferencesApi.getItem("sele:chat-sidebar-working-at-bottom:v1").value'),
+        'true'
+      )
+      await run(`document.querySelector('[aria-label="Close settings"]').click()`)
+      await ready(`!document.querySelector('.chat-home__filter-tabs [aria-label="Working chats"]') &&
+        document.querySelector('[data-sidebar-group-key="working:cwd:/fixture"] [data-chat-id="root"]') &&
+        document.querySelector('[data-sidebar-group-key="working:cwd:/other-project"] [data-chat-id="pinned-working"]')`)
+      assert.equal(await run(`document.querySelectorAll('[data-chat-id="root"]').length`), 1)
+      assert.equal(
+        await run(`Boolean(document.querySelector('.chat-list-group__working-icon'))`),
+        false
+      )
+      assert.equal(
+        await run(`Boolean(document.querySelector('.chat-list-group--done .chat-list-group__title')
+          .compareDocumentPosition(document.querySelector('.chat-sidebar__working'))
+          & Node.DOCUMENT_POSITION_FOLLOWING)`),
+        true
+      )
+      assert.equal(
+        await run(`document.querySelector('.chat-sidebar__working').firstElementChild
+          .matches('.chat-list-stack')`),
+        true,
+        'the first row in Working is a project'
+      )
+      const workingOverflow = `(() => {
+        const working = document.querySelector('.chat-sidebar__working');
+        return working.scrollHeight > working.clientHeight;
+      })()`
+      assert.equal(await run(workingOverflow), false, 'Working fits without scrolling')
+      await run(`document.querySelector('.chat-sidebar').style.height = '190px'`)
+      await ready(workingOverflow)
+      assert.deepEqual(
+        await run(`(() => {
+          const working = document.querySelector('.chat-sidebar__working');
+          const body = document.querySelector('.chat-sidebar__body');
+          const panelTop = working.getBoundingClientRect().top;
+          body.scrollTop = body.scrollHeight;
+          working.scrollTop = working.scrollHeight;
+          return {
+            bodyScrollable: body.scrollTop > 0,
+            workingScrollable: working.scrollTop > 0,
+            staysPinned: working.getBoundingClientRect().top === panelTop,
+            atBottom: Math.abs(working.getBoundingClientRect().bottom -
+              document.querySelector('.chat-sidebar__footer').getBoundingClientRect().top) < 1
+          };
+        })()`),
+        { bodyScrollable: true, workingScrollable: true, staysPinned: true, atBottom: true }
+      )
+      await run(`document.querySelector('.chat-sidebar').style.removeProperty('height')`)
+      await ready(`!${workingOverflow}`)
+      await run(
+        `document.querySelector('.chat-home__filter-tabs [aria-label="Sleeping chats"]').click()`
+      )
+      await ready(`document.querySelector('[aria-label="Sleeping chats"][aria-pressed="true"]') &&
+        document.querySelector('[data-sidebar-group-key="working:cwd:/fixture"] [data-chat-id="root"]') &&
+        !document.querySelector('[data-chat-id="idle"]')`)
+      await run(
+        `document.querySelector('.chat-home__filter-tabs [aria-label="Active chats"]').click()`
+      )
+      await ready(`document.querySelector('[aria-label="Active chats"][aria-pressed="true"]') &&
+        document.querySelector('[data-sidebar-group-key="working:cwd:/fixture"] [data-chat-id="root"]')`)
+      await run('window.finishAgents()')
+      await ready(`document.querySelector('[data-sidebar-group-key="cwd:/fixture"] [data-chat-id="root"]') &&
+        !document.querySelector('[data-sidebar-group-key="working:cwd:/fixture"]')`)
+      await run(`document.querySelector('button[aria-label="Settings"]').click()`)
+      await ready(`document.getElementById('settings-tab-chatSidebar')`)
+      await run(`document.getElementById('settings-tab-chatSidebar').click()`)
+      await ready(`document.querySelector('${workingSwitch}')?.checked`)
+      await run(`document.querySelector('${workingSwitch}').click()`)
+      await run(`document.querySelector('[aria-label="Close settings"]').click()`)
+      await ready(`document.querySelector('.chat-home__filter-tabs [aria-label="Working chats"]') &&
+        !document.querySelector('.chat-sidebar__working')`)
+
       assert.equal(errors.length, 0, errors.join('\n'))
       console.log(
-        'Subagent workspace checks passed: live rows/spinners, nested depth, empty recovery, draft round trips, automatic history paging, native sleep activity, completion bubbles in both themes, scoped rows, selected completed agents, parent read state and scroll restoration, cascading stop.'
+        'Subagent workspace checks passed: live rows/spinners, nested depth, empty recovery, draft round trips, automatic history paging, native sleep activity, completion bubbles in both themes, scoped rows, selected completed agents, parent read state and scroll restoration, cascading stop, and working chats at the bottom of the sidebar.'
       )
     } catch (error) {
       console.error(error.stack)

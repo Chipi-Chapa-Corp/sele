@@ -101,6 +101,7 @@ export function useWorkspaceProjectResources({
     }
 
     sidebarModel.activeChatGroups.forEach((group) => addProjectIconEntry(group.cwd))
+    sidebarModel.workingChatGroups.forEach((group) => addProjectIconEntry(group.cwd))
     projectState.projects.forEach((project) => addProjectIconEntry(project.cwd))
     addProjectIconEntry(sourceState.newSessionCwd)
 
@@ -141,6 +142,7 @@ export function useWorkspaceProjectResources({
     })
   }, [
     sidebarModel.activeChatGroups,
+    sidebarModel.workingChatGroups,
     sourceState.newSessionCwd,
     projectState.projects,
     projectState.projectIconsByGroup,

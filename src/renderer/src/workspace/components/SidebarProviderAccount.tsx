@@ -187,7 +187,10 @@ export function SidebarProviderAccount({
   }
 
   return (
-    <div aria-label={isOpenCode ? 'Current OpenCode provider' : 'Current provider account'}>
+    <div
+      className="chat-sidebar__account"
+      aria-label={isOpenCode ? 'Current OpenCode provider' : 'Current provider account'}
+    >
       <Dropdown
         aria-label={isOpenCode ? 'OpenCode provider' : `${providerLabels[providerId]} account`}
         fill

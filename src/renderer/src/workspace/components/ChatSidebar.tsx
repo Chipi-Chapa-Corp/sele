@@ -4,7 +4,7 @@ import { SidebarProviderAccount } from './SidebarProviderAccount'
 import { UsageIndicator } from '../../components/UsageIndicator'
 import { getVisibleUsageBadges } from '../../usageBadges'
 import { selectBadgeBalance } from '../../accountBalances'
-import { memo, useState, type ReactElement } from 'react'
+import { memo, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { useStableProps } from '../stableProps'
 import { ChatSidebarHeader } from './ChatSidebarHeader'
 import type { ChatImportPreview } from '../../../../shared/chatArchive'
@@ -31,6 +31,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     handleChatSidebarFilterChange,
     chatCount,
     sidebarGroups,
+    workingChatGroups,
     chromeControlTheme,
     handleCloseSearch,
     handleNewChat,
@@ -88,7 +89,7 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
     searchLoading: sidebarSearch.loading
   })
 
-  const hasVisibleGroups = sidebarGroups.size > 0
+  const hasVisibleGroups = sidebarGroups.size > 0 || workingChatGroups.size > 0
 
   return (
     <aside className="chat-sidebar" aria-label="Recent conversations">
@@ -103,57 +104,67 @@ export function ChatSidebar(props: ChatSidebarProps): ReactElement {
           }}
         />
       )}
-      <div ref={setScrollParent} className="chat-sidebar__body">
-        {importError && (
-          <p className="chat__status" role="alert">
-            {importError}
-          </p>
-        )}
-        {loadState === 'loading' && chatCount === 0 && (
-          <ChatSidebarLoadingState label="Loading conversations" />
-        )}
-        {loadState === 'error' && <p className="chat__status">Unable to load chats.</p>}
-        {loadState === 'ready' && !hasVisibleGroups && !sidebarSearch.loading && (
-          <p className="chat__status">
-            {searchQuery.trim()
-              ? 'No matching chats.'
-              : chatSidebarFilter === 'sleeping'
-                ? 'No sleeping chats.'
-                : chatSidebarFilter === 'active'
-                  ? 'No active chats.'
-                  : chatSidebarFilter === 'working'
-                    ? 'No chats in progress.'
-                    : 'No chats found.'}
-          </p>
-        )}
-        {sidebarSearch.error && (
-          <p className="chat__status" role="status">
-            {sidebarSearch.error}
-          </p>
-        )}
-        <ChatSleepActionsContext.Provider
-          value={chatSidebarTabs.sleeping && (chatSidebarFilter === 'sleeping' ? 'wake' : 'sleep')}
-        >
-          <ChatReadStateContext.Provider value={chatReadState}>
-            <ChatSidebarGroups
-              scrollParent={scrollParent}
-              filterKey={chatSidebarFilter}
-              sidebarGroups={sidebarGroups}
+      <ChatSleepActionsContext.Provider
+        value={chatSidebarTabs.sleeping && (chatSidebarFilter === 'sleeping' ? 'wake' : 'sleep')}
+      >
+        <ChatReadStateContext.Provider value={chatReadState}>
+          <div className="chat-sidebar__lists">
+            <div
+              ref={setScrollParent}
+              className="chat-sidebar__body"
+              data-has-groups={sidebarGroups.size > 0 || undefined}
+            >
+              {importError && (
+                <p className="chat__status" role="alert">
+                  {importError}
+                </p>
+              )}
+              {loadState === 'loading' && chatCount === 0 && (
+                <ChatSidebarLoadingState label="Loading conversations" />
+              )}
+              {loadState === 'error' && <p className="chat__status">Unable to load chats.</p>}
+              {loadState === 'ready' && !hasVisibleGroups && !sidebarSearch.loading && (
+                <p className="chat__status">
+                  {searchQuery.trim()
+                    ? 'No matching chats.'
+                    : chatSidebarFilter === 'sleeping'
+                      ? 'No sleeping chats.'
+                      : chatSidebarFilter === 'active'
+                        ? 'No active chats.'
+                        : chatSidebarFilter === 'working'
+                          ? 'No chats in progress.'
+                          : 'No chats found.'}
+                </p>
+              )}
+              {sidebarSearch.error && (
+                <p className="chat__status" role="status">
+                  {sidebarSearch.error}
+                </p>
+              )}
+              <ChatSidebarGroups
+                scrollParent={scrollParent}
+                filterKey={chatSidebarFilter}
+                sidebarGroups={sidebarGroups}
+                renderChatGroup={renderChatGroup}
+                handleProjectDrop={handleProjectDrop}
+                handleProjectStackDragOver={handleProjectStackDragOver}
+              />
+              {sidebarSearch.hasMore && (
+                <Button
+                  theme="transparent"
+                  label="More search results"
+                  disabled={sidebarSearch.loading}
+                  callback={sidebarSearch.loadMore}
+                />
+              )}
+            </div>
+            <ChatSidebarWorking
+              workingChatGroups={workingChatGroups}
               renderChatGroup={renderChatGroup}
-              handleProjectDrop={handleProjectDrop}
-              handleProjectStackDragOver={handleProjectStackDragOver}
             />
-          </ChatReadStateContext.Provider>
-        </ChatSleepActionsContext.Provider>
-        {sidebarSearch.hasMore && (
-          <Button
-            theme="transparent"
-            label="More search results"
-            disabled={sidebarSearch.loading}
-            callback={sidebarSearch.loadMore}
-          />
-        )}
-      </div>
+          </div>
+        </ChatReadStateContext.Provider>
+      </ChatSleepActionsContext.Provider>
       {props.mobile ? (
         <div className="mobile-sidebar-footer">
           <ChatSidebarFooter
@@ -204,10 +215,42 @@ const ChatSidebarFooter = memo(function ChatSidebarFooter({
   ChatSidebarProps,
   'providerAccount' | 'usageIndicator'
 >): ReactElement {
+  const accountRowRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const row = accountRowRef.current
+    if (!row || mobile) return
+
+    const usage = row.querySelector('.message-box__usage-control')
+    if (!usage) return
+
+    const updateLayout = (): void => {
+      const account = row.querySelector('.chat-sidebar__account')
+      row.toggleAttribute(
+        'data-stacked',
+        Boolean(
+          account &&
+            usage.getClientRects().length &&
+            usage.getBoundingClientRect().top >= account.getBoundingClientRect().bottom
+        )
+      )
+    }
+    let frame = 0
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(updateLayout)
+    })
+    observer.observe(row)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [mobile])
+
   return (
     <footer className="chat-sidebar__footer">
       <AppUpdatePrompt />
-      <div className="chat-sidebar__account-row">
+      <div className="chat-sidebar__account-row" ref={accountRowRef}>
         <SidebarProviderAccount
           openCode={providerAccount.openCode}
           refreshKey={providerAccount.key}
@@ -234,5 +277,18 @@ const ChatSidebarFooter = memo(function ChatSidebarFooter({
         {!mobile && <UsageIndicator scopeKey={providerAccount.key} {...usageIndicator} />}
       </div>
     </footer>
+  )
+})
+
+const ChatSidebarWorking = memo(function ChatSidebarWorking({
+  workingChatGroups,
+  renderChatGroup
+}: Pick<ChatSidebarProps, 'workingChatGroups' | 'renderChatGroup'>): ReactElement | null {
+  if (workingChatGroups.size === 0) return null
+
+  return (
+    <section className="chat-sidebar__working" aria-label="Working">
+      <ChatSidebarGroups sidebarGroups={workingChatGroups} renderChatGroup={renderChatGroup} />
+    </section>
   )
 })

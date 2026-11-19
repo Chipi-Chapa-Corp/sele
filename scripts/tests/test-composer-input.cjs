@@ -287,6 +287,57 @@ if (!process.versions.electron) {
         await run(`renderFixture({models:[],model:'test'}); setText('')`)
         await settle()
       }
+
+      // A narrow chat panel can need two rows even in a wide desktop window.
+      await run(`
+        window.toolbarRoot = document.getElementById('root');
+        window.toolbarLayout = () => {
+          const toolbar = document.querySelector('.message-box__controls');
+          const bounds = toolbar.getBoundingClientRect();
+          const model = document.getElementById('chat-config-mode').getBoundingClientRect();
+          const others = [...toolbar.querySelectorAll('button:not(#chat-config-mode)')]
+            .map(button => button.getBoundingClientRect());
+          const center = rect => (rect.top + rect.bottom) / 2;
+          return {
+            singleRow: others.every(rect => Math.abs(center(rect) - center(model)) < 1),
+            fullWidth: Math.abs(model.width - bounds.width) < 1,
+            buttonsBelow: others.every(rect => rect.top >= model.bottom
+              && Math.abs(center(rect) - center(others[0])) < 1)
+          };
+        };
+        const models = ['Model', 'Model with a long descriptive name'].map((label, i) => ({
+          id: 'layout-' + i, label, description: '', isDefault: i === 0,
+          supportedReasoningEfforts: [], defaultReasoningEffort: 'medium'
+        }));
+        const noop = () => {};
+        renderFixture({models, model:'layout-1', showUsageIndicator:false,
+          onSetGoal:noop, showNotesButton:true, notesLabel:'Fixture', onNotesChange:noop,
+          showActions:true, onActionsChange:noop, onLastActionChange:noop, onRunAction:noop});
+      `)
+      await settle()
+      assert.equal(await run('toolbarLayout().singleRow'), true, 'wide toolbar uses one row')
+      await run("toolbarRoot.style.width = '360px'")
+      await settle()
+      assert.deepEqual(
+        await run('toolbarLayout()'),
+        { singleRow: false, fullWidth: true, buttonsBelow: true },
+        'toolbar wraps with a full-width selector and all other buttons below'
+      )
+      await run("renderFixture({model:'layout-0'})")
+      await settle()
+      assert.equal(
+        await run('toolbarLayout().singleRow'),
+        true,
+        'shorter model fits at the same width'
+      )
+      await run(`
+        toolbarRoot.style.removeProperty('width');
+        renderFixture({models:[], model:'test', showUsageIndicator:true,
+          onSetGoal:undefined, showNotesButton:false, notesLabel:undefined, onNotesChange:undefined,
+          showActions:false, onActionsChange:undefined, onLastActionChange:undefined, onRunAction:undefined});
+      `)
+      await settle()
+
       // Native predictions are draft hints; accepting one must never send it.
       const ghost = () =>
         run('document.querySelector(".message-box__prompt-suggestion")?.textContent ?? null')

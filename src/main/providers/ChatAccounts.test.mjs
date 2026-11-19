@@ -69,7 +69,12 @@ const setup = (stored = new Map(), sourceContainer = null, recovery = {}) => {
         return { id, account, revision: account === 'a' ? 100 : 1, items: [] }
       }
     }
-    if (account !== 'base') runtimes.set(account, adapter)
+    if (account !== 'base') {
+      adapter.updateChatPermissions = async (id, options) => {
+        calls.push(['updateChatPermissions', account, id, options])
+      }
+      runtimes.set(account, adapter)
+    }
     return adapter
   }
   const router = new ChatAccounts(make('base'), {
@@ -92,6 +97,14 @@ const setup = (stored = new Map(), sourceContainer = null, recovery = {}) => {
     }
   }
 }
+
+test('live permissions reach the owning account when the native adapter lacks the method', async () => {
+  const h = setup(new Map([['chat', 'a']]))
+  h.select('b')
+  const options = { sandboxMode: 'danger-full-access', approvalPolicy: 'never' }
+  await h.adapter.updateChatPermissions('chat', options)
+  assert.deepEqual(h.calls, [['updateChatPermissions', 'a', 'chat', options]])
+})
 
 test('discovery recovers each bound account in the background without opening chats', async () => {
   const recoveries = []

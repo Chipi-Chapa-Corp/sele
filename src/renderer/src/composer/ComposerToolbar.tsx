@@ -1,5 +1,5 @@
 import { Ellipsis, Paperclip } from 'lucide-react'
-import { memo } from 'react'
+import { memo, useLayoutEffect, useRef } from 'react'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type { ProviderActiveSendMode, ProviderApp, ProviderSkill } from '../../../shared/provider'
 import { Button } from '../components/Button'
@@ -123,6 +123,49 @@ export const ComposerToolbar = memo(function ComposerToolbar({
   const workspaceControlsVisible = Boolean(onSetGoal) || notesButtonVisible || actionsButtonVisible
 
   const promptControlsVisible = selectorsVisible || workspaceControlsVisible
+  const controlsRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const controls = controlsRef.current
+    if (!controls || !selectorsVisible || compact) return
+
+    const send = controls.querySelector('.message-box__send-controls')
+    if (!send) return
+
+    const updateLayout = (): void => {
+      // Measure the single row at its natural width, even when the visible layout is stacked.
+      controls.dataset.layout = 'measuring'
+      if (send.getBoundingClientRect().right > controls.getBoundingClientRect().right) {
+        controls.dataset.layout = 'stacked'
+      } else {
+        delete controls.dataset.layout
+      }
+    }
+
+    let frame = 0
+    const scheduleLayout = (): void => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        updateLayout()
+      })
+    }
+    const resizeObserver = new ResizeObserver(scheduleLayout)
+    resizeObserver.observe(controls)
+    resizeObserver.observe(send)
+    const contentObserver = new MutationObserver(scheduleLayout)
+    contentObserver.observe(controls, { childList: true, subtree: true, characterData: true })
+    document.fonts.addEventListener('loadingdone', scheduleLayout)
+    updateLayout()
+
+    return () => {
+      cancelAnimationFrame(frame)
+      resizeObserver.disconnect()
+      contentObserver.disconnect()
+      document.fonts.removeEventListener('loadingdone', scheduleLayout)
+      delete controls.dataset.layout
+    }
+  }, [compact, selectorsVisible])
 
   const controlsClassName = [
     'message-box__controls',
@@ -140,7 +183,7 @@ export const ComposerToolbar = memo(function ComposerToolbar({
           Chat settings
         </label>
       )}
-      <div className={controlsClassName}>
+      <div className={controlsClassName} ref={controlsRef}>
         <div className="message-box__attachment-controls">
           <Button
             aria-label="Attach files"
@@ -213,7 +256,7 @@ export const ComposerToolbar = memo(function ComposerToolbar({
                 onServiceTierChange={onServiceTierChange}
               />
             )}
-            {!compact && workspaceControls}
+            {!compact && <div className="message-box__workspace-controls">{workspaceControls}</div>}
           </div>
         )}
         <ComposerSendControls

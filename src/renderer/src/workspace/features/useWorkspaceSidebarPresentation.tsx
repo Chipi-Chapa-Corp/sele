@@ -6,6 +6,7 @@ import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
 export function useWorkspaceSidebarPresentation({
   chatState,
+  sidebarModel,
   subagentState,
   subagentPresentation,
   session,
@@ -13,26 +14,19 @@ export function useWorkspaceSidebarPresentation({
 }: WorkspaceChanges & {
   subagentPresentation: ReturnType<typeof useWorkspaceSubagentPresentation>
 }) {
-  const { committingChatKeys, selectedChatKey } = session
+  const { selectedChatKey } = session
   const { renderChatGroup } = interactions
+  const { isWorkingChat } = sidebarModel
 
   const committedWorkingProjectCwds = useRef(new Set<string | null>())
   const workingProjectCwds = useMemo(() => {
     const cwds = new Set<string | null>()
     for (const chat of chatState.chats) {
-      if (chat.imported) continue
-      const key = getChatKey(chat)
-      if (
-        chat.status === 'active' ||
-        committingChatKeys.has(key) ||
-        subagentState.workingSubagentChatKeys.has(key)
-      ) {
-        cwds.add(getChatProjectCwd(chat))
-      }
+      if (!chat.imported && isWorkingChat(chat)) cwds.add(getChatProjectCwd(chat))
     }
     const before = committedWorkingProjectCwds.current
     return before.size === cwds.size && [...cwds].every((cwd) => before.has(cwd)) ? before : cwds
-  }, [chatState.chats, committingChatKeys, subagentState.workingSubagentChatKeys])
+  }, [chatState.chats, isWorkingChat])
 
   useLayoutEffect(() => {
     committedWorkingProjectCwds.current = workingProjectCwds
@@ -48,7 +42,7 @@ export function useWorkspaceSidebarPresentation({
           ? {
               ...group,
               hasWorkingChat:
-                chatState.chatSidebarTabs.working &&
+                chatState.visibleChatSidebarTabs.working &&
                 chatState.activeChatSidebarFilter !== 'working' &&
                 chatState.activeChatSidebarFilter !== 'all' &&
                 workingProjectCwds.has(group.cwd)
@@ -60,7 +54,7 @@ export function useWorkspaceSidebarPresentation({
       )
     },
     [
-      chatState.chatSidebarTabs.working,
+      chatState.visibleChatSidebarTabs.working,
       chatState.activeChatSidebarFilter,
       renderChatGroup,
       selectedChatKey,

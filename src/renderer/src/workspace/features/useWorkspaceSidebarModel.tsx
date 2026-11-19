@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import type { AppContainerTarget } from '../../../../shared/app'
 import { isNoProjectChat, noProjectGroupKey } from '../../../../shared/noProject'
 import type { ProviderChat } from '../../../../shared/provider'
-import { matchesChatSidebarFilter } from '../../chatSidebarFilter'
+import { isWorkingSidebarChat, matchesChatSidebarFilter } from '../../chatSidebarFilter'
 import { reuseChatGroups } from '../../chatSidebarGroups'
 import { getChatSleepKey } from '../../chatSleep'
 import { type ChatListGroupData } from '../../components/ChatListGroup'
@@ -126,21 +126,33 @@ export function useWorkspaceSidebarModel({
     [chatState.manuallyUnreadChatKeys, handleMarkChatRead]
   )
 
-  const matchesSidebarFilter = useCallback(
+  const isWorkingChat = useCallback(
     (chat: ProviderChat): boolean => {
       const key = getChatKey(chat)
+      return isWorkingSidebarChat(
+        chat,
+        committingChatKeys.has(key) || subagentState.workingSubagentChatKeys.has(key)
+      )
+    },
+    [committingChatKeys, subagentState.workingSubagentChatKeys]
+  )
+
+  const matchesSidebarFilter = useCallback(
+    (chat: ProviderChat): boolean => {
+      const working = isWorkingChat(chat)
+      if (chatState.showWorkingAtBottom && working && !chat.imported) return true
       return matchesChatSidebarFilter(chat, chatState.activeChatSidebarFilter, {
         sleeping: isSleepingChat(chat),
-        working: committingChatKeys.has(key) || subagentState.workingSubagentChatKeys.has(key),
-        tabs: chatState.chatSidebarTabs
+        working,
+        tabs: chatState.visibleChatSidebarTabs
       })
     },
     [
       chatState.activeChatSidebarFilter,
+      chatState.showWorkingAtBottom,
+      chatState.visibleChatSidebarTabs,
       isSleepingChat,
-      chatState.chatSidebarTabs,
-      committingChatKeys,
-      subagentState.workingSubagentChatKeys
+      isWorkingChat
     ]
   )
 
@@ -166,21 +178,25 @@ export function useWorkspaceSidebarModel({
   )
 
   const previousChatGroupsRef = useRef<ChatListGroupData[]>([])
+  const isBottomWorkingChat = chatState.showWorkingAtBottom ? isWorkingChat : undefined
 
   const chatGroups = useMemo(
     () =>
       reuseChatGroups(
-        groupChatsForSidebar(filteredChats, projectRecordsByCwd, previousChatGroupsRef.current).map(
-          (group) => {
-            if (group.kind !== 'cwd' || !group.cwd) return group
+        groupChatsForSidebar(
+          filteredChats,
+          projectRecordsByCwd,
+          previousChatGroupsRef.current,
+          isBottomWorkingChat
+        ).map((group) => {
+          if ((group.kind !== 'cwd' && group.kind !== 'working') || !group.cwd) return group
 
-            const project = projectRecordsByCwd.get(group.cwd)
-            return project ? { ...group, projectName: getProjectDisplayName(project) } : group
-          }
-        ),
+          const project = projectRecordsByCwd.get(group.cwd)
+          return project ? { ...group, projectName: getProjectDisplayName(project) } : group
+        }),
         previousChatGroupsRef.current
       ),
-    [filteredChats, projectRecordsByCwd]
+    [filteredChats, projectRecordsByCwd, isBottomWorkingChat]
   )
 
   useLayoutEffect(() => {
@@ -241,6 +257,13 @@ export function useWorkspaceSidebarModel({
           },
     [projectState.doneProjectFilterValue, unfilteredDoneChatGroup]
   )
+  const workingChatGroups = useMemo(
+    () =>
+      new Map(
+        chatGroups.filter((group) => group.kind === 'working').map((group) => [group.key, group])
+      ),
+    [chatGroups]
+  )
   // Catalog snapshots are maps, so React's dev changed-props diagnostics do
   // not recursively format thousands of chats for each sidebar component.
   const sidebarGroups = useMemo(() => {
@@ -263,6 +286,8 @@ export function useWorkspaceSidebarModel({
     sidebarSearch,
     chatReadState,
     projectNamesByCwd,
-    activeChatGroups
+    activeChatGroups,
+    workingChatGroups,
+    isWorkingChat
   }
 }

@@ -57,8 +57,12 @@ const fixture = (nativeUpdate) => {
   }
   const adapter = withLiveChatPermissions(native)
   const unsubscribe = adapter.onChatUpdated((detail) => updates.push(detail))
-  const emit = (id, requestId, question = null) => {
-    const detail = makeDetail(id, requestId ? { id: requestId, type: 'command' } : null, question)
+  const emit = (id, requestId, question = null, startedAt = 100) => {
+    const detail = makeDetail(
+      id,
+      requestId ? { id: requestId, type: 'command', startedAt } : null,
+      question
+    )
     details.set(id, detail)
     listener?.(detail)
     return detail
@@ -211,6 +215,56 @@ test('stopping a chat disables host auto-approval', async () => {
   await f.adapter.stopChat('chat')
   f.emit('chat', 'late')
   await f.flush()
+  assert.deepEqual(f.replies, [])
+  f.adapter.dispose()
+})
+
+test('a recovered command uses the saved Full access choice only for the matching live request', async () => {
+  const f = fixture()
+  f.emit('chat', '0')
+  const restore = (id, startedAt) =>
+    f.adapter.updateChatPermissions('chat', {
+      ...full,
+      restoreForCommand: { id, startedAt }
+    })
+  await restore('1', 100)
+  await restore('0', 99)
+  assert.deepEqual(f.replies, [])
+  await restore('0', 100)
+  assert.deepEqual(f.replies, [['chat', '0', 'allow']])
+  f.emit('chat', '0', null, 200)
+  await f.flush()
+  assert.equal(f.replies.length, 2, 'a new connection can reuse request ID zero')
+  f.adapter.dispose()
+})
+
+test('a saved choice cannot override an active turn policy or answer a user question', async () => {
+  const f = fixture()
+  const restore = { ...full, restoreForCommand: { id: 'pending', startedAt: 100 } }
+  f.emit('chat', null, { id: 'pending' })
+  await f.adapter.updateChatPermissions('chat', restore)
+  await f.adapter.updateChatPermissions('chat', ask)
+  f.emit('chat', 'pending')
+  await f.adapter.updateChatPermissions('chat', restore)
+  assert.deepEqual(f.replies, [])
+  f.adapter.dispose()
+})
+
+test('stopping during a recovery read supersedes the saved permission', async () => {
+  const f = fixture()
+  const gate = deferred()
+  const pending = f.emit('chat', '0')
+  f.native.getChatWindow = async () => {
+    await gate.promise
+    return pending
+  }
+  const restore = f.adapter.updateChatPermissions('chat', {
+    ...full,
+    restoreForCommand: { id: '0', startedAt: 100 }
+  })
+  await f.adapter.stopChat('chat')
+  gate.resolve()
+  await restore
   assert.deepEqual(f.replies, [])
   f.adapter.dispose()
 })

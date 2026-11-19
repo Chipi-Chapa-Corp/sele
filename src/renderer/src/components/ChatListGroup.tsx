@@ -35,7 +35,7 @@ export type ChatListGroupData = {
   projectName?: string | null
   hasWorkingChat?: boolean
   chats: ProviderChat[]
-  kind: 'pinned' | 'cwd' | 'active' | 'done' | 'imported'
+  kind: 'pinned' | 'cwd' | 'active' | 'done' | 'imported' | 'working'
 }
 
 export type ChatListGroupProps = {
@@ -174,18 +174,18 @@ export const ChatListGroup = memo(function ChatListGroup({
   const headerRef = useRef<HTMLDivElement>(null)
   const hold = useHoldActions(headerRef)
   const sleepAction = useContext(ChatSleepActionsContext)
-  const projectLike = group.kind === 'cwd' || group.kind === 'imported'
-  const noProject = group.key === noProjectGroupKey
+  const projectGroup = group.kind === 'cwd' || group.kind === 'working'
+  const projectLike = projectGroup || group.kind === 'imported'
+  const noProject = group.key === noProjectGroupKey || group.key === `working:${noProjectGroupKey}`
   const sleepProjectChats = (durationMs?: number): void => {
     sleepChats(
       group.chats.map((chat) => getChatSleepKey(chat.providerId, chat.id)),
       durationMs
     )
   }
-  const groupLabel =
-    group.kind === 'cwd'
-      ? group.projectName?.trim() || formatProjectLabel(group.label)
-      : group.label
+  const groupLabel = projectGroup
+    ? group.projectName?.trim() || formatProjectLabel(group.label)
+    : group.label
   const sleepActionLabel = `${sleepAction === 'wake' ? 'Wake' : 'Sleep'} all chats in project ${groupLabel}`
   const toggleContent = (
     <>
@@ -327,7 +327,9 @@ export const ChatListGroup = memo(function ChatListGroup({
               title={
                 noProject ? 'Chats' : group.kind === 'imported' ? 'Imported chats' : 'Edit project'
               }
-              disabled={noProject || group.kind === 'imported'}
+              disabled={
+                noProject || group.kind === 'imported' || (group.kind === 'working' && !group.cwd)
+              }
               onClick={() => onSelectProjectIcon?.(group)}
             >
               {noProject ? (

@@ -20,6 +20,7 @@ const source = ts.createSourceFile(
   ts.ScriptKind.TSX
 )
 let effect
+let restoreEffect
 const find = (node) => {
   if (
     ts.isCallExpression(node) &&
@@ -27,6 +28,12 @@ const find = (node) => {
     node.arguments[0]?.getText(source).includes('const currentSelection: MessageBoxSelection')
   )
     effect = node.arguments[0]
+  if (
+    ts.isCallExpression(node) &&
+    node.expression.getText(source) === 'useEffect' &&
+    node.arguments[0]?.getText(source).includes('restoreForCommand')
+  )
+    restoreEffect = node.arguments[0]
   ts.forEachChild(node, find)
 }
 find(source)
@@ -54,6 +61,7 @@ const fixture = (selection = {}, overrides = {}) => {
     messageBoxSelectionChatKeyRef: { current: 'opencode:chat' },
     lastMessageBoxSelectionRef: { current: original },
     messageBoxSelectionsRef: { current: { opencode: original } },
+    savedAccessChatKey: { current: null },
     chatMessageBoxSelectionsRef: { current: {} },
     selectedChat: { id: 'chat', providerId: 'opencode', status: 'active', cwd: '/project' },
     chatDetailRef: { current: { status: 'active' } },
@@ -138,4 +146,45 @@ test('model changes and idle chat selections do not update running permissions',
   )
   idle.run()
   assert.equal(idle.calls.length, 0)
+})
+
+test('an outstanding command restores only the selected chat’s saved Full access choice', () => {
+  const f = fixture(
+    {},
+    {
+      pendingCommandId: '0',
+      pendingCommandStartedAt: 123,
+      selectedChatId: 'chat',
+      selectedProviderId: 'codex',
+      messageBoxChatKey: 'codex:chat',
+      savedAccessChatKey: { current: 'codex:other' },
+      chatMessageBoxSelectionsRef: {
+        current: { 'codex:chat': { sandboxMode: 'danger-full-access' } }
+      }
+    }
+  )
+  const code = ts.transpileModule(`(${restoreEffect.getText(source)})()`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText
+  const restore = () => vm.runInNewContext(code, workspaceTestGlobals(f.context))
+  restore()
+  assert.equal(f.calls.length, 0)
+  f.context.savedAccessChatKey.current = 'codex:chat'
+  f.context.effectiveAppSettings.chat.forceAccess = 'read-only'
+  restore()
+  assert.equal(f.calls.length, 0)
+  f.context.effectiveAppSettings.chat.forceAccess = 'manual'
+  restore()
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls)), [
+    [
+      'codex',
+      'chat',
+      {
+        approvalPolicy: 'never',
+        approvalsReviewer: 'user',
+        sandboxMode: 'danger-full-access',
+        restoreForCommand: { id: '0', startedAt: 123 }
+      }
+    ]
+  ])
 })

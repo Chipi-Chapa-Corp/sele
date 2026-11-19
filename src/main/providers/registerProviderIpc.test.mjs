@@ -828,10 +828,20 @@ test('live permission IPC validates choices and forwards only permission fields'
       additionalDirectories: ['/reference']
     }
   ])
+  await handler({}, 'codex', 'chat', {
+    ...options,
+    restoreForCommand: { id: '0', startedAt: 123, ignored: true }
+  })
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1][2].restoreForCommand)), {
+    id: '0',
+    startedAt: 123
+  })
   for (const value of [
     null,
     [],
     {},
+    { ...options, restoreForCommand: { id: 0, startedAt: 123 } },
+    { ...options, restoreForCommand: { id: '0' } },
     { ...options, sandboxMode: 'invalid' },
     { ...options, approvalPolicy: 'invalid' },
     { ...options, approvalsReviewer: 'invalid' },
@@ -840,7 +850,7 @@ test('live permission IPC validates choices and forwards only permission fields'
   ]) {
     assert.throws(() => handler({}, 'opencode-v2', 'chat', value), /Invalid/)
   }
-  assert.equal(calls.length, 1)
+  assert.equal(calls.length, 2)
 })
 
 test('question answer IPC forwards selected turn settings and validates permissions', async () => {

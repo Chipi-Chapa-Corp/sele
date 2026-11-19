@@ -765,6 +765,7 @@
 .message-box__controls {
   display: grid;
   min-width: 0;
+  grid-template-areas: "attachments selectors send";
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   justify-content: space-between;
@@ -772,18 +773,31 @@
 }
 
 .message-box__controls--no-selectors {
+  grid-template-areas: "attachments send";
   grid-template-columns: auto auto;
+}
+
+.message-box__controls[data-layout="measuring"] {
+  grid-template-columns: repeat(3, max-content);
+  justify-content: start;
+}
+
+.message-box__controls[data-layout="stacked"] {
+  grid-template-areas: "selectors selectors selectors" "attachments workspace send";
+  grid-template-columns: auto minmax(min-content, 1fr) minmax(min-content, max-content);
 }
 
 .message-box__attachment-controls {
   display: flex;
   min-width: 0;
   flex: none;
+  grid-area: attachments;
   align-items: center;
   gap: 0.4rem;
 }
 
-.message-box__selectors {
+.message-box__selectors,
+.message-box__workspace-controls {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -792,13 +806,38 @@
   gap: 0.4rem;
 }
 
+.message-box__selectors {
+  grid-area: selectors;
+}
+
+.message-box__workspace-controls:empty {
+  display: none;
+}
+
+.message-box__controls[data-layout="stacked"] > .message-box__selectors {
+  display: contents;
+}
+
+.message-box__controls[data-layout="stacked"] .message-box__selectors > .message-box__chat-config {
+  grid-area: selectors;
+}
+
+.message-box__controls[data-layout="stacked"] .message-box__workspace-controls {
+  grid-area: workspace;
+}
+
 .message-box__send-controls {
   display: flex;
   min-width: 0;
   flex: none;
+  grid-area: send;
   align-items: center;
   justify-content: flex-end;
   gap: 0.4rem;
+}
+
+.message-box__controls[data-layout="stacked"] .message-box__send-controls {
+  flex-wrap: wrap;
 }
 
 .message-box textarea::placeholder {
@@ -857,33 +896,15 @@
 }
 
 @container chat-panel (max-width: 75rem) {
-  .message-box__selectors {
+  .message-box__selectors,
+  .message-box__workspace-controls {
     gap: 0.3rem;
   }
 }
 
 @media (max-width: 56.25rem) {
   .message-box__controls {
-    grid-template-areas: "attachments selectors send";
-    grid-template-columns: auto minmax(0, 1fr) auto;
     justify-content: stretch;
-  }
-
-  .message-box__attachment-controls {
-    grid-area: attachments;
-  }
-
-  .message-box__selectors {
-    grid-area: selectors;
-  }
-
-  .message-box__send-controls {
-    grid-area: send;
-  }
-
-  .message-box__controls--no-selectors {
-    grid-template-areas: "attachments send";
-    grid-template-columns: auto auto;
   }
 }
 

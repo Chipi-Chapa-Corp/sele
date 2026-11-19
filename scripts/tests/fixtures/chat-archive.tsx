@@ -128,6 +128,7 @@ function Fixture() {
     chatCount: chats.length,
     loadState: 'ready',
     chromeControlTheme: 'transparent',
+    workingChatGroups: new Map(),
     sidebarGroups: new Map(
       ['pinned', 'imported', 'cwd'].flatMap((kind) =>
         groups.filter((group) => group.kind === kind).map((group) => [group.key, group])

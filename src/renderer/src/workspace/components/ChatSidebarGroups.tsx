@@ -26,10 +26,13 @@ import { ChatListDragContext } from '../../components/ChatListDragContext'
 import { useStableProps } from '../stableProps'
 import { appMaxChatsRenderedDefault } from '../../performanceSettings'
 
-type Props = Pick<
-  WorkspaceController['chatSidebar'],
-  'sidebarGroups' | 'renderChatGroup' | 'handleProjectDrop' | 'handleProjectStackDragOver'
-> & { scrollParent: HTMLDivElement | null; filterKey: string }
+type Props = Pick<WorkspaceController['chatSidebar'], 'sidebarGroups' | 'renderChatGroup'> &
+  Partial<
+    Pick<WorkspaceController['chatSidebar'], 'handleProjectDrop' | 'handleProjectStackDragOver'>
+  > & {
+    scrollParent?: HTMLDivElement | null
+    filterKey?: string
+  }
 
 type Entry = {
   mountPolicy: InitialSidebarMount
@@ -81,7 +84,8 @@ const VirtualRow = memo(function VirtualRow({ item }: { item: SidebarItem }) {
     committingChatKeys: p.committingChatKeys,
     latestCommitFinishedAtByChatKey: p.latestCommitFinishedAtByChatKey,
     canMarkDone: p.group.kind !== 'done',
-    canMarkUndone: p.group.kind === 'done' || p.group.kind === 'imported',
+    canMarkUndone:
+      p.group.kind === 'done' || p.group.kind === 'imported' || p.group.kind === 'working',
     reorderable: p.canReorderChats,
     projectNamesByCwd: p.projectNamesByCwd,
     projectIconsByCwd: p.projectIconsByCwd,
@@ -141,7 +145,7 @@ const renderSidebarEntry = (index: number, item: SidebarItem): ReactElement => (
   <SidebarEntry index={index} item={item} />
 )
 
-/** One viewport window for headers and rows; filtering never mounts the whole catalog. */
+/** Virtualize the main catalog and render the paginated Working groups at their natural height. */
 export const ChatSidebarGroups = memo(function ChatSidebarGroups({
   sidebarGroups,
   renderChatGroup,
@@ -150,10 +154,12 @@ export const ChatSidebarGroups = memo(function ChatSidebarGroups({
   scrollParent,
   filterKey
 }: Props): ReactElement {
+  const naturalHeight = scrollParent === undefined
   const list = useRef<VirtuosoHandle>(null)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: changing tabs starts a new initial mount batch.
   const mountPolicy = useMemo<InitialSidebarMount>(
-    () => ({ deferred: true, pending: 0, completed: false }),
-    [filterKey]
+    () => ({ deferred: !naturalHeight, pending: 0, completed: false }),
+    [naturalHeight, filterKey]
   )
   const hasMountedList = useRef(false)
   const previousFilter = useRef(filterKey)
@@ -243,7 +249,6 @@ export const ChatSidebarGroups = memo(function ChatSidebarGroups({
       }
     })
   }
-  // biome-ignore lint/correctness/useExhaustiveDependencies: changing tabs starts at the top of the new result set
   useLayoutEffect(() => {
     if (previousFilter.current === filterKey) return
     previousFilter.current = filterKey
@@ -254,7 +259,7 @@ export const ChatSidebarGroups = memo(function ChatSidebarGroups({
       className="chat-list-stack"
       onDragOver={handleProjectStackDragOver}
       onDrop={handleProjectDrop}
-      onKeyDown={moveTabFocus}
+      onKeyDown={naturalHeight ? undefined : moveTabFocus}
     >
       <ChatListDragContext.Provider value={drag}>
         <CurrentEntries.Provider value={entryLookup}>
@@ -270,6 +275,8 @@ export const ChatSidebarGroups = memo(function ChatSidebarGroups({
               itemContent={renderSidebarEntry}
             />
           )}
+          {naturalHeight &&
+            data.map((item, index) => <SidebarEntry key={item.id} index={index} item={item} />)}
         </CurrentEntries.Provider>
       </ChatListDragContext.Provider>
     </div>

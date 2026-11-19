@@ -1,4 +1,4 @@
-import { writeChatSidebarTabs } from '../../chatSidebarFilter'
+import { writeChatSidebarTabs, writeShowWorkingAtBottom } from '../../chatSidebarFilter'
 import { type SettingsPanelProps } from '../../components/SettingsPanel'
 import { appAppearanceZoomLevelToPercent } from '../../settings'
 import { getFolderName } from '../chatControllerUtils'
@@ -75,6 +75,11 @@ export function getWorkspaceSettingsPanel({
       const next = { ...chatState.chatSidebarTabs, [tab]: visible }
       chatState.setChatSidebarTabs(next)
       writeChatSidebarTabs(next)
+    },
+    showWorkingAtBottom: chatState.showWorkingAtBottom,
+    handleShowWorkingAtBottomChange: (enabled) => {
+      chatState.setShowWorkingAtBottom(enabled)
+      writeShowWorkingAtBottom(enabled)
     },
     handleGroupChatsByProjectChange: (enabled) => {
       const preference = enabled ? 'grouped' : 'ungrouped'

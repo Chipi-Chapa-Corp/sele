@@ -36,7 +36,7 @@ if (!process.versions.electron) {
               const contextUsage=s.context ? {source:'exact',usedTokens:20000,maxTokens:100000} : {source:'unavailable',usedTokens:null,maxTokens:null}
               if (s.sidebar) {
                 flushSync(()=>root.render(<ChatSidebar
-                  chatCount={0} chromeControlTheme="transparent" sidebarGroups={new Map()}
+                  chatCount={0} chromeControlTheme="transparent" sidebarGroups={new Map()} workingChatGroups={new Map()}
                   chatSidebarTabs={readChatSidebarTabs()} chatSidebarFilter="all" hasWorkingChats={false} handleChatSidebarFilterChange={noop}
                   loadState="ready" searchOpen={false} searchQuery="" searchInputRef={{current:null}}
                   sidebarSearch={{loading:false,error:null,hasMore:false}} renderWindowControls={()=>null}
@@ -44,7 +44,7 @@ if (!process.versions.electron) {
                   handleNewChat={noop} handleNewChatNoProject={noop} handleCloseSearch={noop} handleProjectDrop={noop} handleProjectStackDragOver={noop} handleImportedChat={noop}
                   setSearchOpen={noop} setSearchQuery={noop}
                   providerAccount={{openCode:{loading:s.providersLoading??false,providers:s.providers??[],selectedId:s.selectedProvider??'',error:null,manageOpen:false,onManage:noop,onClose:noop,onChanged:noop,onSelect:id=>window.renderFixture({selectedProvider:id})},key:'fixture:'+s.accountRevision,providerId:s.provider,chatId:s.chatId,container:s.container??null,available:true,updating:false,onSelect:async id=>{if(s.chatId)window.chatAccounts[s.chatId]=id;else window.activeAccount=id},onCreate:()=>window.createAccount(s.provider),onDelete:id=>window.deleteAccount(s.provider,id)}}
-                  usageIndicator={{chatId:s.chatId,providerId:s.provider,accountUsage:s.usageLoading?null:{rateLimits:s.limits,errors:[],updatedAt:1},accountUsageError:null,accountUsageState:s.usageLoading?'loading':'ready',contextUsage,displayUsage:s.settings.chat.displayUsage}}
+                  usageIndicator={{chatId:s.chatId,providerId:s.provider,accountUsage:s.usageLoading?null:{rateLimits:s.limits,errors:[],updatedAt:1},accountUsageError:null,accountUsageState:s.usageLoading?'loading':'ready',contextUsage,displayUsage:s.settings.chat.displayUsage,onQueueLimitReset:s.queueReset?noop:undefined}}
                 />))
                 return
               }
@@ -359,6 +359,50 @@ if (!process.versions.electron) {
       await waitFor(
         'document.querySelector("[aria-label=\\"Codex account\\"]")?.textContent.includes("Jane at Work")'
       )
+      await run(`
+        window.renderFixture({queueReset:true});
+        window.sidebarFooterLayout = () => {
+          const row = document.querySelector('.chat-sidebar__account-row');
+          const bounds = row.getBoundingClientRect();
+          const account = row.querySelector('[aria-label="Codex account"]').getBoundingClientRect();
+          const limits = [...row.querySelectorAll('[data-usage-limit]')]
+            .map(button => button.getBoundingClientRect());
+          const reset = row.querySelector('[aria-label="On Limit Reset"]').getBoundingClientRect();
+          const center = rect => (rect.top + rect.bottom) / 2;
+          return {
+            singleRow: [...limits, reset].every(rect => Math.abs(center(rect) - center(account)) < 1),
+            accountFullWidth: Math.abs(account.width - bounds.width) < 1,
+            limitsBelow: limits.every(rect => rect.top >= account.bottom
+              && Math.abs(center(rect) - center(reset)) < 1),
+            limitsAtLeft: Math.abs(limits[0].left - bounds.left) < 1,
+            resetAtRight: Math.abs(reset.right - bounds.right) < 1,
+            resetBesideFirstLimit: Math.abs(center(reset) - center(limits[0])) < 1,
+            limitsClearReset: limits.every(rect => rect.right <= reset.left)
+          };
+        };
+        void 0;
+      `)
+      assert.equal(await run('sidebarFooterLayout().singleRow'), true)
+      await run("document.getElementById('root').style.width = '255px'")
+      await waitFor('sidebarFooterLayout().resetAtRight && sidebarFooterLayout().limitsAtLeft')
+      assert.deepEqual(await run('sidebarFooterLayout()'), {
+        singleRow: false,
+        accountFullWidth: true,
+        limitsBelow: true,
+        limitsAtLeft: true,
+        resetAtRight: true,
+        resetBesideFirstLimit: true,
+        limitsClearReset: true
+      })
+      await run("document.getElementById('root').style.width = '176px'")
+      await waitFor('sidebarFooterLayout().limitsClearReset')
+      const narrowLayout = await run('sidebarFooterLayout()')
+      assert.equal(narrowLayout.resetBesideFirstLimit, true)
+      assert.equal(narrowLayout.resetAtRight, true)
+      await run("document.getElementById('root').style.removeProperty('width')")
+      await waitFor('sidebarFooterLayout().singleRow')
+      await run('window.renderFixture({queueReset:false})')
+
       // A chat retains its own account when the new-chat default changes.
       await run(
         "window.chatAccounts['bound-chat']='default';window.renderFixture({chatId:'bound-chat'})"

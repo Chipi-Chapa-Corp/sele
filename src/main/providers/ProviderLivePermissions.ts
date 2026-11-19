@@ -11,9 +11,17 @@ const allowsWithoutApproval = (options: ProviderPermissionOptions): boolean =>
 
 /** Keep live approval choices effective even when a provider snapshots them at turn start. */
 export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapter => {
-  const policies = new Map<string, ProviderPermissionOptions>()
+  const policies = new Map<string, ProviderPermissionOptions | null>()
   const latest = new Map<string, ProviderChatDetail>()
-  const attempted = new Map<string, Set<string>>()
+  // Request IDs are local to a provider connection and can be reused after reconnect.
+  const attempted = new Map<string, { id: string; startedAt: number }>()
+  const alreadyAttempted = (
+    chatId: string,
+    request: { id: string; startedAt: number }
+  ): boolean => {
+    const previous = attempted.get(chatId)
+    return previous?.id === request.id && previous.startedAt === request.startedAt
+  }
   const draining = new Map<string, Promise<void>>()
   const nativeUpdates = new Map<string, Promise<void>>()
   const listeners = new Set<Parameters<ProviderAdapter['onChatUpdated']>[0]>()
@@ -36,10 +44,8 @@ export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapt
           const policy = policies.get(id)
           const request = latest.get(id)?.pendingApproval
           if (!policy || !allowsWithoutApproval(policy) || !request) return
-          const tried = attempted.get(id) ?? new Set<string>()
-          attempted.set(id, tried)
-          if (tried.has(request.id)) return
-          tried.add(request.id)
+          if (alreadyAttempted(id, request)) return
+          attempted.set(id, { id: request.id, startedAt: request.startedAt })
           try {
             const detail = await adapter.resolveApproval(id, 'allow')
             if (disposed) return
@@ -63,7 +69,7 @@ export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapt
           policy &&
           allowsWithoutApproval(policy) &&
           request &&
-          !attempted.get(id)?.has(request.id)
+          !alreadyAttempted(id, request)
         ) {
           void drain(id)
         }
@@ -102,7 +108,7 @@ export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapt
     ...adapter,
     releaseChat: adapter.releaseChat
       ? async (id, options) => {
-          policies.delete(id)
+          policies.set(id, null)
           attempted.delete(id)
           latest.delete(id)
           await adapter.releaseChat!(id, options)
@@ -115,6 +121,29 @@ export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapt
       }
     },
     updateChatPermissions: async (id, options) => {
+      const command = options.restoreForCommand
+      if (command) {
+        if (policies.has(id) || options.sandboxMode !== 'danger-full-access') return
+        // Recovery can deliver the selected chat snapshot before its first live event.
+        remember(
+          await adapter.getChatWindow(
+            id,
+            { startIndex: null, limit: 1 },
+            { container: options.container }
+          )
+        )
+        const detail = latest.get(id)
+        const pending = detail?.pendingApproval
+        if (
+          disposed ||
+          policies.has(id) ||
+          (detail?.writeAccess !== undefined && detail.writeAccess !== 'writable') ||
+          pending?.type !== 'command' ||
+          pending.id !== command.id ||
+          pending.startedAt !== command.startedAt
+        )
+          return
+      }
       setPolicy(id, options)
       // Native updates are ordered, but host approval does not wait for them.
       const previous = nativeUpdates.get(id) ?? Promise.resolve()
@@ -158,7 +187,7 @@ export const withLiveChatPermissions = (adapter: ProviderAdapter): ProviderAdapt
     editMessage: (id, messageId, message, options) =>
       run(id, options, () => adapter.editMessage(id, messageId, message, options)),
     stopChat: (id) => {
-      policies.delete(id)
+      policies.set(id, null)
       attempted.delete(id)
       return adapter.stopChat(id)
     },

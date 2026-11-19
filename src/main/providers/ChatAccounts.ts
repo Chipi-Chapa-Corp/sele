@@ -219,7 +219,9 @@ export class ChatAccounts {
       }
     }
     for (const method of chatMethods) {
-      if (!base[method]) continue
+      // Live permissions are implemented by the account runtime wrapper, even for
+      // native providers that cannot change permissions during a turn.
+      if (method !== 'updateChatPermissions' && !base[method]) continue
       Object.assign(overrides, {
         [method]: (id: string, ...args: unknown[]) =>
           this.withChat(id, async (account) => {

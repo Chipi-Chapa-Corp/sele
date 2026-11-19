@@ -229,10 +229,12 @@ export const sortChatsForGroup = (
 export const groupChatsForSidebar = (
   chats: ProviderChat[],
   projectsByCwd: ReadonlyMap<string, AppProject>,
-  previous: ChatListGroupData[] = []
+  previous: ChatListGroupData[] = [],
+  isWorkingChat?: (chat: ProviderChat) => boolean
 ): ChatListGroupData[] => {
   const previousByKey = new Map(previous.map((group) => [group.key, group.chats]))
   const groupsByCwd = new Map<string, ChatListGroupData>()
+  const workingGroupsByCwd = new Map<string, ChatListGroupData>()
   const pinnedChats: ProviderChat[] = []
   const doneChats: ProviderChat[] = []
   const importedChats: ProviderChat[] = []
@@ -242,42 +244,45 @@ export const groupChatsForSidebar = (
       ;(chat.done ? doneChats : importedChats).push(chat)
       continue
     }
-    const projectCwd = getChatProjectCwd(chat)
-    const key = getChatGroupKey(chat)
-
-    if (chat.pinned) {
+    const working = isWorkingChat?.(chat) ?? false
+    if (!working && chat.pinned) {
       pinnedChats.push(chat)
       continue
     }
 
-    if (chat.done) {
+    if (!working && chat.done) {
       doneChats.push(chat)
       continue
     }
 
-    const existingGroup = groupsByCwd.get(key)
+    const projectCwd = getChatProjectCwd(chat)
+    const projectKey = getChatGroupKey(chat)
+    const groups = working ? workingGroupsByCwd : groupsByCwd
+    const key = working ? `working:${projectKey}` : projectKey
+    const existingGroup = groups.get(key)
 
     if (existingGroup) {
       existingGroup.chats.push(chat)
       continue
     }
 
-    groupsByCwd.set(key, {
+    groups.set(key, {
       key,
-      cwd: key === noProjectGroupKey ? null : projectCwd,
-      label: key === noProjectGroupKey ? 'Chats' : getChatCwdLabel(projectCwd),
+      cwd: projectKey === noProjectGroupKey ? null : projectCwd,
+      label: projectKey === noProjectGroupKey ? 'Chats' : getChatCwdLabel(projectCwd),
       chats: [chat],
-      kind: 'cwd'
+      kind: working ? 'working' : 'cwd'
     })
   }
 
-  const cwdGroups = sortProjectGroupsForSidebar(
-    Array.from(groupsByCwd.values()).map((group) => ({
-      ...group,
-      chats: sortChatsForGroup(group.chats, previousByKey.get(group.key))
-    })),
-    projectsByCwd
-  )
+  const sortProjectGroups = (groups: Map<string, ChatListGroupData>): ChatListGroupData[] =>
+    sortProjectGroupsForSidebar(
+      [...groups.values()].map((group) => ({
+        ...group,
+        chats: sortChatsForGroup(group.chats, previousByKey.get(group.key))
+      })),
+      projectsByCwd
+    )
   const pinnedGroups =
     pinnedChats.length === 0
       ? []
@@ -304,7 +309,7 @@ export const groupChatsForSidebar = (
           }
         ]
       : []),
-    ...cwdGroups,
+    ...sortProjectGroups(groupsByCwd),
     ...(doneChats.length === 0
       ? []
       : [
@@ -315,7 +320,8 @@ export const groupChatsForSidebar = (
             chats: sortDoneChats(doneChats, previousByKey.get(doneGroupKey)),
             kind: 'done' as const
           }
-        ])
+        ]),
+    ...sortProjectGroups(workingGroupsByCwd)
   ]
 }
 

@@ -164,7 +164,9 @@ const renderChatListGroup = (
       workingSubagentChatKeys={workingSubagentChatKeys}
       committingChatKeys={committingChatKeys}
       latestCommitFinishedAtByChatKey={latestCommitFinishedAtByChatKey}
-      canReorderChats={group.kind !== 'done' && searchTerms.length === 0}
+      canReorderChats={
+        group.kind !== 'done' && group.kind !== 'working' && searchTerms.length === 0
+      }
       projectDraggable={projectDraggable}
       projectDragging={group.key === draggedProjectGroupKey}
       projectDropPosition={projectDropPosition}
@@ -238,7 +240,7 @@ export function useChatInteractionController({
     runPromptActionRef
   } = chatState
   const { scheduleChatAutoScroll } = scroll
-  const { searchTerms, activeChatGroups, projectNamesByCwd } = sidebarModel
+  const { searchTerms, activeChatGroups, workingChatGroups, projectNamesByCwd } = sidebarModel
   const {
     collapsedCwdGroups,
     visibleChatPageCountsByGroup,
@@ -311,7 +313,11 @@ export function useChatInteractionController({
   // elements otherwise invalidate every memoized sidebar row on every update.
   const projectCwdsKey = JSON.stringify(
     [
-      ...new Set([...projectRecordsByCwd.keys(), ...activeChatGroups.map((group) => group.cwd)])
+      ...new Set([
+        ...projectRecordsByCwd.keys(),
+        ...activeChatGroups.map((group) => group.cwd),
+        ...Array.from(workingChatGroups.values(), (group) => group.cwd)
+      ])
     ].sort()
   )
   // Removing the last active chat changes the directory set. Reuse each

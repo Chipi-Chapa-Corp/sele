@@ -48,6 +48,8 @@ export type SettingsPanelProps = {
   handleGroupChatsByProjectChange: (enabled: boolean) => void
   chatSidebarTabs: ChatSidebarTabs
   handleChatSidebarTabChange: (tab: ChatSidebarFilter, visible: boolean) => void
+  showWorkingAtBottom: boolean
+  handleShowWorkingAtBottomChange: (enabled: boolean) => void
   appearanceFontSizeInputDraft: { key: string; value: string } | null
   appearanceZoomLevelInput: string
   browserDefaultScaleInput: string

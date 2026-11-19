@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type {
   ProviderChat,
   ProviderChatDetail,
@@ -8,7 +8,8 @@ import { type RecentChatReference } from '../../chatRecents'
 import {
   chatSidebarFilters,
   readChatSidebarFilter,
-  readChatSidebarTabs
+  readChatSidebarTabs,
+  readShowWorkingAtBottom
 } from '../../chatSidebarFilter'
 import { useSleepingChats } from '../../chatSleep'
 import { type ChatTurnWindow } from '../../chatTurnWindow'
@@ -68,12 +69,20 @@ export function useWorkspaceChatState() {
     usePreferenceState(readManuallyUnreadChats)
 
   const [chatSidebarTabs, setChatSidebarTabs] = usePreferenceState(readChatSidebarTabs)
+  const [showWorkingAtBottom, setShowWorkingAtBottom] = usePreferenceState(readShowWorkingAtBottom)
+  const visibleChatSidebarTabs = useMemo(
+    () =>
+      showWorkingAtBottom && chatSidebarTabs.working
+        ? { ...chatSidebarTabs, working: false }
+        : chatSidebarTabs,
+    [chatSidebarTabs, showWorkingAtBottom]
+  )
 
   const [chatSidebarFilter, setChatSidebarFilter] = useState(readChatSidebarFilter)
 
-  const activeChatSidebarFilter = chatSidebarTabs[chatSidebarFilter]
+  const activeChatSidebarFilter = visibleChatSidebarTabs[chatSidebarFilter]
     ? chatSidebarFilter
-    : (chatSidebarFilters.find(({ value }) => chatSidebarTabs[value])?.value ?? 'all')
+    : (chatSidebarFilters.find(({ value }) => visibleChatSidebarTabs[value])?.value ?? 'all')
 
   const [chatTurnWindow, setChatTurnWindow] = useState<ChatTurnWindow | null>(null)
 
@@ -189,6 +198,9 @@ export function useWorkspaceChatState() {
     setManuallyUnreadChatKeys,
     chatSidebarTabs,
     setChatSidebarTabs,
+    visibleChatSidebarTabs,
+    showWorkingAtBottom,
+    setShowWorkingAtBottom,
     setChatSidebarFilter,
     activeChatSidebarFilter,
     chatTurnWindow,

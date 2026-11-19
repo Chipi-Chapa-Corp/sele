@@ -1377,11 +1377,18 @@ const requirePermissionOptions = (value: unknown): ProviderPermissionOptions => 
       ))
   )
     throw new Error('Invalid additional directories')
+  const command = options.restoreForCommand
+  if (
+    command !== undefined &&
+    (!command || typeof command.id !== 'string' || !Number.isFinite(command.startedAt))
+  )
+    throw new Error('Invalid pending command')
   return {
     approvalPolicy: options.approvalPolicy,
     approvalsReviewer: options.approvalsReviewer,
     sandboxMode: options.sandboxMode,
-    additionalDirectories: directories
+    additionalDirectories: directories,
+    ...(command && { restoreForCommand: { id: command.id, startedAt: command.startedAt } })
   }
 }
 

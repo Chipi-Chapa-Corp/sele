@@ -1210,7 +1210,10 @@ export type ProviderOneShotOptions = ProviderTurnOptions & {
 export type ProviderPermissionOptions = Pick<
   ProviderTurnOptions,
   'approvalPolicy' | 'approvalsReviewer' | 'sandboxMode' | 'additionalDirectories' | 'container'
->
+> & {
+  /** Reattach a saved choice only if this command is still waiting and has no live policy. */
+  restoreForCommand?: Pick<ProviderPendingApproval, 'id' | 'startedAt'>
+}
 
 export const providerOneShotGenerationCanceledMessage = 'One-shot generation canceled'
 

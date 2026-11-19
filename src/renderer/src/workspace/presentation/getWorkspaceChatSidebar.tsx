@@ -129,7 +129,7 @@ export function getWorkspaceChatSidebar({
         )
     },
     chatSidebarFilter: chatState.activeChatSidebarFilter,
-    chatSidebarTabs: chatState.chatSidebarTabs,
+    chatSidebarTabs: chatState.visibleChatSidebarTabs,
     hasWorkingChats: sidebarPresentation.hasWorkingChats,
     chatReadState: sidebarModel.chatReadState,
     handleChatSidebarFilterChange: (filter: ChatSidebarFilter) => {
@@ -145,6 +145,7 @@ export function getWorkspaceChatSidebar({
     chatCount: chatState.chats.length,
     chromeControlTheme: chrome.chromeControlTheme,
     sidebarGroups: sidebarModel.sidebarGroups,
+    workingChatGroups: sidebarModel.workingChatGroups,
     handleCloseSearch: navigation.handleCloseSearch,
     handleNewChat: navigation.handleNewChat,
     handleNewChatNoProject: navigation.handleNewChatNoProject,

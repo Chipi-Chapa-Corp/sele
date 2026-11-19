@@ -20,6 +20,7 @@ export type ChatSidebarFilter = (typeof chatSidebarFilters)[number]['value']
 export type ChatSidebarTabs = Record<ChatSidebarFilter, boolean>
 const storageKey = 'sele:chat-sidebar-tabs:v1'
 const selectedFilterStorageKey = 'sele:chat-sidebar-filter:v1'
+const workingAtBottomStorageKey = 'sele:chat-sidebar-working-at-bottom:v1'
 const defaultTabs: ChatSidebarTabs = { all: true, active: true, sleeping: true, working: true }
 
 export const readChatSidebarFilter = (): ChatSidebarFilter => {
@@ -54,6 +55,18 @@ export const writeChatSidebarTabs = (tabs: ChatSidebarTabs): void => {
   preferences.setItem(storageKey, JSON.stringify(tabs))
 }
 
+export const readShowWorkingAtBottom = (): boolean =>
+  preferences.getItem(workingAtBottomStorageKey) === 'true'
+
+export const writeShowWorkingAtBottom = (enabled: boolean): void => {
+  preferences.setItem(workingAtBottomStorageKey, String(enabled))
+}
+
+export const isWorkingSidebarChat = (
+  chat: Pick<ProviderChat, 'status'>,
+  working: boolean
+): boolean => chat.status === 'active' || working
+
 export const matchesChatSidebarFilter = (
   chat: Pick<ProviderChat, 'status'>,
   filter: ChatSidebarFilter,
@@ -61,7 +74,7 @@ export const matchesChatSidebarFilter = (
 ): boolean => {
   if (filter === 'all') return true
   if (filter === 'sleeping') return sleeping
-  const isWorking = chat.status === 'active' || working
+  const isWorking = isWorkingSidebarChat(chat, working)
   if (filter === 'working') return isWorking
   return (!tabs.sleeping || !sleeping) && (!tabs.working || !isWorking)
 }
