@@ -1,4 +1,6 @@
 .chat-list-item {
+  --chat-list-item-actions-space: 5.5rem;
+
   position: relative;
   width: 100%;
   overflow: hidden;
@@ -13,6 +15,10 @@
     transform 180ms ease;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
+}
+
+.chat-list-item--compact-actions {
+  --chat-list-item-actions-space: 1.8rem;
 }
 
 .chat-list-item__main {
@@ -129,12 +135,12 @@
 
 .chat-list-item:hover:not(:has(.ui-input)) .chat-list-item__header,
 .chat-list-item:has(:focus-visible):not(:has(.ui-input)) .chat-list-item__header {
-  padding-right: 5.5rem;
+  padding-right: var(--chat-list-item-actions-space);
 }
 
 .chat-list-item--approval:hover:not(:has(.ui-input)) .chat-list-item__header,
 .chat-list-item--approval:has(:focus-visible):not(:has(.ui-input)) .chat-list-item__header {
-  padding-right: 9.3rem;
+  padding-right: calc(var(--chat-list-item-actions-space) + 3.8rem);
 }
 
 .chat-list-item__title {
@@ -407,16 +413,6 @@
 
   .chat-list-item__header {
     align-items: center;
-  }
-
-  .chat-list-item:hover:not(:has(.ui-input)) .chat-list-item__header,
-  .chat-list-item:has(:focus-visible):not(:has(.ui-input)) .chat-list-item__header {
-    padding-right: 5.5rem;
-  }
-
-  .chat-list-item--approval:hover:not(:has(.ui-input)) .chat-list-item__header,
-  .chat-list-item--approval:has(:focus-visible):not(:has(.ui-input)) .chat-list-item__header {
-    padding-right: 9.3rem;
   }
 }
 

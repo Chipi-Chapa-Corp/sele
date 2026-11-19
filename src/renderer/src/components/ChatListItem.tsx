@@ -97,6 +97,7 @@ const statusLabels = {
   waitingOnUserInput: 'Waiting for your input'
 } as const
 const finishedUnseenLabel = 'Finished since last viewed'
+const compactActionsMaxWidth = 240
 
 const minuteMs = 60_000
 const hourMs = 60 * minuteMs
@@ -182,6 +183,13 @@ export const ChatListItem = memo(function ChatListItem({
   const itemRef = useRef<HTMLElement>(null)
   const holdActions = useHoldActions(itemRef)
   const compact = useCompactLayout()
+  const [narrowRow, setNarrowRow] = useState(false)
+  const narrowRowRef = useRef(false)
+  const actionsInMenu = compact || narrowRow
+  const canChangeDone = chat.done ? canMarkUndone : canMarkDone
+  const doneActionLabel = chat.done ? 'Mark not done' : 'Mark done'
+  const DoneActionIcon = chat.done ? Undo2 : Check
+  const changeDone = (): void => onMarkDone(chat, !chat.done)
   const [touchDragArmed, setTouchDragArmed] = useState(false)
   const detailCardRef = useRef<HTMLDivElement>(null)
   const detailCardId = useId()
@@ -258,6 +266,20 @@ export const ChatListItem = memo(function ChatListItem({
             : turnOutcomeStatus
               ? statusDot(turnOutcomeStatus, statusLabels[turnOutcomeStatus])
               : showFinishedUnseen && statusDot('finished-unseen', finishedUnseenLabel)
+
+  useLayoutEffect(() => {
+    const item = itemRef.current
+    if (!item) return
+
+    const observer = new ResizeObserver(([entry]) => {
+      const narrow = entry.contentRect.width <= compactActionsMaxWidth
+      if (narrowRowRef.current === narrow) return
+      narrowRowRef.current = narrow
+      setNarrowRow(narrow)
+    })
+    observer.observe(item)
+    return () => observer.disconnect()
+  }, [])
 
   useLayoutEffect(() => {
     if (!detailOpen) return
@@ -366,7 +388,7 @@ export const ChatListItem = memo(function ChatListItem({
       data-chat-id={chat.id}
       data-touch-actions={holdActions.open ? 'open' : undefined}
       data-touch-input={holdActions.touch ? 'true' : undefined}
-      className={`chat-list-item${!committing && working ? ' chat-list-item--working' : ''}${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
+      className={`chat-list-item${actionsInMenu ? ' chat-list-item--compact-actions' : ''}${!committing && working ? ' chat-list-item--working' : ''}${pendingApproval ? ' chat-list-item--approval' : ''}${chat.pinned ? ' chat-list-item--pinned' : ''}${selected ? ' chat-list-item--selected' : ''}${showFinishedUnseen ? ' chat-list-item--unread' : ''}${userInputStatus ? ' chat-list-item--waiting-input' : ''}${draggable ? ' chat-list-item--reorderable' : ''}${dragging ? ' chat-list-item--dragging' : ''}${dropPosition ? ` chat-list-item--drop-${dropPosition}` : ''}`}
       draggable={!editingName && (!compact || (holdActions.open && touchDragArmed))}
       onDragEnd={onDragEnd}
       onDragOver={(event) => onDragOver?.(event, chat)}
@@ -424,6 +446,14 @@ export const ChatListItem = memo(function ChatListItem({
               onClick: () => {
                 holdActions.close()
                 onClick(chat)
+              },
+              onMouseDown: (event: React.MouseEvent<HTMLElement>) => {
+                if (event.button === 1) event.preventDefault()
+              },
+              onAuxClick: (event: React.MouseEvent<HTMLElement>) => {
+                if (event.button !== 1) return
+                event.preventDefault()
+                if (!chat.done && canMarkDone) changeDone()
               }
             })}
       >
@@ -500,33 +530,27 @@ export const ChatListItem = memo(function ChatListItem({
               />
             </>
           )}
-          <Button
-            theme="transparent"
-            size="small"
-            aria-label="Edit chat name"
-            title="Edit name"
-            callback={beginEditingName}
-            icon={<Pencil aria-hidden="true" />}
-          />
-          {!chat.done && canMarkDone && (
-            <Button
-              theme="transparent"
-              size="small"
-              aria-label="Mark chat done"
-              title="Mark done"
-              callback={() => onMarkDone(chat, true)}
-              icon={<Check aria-hidden="true" />}
-            />
-          )}
-          {chat.done && canMarkUndone && (
-            <Button
-              theme="transparent"
-              size="small"
-              aria-label="Mark chat not done"
-              title="Mark not done"
-              callback={() => onMarkDone(chat, false)}
-              icon={<Undo2 aria-hidden="true" />}
-            />
+          {!actionsInMenu && (
+            <>
+              <Button
+                theme="transparent"
+                size="small"
+                aria-label="Edit chat name"
+                title="Edit name"
+                callback={beginEditingName}
+                icon={<Pencil aria-hidden="true" />}
+              />
+              {canChangeDone && (
+                <Button
+                  theme="transparent"
+                  size="small"
+                  aria-label={chat.done ? 'Mark chat not done' : 'Mark chat done'}
+                  title={doneActionLabel}
+                  callback={changeDone}
+                  icon={<DoneActionIcon aria-hidden="true" />}
+                />
+              )}
+            </>
           )}
           <ActionMenu
             className="chat-list-item__menu"
@@ -540,6 +564,26 @@ export const ChatListItem = memo(function ChatListItem({
             }
             disabled={exporting}
             actions={() => [
+              ...(actionsInMenu && canChangeDone
+                ? [
+                    {
+                      id: 'done',
+                      label: doneActionLabel,
+                      icon: <DoneActionIcon />,
+                      callback: changeDone
+                    }
+                  ]
+                : []),
+              ...(actionsInMenu
+                ? [
+                    {
+                      id: 'edit',
+                      label: 'Edit name',
+                      icon: <Pencil />,
+                      callback: beginEditingName
+                    }
+                  ]
+                : []),
               ...(sleepActionsEnabled
                 ? [
                     {

@@ -27,7 +27,8 @@ module.exports = async (ui, { desktop, dirs, chat, artifacts, browserUrl }) => {
   await shot('long-conversation')
   await ui.navigate('Chats')
   await ui.hold(`[data-chat-id="${chat.chatId}"] .chat-list-item__main`)
-  await tap(`[data-chat-id="${chat.chatId}"] button[aria-label="Edit chat name"]`)
+  await tap(`[data-chat-id="${chat.chatId}"] [aria-label="Chat menu"]`)
+  await tap('.ui-dropdown__actions > .ui-dropdown__action:nth-child(2)')
   await waitFor(`Boolean(document.querySelector('[data-chat-id="${chat.chatId}"] input[aria-label="Chat name"]'))`)
   assert.equal(ui.keyboardVisible(),false,'rename waits for an explicit editing tap')
   await tap(`[data-chat-id="${chat.chatId}"] input[aria-label="Chat name"]`)
@@ -43,7 +44,8 @@ module.exports = async (ui, { desktop, dirs, chat, artifacts, browserUrl }) => {
   await ui.dismissKeyboard()
   await ui.navigate('Chats')
   await ui.hold(`[data-chat-id="${chat.chatId}"] .chat-list-item__main`)
-  await tap(`[data-chat-id="${chat.chatId}"] button[aria-label="Mark chat done"]`)
+  await tap(`[data-chat-id="${chat.chatId}"] [aria-label="Chat menu"]`)
+  await tap('.ui-dropdown__actions > .ui-dropdown__action:first-child')
   await desktop.waitFor(
     `providerApi.getChat(${JSON.stringify(chat.provider)},${JSON.stringify(chat.chatId)}).then(chat=>chat.done)`,
     { timeout: 10000 }

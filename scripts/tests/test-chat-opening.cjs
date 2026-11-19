@@ -38,10 +38,11 @@ if (!process.versions.electron) {
             const chats = Array.from({length:300}, (_, i) => ({
               id: String(i), providerId: 'codex', title: 'Conversation ' + i,
               cwd:'/project', createdAt:Date.now(), updatedAt:Date.now(), status:null,
+              done: i === 11,
               ...(i === 10 ? {pendingApproval:{id:'approval', title:'Approve'}} : {})
             }))
             window.renderSidebar = (selected, revision) => flushSync(() => sidebar.render(
-              <ChatList chats={chats} selectedChatKey={'codex:' + selected} reorderable
+              <ChatList chats={chats} selectedChatKey={'codex:' + selected} reorderable canMarkUndone
                 onSelect={chat => window.actions.push(['select', chat.id, revision])}
                 onMarkDone={(chat, done) => window.actions.push(['done', chat.id, done, revision])}
                 onRename={async (chat, title) => { window.actions.push(['rename', chat.id, title, revision]) }}
@@ -205,6 +206,80 @@ if (!process.versions.electron) {
         'memoized rows must still dispatch the latest handlers and preserve editing and drag/drop: ' +
           JSON.stringify(dragState)
       )
+      if (!process.argv.includes('--baseline')) {
+        const row = '[data-chat-id="10"]'
+        const menu = `${row} [aria-label="Chat menu"]`
+        const click = (selector) => run(`click(${JSON.stringify(selector)})`)
+        const openMenu = async (trigger) => {
+          await click(trigger)
+          const menuId = await run(
+            `CSS.escape(document.querySelector(${JSON.stringify(trigger)}).getAttribute('aria-controls'))`
+          )
+          return `.ui-dropdown__menu:has(> #${menuId}) .ui-dropdown__action`
+        }
+        const actionLabels = (selector) =>
+          run(
+            `Array.from(document.querySelectorAll(${JSON.stringify(selector)}), action => action.textContent)`
+          )
+        const hasInlineEdit = () =>
+          run(`Boolean(document.querySelector('${row} [aria-label="Edit chat name"]'))`)
+        await run('actions.length = 0; document.getElementById("sidebar").style.width = "210px"')
+        await settle()
+        assert.equal(await hasInlineEdit(), false)
+        assert.ok(await run(`!document.querySelector('${row} [aria-label="Mark chat done"]')`))
+        assert.ok(await run(`document.querySelector('${row} [aria-label^="Approve approval"]')`))
+        const narrowActions = await openMenu(menu)
+        assert.deepEqual((await actionLabels(narrowActions)).slice(0, 2), ['Mark done', 'Edit name'])
+        await click(`${narrowActions}:nth-child(1)`)
+        await click(`${await openMenu(menu)}:nth-child(2)`)
+        assert.ok(
+          await run(`document.querySelector('${row} input[aria-label="Chat name"]') !== null`)
+        )
+        await click(`${row} [aria-label="Cancel editing chat name"]`)
+
+        const doneActions = await openMenu('[data-chat-id="11"] [aria-label="Chat menu"]')
+        assert.deepEqual((await actionLabels(doneActions)).slice(0, 2), ['Mark not done', 'Edit name'])
+        await click(`${doneActions}:nth-child(1)`)
+
+        win.webContents.debugger.attach('1.3')
+        for (const id of ['10', '11']) {
+          const { x, y } = await run(`(() => {
+            const bounds = document.querySelector('[data-chat-id="${id}"] .chat-list-item__title').getBoundingClientRect()
+            return { x: bounds.left + 5, y: bounds.top + bounds.height / 2 }
+          })()`)
+          await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+            type: 'mousePressed',
+            button: 'middle',
+            buttons: 4,
+            clickCount: 1,
+            x,
+            y
+          })
+          await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+            type: 'mouseReleased',
+            button: 'middle',
+            buttons: 0,
+            clickCount: 1,
+            x,
+            y
+          })
+        }
+        win.webContents.debugger.detach()
+        assert.deepEqual(await run('actions'), [
+          ['done', '10', true, 1],
+          ['done', '11', false, 1],
+          ['done', '10', true, 1]
+        ])
+
+        await run('document.getElementById("sidebar").style.width = "300px"')
+        await settle()
+        assert.equal(await hasInlineEdit(), true)
+        const wideActions = await openMenu(menu)
+        const wideLabels = await actionLabels(wideActions)
+        assert.ok(wideLabels.includes('Pin'))
+        assert.ok(!wideLabels.some((label) => ['Mark done', 'Edit name'].includes(label)))
+        await click(menu)
+      }
       const content =
         '# Answer\n\nA **formatted** response with [source](/project/file.ts:12).\n\n' +
         '```typescript\nconst value = "<safe>";\n```\n\n' +
