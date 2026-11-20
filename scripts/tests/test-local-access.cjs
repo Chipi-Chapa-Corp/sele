@@ -463,6 +463,8 @@ if (!process.versions.electron) {
           assert.equal(advertisement.txt.version, '2')
           assert.equal(advertisement.txt.tls, '1')
           assert.match(advertisement.txt.id, /^[a-f0-9-]{36}$/)
+          assert.ok(advertisement.addresses.length, 'the service advertises a reachable address')
+          assert.ok(advertisement.addresses.every(require('node:net').isIPv4), 'discovery advertises only addresses served by the IPv4 listener')
           assert.equal(
             Object.keys(advertisement.txt).some((key) => /token|secret|key/i.test(key)),
             false

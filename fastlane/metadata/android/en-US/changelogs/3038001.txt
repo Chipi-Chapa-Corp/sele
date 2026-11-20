@@ -1,0 +1,2 @@
+The Your devices screen now shows connection progress when opening Sele or tapping a paired computer.
+Sele can reconnect after your computer’s network address changes. If the connection fails, the app explains what happened and lets you retry.

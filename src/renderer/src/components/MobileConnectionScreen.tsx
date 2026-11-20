@@ -2,7 +2,7 @@ import '../assets/main.css'
 import '../workspace/styles/workspace-shell.css'
 import '../workspace/styles/conversation-panel.css'
 import './MobileConnectionScreen.css'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Laptop, LoaderCircle, Radio, ArrowRight, X } from 'lucide-react'
 import { Button } from './Button'
 import { showPrivacyPolicy } from './PrivacyPolicyDialog'
@@ -13,6 +13,7 @@ import {
   type NearbyComputer
 } from '../mobileDiscovery'
 import { readMobileDevices, type MobileConnection } from '../mobileConnection'
+import { LanAccessRevokedError } from '../lanTransport'
 
 export function MobileConnectionScreen({
   error: initialError,
@@ -21,22 +22,19 @@ export function MobileConnectionScreen({
   onConnect
 }: {
   error?: string
-  previous?: MobileConnection | null
-  validate?: (connection: MobileConnection, signal: AbortSignal) => Promise<void>
+  previous: MobileConnection | null
+  validate: (connection: MobileConnection, signal: AbortSignal) => Promise<void>
   onConnect(connection: MobileConnection): void
 }): React.ReactElement {
   const [computers, setComputers] = useState<NearbyComputer[]>([])
   const [error, setError] = useState(initialError ?? null)
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null)
   const [waiting, setWaiting] = useState<NearbyComputer | null>(null)
-  const [connecting, setConnecting] = useState<string | null>(null)
+  const [connecting, setConnecting] = useState<NearbyComputer | null>(null)
   const [securityCode, setSecurityCode] = useState<string | null>(null)
   const [saved] = useState(readMobileDevices)
   const pairAgain = useRef(new Set<string>())
   const pairing = useRef<AbortController | null>(null)
-  const retryLast = useRef(!/invalid|revoked|certificate/i.test(initialError ?? ''))
-  const attempt = useRef<
-    (computer: NearbyComputer, connection?: MobileConnection) => Promise<void>
-  >(async () => {})
   useEffect(() => {
     const query = window.matchMedia('(prefers-color-scheme: dark)')
     const update = (): void => {
@@ -46,13 +44,14 @@ export function MobileConnectionScreen({
     query.addEventListener('change', update)
     return () => query.removeEventListener('change', update)
   }, [])
-  useEffect(() => {
-    setError(initialError ?? null)
-    return watchNearbyComputers((devices, discoveryError) => {
-      setComputers(devices)
-      if (discoveryError) setError(discoveryError)
-    })
-  }, [initialError])
+  useEffect(
+    () =>
+      watchNearbyComputers((devices, failure) => {
+        setComputers(devices)
+        setDiscoveryError(failure ?? null)
+      }),
+    []
+  )
   useEffect(() => () => pairing.current?.abort(), [])
   const connect = async (
     computer: NearbyComputer,
@@ -63,41 +62,24 @@ export function MobileConnectionScreen({
     pairing.current = abort
     setError(null)
     setSecurityCode(null)
-    setConnecting(computer.name)
-    const revoked =
-      savedConnection &&
-      (pairAgain.current.has(savedConnection.hostId ?? savedConnection.origin) ||
-        (/invalid|revoked|certificate/i.test(initialError ?? '') &&
-          (savedConnection.hostId ?? savedConnection.origin) ===
-            (previous?.hostId ?? previous?.origin)))
-    setWaiting(savedConnection && !revoked ? null : computer)
+    setConnecting(computer)
+    const savedId = savedConnection?.hostId ?? savedConnection?.origin
+    const useSavedConnection = savedConnection && savedId && !pairAgain.current.has(savedId)
+    setWaiting(useSavedConnection ? null : computer)
     try {
-      const connection =
-        savedConnection && !revoked
-          ? { ...savedConnection, origin: computer.origin }
-          : await pairComputer(computer, abort.signal, (code) => {
-              if (!abort.signal.aborted) setSecurityCode(code)
-            })
+      const connection = useSavedConnection
+        ? savedConnection
+        : await pairComputer(computer, abort.signal, (code) => {
+            if (!abort.signal.aborted) setSecurityCode(code)
+          })
       if (abort.signal.aborted) return
       setWaiting(null)
-      await validate?.(connection, abort.signal)
+      await validate(connection, abort.signal)
       if (!abort.signal.aborted) onConnect(connection)
     } catch (error) {
       if (!abort.signal.aborted) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (savedConnection && /certificate/i.test(message)) {
-          // Keep the original pin until an explicit second selection starts a
-          // new, code-verified approval. Background retries must never replace it.
-          pairAgain.current.add(savedConnection.hostId ?? savedConnection.origin)
-          retryLast.current = false
-        }
-        if (savedConnection && !revoked && /invalid|revoked/i.test(message)) {
-          retryLast.current = false
-          await connect(computer)
-          return
-        }
-        if (/invalid|revoked/i.test(message)) retryLast.current = false
-        setError(message)
+        if (savedId && error instanceof LanAccessRevokedError) pairAgain.current.add(savedId)
+        setError(error instanceof Error ? error.message : String(error))
       }
     } finally {
       if (pairing.current === abort) {
@@ -107,27 +89,19 @@ export function MobileConnectionScreen({
       }
     }
   }
-  attempt.current = connect
+  const resumePrevious = useEffectEvent((connection: MobileConnection) => {
+    void connect(
+      {
+        id: connection.hostId ?? connection.origin,
+        name: connection.name ?? 'Saved computer',
+        origin: connection.origin
+      },
+      connection
+    )
+  })
   useEffect(() => {
-    if (!previous || !validate) return
-    const retry = (): void => {
-      if (!retryLast.current || pairing.current) return
-      void attempt.current(
-        {
-          id: previous.hostId ?? previous.origin,
-          name: previous.name ?? 'Saved computer',
-          origin: previous.origin
-        },
-        previous
-      )
-    }
-    const first = setTimeout(retry, 500)
-    const timer = setInterval(retry, 6000)
-    return () => {
-      clearTimeout(first)
-      clearInterval(timer)
-    }
-  }, [previous, validate])
+    if (previous) resumePrevious(previous)
+  }, [previous])
 
   const devices: { computer: NearbyComputer; connection?: MobileConnection }[] = saved.map(
     (connection) => {
@@ -190,43 +164,48 @@ export function MobileConnectionScreen({
           </div>
         ) : (
           <>
-            {connecting && <p role="status">Connecting to {connecting}…</p>}
-            {previous && retryLast.current && !connecting && (
-              <p role="status">
-                Reconnecting to {previous.name ?? 'your last device'} when it’s available.
-              </p>
-            )}
             <div className="mobile-connect__section-label">
               <Radio size={15} aria-hidden="true" /> Computers
             </div>
             <div className="mobile-connect__computers">
-              {devices.map(({ computer, connection }) => (
-                <Button
-                  key={computer.id}
-                  theme="secondary"
-                  fill
-                  icon={<Laptop aria-hidden="true" />}
-                  callback={() => {
-                    retryLast.current = false
-                    void connect(computer, connection)
-                  }}
-                  label={
-                    <span className="mobile-connect__computer-copy">
-                      <span>
-                        {computer.name}
-                        {connection && (
-                          <small>
-                            {pairAgain.current.has(connection.hostId ?? connection.origin)
-                              ? 'Pair again'
-                              : 'Paired'}
-                          </small>
+              {devices.map(({ computer, connection }) => {
+                const savedId = connection?.hostId ?? connection?.origin
+                const busy =
+                  connecting !== null &&
+                  (connecting.id === computer.id || connecting.id === savedId)
+                return (
+                  <Button
+                    key={computer.id}
+                    theme="secondary"
+                    fill
+                    icon={<Laptop aria-hidden="true" />}
+                    aria-busy={busy || undefined}
+                    disabled={busy}
+                    callback={() => void connect(computer, connection)}
+                    label={
+                      <span className="mobile-connect__computer-copy">
+                        <span>
+                          {computer.name}
+                          {busy ? (
+                            <small role="status">Connecting…</small>
+                          ) : (
+                            savedId && (
+                              <small>
+                                {pairAgain.current.has(savedId) ? 'Pair again' : 'Paired'}
+                              </small>
+                            )
+                          )}
+                        </span>
+                        {busy ? (
+                          <LoaderCircle className="mobile-connect__spin" aria-hidden="true" />
+                        ) : (
+                          <ArrowRight aria-hidden="true" />
                         )}
                       </span>
-                      <ArrowRight aria-hidden="true" />
-                    </span>
-                  }
-                />
-              ))}
+                    }
+                  />
+                )
+              })}
               {!devices.length && (
                 <div className="mobile-connect__empty" role="status">
                   <LoaderCircle size={18} className="mobile-connect__spin" aria-hidden="true" />
@@ -248,16 +227,16 @@ export function MobileConnectionScreen({
                 label="Search again"
                 theme="secondary"
                 callback={() => {
-                  setError(null)
+                  setDiscoveryError(null)
                   restartNearbyDiscovery()
                 }}
               />
             </details>
           </>
         )}
-        {error && (
+        {(error ?? discoveryError) && (
           <p className="mobile-connect__error" role="alert">
-            {error}
+            {error ?? discoveryError}
           </p>
         )}
         <Button

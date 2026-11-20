@@ -146,9 +146,9 @@ export const forgetMobileConnection = async (): Promise<void> => {
 }
 
 export const requestMobileConnection = async (
-  error?: string,
-  previous?: MobileConnection | null,
-  validate?: (connection: MobileConnection, signal: AbortSignal) => Promise<void>
+  error: string | undefined,
+  previous: MobileConnection | null,
+  validate: (connection: MobileConnection, signal: AbortSignal) => Promise<void>
 ): Promise<MobileConnection> => {
   const [{ createRoot }, { createElement }, { MobileConnectionScreen }] = await Promise.all([
     import('react-dom/client'),

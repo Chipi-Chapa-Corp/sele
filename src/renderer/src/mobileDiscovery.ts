@@ -90,7 +90,11 @@ export const pairComputer = async (
         )
       )
     socket.onclose = () =>
-      finish(new Error('Pairing ended. Check Sele on your computer and try again.'))
+      finish(
+        new Error(
+          socket.connectionFailure ?? 'Pairing ended. Check Sele on your computer and try again.'
+        )
+      )
   })
 }
 

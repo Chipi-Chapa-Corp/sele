@@ -195,6 +195,7 @@ module.exports = async ({
     await revokeDevice((await getState()).devices[0].id)
     window.destroy()
     await open()
+    await wait('document.querySelector(".mobile-connect [role=alert]")?.textContent.includes("revoked")')
     await connect(link)
     assert.equal(sends(), 1)
     await run('document.querySelector(\'[aria-label="Settings"]\').click()')

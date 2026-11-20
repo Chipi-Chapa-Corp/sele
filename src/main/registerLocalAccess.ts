@@ -109,6 +109,8 @@ const start = async (assets: RendererAssets): Promise<void> => {
         type: 'sele',
         protocol: 'tcp',
         port: server.port,
+        // The local-access listener binds IPv4 only.
+        disableIPv6: true,
         txt: { version: '2', tls: '1', name: hostname(), id: configuration.computerId }
       })
       advertisement.on('error', (error) => {
