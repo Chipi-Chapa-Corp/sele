@@ -3,6 +3,7 @@ import test from 'node:test'
 import { createLocalPreferences } from './localPreferences.ts'
 import {
   parseMobileConnection,
+  parseMobilePairingAddress,
   mobileConnectionLink,
   mobileWebSocketUrl,
   readMobileConnection,
@@ -11,6 +12,26 @@ import {
 
 const token = 'a'.repeat(64)
 const fingerprint = 'c'.repeat(64)
+
+test('pairing by address accepts local IPv4 addresses and rejects links with credentials', () => {
+  assert.equal(parseMobilePairingAddress('192.168.1.20'), 'https://192.168.1.20:4589')
+  assert.equal(parseMobilePairingAddress(' https://10.0.0.6:9876/ '), 'https://10.0.0.6:9876')
+  assert.equal(parseMobilePairingAddress('192.168.1.020:4589'), 'https://192.168.1.20:4589')
+  for (const address of [
+    '192.168.1.256',
+    '192.168.1.20:65536',
+    '192.168.1.20:0',
+    '192.168.1.20:4589/#token=secret',
+    '192.168.1.20:4589/sele',
+    'http://192.168.1.20',
+    'https://user@192.168.1.20',
+    '8.8.8.8',
+    '172.32.0.1',
+    'example.com'
+  ]) {
+    assert.throws(() => parseMobilePairingAddress(address), /local IPv4 address and port/)
+  }
+})
 
 test('Android connection links select the LAN host independently of the packaged app origin', () => {
   const connection = parseMobileConnection(

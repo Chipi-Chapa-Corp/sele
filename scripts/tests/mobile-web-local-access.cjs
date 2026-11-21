@@ -13,7 +13,7 @@ module.exports = async ({
   revokeDevice
 }) => {
   const computer = await getState()
-  let discoveryVisible = true
+  let discoveryVisible = false
   const browser = session.fromPartition('persist:sele-android-web-fixture')
   browser.setCertificateVerifyProc((request, done) => {
     const actual = new (require('node:crypto').X509Certificate)(request.certificate.data).fingerprint256.replaceAll(':', '').toLowerCase()
@@ -113,6 +113,12 @@ module.exports = async ({
     await window.loadURL('http://sele.localhost')
   }
   const run = (expression) => window.webContents.executeJavaScript(expression)
+  const captureChooser = async (name) => {
+    await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    const images = path.resolve('test-results/mobile-ui')
+    await fs.mkdir(images, { recursive: true })
+    await fs.writeFile(path.join(images, name), (await window.webContents.capturePage()).toPNG())
+  }
   const wait = async (expression) => {
     const start = Date.now()
     while (Date.now() - start < 20000) {
@@ -123,10 +129,30 @@ module.exports = async ({
       `Mobile bundle timeout: ${expression}\n${await run('document.body.innerText')}\n${errors.join('\n')}`
     )
   }
-  const connect = async (url) => {
-    await wait('Boolean(document.querySelector(".mobile-connect__computers button"))')
-    assert.equal(await run('Boolean(document.querySelector(".mobile-connect input"))'), false)
-    await run('document.querySelector(".mobile-connect__computers button").click()')
+  const connect = async (byAddress = false) => {
+    if (byAddress) {
+      await wait('document.querySelector(".mobile-connect__empty")?.textContent.includes("No devices found")')
+      assert.equal(await run('Boolean(document.querySelector(".mobile-connect__computers button"))'), false)
+      assert.ok(await run(`(() => {
+        const content = document.querySelector('.mobile-connect__content').getBoundingClientRect();
+        const footer = document.querySelector('.mobile-connect__footer').getBoundingClientRect();
+        return content.top > innerHeight / 4 && content.bottom <= footer.top && footer.bottom <= innerHeight;
+      })()`), 'the empty chooser is centered with its privacy footer below it')
+      await captureChooser('no-devices-web.png')
+      await run(`Array.from(document.querySelectorAll('.mobile-connect button'))
+        .find(button => button.textContent === 'Pair by address').click()`)
+      await wait('Boolean(document.getElementById("mobile-computer-address"))')
+      await captureChooser('pair-by-address-web.png')
+      await run(`(() => {
+        const input = document.getElementById('mobile-computer-address');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(new URL(link).host)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`)
+      await run('document.querySelector(".mobile-connect__address").requestSubmit()')
+    } else {
+      await wait('Boolean(document.querySelector(".mobile-connect__computers button"))')
+      await run('document.querySelector(".mobile-connect__computers button").click()')
+    }
     await wait('document.body.innerText.includes("Allow this device on")')
     let request
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -135,6 +161,7 @@ module.exports = async ({
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
     assert.ok(request)
+    assert.equal(await run('document.querySelector(".mobile-connect__waiting strong").textContent'), request.securityCode)
     await decidePairing(request.id, true)
     await wait('Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))')
   }
@@ -142,7 +169,7 @@ module.exports = async ({
   try {
     await open()
     assert.equal(await run('location.origin'), 'http://sele.localhost')
-    await connect(link)
+    await connect(true)
     await run(
       'document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()'
     )
@@ -195,7 +222,8 @@ module.exports = async ({
     await revokeDevice((await getState()).devices[0].id)
     window.destroy()
     await open()
-    await connect(link)
+    await wait('document.querySelector(".mobile-connect [role=alert]")?.textContent.includes("revoked")')
+    await connect()
     assert.equal(sends(), 1)
     await run('document.querySelector(\'[aria-label="Settings"]\').click()')
     await wait('Boolean(document.getElementById("settings-tab-localNetwork"))')
@@ -215,7 +243,7 @@ module.exports = async ({
       []
     )
     console.log(
-      'ANDROID WEB BUNDLE PASSED: app origin, LAN pairing, chat send/stream, saved host, restart, key revocation, host switching'
+      'ANDROID WEB BUNDLE PASSED: app origin, pairing by address with no discovery, matching security codes, chat send/stream, saved host, restart, key revocation, host switching'
     )
   } finally {
     window?.destroy()

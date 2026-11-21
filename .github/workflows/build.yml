@@ -217,6 +217,9 @@ jobs:
       - name: Verify artifact
         run: |
           node scripts/verify-packaged-runtime.mjs dist/mac-arm64/Sele.app/Contents/Resources/app.asar
+          plist="dist/mac-arm64/Sele.app/Contents/Info.plist"
+          test -n "$(plutil -extract NSLocalNetworkUsageDescription raw "$plist")"
+          test "$(plutil -extract NSBonjourServices.0 raw "$plist")" = "_sele._tcp"
           hdiutil verify "dist/sele-macos-arm64.dmg"
 
       - name: Upload macOS disk image

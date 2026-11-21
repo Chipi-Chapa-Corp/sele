@@ -76,7 +76,7 @@ test('a changed certificate stops retries before credentials can reach another c
 test('a silent handshake times out and closes cleanly; saved devices keep retrying', async (t) => {
   const { transport } = setup(t)
   const connect = transport.connect()
-  const failed = assert.rejects(connect, /Connection lost/)
+  const failed = assert.rejects(connect, /Cannot reach Sele/)
   t.mock.timers.tick(4000)
   await failed
   assert.equal(Socket.sockets[0].readyState, 3)
@@ -89,7 +89,7 @@ test('a silent handshake times out and closes cleanly; saved devices keep retryi
 test('discovery replaces an unreachable endpoint and stale socket callbacks cannot disconnect its replacement', async (t) => {
   const { transport } = setup(t)
   const initial = transport.connect()
-  const failed = assert.rejects(initial, /Connection lost/)
+  const failed = assert.rejects(initial, /Cannot reach Sele/)
   const stale = Socket.sockets[0].onclose
   transport.updateEndpoints(['ws://192.168.1.20:4589/sele/ws', 'ws://192.168.1.2:4589/sele/ws'])
   await failed
@@ -103,6 +103,22 @@ test('discovery replaces an unreachable endpoint and stale socket callbacks cann
     true,
     'a discovery change never interrupts an established connection'
   )
+})
+
+test('a saved address can fall back to a discovered endpoint and report its connection error', async (t) => {
+  const { transport } = setup(t)
+  const saved = transport.endpoint
+  const discovered = 'ws://192.168.1.20:4589/sele/ws'
+  transport.updateEndpoints([saved, discovered])
+  const failed = assert.rejects(transport.waitUntilReady(10_000), /refused the connection/)
+  assert.equal(Socket.sockets[0].url, saved)
+  Socket.sockets[0].disconnect()
+  t.mock.timers.tick(500)
+  assert.equal(Socket.sockets[1].url, discovered)
+  Socket.sockets[1].connectionFailure = 'The computer refused the connection.'
+  Socket.sockets[1].disconnect()
+  t.mock.timers.tick(9500)
+  await failed
 })
 
 test('foreground heartbeat detects half-open sockets and reconnects without replaying a mutation', async (t) => {

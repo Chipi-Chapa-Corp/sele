@@ -38,6 +38,10 @@ nsis:
   createDesktopShortcut: always
 mac:
   icon: build/icon.icns
+  extendInfo:
+    NSLocalNetworkUsageDescription: Sele uses your local network so the Android app can find and connect to this Mac.
+    NSBonjourServices:
+      - _sele._tcp
   # Computer Use authenticates its client/helper using GitHub's signing identity.
   # Re-signing these vendor binaries breaks authorization and their existing TCC grants.
   signIgnore:

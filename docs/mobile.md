@@ -8,6 +8,11 @@ Enable **Settings → Local network → Allow local network access** on the comp
 computer in the Android app and approve the request only when the security codes match
 on both devices. Approved devices reconnect
 without entering a code or copying a link. The computer must remain awake with Sele running.
+On macOS, allow Sele when prompted for Local Network access. If discovery is empty after
+denying the prompt, enable Sele in **System Settings → Privacy & Security → Local Network**
+and reopen Sele.
+If discovery comes up empty, select **Pair by address** on the phone. Enter the IPv4 address
+and port shown in **Local network** on the computer, then compare the same approval code.
 
 ## Connection and pairing
 
@@ -15,7 +20,7 @@ without entering a code or copying a link. The computer must remain awake with S
 using DNS-SD. Its public TXT record contains a stable computer ID, display name, and protocol
 version and TLS support. Credentials are never advertised. The Android `LocalNetworkPlugin` uses NsdManager
 to discover computers. The device picker merges nearby computers with saved pairings by stable
-computer ID; addresses and connection links are not shown. The last connected computer is tried
+computer ID. The last connected computer is tried
 immediately while discovery runs in the background. Switching computers preserves previous pairings.
 Android holds a multicast lock during discovery, restarts discovery when its default network changes,
 and advertises all resolved usable addresses to the transport. Wi-Fi bands do not define device

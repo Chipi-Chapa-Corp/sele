@@ -445,33 +445,57 @@ if (!process.versions.electron) {
           { enabled: true, port }
         )
         assert.ok(state.urls.length, 'an actual LAN address is needed to test encrypted LAN access')
-        const { Bonjour } = require('bonjour-service')
-        const discovery = new Bonjour()
-        let browser
+        const lanAddress = new URL(state.urls[0]).hostname
+        const discovery = require('multicast-dns')({ bind: '0.0.0.0', interface: lanAddress })
         try {
-          const advertisement = await new Promise((resolve, reject) => {
+          const { target, txt, addresses } = await new Promise((resolve, reject) => {
             const timeout = setTimeout(
               () => reject(new Error('Sele did not advertise its local service.')),
               12000
             )
-            browser = discovery.find({ type: 'sele' }, (service) => {
-              if (service.port !== port) return
+            discovery.on('response', (packet, source) => {
+              // A phone sees the responses from its LAN interface.
+              if (source.address !== lanAddress) return
+              const records = [...packet.answers, ...packet.additionals]
+              const service = records.find(({ type, data }) => type === 'SRV' && data.port === port)
+              if (!service) return
+              const pointer = records.find(
+                ({ type, name, data }) =>
+                  type === 'PTR' && name === '_sele._tcp.local' && data === service.name
+              )
+              const attributes = records.find(
+                ({ type, name }) => type === 'TXT' && name === service.name
+              )
+              if (!pointer || !attributes) return
               clearTimeout(timeout)
-              resolve(service)
+              const { target } = service.data
+              resolve({
+                target,
+                txt: attributes.data.map((entry) => entry.toString()),
+                addresses: records
+                  .filter(({ type, name }) => (type === 'A' || type === 'AAAA') && name === target)
+                  .map(({ data }) => data)
+              })
             })
+            discovery.query('_sele._tcp.local', 'PTR')
           })
-          assert.equal(advertisement.txt.version, '2')
-          assert.equal(advertisement.txt.tls, '1')
-          assert.match(advertisement.txt.id, /^[a-f0-9-]{36}$/)
-          assert.equal(
-            Object.keys(advertisement.txt).some((key) => /token|secret|key/i.test(key)),
-            false
+          assert.match(state.computerId, /^[a-f0-9-]{36}$/)
+          assert.deepEqual(txt.sort(), [
+            `id=${state.computerId}`,
+            `name=${state.computerName}`,
+            'tls=1',
+            'version=2'
+          ])
+          assert.equal(target, `sele-${state.computerId}.local`)
+          assert.ok(addresses.includes(lanAddress), 'the service advertises the LAN address')
+          assert.ok(
+            addresses.every(require('node:net').isIPv4),
+            'discovery advertises only addresses served by the IPv4 listener'
           )
           console.log(
             'LOCAL DISCOVERY PASSED: public service identity and port; no access credentials'
           )
         } finally {
-          browser?.stop()
           discovery.destroy()
         }
         // Trust only this fixture's exact certificate, never all self-signed certificates.

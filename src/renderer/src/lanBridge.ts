@@ -9,7 +9,7 @@ import { providerIpcChannels } from '../../shared/provider'
 import { preferencesChannel, type PreferenceResult } from '../../shared/preferences'
 import { isLocalPreference } from '../../shared/preferenceSync'
 import { createLocalPreferences } from './localPreferences'
-import { LanAccessRevokedError, LanTransport } from './lanTransport'
+import { LanTransport } from './lanTransport'
 import { isAndroidClient } from './runtimeCapabilities'
 import { Capacitor } from '@capacitor/core'
 import { createElement } from 'react'
@@ -29,7 +29,9 @@ import {
   mobileConnectionStorageKey,
   mobileDevicesStorageKey,
   forgetMobileConnection,
+  mobileConnectionLink,
   type MobileConnection,
+  parseMobileConnection,
   readMobileConnection,
   requestMobileConnection,
   saveMobileConnection
@@ -157,7 +159,6 @@ export const initializeLanBridge = async (): Promise<void> => {
     }
   }
   let mobileConnection = android ? readMobileConnection() : null
-  const deviceId = nativeStorage ? (await localNetwork.deviceInfo()).id : undefined
   const parameters = new URLSearchParams(location.hash.slice(1))
   let token =
     mobileConnection?.token ??
@@ -172,11 +173,12 @@ export const initializeLanBridge = async (): Promise<void> => {
     candidate: MobileConnection | null,
     signal?: AbortSignal
   ): Promise<void> => {
+    const deviceId = nativeStorage ? (await localNetwork.deviceInfo()).id : undefined
+    if (signal?.aborted) return
     transport?.close()
     stopDiscovery()
-    mobileConnection = candidate
     if (candidate) token = candidate.token
-    transport = new LanTransport(
+    const current = new LanTransport(
       candidate
         ? mobileWebSocketUrl(candidate)
         : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/sele/ws`,
@@ -187,70 +189,63 @@ export const initializeLanBridge = async (): Promise<void> => {
       deviceId,
       (url) => createLanSocket(url, candidate?.fingerprint)
     )
-    const current = transport
+    transport = current
     const abortConnection = (): void => current.close()
     signal?.addEventListener('abort', abortConnection, { once: true })
-    if (signal?.aborted) {
-      current.close()
-      throw new Error('Connection canceled.')
-    }
     showConnection(`Connecting to ${candidate?.name ?? 'Sele'}…`)
-    // The saved endpoint is tried now. DNS-SD runs concurrently and can replace a
-    // stale DHCP endpoint while the handshake is still in progress.
-    if (candidate?.hostId) {
-      stopDiscovery = watchNearbyComputers((computers) => {
-        const found = computers.find((computer) => computer.id === candidate.hostId)
-        if (!found) return
-        const origins = found.origins ?? [found.origin]
-        current.updateEndpoints(
-          [...origins, candidate.origin].map((origin) =>
-            mobileWebSocketUrl({ ...candidate, origin })
-          )
-        )
-      })
-    }
+    // Use addresses advertised for this computer, keeping the saved address as
+    // a fallback when discovery is absent or advertises an unreachable route.
+    const stopWatching = candidate?.hostId
+      ? watchNearbyComputers((computers) => {
+          const found = computers.find((computer) => computer.id === candidate.hostId)
+          const endpoints: string[] = []
+          for (const origin of found?.origins ?? (found ? [found.origin] : [])) {
+            try {
+              const endpoint = parseMobileConnection(mobileConnectionLink({ ...candidate, origin }))
+              endpoints.push(mobileWebSocketUrl(endpoint))
+            } catch {
+              // Discovery may return an address the WebView URL parser cannot use.
+            }
+          }
+          current.updateEndpoints([...endpoints, mobileWebSocketUrl(candidate)])
+        })
+      : () => {}
     try {
-      await current.connect()
-    } catch (error) {
-      if (error instanceof LanAccessRevokedError) throw error
-      if (!signal?.aborted && candidate?.hostId) await current.waitUntilReady()
-      else throw error
-    }
-    initialPreferences = await current.invoke<PreferenceResult>(preferencesChannel, {
-      action: 'load'
-    })
-    if (!initialPreferences.ok) throw new Error(initialPreferences.error)
-    signal?.removeEventListener('abort', abortConnection)
-    if (candidate) {
+      if (candidate?.hostId) await current.waitUntilReady(10_000)
+      else await current.connect()
+      const loadPreferences = { action: 'load' }
+      initialPreferences = android
+        ? await current.invokeWithTimeout<PreferenceResult>(
+            preferencesChannel,
+            5000,
+            loadPreferences
+          )
+        : await current.invoke<PreferenceResult>(preferencesChannel, loadPreferences)
+      if (!initialPreferences.ok) throw new Error(initialPreferences.error)
       // Persist the endpoint that actually authenticated, including discovery changes.
-      const origin = current.endpoint.replace(/^ws/, 'http').replace(/\/sele\/ws$/, '')
-      mobileConnection = { ...candidate, origin }
+      mobileConnection = candidate && {
+        ...candidate,
+        origin: new URL(current.endpoint).origin.replace(/^ws/, 'http')
+      }
+      stopDiscovery = stopWatching
+    } catch (error) {
+      current.close()
+      stopWatching()
+      throw error
+    } finally {
+      signal?.removeEventListener('abort', abortConnection)
     }
   }
   if (android) {
-    let error: string | undefined =
+    const error =
       !mobileConnection && localStorage.getItem(mobileConnectionStorageKey)
         ? 'Pair your computer again to verify its encrypted connection. Update desktop Sele first.'
         : undefined
-    if (mobileConnection) {
-      try {
-        await connect(mobileConnection)
-      } catch (failure) {
-        error = failure instanceof Error ? failure.message : String(failure)
-        transport?.close()
-      }
-    }
-    if (!transport?.isReady) {
-      showConnection(null)
-      const previous = mobileConnection
-      connectionChooserOpen = true
-      try {
-        await requestMobileConnection(error, previous, async (candidate, signal) => {
-          await connect(candidate, signal)
-        })
-      } finally {
-        connectionChooserOpen = false
-      }
+    connectionChooserOpen = true
+    try {
+      await requestMobileConnection(error, mobileConnection, connect)
+    } finally {
+      connectionChooserOpen = false
     }
   } else {
     for (;;) {

@@ -90,7 +90,11 @@ export const pairComputer = async (
         )
       )
     socket.onclose = () =>
-      finish(new Error('Pairing ended. Check Sele on your computer and try again.'))
+      finish(
+        new Error(
+          socket.connectionFailure ?? 'Pairing ended. Check Sele on your computer and try again.'
+        )
+      )
   })
 }
 
@@ -156,7 +160,6 @@ export const watchNearbyComputers = (
       .then(async () => {
         if (generation !== discoveryGeneration) return
         await localNetwork.startDiscovery()
-        void poll()
       })
       .catch((error) => {
         console.warn('Unable to start device discovery.', error)
@@ -165,6 +168,7 @@ export const watchNearbyComputers = (
             watcher(discovered, 'Could not search for devices. Check your network connection.')
           )
       })
+      .finally(() => void poll())
   }
   return () => {
     watchers.delete(listener)

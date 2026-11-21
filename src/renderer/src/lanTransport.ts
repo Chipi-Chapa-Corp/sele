@@ -27,6 +27,7 @@ export class LanTransport implements RendererTransport {
   private heartbeatTimeout = 0
   private heartbeatSupported = false
   private connection: Promise<void> | null = null
+  private connectionFailure: Error | null = null
   private cancelConnection: (() => void) | null = null
   private listeners = new Map<string, Map<unknown, (args: unknown[]) => void>>()
   private readyWaiters = new Set<{ resolve(): void; reject(error: Error): void }>()
@@ -133,7 +134,8 @@ export class LanTransport implements RendererTransport {
       socket = this.socketFactory(this.url)
     } catch (error) {
       this.connection = null
-      rejectConnection(error instanceof Error ? error : new Error(String(error)))
+      this.connectionFailure = error instanceof Error ? error : new Error(String(error))
+      rejectConnection(this.connectionFailure)
       return connection
     }
     this.socket = socket
@@ -157,11 +159,10 @@ export class LanTransport implements RendererTransport {
             )
           : code === 1008
             ? new LanAccessRevokedError(
-                'Device access is invalid or was revoked. Request access again on your computer.'
+                'Device access is invalid or was revoked. Update Sele on both devices and pair again.'
               )
-            : new LanConnectionError(
-                'Connection lost. A request may have completed on your computer; check before trying again.'
-              )
+            : new LanConnectionError(this.readyFailureMessage(socket))
+      this.connectionFailure = error
       this.pending.forEach((request) => {
         clearTimeout(request.timer)
         request.reject(error)
@@ -210,6 +211,7 @@ export class LanTransport implements RendererTransport {
           clearTimeout(timeout)
           this.ready = true
           this.connection = null
+          this.connectionFailure = null
           this.heartbeatSupported = message.heartbeat === true
           this.reconnectDelay = 500
           this.onStatus(null)
@@ -247,7 +249,21 @@ export class LanTransport implements RendererTransport {
     return connection
   }
 
+  private readyFailureMessage(socket: LanSocket): string {
+    if (this.connectedBefore)
+      return 'Connection lost. A request may have completed on your computer; check before trying again.'
+    return (
+      socket.connectionFailure ??
+      this.connectionFailure?.message ??
+      'Cannot reach Sele on this computer. Check that Sele is open, Local network is enabled, and both devices are on the same network.'
+    )
+  }
+
   invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+    return this.invokeWithTimeout(channel, 5 * 60_000, ...args)
+  }
+
+  invokeWithTimeout<T>(channel: string, timeout: number, ...args: unknown[]): Promise<T> {
     if (!this.isReady || !this.socket)
       return Promise.reject(new LanConnectionError('Sele is disconnected.'))
     const id = this.nextId++
@@ -255,7 +271,7 @@ export class LanTransport implements RendererTransport {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error('The request timed out. Check its status before trying again.'))
-      }, 5 * 60_000)
+      }, timeout)
       this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer })
       try {
         this.socket!.send(encodeClientMessage({ type: 'invoke', id, channel, args }))
@@ -267,14 +283,9 @@ export class LanTransport implements RendererTransport {
     })
   }
 
-  waitUntilReady(): Promise<void> {
+  waitUntilReady(timeout = 15_000): Promise<void> {
     if (this.isReady) return Promise.resolve()
-    if (this.revoked)
-      return Promise.reject(
-        new LanAccessRevokedError(
-          'Device access was revoked. Request access again on your computer.'
-        )
-      )
+    if (this.revoked) return Promise.reject(this.connectionFailure)
     if (this.stopped) return Promise.reject(new LanConnectionError('Sele is disconnected.'))
     this.resume()
     return new Promise((resolve, reject) => {
@@ -286,8 +297,14 @@ export class LanTransport implements RendererTransport {
       }
       const waiter = { resolve: () => finish(), reject: (error: Error) => finish(error) }
       const timer = setTimeout(
-        () => finish(new LanConnectionError('Sele is disconnected. Try again after reconnecting.')),
-        15_000
+        () =>
+          finish(
+            this.connectionFailure ??
+              new LanConnectionError(
+                'Sele did not respond in time. Check that the computer is awake and Sele is open.'
+              )
+          ),
+        timeout
       )
       this.readyWaiters.add(waiter)
     })

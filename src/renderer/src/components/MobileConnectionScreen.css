@@ -1,32 +1,27 @@
 .mobile-connect {
-  min-height: 100dvh;
   height: 100dvh;
   overflow-y: auto;
   overscroll-behavior: contain;
   box-sizing: border-box;
-  padding: max(1rem, env(safe-area-inset-top)) 0.75rem max(1rem, env(safe-area-inset-bottom));
+  padding: max(1.25rem, env(safe-area-inset-top)) 1.25rem max(0.5rem, env(safe-area-inset-bottom));
   color: var(--lead);
   background: var(--bg);
   display: flex;
   flex-direction: column;
-  justify-content: stretch;
-  gap: 1rem;
+  gap: 1.25rem;
   --control-height: 2.75rem;
 }
 .mobile-connect__content {
-  flex: 1;
-  box-sizing: border-box;
-  width: 100%;
-  margin: 0;
-  padding: clamp(1rem, 4vw, 2rem);
-  overflow-y: auto;
-}
-.mobile-connect__content > * {
-  width: min(100%, 32rem);
-  margin-inline: auto;
+  flex: 0 0 auto;
+  width: min(100%, 28rem);
+  margin: auto;
+  display: grid;
+  gap: 1.25rem;
+  text-align: center;
 }
 .mobile-connect__content > header {
   display: flex;
+  justify-content: center;
   align-items: center;
   gap: 0.75rem;
 }
@@ -42,6 +37,7 @@
   margin: 0;
 }
 .mobile-connect p {
+  margin: 0;
   font-size: 1rem;
   line-height: 1.5;
   color: var(--muted);
@@ -50,17 +46,9 @@
   font-size: 1.1rem;
   overflow-wrap: anywhere;
 }
-.mobile-connect__section-label {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin: 1.25rem 0 0.75rem;
-  font-weight: 500;
-}
 .mobile-connect__computers {
   display: grid;
   gap: 0.75rem;
-  margin-bottom: 1rem;
 }
 .mobile-connect__computers > .ui-button {
   min-height: 3.25rem;
@@ -92,33 +80,46 @@
   color: var(--muted);
 }
 .mobile-connect__empty {
-  padding: 1rem;
+  display: grid;
+  gap: 0.5rem;
+  justify-items: center;
+}
+.mobile-connect__actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.mobile-connect__address {
   display: grid;
   gap: 0.75rem;
-  justify-items: center;
-  text-align: center;
-  border: 1px solid var(--field-border);
-  border-radius: var(--control-radius);
-  background: var(--control-surface);
-  box-shadow: var(--field-shadow);
+  text-align: start;
 }
-.mobile-connect__help {
-  margin-top: 1rem;
-}
-.mobile-connect__help summary {
-  min-height: 2.75rem;
-  white-space: normal;
+.mobile-connect__address p,
+.mobile-connect__empty p {
+  font-size: 0.875rem;
 }
 .mobile-connect__waiting {
-  margin-top: 1rem;
   padding: 1rem;
   border: 1px solid var(--field-border);
   border-radius: var(--control-radius);
   box-shadow: var(--field-shadow);
   background: var(--control-surface);
+}
+.mobile-connect__waiting p {
+  margin: 0.75rem 0;
 }
 .mobile-connect .mobile-connect__error {
   color: var(--error);
+}
+.mobile-connect__footer {
+  display: flex;
+  justify-content: center;
+}
+.mobile-connect__footer .ui-button {
+  min-height: 2.75rem;
+  color: var(--muted);
+  font-weight: 400;
 }
 .mobile-connect__spin {
   animation: mobile-connect-spin 1.5s linear infinite;

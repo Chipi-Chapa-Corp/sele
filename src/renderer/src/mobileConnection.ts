@@ -1,3 +1,5 @@
+import { localAccessDefaultPort } from '../../shared/localAccess.ts'
+
 export type MobileConnection = {
   origin: string
   token: string
@@ -10,6 +12,19 @@ export const mobileConnectionStorageKey = 'sele-android-connection-v1'
 export const mobileDevicesStorageKey = 'sele-android-devices-v1'
 const storageKey = mobileConnectionStorageKey
 
+export const isLocalIpv4Address = (hostname: string): boolean => {
+  if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname)) return false
+  const parts = hostname.split('.').map(Number)
+  return (
+    parts.every((part) => part <= 255) &&
+    (parts[0] === 10 ||
+      parts[0] === 127 ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 169 && parts[1] === 254))
+  )
+}
+
 const isLanHostname = (hostname: string): boolean => {
   if (
     hostname === 'localhost' ||
@@ -20,20 +35,19 @@ const isLanHostname = (hostname: string): boolean => {
   )
     return true
   if (/^[a-z0-9-]+$/i.test(hostname) && !/^\d+$/.test(hostname)) return true
-  const parts = hostname.split('.').map(Number)
-  if (
-    parts.length === 4 &&
-    parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-  ) {
-    return (
-      parts[0] === 10 ||
-      parts[0] === 127 ||
-      (parts[0] === 192 && parts[1] === 168) ||
-      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] === 169 && parts[1] === 254)
-    )
-  }
+  if (isLocalIpv4Address(hostname)) return true
   return hostname === '[::1]' || /^\[(?:f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i.test(hostname)
+}
+
+export const parseMobilePairingAddress = (value: string): string => {
+  const match = /^(?:https:\/\/)?([0-9.]+)(?::([0-9]{1,5}))?\/?$/i.exec(value.trim())
+  const host = match?.[1]
+  const port = match?.[2] ? Number(match[2]) : localAccessDefaultPort
+  if (!host || !isLocalIpv4Address(host) || port < 1 || port > 65535)
+    throw new Error('Enter your computer’s local IPv4 address and port.')
+  // Build from decimal octets so a leading zero cannot change the address in URL parsing.
+  const address = host.split('.').map(Number).join('.')
+  return new URL(`https://${address}:${port}`).origin
 }
 
 export const parseMobileConnection = (link: string): MobileConnection => {
@@ -146,9 +160,9 @@ export const forgetMobileConnection = async (): Promise<void> => {
 }
 
 export const requestMobileConnection = async (
-  error?: string,
-  previous?: MobileConnection | null,
-  validate?: (connection: MobileConnection, signal: AbortSignal) => Promise<void>
+  error: string | undefined,
+  previous: MobileConnection | null,
+  validate: (connection: MobileConnection, signal: AbortSignal) => Promise<void>
 ): Promise<MobileConnection> => {
   const [{ createRoot }, { createElement }, { MobileConnectionScreen }] = await Promise.all([
     import('react-dom/client'),

@@ -288,14 +288,7 @@ module.exports = async ({
     if (forwarded) adb(['forward', '--remove', `tcp:${forwarded}`])
     forwarded = null
   }
-  const connect = async (value) => {
-    await waitFor('Boolean(document.querySelector(".mobile-connect"))')
-    await run('Array.from(document.querySelectorAll("button")).find(button=>button.textContent.trim()==="Privacy policy").click()')
-    await waitFor('Boolean(document.querySelector(".privacy-policy-dialog[open]"))')
-    assert.ok(await run('document.querySelector(".privacy-policy-dialog").textContent.includes("chipi.chapa.corporation@gmail.com")'), 'privacy disclosure is available before pairing')
-    await fs.mkdir(path.resolve('test-results/google-play'), { recursive: true })
-    await fs.writeFile(path.resolve('test-results/google-play/privacy-before-pairing.png'), adb(['exec-out', 'screencap', '-p'], true))
-    await tap('.privacy-policy-dialog button[aria-label="Close privacy policy"]')
+  const advertise = async (value) => {
     const state = await getState()
     // Emulator NAT does not forward host multicast. Inject only the discovery
     // result; native NSD itself is covered by LocalDiscoveryTest.
@@ -306,8 +299,30 @@ module.exports = async ({
         ? Promise.resolve({services:${JSON.stringify([{ id: state.computerId, name: state.computerName, origin: new URL(value).origin }])}})
         : nativePromise(plugin, method, options);
     })()`)
-    await waitFor('Boolean(document.querySelector(".mobile-connect__computers button"))')
-    await run('document.querySelector(".mobile-connect__computers button").click()')
+  }
+  const connect = async (value, byAddress = false) => {
+    await waitFor('Boolean(document.querySelector(".mobile-connect"))')
+    await run('Array.from(document.querySelectorAll("button")).find(button=>button.textContent.trim()==="Privacy policy").click()')
+    await waitFor('Boolean(document.querySelector(".privacy-policy-dialog[open]"))')
+    assert.ok(await run('document.querySelector(".privacy-policy-dialog").textContent.includes("chipi.chapa.corporation@gmail.com")'), 'privacy disclosure is available before pairing')
+    await fs.mkdir(path.resolve('test-results/google-play'), { recursive: true })
+    await fs.writeFile(path.resolve('test-results/google-play/privacy-before-pairing.png'), adb(['exec-out', 'screencap', '-p'], true))
+    await tap('.privacy-policy-dialog button[aria-label="Close privacy policy"]')
+    if (byAddress) {
+      await run(`Array.from(document.querySelectorAll('.mobile-connect button'))
+        .find(button => button.textContent === 'Pair by address').click()`)
+      await waitFor('Boolean(document.getElementById("mobile-computer-address"))')
+      await run(`(() => {
+        const input = document.getElementById('mobile-computer-address');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(new URL(value).host)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`)
+      await run('document.querySelector(".mobile-connect__address").requestSubmit()')
+    } else {
+      await advertise(value)
+      await waitFor('Boolean(document.querySelector(".mobile-connect__computers button"))')
+      await run('document.querySelector(".mobile-connect__computers button").click()')
+    }
     await waitFor('document.body.innerText.includes("Allow this device on")')
     let request
     for (let i = 0; i < 100; i++) {
@@ -333,6 +348,7 @@ module.exports = async ({
         ? 'Boolean(document.querySelector("main.chat"))'
         : 'Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))'
     )
+    if (byAddress) console.log('ANDROID PAIR BY ADDRESS PASSED: native TLS and desktop approval')
   }
   try {
     adb(['install', '-r', apk])
@@ -345,9 +361,17 @@ module.exports = async ({
     await delay(500)
     await fs.mkdir(path.resolve('test-results/mobile-ui'), { recursive: true })
     await fs.writeFile(path.resolve('test-results/mobile-ui/nearby-computers.png'), adb(['exec-out', 'screencap', '-p'], true))
-    assert.equal(await run('Boolean(document.querySelector(".mobile-connect footer"))'),false,'connection has no extra bottom label')
-    assert.ok(await run('(()=>{const r=document.querySelector(".mobile-connect__content.chat-panel").getBoundingClientRect();return r.width>=innerWidth*.85&&r.height>=innerHeight*.85})()'),'connection controls live inside a full-size shared chat pane')
-    await connect(link)
+    assert.equal(
+      await run('document.querySelector(".mobile-connect footer").textContent.trim()'),
+      'Privacy policy',
+      'privacy remains accessible in the footer'
+    )
+    assert.ok(await run(`(() => {
+      const content = document.querySelector('.mobile-connect__content').getBoundingClientRect();
+      const footer = document.querySelector('.mobile-connect__footer').getBoundingClientRect();
+      return content.top > innerHeight / 4 && content.bottom <= footer.top && footer.bottom <= innerHeight;
+    })()`), 'connection controls are centered above the footer')
+    await connect(link, true)
     const certificateRejection = await run(`new Promise(async(resolve,reject)=>{
       const id=crypto.randomUUID();let listener;const timer=setTimeout(()=>finish('timeout'),8000);
       const finish=type=>{clearTimeout(timer);Capacitor.nativePromise('SecureLan','close',{id}).catch(()=>{});
@@ -469,12 +493,46 @@ module.exports = async ({
     )
     assert.equal(sends(), 1)
     assert.equal(await run('window.retainedConnectionDocument'), true, 'reconnect keeps the native document')
+    // A cold start stays in the chooser even if the saved address is no longer reachable.
+    await run(`(async () => {
+      const activeKey = 'sele-android-connection-v1';
+      const devicesKey = 'sele-android-devices-v1';
+      const saved = JSON.parse(localStorage.getItem(activeKey));
+      const devices = JSON.parse(localStorage.getItem(devicesKey));
+      saved.origin = ${JSON.stringify(`https://127.0.0.1:${port}`)};
+      await Capacitor.nativePromise('LocalNetwork','writeStorage',{key:activeKey,value:JSON.stringify(saved)});
+      await Capacitor.nativePromise('LocalNetwork','writeStorage',{key:devicesKey,value:JSON.stringify([saved, ...devices.filter(device => device.hostId !== saved.hostId)])});
+    })()`)
+    // Keep the host unavailable until the chooser reports the stale address.
+    // Some emulator versions can already rediscover the real LAN address.
+    await configure({ enabled: false, port })
+    detach()
+    adb(['shell', 'am', 'force-stop', appId])
+    launch()
+    await attach()
+    const busyDevice = '.mobile-connect__computers button[aria-busy="true"]'
+    await waitFor(`Boolean(document.querySelector(${JSON.stringify(busyDevice)}))`)
+    assert.equal(await run('document.querySelector(".mobile-connect h1").textContent'), 'Your devices')
+    assert.equal(await run('Boolean(document.getElementById("sele-connection-status"))'), false)
+    await ui.screenshot(path.resolve('test-results/android/connecting-device.png'))
+    await waitFor('document.querySelector(".mobile-connect [role=alert]")?.textContent.includes("refused the connection")')
+    await tap('.mobile-connect__computers button')
+    await waitFor(`Boolean(document.querySelector(${JSON.stringify(busyDevice)}))`)
+    await configure({ enabled: true, port })
+    await advertise(link)
+    await waitFor('Boolean(document.querySelector(\'[data-chat-id="lan-fixture"]\'))')
+    assert.equal(await run("JSON.parse(localStorage.getItem('sele-android-connection-v1')).origin"), new URL(link).origin)
+    assert.equal((await getState()).pairingRequests.length, 0, 'a renewed address uses the saved approval')
+    console.log('ANDROID STARTUP PASSED: chooser progress, specific connection error, and retry at the discovered address')
     const device = (await getState()).devices[0]
     assert.ok(device, 'a paired Android device is persisted on the host')
     await revokeDevice(device.id)
     await waitFor('document.getElementById("sele-connection-status")?.textContent.includes("revoked")')
     await run('document.querySelector("#sele-connection-status button").click()')
     await waitFor('Boolean(document.querySelector(".mobile-connect"))')
+    await tap('.mobile-connect__computers button')
+    await waitFor('document.querySelector(".mobile-connect [role=alert]")?.textContent.includes("revoked")')
+    assert.equal((await getState()).pairingRequests.length, 0, 'revoked access asks for an explicit repair')
     await connect(link)
     assert.equal(sends(), 1)
     await selectChat()

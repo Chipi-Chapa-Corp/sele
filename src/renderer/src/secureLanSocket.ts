@@ -3,8 +3,8 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 export type LanSocket = Pick<
   WebSocket,
   'readyState' | 'onopen' | 'onmessage' | 'onerror' | 'onclose' | 'send' | 'close'
->
-type SocketEvent = { id: string; type: string; data?: string; code: number }
+> & { readonly connectionFailure?: string }
+type SocketEvent = { id: string; type: string; data?: string; code: number; failure?: string }
 const native = registerPlugin<{
   inspect(options: { origin: string }): Promise<{ fingerprint: string }>
   open(options: { id: string; url: string; fingerprint: string }): Promise<void>
@@ -37,6 +37,7 @@ export const inspectComputerCertificate = async (
 
 class PinnedLanSocket implements LanSocket {
   readyState: number = WebSocket.CONNECTING
+  connectionFailure?: string
   onopen: WebSocket['onopen'] = null
   onmessage: WebSocket['onmessage'] = null
   onerror: WebSocket['onerror'] = null
@@ -49,10 +50,11 @@ class PinnedLanSocket implements LanSocket {
     void this.open(url, fingerprint)
   }
 
-  private finish(code: number): void {
+  private finish(code: number, failure?: string): void {
     if (this.closed) return
     this.closed = true
     this.readyState = WebSocket.CLOSED
+    this.connectionFailure = failure
     void this.listener?.remove().catch(() => {})
     void native.close({ id: this.id }).catch(() => {})
     this.onclose?.call(this as unknown as WebSocket, new CloseEvent('close', { code }))
@@ -69,7 +71,8 @@ class PinnedLanSocket implements LanSocket {
         } else if (event.type === 'message') {
           this.onmessage?.call(self, new MessageEvent('message', { data: event.data }))
         } else if (event.type === 'certificateError') this.finish(4003)
-        else if (event.type === 'close' || event.type === 'error') this.finish(event.code || 1006)
+        else if (event.type === 'close' || event.type === 'error')
+          this.finish(event.code || 1006, event.failure)
       })
       if (this.closed) {
         await this.listener.remove()
@@ -77,8 +80,12 @@ class PinnedLanSocket implements LanSocket {
       }
       await native.open({ id: this.id, url, fingerprint })
       if (this.closed) await native.close({ id: this.id })
-    } catch {
-      this.finish(1006)
+    } catch (error) {
+      console.warn('Unable to open the Android connection to Sele.', error)
+      this.finish(
+        1006,
+        'Android could not open an encrypted connection to Sele. Try reopening the app.'
+      )
     }
   }
 

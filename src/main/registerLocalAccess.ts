@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { hostname } from 'node:os'
-import { Bonjour } from 'bonjour-service'
+import { getResponder, type Responder } from '@homebridge/ciao'
 import { LocalAccessPairing } from './localAccessPairing'
 import { remoteBrowserRequest } from './remoteBrowser'
 import { browseHostDirectory } from './hostDirectory'
@@ -37,22 +37,22 @@ let serverError: string | null = null
 let configuring: Promise<unknown> = Promise.resolve()
 let shuttingDown = false
 let pairing: LocalAccessPairing
-let discovery: Bonjour | null = null
+let discovery: Responder | null = null
 let discoveryError: string | null = null
 let tls: LocalAccessTls | null = null
+
+const reportDiscoveryError = (error: unknown): void => {
+  discoveryError = 'Nearby discovery is unavailable. Check your network multicast settings.'
+  console.warn('Local-access discovery failed.', error)
+}
 
 const stopDiscovery = async (): Promise<void> => {
   const previous = discovery
   discovery = null
-  if (!previous) return
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, 1000)
-    previous.unpublishAll(() => {
-      clearTimeout(timer)
-      resolve()
-    })
-  })
-  previous.destroy()
+  discoveryError = null
+  await previous
+    ?.shutdown()
+    .catch((error) => console.warn('Unable to stop local discovery.', error))
 }
 
 const validPort = (port: unknown): port is number =>
@@ -98,26 +98,25 @@ const start = async (assets: RendererAssets): Promise<void> => {
       invoke: invokeClientRequest,
       receive: receiveClientMessage
     })
-    discoveryError = null
     try {
-      discovery = new Bonjour(undefined, (error) => {
-        discoveryError = 'Nearby discovery is unavailable. Check your network multicast settings.'
-        console.warn('Local-access discovery failed.', error)
-      })
-      const advertisement = discovery.publish({
-        name: `Sele ${configuration.computerId.slice(0, 8)} on ${hostname()}`.slice(0, 63),
+      // Use per-interface mDNS with IPv4 records for the IPv4-only listener.
+      const responder = getResponder({ disableIpv6: true })
+      discovery = responder
+      const computerName = hostname()
+      const label = `Sele ${configuration.computerId.slice(0, 8)}`
+      const advertisement = responder.createService({
+        name: label,
+        hostname: `sele-${configuration.computerId}`,
         type: 'sele',
-        protocol: 'tcp',
         port: server.port,
-        txt: { version: '2', tls: '1', name: hostname(), id: configuration.computerId }
+        txt: { version: '2', tls: '1', name: computerName, id: configuration.computerId }
       })
-      advertisement.on('error', (error) => {
-        discoveryError = 'Nearby discovery is unavailable. Check your network multicast settings.'
-        console.warn('Unable to advertise local Sele.', error)
+      void advertisement.advertise().catch((error) => {
+        if (discovery === responder) reportDiscoveryError(error)
       })
     } catch (error) {
-      discoveryError = 'Nearby discovery is unavailable. Check your network multicast settings.'
-      console.warn('Unable to start local Sele discovery.', error)
+      await stopDiscovery()
+      reportDiscoveryError(error)
     }
   } catch (error) {
     serverError = error instanceof Error ? error.message : String(error)
