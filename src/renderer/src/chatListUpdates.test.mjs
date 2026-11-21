@@ -45,3 +45,31 @@ test('single updates match bulk merging across ties, creation changes, providers
     assert.deepEqual(chats, expected)
   }
 })
+
+test('a fresh lifecycle update with an older activity time preserves sidebar metadata', () => {
+  const active = {
+    ...makeChat('1'),
+    status: 'active',
+    updatedAt: 10,
+    seenUpdatedAt: 10,
+    pendingApproval: null
+  }
+  const chats = [active]
+  const stopped = {
+    ...active,
+    title: 'Previous title',
+    updatedAt: 5,
+    seenUpdatedAt: null,
+    status: null,
+    lastTurnOutcome: 'stopped'
+  }
+  assert.equal(mergeChatUpdate(chats, stopped), chats)
+  const options = { authoritativeLifecycle: true }
+  const next = mergeChatUpdate(chats, stopped, options)
+  assert.deepEqual(next, [{ ...active, status: null, lastTurnOutcome: 'stopped' }])
+  assert.equal(mergeChatUpdate(next, stopped, options), next)
+  assert.deepEqual(
+    mergeChatUpdate(next, { ...stopped, status: 'active', lastTurnOutcome: null }, options),
+    [{ ...active, lastTurnOutcome: null }]
+  )
+})

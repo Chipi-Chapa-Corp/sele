@@ -41,25 +41,23 @@ export function useWorkspaceChatProjection({
     ): void => {
       const updatedAt = detail.updatedAt ?? Date.now()
       const detailKey = getProviderChatKey(providerId, detail.id)
+      const isViewedDetail = options.select || chatState.selectedChatKeyRef.current === detailKey
       const currentDetail = chatState.chatDetailRef.current
       const replacesEqualRevision =
         options.allowEqualRevision === true &&
         currentDetail?.id === detail.id &&
         currentDetail.revision === detail.revision
       if (isChatDetailSnapshotStale(detail, currentDetail) && !replacesEqualRevision) {
-        if (options.select || chatState.selectedChatKeyRef.current === detailKey)
-          startTransition(() => chatState.setChatLoadState('ready'))
+        if (isViewedDetail) startTransition(() => chatState.setChatLoadState('ready'))
         return
       }
       const appliedDetail = reuseChatSnapshotItems(
         currentDetail,
-        isActiveChatStatus(detail.status) &&
-          currentDetail?.id === detail.id &&
-          (options.select || chatState.selectedChatKeyRef.current === detailKey)
+        isViewedDetail && isActiveChatStatus(detail.status) && currentDetail?.id === detail.id
           ? preserveOptimisticChatDetail(currentDetail, detail)
           : detail
       )
-      if (options.select || chatState.selectedChatKeyRef.current === detailKey) {
+      if (isViewedDetail) {
         chatState.chatDetailRef.current = appliedDetail
         chatState.selectedChatUpdatedAtRef.current = options.select
           ? updatedAt
@@ -106,7 +104,10 @@ export function useWorkspaceChatProjection({
           ) ?? null
         const nextChat = getChatSidebarMetadata(providerId, appliedDetail, existingChat, updatedAt)
 
-        return mergeChatUpdate(currentChats, nextChat)
+        return mergeChatUpdate(currentChats, nextChat, {
+          authoritativeLifecycle:
+            isViewedDetail && !appliedDetail.historyPreview && !detail.turnPagination?.newerCursor
+        })
       })
     },
     [
@@ -125,23 +126,27 @@ export function useWorkspaceChatProjection({
   )
 
   const applyChatSummary = useCallback(
-    (providerId: ProviderId, summary: ProviderChatUpdateSummary, turnCompleted: boolean): void => {
+    (
+      providerId: ProviderId,
+      summary: ProviderChatUpdateSummary,
+      turnCompleted: boolean,
+      { liveUpdate = false } = {}
+    ): void => {
       const summaryKey = getProviderChatKey(providerId, summary.id)
       // The send IPC can resolve after a newer completion event has already updated this chat.
+      const currentDetail =
+        chatState.selectedChatKeyRef.current === summaryKey ? chatState.chatDetailRef.current : null
+      const cached = chatCache.recentChatCacheRef.current.get(summaryKey)
       if (
-        chatState.selectedChatKeyRef.current === summaryKey &&
-        chatState.chatDetailRef.current?.id === summary.id &&
-        summary.revision < chatState.chatDetailRef.current.revision
-      ) {
+        (currentDetail?.id === summary.id && summary.revision < currentDetail.revision) ||
+        (cached && summary.revision < cached.detail.revision)
+      )
         return
-      }
-      const cacheKey = getProviderChatKey(providerId, summary.id)
-      const cached = chatCache.recentChatCacheRef.current.get(cacheKey)
       if (
         cached &&
         (cached.detail.revision < summary.revision || cached.detail.status !== summary.status)
       ) {
-        chatCache.recentChatCacheRef.current.set(cacheKey, {
+        chatCache.recentChatCacheRef.current.set(summaryKey, {
           ...cached,
           detail: asChatPreview(cached.detail)
         })
@@ -177,7 +182,7 @@ export function useWorkspaceChatProjection({
         const nextChat = getChatFromUpdateSummary(providerId, summary, existingChat, turnCompleted)
         if (existingChat && areChatsEqual(existingChat, nextChat)) return currentChats
 
-        return mergeChatUpdate(currentChats, nextChat)
+        return mergeChatUpdate(currentChats, nextChat, { authoritativeLifecycle: liveUpdate })
       })
     },
     [

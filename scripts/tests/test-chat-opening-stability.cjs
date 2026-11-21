@@ -24,7 +24,7 @@ if (!process.versions.electron) {
             const now = Date.now()
             const chats = Array.from({length:20}, (_,i) => ({id:String(i),providerId:'${provider}',
               title:'Conversation '+i,preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,
-              status:null,cwd:'/fixture',cwdKind:'directory',projectCwd:null,branchName:null,
+              status:i===6||i===7?'active':null,cwd:'/fixture',cwdKind:'directory',projectCwd:null,branchName:null,
               worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,done:false,
               seenUpdatedAt:now,purpose:null,container:null}))
             const items = Array.from({length:10}, (_,i) => [
@@ -45,6 +45,18 @@ if (!process.versions.electron) {
               subagents:[],turnCount:history.length===0?0:id==='3'?1:10,itemsStartTurnIndex:0,
               ...('${provider}'==='claude'?{turnPagination:{kind:'cursor',olderCursor:null,newerCursor:null}}:{})})
             let revision=1
+            window.publishTurn=(id, stopped, includeDetail)=>{
+              const snapshot=detail(id,++revision,[items.at(-2),
+                {id:'working-'+id,type:'working',status:stopped?'stopped':'working',items:[]}])
+              snapshot.status=stopped?null:'active'
+              snapshot.lastTurnOutcome=stopped?'stopped':null
+              snapshot.updatedAt-=1000
+              snapshot.turnCount=1
+              window.chatListener({providerId:'${provider}',chatId:id,sequence:revision,
+                detail:includeDetail?{...snapshot,baseRevision:null,baseItemIds:null,
+                  itemIds:snapshot.items.map(item=>item.id),changedItems:snapshot.items}:null,
+                turnCompleted:stopped,summary:snapshot})
+            }
             window.growTools=count=>{
               const snapshot=detail('3',++revision,singleTurn(count))
               window.chatListener?.({providerId:'${provider}',chatId:'3',sequence:revision,
@@ -73,7 +85,8 @@ if (!process.versions.electron) {
             const api=new Proxy({}, {get:(_target,name)=>name==='onChatUpdated' ? listener=>{window.chatListener=listener;return noop} : name.startsWith('on') ? ()=>noop :
               (...args)=>Promise.resolve(defaults[name]?.(...args)??null)})
             Object.assign(window,{appApi:api,providerApi:api,terminalApi:api,browserApi:api})
-            const stored=new Map([['sele:app-settings:v1',JSON.stringify({appearance:{position:'hidden'},
+            const stored=new Map([['sele:chat-sidebar-filter:v1','all'],
+              ['sele:app-settings:v1',JSON.stringify({appearance:{position:'hidden'},
               chat:{collapseProgressOnFinish:false,collapseProgressOnNextTurn:false}})]])
             window.preferencesApi={getItem:key=>({ok:true,value:stored.get(key)??null}),
               setItem:(key,value)=>{stored.set(key,value);return {ok:true,value:null}},
@@ -160,6 +173,23 @@ if (!process.versions.electron) {
       })`)
       await ready(`document.querySelector('[data-chat-id="4"] .chat-list-item__main')`)
       await run('document.fonts.ready')
+      await ready(`document.querySelector('[data-chat-id="6"] .chat-list-item__main')`)
+      await run(`document.querySelector('[data-chat-id="6"] .chat-list-item__main').click()`)
+      await ready(
+        `document.querySelector('[data-chat-id="6"].chat-list-item--selected [aria-label="In progress"]') &&
+         document.querySelector('#chat-search-content [data-chat-message-id="answer-9"]')`
+      )
+      await run(`window.publishTurn('6',true,true)`)
+      await ready(`document.querySelector('#chat-search-content .chat-detail__working-label')?.textContent.trim()==='Stopped'`)
+      assert.equal(
+        await run(`Boolean(document.querySelector('[data-chat-id="6"] [aria-label="Stopped"]'))`),
+        true,
+        'an accepted transcript update must also replace an active sidebar row with a newer activity timestamp'
+      )
+      await run(`window.publishTurn('7',true,false)`)
+      await ready(`document.querySelector('[data-chat-id="7"] [aria-label="Stopped"]')`)
+      await run(`window.publishTurn('7',false,false)`)
+      await ready(`document.querySelector('[data-chat-id="7"] [aria-label="In progress"]')`)
       await run(`document.querySelector('[data-chat-id="4"] .chat-list-item__main').click()`)
       await ready(
         `window.pendingChatReads?.['4'] && document.querySelector('[role="status"][aria-label="Loading messages"]')`

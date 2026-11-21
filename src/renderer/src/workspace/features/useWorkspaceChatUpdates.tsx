@@ -117,7 +117,9 @@ export function useWorkspaceChatUpdates({
           // Keep their sidebar work interruptible, like the active transcript,
           // instead of promoting the entire workspace to an urgent render.
           startTransition(() => {
-            chatProjection.applyChatSummary(event.providerId, event.summary, event.turnCompleted)
+            chatProjection.applyChatSummary(event.providerId, event.summary, event.turnCompleted, {
+              liveUpdate: true
+            })
           })
           if (viewingUpdatedChat) {
             const retainedDetail =
