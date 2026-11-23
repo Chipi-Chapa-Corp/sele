@@ -1,4 +1,5 @@
 import type { AppContainerTarget } from '../../../shared/app'
+import { isGitHubPullRequestTool } from '../../../shared/githubPullRequestApproval.ts'
 import type {
   ProviderMcpToolApproval,
   ProviderPendingUserInput,
@@ -43,21 +44,42 @@ const optionalText = (value: unknown): string | undefined =>
 
 function getToolApproval(
   meta: Record<string, unknown> | null,
-  schema: Record<string, unknown>
+  schema: Record<string, unknown>,
+  serverName: string,
+  message: unknown
 ): ProviderMcpToolApproval | undefined {
   const properties = record(schema.properties)
+  const namedTool = optionalText(meta?.tool_name)
+  const promptTool =
+    serverName === 'codex_apps' && typeof message === 'string'
+      ? /^Allow GitHub to run tool "(github\.[a-z_]+)"\?$/.exec(message)?.[1]
+      : undefined
+  const githubTool = namedTool ?? promptTool
+  const githubApproval =
+    serverName === 'codex_apps' && !!githubTool && isGitHubPullRequestTool(githubTool)
   if (
-    meta?.codex_approval_kind !== 'mcp_tool_call' ||
-    meta.codex_requires_user_input === true ||
+    meta?.codex_requires_user_input === true ||
     schema.type !== 'object' ||
-    !properties ||
-    Object.keys(properties).length ||
+    (!properties && !(githubApproval && schema.properties === undefined)) ||
+    (properties && Object.keys(properties).length) ||
     (Array.isArray(schema.required) && schema.required.length)
   )
     return undefined
+  if (meta?.codex_approval_kind !== 'mcp_tool_call') {
+    // Match plain Codex Apps confirmations only when the empty response is valid.
+    if (
+      githubApproval &&
+      promptTool === githubTool &&
+      meta?.codex_approval_kind === undefined &&
+      !validateElicitation(schema, {})
+    )
+      return { connectorName: 'GitHub', toolName: githubTool, parameters: [] }
+    return undefined
+  }
+  if (!properties && validateElicitation(schema, {})) return undefined
 
   const connectorName = optionalText(meta.connector_name)
-  const toolName = optionalText(meta.tool_name)
+  const toolName = namedTool ?? (githubApproval ? githubTool : undefined)
   const pullRequestLabels: Record<string, string> =
     toolName === 'github.create_pull_request'
       ? {
@@ -78,7 +100,7 @@ function getToolApproval(
       : []
   })
   const fields =
-    display && (display.length || displayEntries?.length === 0)
+    display && (githubApproval || display.length || displayEntries?.length === 0)
       ? display
       : Object.entries(record(meta.tool_params) ?? {}).map(([name, value]) => ({
           name,
@@ -144,7 +166,12 @@ export class CodexUserQuestions {
     } else if (['form', 'openai/form', 'openaiForm'].includes(String(params?.mode))) {
       const schema = record(params?.requestedSchema)
       if (!schema) throw new Error('Invalid MCP form schema')
-      const toolApproval = getToolApproval(meta, schema)
+      const toolApproval = getToolApproval(
+        meta,
+        schema,
+        serverName,
+        params?.message ?? params?.description
+      )
       elicitation = { mode: 'form', serverName, schema, ...(toolApproval && { toolApproval }) }
     } else if (params?.mode === 'url') {
       const url = new URL(requiredString(params.url))

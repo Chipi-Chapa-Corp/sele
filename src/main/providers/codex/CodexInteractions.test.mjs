@@ -8,6 +8,7 @@ import { CodexUserQuestions } from './CodexUserQuestions.ts'
 import { parseCodexPermissions } from './CodexPermissionRequests.ts'
 import { isBrowserPermissionRequest } from './CodexBrowserPermissions.ts'
 import { CodexDynamicTools } from './CodexDynamicTools.ts'
+import { getGitHubPullRequestApproval } from '../../../shared/githubPullRequestApproval.ts'
 const require = createRequire(import.meta.url)
 const {
   createInteractionHarness
@@ -120,6 +121,95 @@ test('tool approvals expose Codex display parameters and accept an empty form', 
   request.params.requestedSchema = { type: 'object', properties: { name: { type: 'string' } } }
   h.adapter.handleServerRequest(request)
   assert.equal(h.snapshot().pendingUserInput.elicitation.toolApproval, undefined)
+})
+
+test('PR merge approvals keep secondary parameters out of the compact preview', async () => {
+  const request = structuredClone(scenarios.toolApproval)
+  request.params._meta = {
+    codex_approval_kind: 'mcp_tool_call',
+    tool_name: 'github.merge_pull_request',
+    tool_params: {
+      repository_full_name: 'example/project',
+      pr_number: 184,
+      merge_method: 'squash',
+      expected_head_sha: 'a'.repeat(40),
+      commit_title: 'Add discovery settings'
+    }
+  }
+  const h = fixture('toolApproval')
+  await respond(h, { kind: 'elicitation', action: 'decline' })
+  h.adapter.handleServerRequest(request)
+  const { toolApproval } = h.snapshot().pendingUserInput.elicitation
+  const card = getGitHubPullRequestApproval(toolApproval)
+  assert.equal(card.title, 'Merge pull request')
+  assert.equal(card.action, 'Squash and merge')
+  assert.equal(card.target, 'example/project #184')
+  assert.deepEqual(card.facts, [])
+  assert.equal(
+    toolApproval.parameters.find((field) => field.name === 'expected_head_sha').value,
+    'a'.repeat(40)
+  )
+  await respond(h, { kind: 'elicitation', action: 'accept', content: {} })
+  assert.deepEqual(h.sent.at(-1).result, { action: 'accept', content: {} })
+
+  request.params._meta.tool_params_display = []
+  h.adapter.handleServerRequest(request)
+  const displayOnly = h.snapshot().pendingUserInput.elicitation.toolApproval
+  assert.deepEqual(displayOnly.parameters, [])
+  assert.equal(getGitHubPullRequestApproval(displayOnly).action, 'Allow once')
+})
+
+test('the plain Codex Apps merge prompt supports approval without inferring a PR', async () => {
+  const h = fixture('toolApproval')
+  await respond(h, { kind: 'elicitation', action: 'decline' })
+  const request = structuredClone(scenarios.toolApproval)
+  delete request.params._meta
+  request.params.message = 'Allow GitHub to run tool "github.merge_pull_request"?'
+  request.params.requestedSchema = { type: 'object', properties: {} }
+  h.adapter.handleServerRequest(request)
+  const { toolApproval } = h.snapshot().pendingUserInput.elicitation
+  const card = getGitHubPullRequestApproval(toolApproval)
+  assert.equal(card.title, 'Merge pull request')
+  assert.equal(card.action, 'Allow once')
+  assert.equal(card.target, 'PR details unavailable')
+  await respond(h, { kind: 'elicitation', action: 'accept', content: {} })
+  assert.deepEqual(h.sent.at(-1).result, { action: 'accept', content: {} })
+
+  for (const params of [
+    { serverName: 'unrelated-mcp-server' },
+    { requestedSchema: { type: 'object', properties: { value: { type: 'string' } } } },
+    { _meta: { codex_requires_user_input: true } },
+    { message: 'Allow GitHub to run tool "github.update_file"?' }
+  ]) {
+    h.adapter.handleServerRequest({ ...request, params: { ...request.params, ...params } })
+    assert.equal(h.snapshot().pendingUserInput.elicitation.toolApproval, undefined)
+    await respond(h, { kind: 'elicitation', action: 'decline' })
+  }
+})
+
+test('GitHub approval previews distinguish PR state changes and inline review targets', () => {
+  const preview = (tool, args) =>
+    getGitHubPullRequestApproval({
+      toolName: 'github.' + tool,
+      parameters: Object.entries(args).map(([name, value]) => ({ name, label: name, value }))
+    })
+  const target = { repo_full_name: 'example/project', pr_number: '184' }
+  assert.equal(preview('update_pull_request', { ...target, state: 'closed' }).action, 'Close PR')
+  assert.equal(preview('update_pull_request', { ...target, state: 'open' }).action, 'Reopen PR')
+  const requestedChanges = preview('add_review_to_pr', {
+    ...target,
+    action: 'REQUEST_CHANGES',
+    review: 'Please add a test.',
+    file_comments: [{ path: 'src/discovery.ts', line: 84, side: 'LEFT', body: 'Add a test here.' }]
+  })
+  assert.equal(requestedChanges.action, 'Request changes')
+  assert.equal(requestedChanges.body, 'Please add a test.')
+  assert.deepEqual(requestedChanges.inlineComments, [
+    { location: 'src/discovery.ts:84 · old version', body: 'Add a test here.' }
+  ])
+  const thread = preview('resolve_review_thread', { thread_id: 'PRRT_example' })
+  assert.equal(thread.target, 'Thread PRRT_example')
+  assert.equal(thread.action, 'Allow once')
 })
 
 test('specialized automated-review requests cannot be accepted through general forms', async () => {

@@ -6,6 +6,7 @@ import type {
   ProviderUserInputResponse
 } from '../../../shared/provider'
 import { getElicitationDefaults, record } from '../../../shared/elicitation'
+import { getGitHubPullRequestApproval } from '../../../shared/githubPullRequestApproval'
 import { appApi } from '../appApi'
 import { Button } from './Button'
 import { Checkbox } from './Checkbox'
@@ -37,63 +38,61 @@ const enumOptions = (field: Record<string, unknown>): { value: string; title: st
   return null
 }
 
-function ToolApprovalPreview({ approval }: { approval: ProviderMcpToolApproval }) {
-  const parameters = new Map(approval.parameters.map((parameter) => [parameter.name, parameter]))
-  const take = (...names: string[]) => {
-    for (const name of names) {
-      const parameter = parameters.get(name)
-      if (typeof parameter?.value !== 'string') continue
-      parameters.delete(name)
-      return parameter.value
-    }
-    return undefined
-  }
-  const isPullRequest = approval.toolName === 'github.create_pull_request'
-  const title = isPullRequest ? take('title') : undefined
-  const repository = isPullRequest ? take('repository_full_name') : undefined
-  const head = isPullRequest ? take('head', 'head_branch') : undefined
-  const base = isPullRequest ? take('base', 'base_branch') : undefined
-  const body = isPullRequest ? take('body') : undefined
-  const draft = parameters.get('draft')?.value
-  if (isPullRequest && typeof draft === 'boolean') parameters.delete('draft')
-
+function ToolApprovalParameters({
+  parameters
+}: {
+  parameters: ProviderMcpToolApproval['parameters']
+}) {
   return (
-    <div className="chat-elicitation__preview">
-      {title && <strong className="chat-elicitation__preview-title">{title}</strong>}
-      {(repository || head || base || (isPullRequest && draft === true)) && (
+    <dl className="chat-elicitation__parameters" tabIndex={0}>
+      {parameters.map(({ name, label, value }) => (
+        <Fragment key={name}>
+          <dt>{label}</dt>
+          <dd>
+            <ToolApprovalValue value={value} />
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
+  )
+}
+
+function PullRequestPreview({
+  approval
+}: {
+  approval: NonNullable<ReturnType<typeof getGitHubPullRequestApproval>>
+}) {
+  const { target, prTitle, head, base, facts, body, inlineComments } = approval
+  return (
+    <div className="chat-elicitation__pr-preview">
+      <div className="chat-elicitation__preview-context">
+        {prTitle && <strong className="chat-elicitation__preview-title">{prTitle}</strong>}
+        <span>{target}</span>
+      </div>
+      {(head || base) && (
         <div className="chat-elicitation__preview-context">
-          {repository && <span>{repository}</span>}
-          {(head || base) && (
-            <span>
-              {head && <code>{head}</code>}
-              {base && (
-                <>
-                  {head ? ' into ' : 'Into '}
-                  <code>{base}</code>
-                </>
-              )}
-              {head && !base && ' (source branch)'}
-            </span>
-          )}
-          {isPullRequest && draft === true && <span>Draft</span>}
+          <span>
+            {head && <code>{head}</code>}
+            {base && (
+              <>
+                {head ? ' → ' : 'Into '}
+                <code>{base}</code>
+              </>
+            )}
+          </span>
         </div>
       )}
-      {body && (
+      {facts.length > 0 && <ToolApprovalParameters parameters={facts} />}
+      {(body || inlineComments.length > 0) && (
         <div className="chat-elicitation__preview-body" tabIndex={0}>
-          <CompactMarkdown content={body} staticPreview />
-        </div>
-      )}
-      {parameters.size > 0 && (
-        <dl className="chat-elicitation__parameters" tabIndex={0}>
-          {Array.from(parameters.values(), ({ name, label, value }) => (
-            <Fragment key={name}>
-              <dt>{label}</dt>
-              <dd>
-                <ToolApprovalValue value={value} />
-              </dd>
-            </Fragment>
+          {body && <CompactMarkdown content={body} staticPreview />}
+          {inlineComments.map(({ location, body }, index) => (
+            <div className="chat-elicitation__inline-comment" key={index}>
+              <code>{location}</code>
+              <CompactMarkdown content={body} staticPreview />
+            </div>
           ))}
-        </dl>
+        </div>
       )}
     </div>
   )
@@ -162,6 +161,10 @@ export const ElicitationRequestBox = ({
   const interaction = request.elicitation!
   const schema = interaction.mode === 'form' ? interaction.schema : {}
   const approval = interaction.mode === 'form' ? interaction.toolApproval : undefined
+  const pullRequest =
+    approval && interaction.serverName === 'codex_apps'
+      ? getGitHubPullRequestApproval(approval)
+      : undefined
   const [answers, setAnswers] = useState(() => getElicitationDefaults(schema))
   const [json, setJson] = useState(() => JSON.stringify(getElicitationDefaults(schema), null, 2))
   const [localError, setLocalError] = useState<string | null>(null)
@@ -171,7 +174,7 @@ export const ElicitationRequestBox = ({
   const showServiceName =
     serviceName &&
     (!approval || !request.question.toLowerCase().includes(serviceName.toLowerCase()))
-  const fields = record(schema.properties)
+  const fields = record(schema.properties) ?? (pullRequest ? {} : null)
   const flat =
     schema.type === 'object' &&
     !!fields &&
@@ -235,12 +238,23 @@ export const ElicitationRequestBox = ({
         />
       </span>
       <div className="chat-approval__main">
-        {showServiceName && <span className="chat-elicitation__label">{serviceName}</span>}
+        {!pullRequest && showServiceName && (
+          <span className="chat-elicitation__label">{serviceName}</span>
+        )}
         <div id={id} className="chat-approval__summary chat-elicitation__message">
-          <CompactMarkdown content={request.question} />
+          {pullRequest ? pullRequest.title : <CompactMarkdown content={request.question} />}
         </div>
       </div>
-      {approval && approval.parameters.length > 0 && <ToolApprovalPreview approval={approval} />}
+      {pullRequest ? (
+        <PullRequestPreview approval={pullRequest} />
+      ) : (
+        approval &&
+        approval.parameters.length > 0 && (
+          <div className="chat-elicitation__preview">
+            <ToolApprovalParameters parameters={approval.parameters} />
+          </div>
+        )
+      )}
       <div className="chat-elicitation__content">
         {interaction.mode === 'form' && (
           <form
@@ -425,6 +439,15 @@ export const ElicitationRequestBox = ({
         )}
       </div>
       <div className="chat-elicitation__footer">
+        {pullRequest && approval && (
+          <details className="chat-elicitation__tool-details">
+            <summary>Tool details</summary>
+            <code>{approval.toolName}</code>
+            {approval.parameters.length > 0 && (
+              <ToolApprovalParameters parameters={approval.parameters} />
+            )}
+          </details>
+        )}
         <div className="chat-approval__actions">
           <Button
             disabled={disabled}
@@ -436,7 +459,7 @@ export const ElicitationRequestBox = ({
             <Button
               disabled={disabled}
               callback={submit}
-              label={approval ? 'Allow once' : 'Submit'}
+              label={pullRequest?.action ?? (approval ? 'Allow once' : 'Submit')}
               theme="primary"
             />
           )}
