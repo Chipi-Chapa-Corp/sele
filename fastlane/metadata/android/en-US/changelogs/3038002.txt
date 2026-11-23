@@ -1,0 +1,1 @@
+Sele now tries another network address if the first one is unreachable when pairing with a nearby computer. Compare the security codes on your phone and computer to approve the connection.
