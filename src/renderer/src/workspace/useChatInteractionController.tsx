@@ -548,13 +548,14 @@ export function useChatInteractionController({
   }, [contentRef, selectedChat, handleSendMessage])
   const quoteRequestSequenceRef = useRef(0)
   const handleQuoteSelectedMessageText = useCallback(
-    (content: string, comment: string): void => {
+    (content: string, comment: string, sendImmediately = false): void => {
       if (!selectedChat) return
       setMessageBoxQuoteRequest({
         id: ++quoteRequestSequenceRef.current,
         scopeKey: getChatKey(selectedChat),
         content,
-        comment
+        comment,
+        sendImmediately
       })
     },
     [selectedChat]

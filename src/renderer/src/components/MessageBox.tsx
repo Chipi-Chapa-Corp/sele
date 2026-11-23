@@ -1,6 +1,6 @@
 import { ComposerImageLightbox } from '../composer/ComposerImageLightbox'
 import { MessagesSquare, Paperclip, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { ComposerAttachments } from '../composer/ComposerAttachments'
 import { ComposerTextInput } from '../composer/ComposerTextInput'
 import { ComposerToolbar } from '../composer/ComposerToolbar'
@@ -15,7 +15,7 @@ import { useComposerFocus } from '../useComposerFocus'
 import { Button } from './Button'
 import './MessageBox.css'
 
-import type { MessageBoxProps } from './MessageBox.types'
+import type { MessageBoxProps, MessageBoxQuoteRequest } from './MessageBox.types'
 export type { MessageBoxQuoteRequest } from './MessageBox.types'
 
 export const MessageBox: React.FC<MessageBoxProps> = (props) => {
@@ -125,40 +125,6 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     }
   }, [error])
 
-  useEffect(() => {
-    if (
-      !quoteRequest ||
-      quoteRequest.scopeKey !== draftScopeKey ||
-      editing ||
-      handledQuoteRequestIdRef.current === quoteRequest.id
-    ) {
-      return
-    }
-
-    const content = quoteRequest.content.trim()
-    const comment = quoteRequest.comment.trim()
-    if (!content || !comment) return
-
-    const updateFrame = window.requestAnimationFrame(() => {
-      handledQuoteRequestIdRef.current = quoteRequest.id
-      draft.setSelectedQuotes((quotes) => [
-        ...quotes,
-        { id: crypto.randomUUID(), content, comment }
-      ])
-      onQuoteRequestHandled?.(quoteRequest.id)
-      mentions.closeMentions()
-
-      const textarea = textareaRef.current
-      if (!textarea) return
-
-      textarea.focus({ preventScroll: true })
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
-    })
-
-    return () => {
-      window.cancelAnimationFrame(updateFrame)
-    }
-  }, [editing, quoteRequest, draftScopeKey, draft.setSelectedQuotes, onQuoteRequestHandled])
   const sending = useComposerSubmission({
     options: props,
     draft: draft,
@@ -170,6 +136,44 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     editingState: editingState,
     setAttachmentSelectionError: setAttachmentSelectionError
   })
+
+  const handleQuoteRequest = useEffectEvent((request: MessageBoxQuoteRequest) => {
+    if (
+      request.scopeKey !== draftScopeKey ||
+      editing ||
+      handledQuoteRequestIdRef.current === request.id
+    )
+      return
+
+    const content = request.content.trim()
+    const comment = request.comment.trim()
+    if (!content || !comment) return
+
+    handledQuoteRequestIdRef.current = request.id
+    onQuoteRequestHandled?.(request.id)
+    mentions.closeMentions()
+    const quote = { id: crypto.randomUUID(), content, comment }
+    if (
+      request.sendImmediately &&
+      sending.submitMessage(activePrimaryMode, draft.message, [...draft.selectedQuotes, quote])
+    ) {
+      return
+    }
+
+    draft.setSelectedQuotes((quotes) => [...quotes, quote])
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    textarea.focus({ preventScroll: true })
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+  })
+
+  useEffect(() => {
+    if (!quoteRequest || quoteRequest.scopeKey !== draftScopeKey || editing) return
+
+    const updateFrame = window.requestAnimationFrame(() => handleQuoteRequest(quoteRequest))
+    return () => window.cancelAnimationFrame(updateFrame)
+  }, [editing, quoteRequest, draftScopeKey])
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {
     event.preventDefault()

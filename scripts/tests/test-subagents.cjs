@@ -516,6 +516,11 @@ if (!process.versions.electron) {
       await ready(
         `document.querySelector('[data-sidebar-group-key="cwd:/fixture"] .chat-list-group__working-icon')`
       )
+      const readProjectActions = (key) =>
+        run(`Array.from(document.querySelectorAll('[data-sidebar-group-key="${key}"] .chat-list-group__action button'),
+          button => button.getAttribute('aria-label'))`)
+      const standardProjectActions = await readProjectActions('cwd:/fixture')
+      assert.ok(standardProjectActions.some((label) => label.startsWith('New chat in ')))
       await run(
         `document.querySelector('.chat-home__filter-tabs [aria-label="Working chats"]').click()`
       )
@@ -540,6 +545,7 @@ if (!process.versions.electron) {
       await ready(`!document.querySelector('.chat-home__filter-tabs [aria-label="Working chats"]') &&
         document.querySelector('[data-sidebar-group-key="working:cwd:/fixture"] [data-chat-id="root"]') &&
         document.querySelector('[data-sidebar-group-key="working:cwd:/other-project"] [data-chat-id="pinned-working"]')`)
+      assert.deepEqual(await readProjectActions('working:cwd:/fixture'), standardProjectActions)
       assert.equal(await run(`document.querySelectorAll('[data-chat-id="root"]').length`), 1)
       assert.equal(
         await run(`Boolean(document.querySelector('.chat-list-group__working-icon'))`),

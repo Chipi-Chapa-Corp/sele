@@ -98,8 +98,9 @@ export function useComposerSubmission({
 
   const submitMessage = (
     activeMode: ProviderActiveSendMode = activePrimaryMode,
-    content: string = message
-  ): void => {
+    content: string = message,
+    quotes = selectedQuotes
+  ): boolean => {
     const nextMessage = content.trim()
     const typedSkillInputs = getSelectedSkillInputs(
       nextMessage,
@@ -124,7 +125,7 @@ export function useComposerSubmission({
         selectedAttachments.length === 0 &&
         selectedSkillInputs.length === 0 &&
         selectedAppInputs.length === 0 &&
-        selectedQuotes.length === 0 &&
+        quotes.length === 0 &&
         linkedChats.length === 0 &&
         !submittingReview) ||
       operationsDisabled ||
@@ -134,7 +135,7 @@ export function useComposerSubmission({
       pending ||
       (!active && disabled)
     ) {
-      return
+      return false
     }
 
     textareaRef.current?.focus({ preventScroll: true })
@@ -148,7 +149,7 @@ export function useComposerSubmission({
         name: chat.name,
         summary: chat.summary ?? ''
       })),
-      buildQuotedPrompt(selectedQuotes, nextMessage)
+      buildQuotedPrompt(quotes, nextMessage)
     )
     const restoreLinkedChats = (): void => {
       if (sentLinkedChats.length === 0) return
@@ -177,7 +178,7 @@ export function useComposerSubmission({
         .catch((error: unknown) => {
           console.error('Unable to persist the cleared composer draft.', error)
         })
-      return
+      return true
     }
 
     const cancelFlight = captureMessageFlight(textareaRef.current, nextMessage, draftScopeKey)
@@ -190,7 +191,7 @@ export function useComposerSubmission({
           attachments: selectedAttachments,
           skills: selectedSkills,
           apps: selectedApps,
-          quotes: selectedQuotes
+          quotes
         })
       )
     }
@@ -221,6 +222,7 @@ export function useComposerSubmission({
         console.error('Unable to send the composer message.', error)
         restoreFailedSend()
       })
+    return true
   }
   return { submitMessage }
 }

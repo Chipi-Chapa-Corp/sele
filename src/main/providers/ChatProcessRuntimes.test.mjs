@@ -47,7 +47,12 @@ const setup = async (t, { providerId = 'codex', container = null } = {}) => {
       },
       recoverRuntime: async () =>
         calls.push(['recover', providerProcessContext.getStore()?.record.id]),
-      releaseChat: async (id) => calls.push(['release', id]),
+      releaseChat: async (id) =>
+        calls.push(['release', id, providerProcessContext.getStore()?.record.id]),
+      acquireChat:
+        providerId === 'codex'
+          ? async (id) => calls.push(['acquire', id, providerProcessContext.getStore()?.record.id])
+          : undefined,
       startChat: async (_message, _options, created) => {
         const id = `new-${++next}`
         await created(id)
@@ -157,6 +162,27 @@ test('restart recovers exact saved runtime identity; stopping an unknown chat cr
   const count = (await h.store.all('codex', 'account')).length
   await second.stopChatProcesses('unknown')
   assert.equal((await h.store.all('codex', 'account')).length, count)
+})
+
+test('Codex releases both possible writers and acquires on the runtime used for later opens', async (t) => {
+  const h = await setup(t)
+  const original = h.wrap()
+  await original.continueChat('a', 'work')
+  const scope = await h.store.find('codex', 'account', 'a', null)
+  await original.dispose()
+
+  const adapter = h.wrap()
+  h.calls.length = 0
+  await adapter.releaseChat('a')
+  await adapter.acquireChat('a')
+  await adapter.getChat('a')
+  assert.deepEqual(h.calls, [
+    ['recover', scope.record.id],
+    ['release', 'a', scope.record.id],
+    ['release', 'a', undefined],
+    ['acquire', 'a', scope.record.id],
+    ['get', 'a', scope.record.id]
+  ])
 })
 
 test('a new boundary keeps revisions increasing and ignores events from its retired runtime', async (t) => {

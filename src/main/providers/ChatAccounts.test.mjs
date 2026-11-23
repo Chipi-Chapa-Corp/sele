@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ChatAccounts } from './ChatAccounts.ts'
 
-const setup = (stored = new Map(), sourceContainer = null, recovery = {}) => {
+const setup = (stored = new Map(), sourceContainer = null, behavior = {}) => {
   let selected = 'a'
   const calls = []
   const runtimes = new Map()
@@ -16,14 +16,16 @@ const setup = (stored = new Map(), sourceContainer = null, recovery = {}) => {
       },
       onTokenUsage: () => () => {},
       dispose: () => calls.push(['dispose', account]),
-      recoverRuntime: recovery.run
-        ? (options) => recovery.run(account, options, adapter)
+      recoverRuntime: behavior.run
+        ? (options) => behavior.run(account, options, adapter)
         : undefined,
+      releaseChat: behavior.release && ((id, options) => behavior.release(account, id, options)),
+      acquireChat: behavior.acquire && ((id, options) => behavior.acquire(account, id, options)),
       getModels: async () => [account],
       getUsage: async () => ({ account }),
       login: async () => ({ account }),
       getChats: async () => ({
-        chats: recovery.chats ?? [{ id: 'existing', container: sourceContainer, status: null }],
+        chats: behavior.chats ?? [{ id: 'existing', container: sourceContainer, status: null }],
         nextCursor: null
       }),
       startChat: async (_message, _options, created) => {
@@ -80,6 +82,7 @@ const setup = (stored = new Map(), sourceContainer = null, recovery = {}) => {
   const router = new ChatAccounts(make('base'), {
     metadata: async (id) => ({ id, container: null, accountId: stored.get(id) }),
     save: async (id, account, replace) => {
+      await behavior.save?.(id, account, replace)
       if (replace || !stored.has(id)) stored.set(id, account)
       return stored.get(id)
     },
@@ -427,6 +430,93 @@ test('a failed writer release preserves the binding and permits a later switch',
   h.runtimes.get('a').releaseChat = async () => {}
   await h.router.select('source', 'b')
   assert.equal((await h.adapter.getChat('source')).account, 'b')
+})
+
+test('a cold account switch releases the retained writer and waits for the selected writer before committing', async () => {
+  let writer = 'a'
+  let grantWriter
+  const waiting = new Promise((resolve) => {
+    grantWriter = resolve
+  })
+  const calls = []
+  const h = setup(new Map([['source', 'a']]), null, {
+    release: async (account, id) => {
+      calls.push(['release', account, id])
+      assert.equal(writer, account)
+      writer = null
+    },
+    acquire: async (account, id) => {
+      calls.push(['acquire', account, id])
+      assert.equal(writer, null)
+      await waiting
+      writer = account
+    },
+    save: (id, account) => {
+      calls.push(['save', account, id])
+      assert.equal(writer, account)
+    }
+  })
+  assert.equal(h.runtimes.size, 0)
+  const switching = h.router.select('source', 'b')
+  const opening = h.adapter.getChat('source')
+  await new Promise(setImmediate)
+  assert.equal(h.stored.get('source'), 'a')
+  assert.deepEqual(h.calls, [])
+  assert.deepEqual(calls, [
+    ['release', 'a', 'source'],
+    ['acquire', 'b', 'source']
+  ])
+  grantWriter()
+  await switching
+  assert.equal((await opening).account, 'b')
+  assert.deepEqual(calls.at(-1), ['save', 'b', 'source'])
+  assert.equal(h.stored.get('source'), 'b')
+})
+
+test('failed acquisition or persistence leaves the old account selected and cleans up the target writer', async () => {
+  for (const phase of ['acquire', 'save']) {
+    let writer = 'a'
+    const h = setup(new Map([['source', 'a']]), null, {
+      release: async (account) => {
+        if (writer === account) writer = null
+      },
+      acquire: async (account) => {
+        if (phase === 'acquire') throw Error('writer unavailable')
+        writer = account
+      },
+      save: () => {
+        throw Error('database unavailable')
+      }
+    })
+    await assert.rejects(h.router.select('source', 'b'), /unavailable/)
+    assert.equal(h.stored.get('source'), 'a')
+    assert.equal(writer, null)
+  }
+})
+
+test('shutdown releases a writer acquired during an uncommitted account switch', async () => {
+  let writer = 'a'
+  let grantWriter
+  const h = setup(new Map([['source', 'a']]), null, {
+    release: async (account) => {
+      if (writer === account) writer = null
+    },
+    acquire: (account) =>
+      new Promise((resolve) => {
+        grantWriter = () => {
+          writer = account
+          resolve()
+        }
+      })
+  })
+  const switching = assert.rejects(h.router.select('source', 'b'), /disposed/)
+  await new Promise(setImmediate)
+  assert.equal(typeof grantWriter, 'function')
+  const disposing = h.adapter.dispose()
+  grantWriter()
+  await Promise.all([switching, disposing])
+  assert.equal(h.stored.get('source'), 'a')
+  assert.equal(writer, null)
 })
 
 test('reset queue handoffs use the chat account instead of the default account', async () => {

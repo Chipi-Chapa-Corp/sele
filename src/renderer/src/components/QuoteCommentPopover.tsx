@@ -17,6 +17,7 @@ export const QuoteCommentPopover = ({
   content,
   comment = '',
   editing = false,
+  onSend,
   onSubmit,
   onClose
 }: {
@@ -24,6 +25,7 @@ export const QuoteCommentPopover = ({
   content: string
   comment?: string
   editing?: boolean
+  onSend?: (comment: string) => void
   onSubmit: (comment: string) => void
   onClose: () => void
 }): React.JSX.Element => {
@@ -82,6 +84,7 @@ export const QuoteCommentPopover = ({
         submitLabel={editing ? 'Save comment' : 'Add comment'}
         position={{ left: 0, top: 0 }}
         onCancel={onClose}
+        onSend={onSend}
         onSubmit={onSubmit}
       />
     </div>,

@@ -29,12 +29,14 @@ const { spawnSync } = require('node:child_process')
         loader: 'ts',
         contents: `
           import assert from 'node:assert/strict'
-          import { readFile, lstat } from 'node:fs/promises'
+          import { once } from 'node:events'
+          import { readFile, lstat, rename } from 'node:fs/promises'
           import { join } from 'node:path'
           import { CodexAppServerClient } from './src/main/providers/codex/CodexAppServerClient'
           const run = async () => {
-          const a = new CodexAppServerClient(null, '00000000-0000-4000-8000-000000000001')
-          const b = new CodexAppServerClient(null, '00000000-0000-4000-8000-000000000002')
+          const accountA = '00000000-0000-4000-8000-000000000001'
+          let a = new CodexAppServerClient(null, accountA, true)
+          const b = new CodexAppServerClient(null, '00000000-0000-4000-8000-000000000002', true)
           const canonical = new CodexAppServerClient(null, 'default')
           try {
             await a.request('account/login/start', { type: 'apiKey', apiKey: 'sk-fixture-a-unused' })
@@ -56,6 +58,19 @@ const { spawnSync } = require('node:child_process')
             const read = await canonical.request('thread/read', { threadId: source.id, includeTurns: false })
             assert.equal(read.thread.id, source.id)
             await assert.rejects(b.request('thread/resume', { threadId: source.id }, { isExpectedError: error => /active writer/.test(error.message) }), /active writer/)
+            const detached = once(a.connectionIdentity, 'close')
+            a.dispose({ preserveRuntime: true })
+            await detached
+            a = new CodexAppServerClient(null, accountA, true)
+            assert.equal(a.ownsThread(source.id), false)
+            const oldAuth = join(root, 'sele/accounts', accountA, 'auth.json')
+            await rename(oldAuth, oldAuth + '.bak')
+            try {
+              await a.recoverRuntime()
+            } finally {
+              await rename(oldAuth + '.bak', oldAuth)
+            }
+            assert.equal(a.ownsThread(source.id), true)
             for (let index = 0; index < 4; index++) {
               const from = index % 2 === 0 ? a : b
               const to = index % 2 === 0 ? b : a
@@ -66,7 +81,7 @@ const { spawnSync } = require('node:child_process')
               assert.equal(from.ownsThread(source.id), false)
               assert.equal(a.ownsThread(sibling.id), true)
             }
-            console.log('PASS real Codex shadows: writer exclusion, four immediate handoffs, sibling ownership preserved')
+            console.log('PASS real Codex shadows: retained writer recovery, four immediate handoffs, sibling ownership preserved')
           } finally {
             await Promise.all([a.disposeAndWait(), b.disposeAndWait(), canonical.disposeAndWait()])
           }
@@ -94,17 +109,19 @@ const { spawnSync } = require('node:child_process')
               contents: `export default ${JSON.stringify(await fs.readFile(args.path, 'utf8'))}`
             }))
             const stubs = {
-              electron: `export const app = { getPath: () => { throw Error('Profile access is forbidden') } }`,
+              electron: `import { join } from 'node:path'; export const app = { getPath: () => join(process.env.HOME, 'sele-profile') }; export const safeStorage = {}; export const nativeImage = {}`,
+              providerProcesses: `export const getProviderHostCommand = async (file, args, options) => ({ file, args, env: options.env })`,
               hostProcess: `export const isRunningInFlatpak = () => false; export const getHostCommand = async (file, args, options) => ({ file, args, env: options?.env || process.env }); export const resolveHostExecutable = async (file, options) => ({ file, env: options.env })`,
               CodexExecutable: `export const getCodexExecutable = () => process.env.SELE_TEST_CODEX_BINARY || 'codex'; export const getCodexExecutableError = error => error; export const isCodexExecutableUnavailable = () => false`,
               CodexAccountView: `import { getCodexAccountViewCommand as prepare } from ${JSON.stringify(path.join(project, 'src/main/providers/codex/CodexAccountView.ts'))}; export const getCodexAccountViewCommand = (binary, args, _posix, id) => prepare(binary, args, process.env.SELE_TEST_CODEX_NATIVE !== '1', id)`,
               CodexDesktopTools: `export const registerCodexDesktopTools = () => ({ close() {} })`,
-              CodexBrowserSessions: `export const registerBrowserUseSession = () => {}; export const removeBrowserUseSessions = () => {}`
+              CodexBrowserTools: `export const registerCodexBrowserTools = () => null`,
+              CodexBrowserSessions: `export const registerBrowserUseSession = () => {}; export const removeBrowserUseSessions = () => {}; export const removeBrowserUseSession = () => {}; export const getBrowserUseSession = () => undefined; export const onBrowserUseSessionRemoved = () => () => {}`
             }
             build.onResolve(
               {
                 filter:
-                  /\/(hostProcess|CodexExecutable|CodexAccountView|CodexAccounts|CodexDesktopTools|CodexBrowserSessions)$/
+                  /\/(providerProcesses|hostProcess|CodexExecutable|CodexAccountView|CodexAccounts|CodexDesktopTools|CodexBrowserTools|CodexBrowserSessions)$/
               },
               (args) => ({
                 path: args.path.split('/').at(-1),

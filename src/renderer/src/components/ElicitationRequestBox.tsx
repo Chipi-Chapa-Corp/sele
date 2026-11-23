@@ -1,5 +1,10 @@
-import { useId, useRef, useState } from 'react'
-import type { ProviderPendingUserInput, ProviderUserInputResponse } from '../../../shared/provider'
+import { X } from 'lucide-react'
+import { Fragment, useId, useRef, useState } from 'react'
+import type {
+  ProviderMcpToolApproval,
+  ProviderPendingUserInput,
+  ProviderUserInputResponse
+} from '../../../shared/provider'
 import { getElicitationDefaults, record } from '../../../shared/elicitation'
 import { appApi } from '../appApi'
 import { Button } from './Button'
@@ -32,6 +37,120 @@ const enumOptions = (field: Record<string, unknown>): { value: string; title: st
   return null
 }
 
+function ToolApprovalPreview({ approval }: { approval: ProviderMcpToolApproval }) {
+  const parameters = new Map(approval.parameters.map((parameter) => [parameter.name, parameter]))
+  const take = (...names: string[]) => {
+    for (const name of names) {
+      const parameter = parameters.get(name)
+      if (typeof parameter?.value !== 'string') continue
+      parameters.delete(name)
+      return parameter.value
+    }
+    return undefined
+  }
+  const isPullRequest = approval.toolName === 'github.create_pull_request'
+  const title = isPullRequest ? take('title') : undefined
+  const repository = isPullRequest ? take('repository_full_name') : undefined
+  const head = isPullRequest ? take('head', 'head_branch') : undefined
+  const base = isPullRequest ? take('base', 'base_branch') : undefined
+  const body = isPullRequest ? take('body') : undefined
+  const draft = parameters.get('draft')?.value
+  if (isPullRequest && typeof draft === 'boolean') parameters.delete('draft')
+
+  return (
+    <div className="chat-elicitation__preview">
+      {title && <strong className="chat-elicitation__preview-title">{title}</strong>}
+      {(repository || head || base || (isPullRequest && draft === true)) && (
+        <div className="chat-elicitation__preview-context">
+          {repository && <span>{repository}</span>}
+          {(head || base) && (
+            <span>
+              {head && <code>{head}</code>}
+              {base && (
+                <>
+                  {head ? ' into ' : 'Into '}
+                  <code>{base}</code>
+                </>
+              )}
+              {head && !base && ' (source branch)'}
+            </span>
+          )}
+          {isPullRequest && draft === true && <span>Draft</span>}
+        </div>
+      )}
+      {body && (
+        <div className="chat-elicitation__preview-body" tabIndex={0}>
+          <CompactMarkdown content={body} staticPreview />
+        </div>
+      )}
+      {parameters.size > 0 && (
+        <dl className="chat-elicitation__parameters" tabIndex={0}>
+          {Array.from(parameters.values(), ({ name, label, value }) => (
+            <Fragment key={name}>
+              <dt>{label}</dt>
+              <dd>
+                <ToolApprovalValue value={value} />
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+    </div>
+  )
+}
+
+const isoDatePattern =
+  /^(\d{4}-\d{2}-\d{2})(?:T((?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?)(Z|[+-]\d{2}:\d{2})?)?$/i
+
+function formatApprovalDate(value: string): string | null {
+  const match = isoDatePattern.exec(value)
+  if (!match) return null
+  const [, day, clock, zone] = match
+  const calendarDay = new Date(`${day}T00:00:00Z`)
+  if (!Number.isFinite(calendarDay.getTime()) || calendarDay.toISOString().slice(0, 10) !== day)
+    return null
+
+  const date = clock ? new Date(`${day}T${clock}${zone || 'Z'}`) : calendarDay
+  if (!Number.isFinite(date.getTime())) return null
+
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    ...(clock && { hour: 'numeric', minute: '2-digit' }),
+    ...(clock && Number(clock.slice(6)) > 0 && { second: '2-digit' }),
+    ...(zone ? { timeZoneName: 'short' } : { timeZone: 'UTC' })
+  }).format(date)
+}
+
+function ToolApprovalValue({ value }: { value: unknown }): React.ReactNode {
+  if (typeof value === 'string') {
+    const formatted = formatApprovalDate(value)
+    return formatted ? (
+      <time dateTime={value} title={value}>
+        {formatted}
+      </time>
+    ) : (
+      value || 'Empty'
+    )
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return 'Empty'
+    return (
+      <ul className="chat-elicitation__parameter-array">
+        {value.map((item, index) => (
+          <li key={index}>
+            <ToolApprovalValue value={item} />
+          </li>
+        ))}
+      </ul>
+    )
+  }
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (value && typeof value === 'object') return <pre>{JSON.stringify(value, null, 2)}</pre>
+  return value == null ? 'Empty' : String(value)
+}
+
 export const ElicitationRequestBox = ({
   request,
   disabled = false,
@@ -42,10 +161,16 @@ export const ElicitationRequestBox = ({
   const formRef = useRef<HTMLFormElement>(null)
   const interaction = request.elicitation!
   const schema = interaction.mode === 'form' ? interaction.schema : {}
+  const approval = interaction.mode === 'form' ? interaction.toolApproval : undefined
   const [answers, setAnswers] = useState(() => getElicitationDefaults(schema))
   const [json, setJson] = useState(() => JSON.stringify(getElicitationDefaults(schema), null, 2))
   const [localError, setLocalError] = useState<string | null>(null)
   const [opened, setOpened] = useState(false)
+  const serverName = interaction.serverName === 'codex_apps' ? 'Codex Apps' : interaction.serverName
+  const serviceName = approval ? approval.connectorName : serverName
+  const showServiceName =
+    serviceName &&
+    (!approval || !request.question.toLowerCase().includes(serviceName.toLowerCase()))
   const fields = record(schema.properties)
   const flat =
     schema.type === 'object' &&
@@ -97,19 +222,26 @@ export const ElicitationRequestBox = ({
     }
   }
   return (
-    <section
-      className="chat-approval chat-user-input chat-elicitation"
-      aria-label="Service input request"
-      aria-labelledby={id}
-    >
+    <section className="chat-approval chat-user-input chat-elicitation" aria-labelledby={id}>
+      <span className="chat-user-input__dismiss">
+        <Button
+          aria-label="Cancel request"
+          callback={() => onRespond({ kind: 'cancel' })}
+          disabled={disabled && interaction.mode !== 'verification'}
+          icon={<X aria-hidden="true" />}
+          size="small"
+          theme="transparent"
+          title="Cancel"
+        />
+      </span>
       <div className="chat-approval__main">
-        <span className="chat-approval__label">
-          {interaction.serverName} ·{' '}
-          {interaction.mode === 'url' ? 'External interaction' : 'Input needed'}
-        </span>
-        <div id={id} className="chat-approval__summary chat-user-input__question">
+        {showServiceName && <span className="chat-elicitation__label">{serviceName}</span>}
+        <div id={id} className="chat-approval__summary chat-elicitation__message">
           <CompactMarkdown content={request.question} />
         </div>
+      </div>
+      {approval && approval.parameters.length > 0 && <ToolApprovalPreview approval={approval} />}
+      <div className="chat-elicitation__content">
         {interaction.mode === 'form' && (
           <form
             ref={formRef}
@@ -263,7 +395,6 @@ export const ElicitationRequestBox = ({
                 </label>
               )}
             </fieldset>
-            <Button disabled={disabled} callback={submit} label="Submit" theme="primary" />
           </form>
         )}
         {interaction.mode === 'url' && (
@@ -272,15 +403,6 @@ export const ElicitationRequestBox = ({
             <span className="chat-user-input__choice-description">
               Complete the interaction at this address, then return here to continue.
             </span>
-            <div className="chat-approval__actions">
-              <Button disabled={disabled} callback={open} label="Open link" theme="secondary" />
-              <Button
-                disabled={disabled || !opened}
-                callback={() => onRespond({ kind: 'elicitation', action: 'accept' })}
-                label="Continue"
-                theme="primary"
-              />
-            </div>
           </>
         )}
         {interaction.mode === 'verification' && (
@@ -293,12 +415,6 @@ export const ElicitationRequestBox = ({
                   ? 'Verify this request using your device. Your system may ask for biometric confirmation.'
                   : interaction.reason}
             </p>
-            <Button
-              disabled={disabled || interaction.availability !== 'available'}
-              callback={() => onRespond({ kind: 'elicitation', action: 'accept' })}
-              label="Verify identity"
-              theme="primary"
-            />
           </>
         )}
         {interaction.mode === 'unsupported' && <p>{interaction.reason}</p>}
@@ -308,19 +424,42 @@ export const ElicitationRequestBox = ({
           </span>
         )}
       </div>
-      <div className="chat-approval__actions">
-        <Button
-          disabled={disabled && interaction.mode !== 'verification'}
-          callback={() => onRespond({ kind: 'cancel' })}
-          label="Cancel"
-          theme="secondary"
-        />
-        <Button
-          disabled={disabled}
-          callback={() => onRespond({ kind: 'elicitation', action: 'decline' })}
-          label="Decline"
-          theme="secondary"
-        />
+      <div className="chat-elicitation__footer">
+        <div className="chat-approval__actions">
+          <Button
+            disabled={disabled}
+            callback={() => onRespond({ kind: 'elicitation', action: 'decline' })}
+            label="Decline"
+            theme="secondary"
+          />
+          {interaction.mode === 'form' && (
+            <Button
+              disabled={disabled}
+              callback={submit}
+              label={approval ? 'Allow once' : 'Submit'}
+              theme="primary"
+            />
+          )}
+          {interaction.mode === 'url' && (
+            <>
+              <Button disabled={disabled} callback={open} label="Open link" theme="secondary" />
+              <Button
+                disabled={disabled || !opened}
+                callback={() => onRespond({ kind: 'elicitation', action: 'accept' })}
+                label="Continue"
+                theme="primary"
+              />
+            </>
+          )}
+          {interaction.mode === 'verification' && (
+            <Button
+              disabled={disabled || interaction.availability !== 'available'}
+              callback={() => onRespond({ kind: 'elicitation', action: 'accept' })}
+              label="Verify identity"
+              theme="primary"
+            />
+          )}
+        </div>
       </div>
     </section>
   )

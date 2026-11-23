@@ -234,7 +234,7 @@ export const ChatListGroup = memo(function ChatListGroup({
 
   const headerActions = (
     <>
-      {group.kind === 'cwd' && (
+      {projectGroup && (
         <span className="chat-list-group__action">
           <Button
             theme={compact ? 'secondary' : 'transparent'}
@@ -343,7 +343,7 @@ export const ChatListGroup = memo(function ChatListGroup({
         ) : (
           toggle
         )}
-        {compact && (group.kind === 'cwd' || group.kind === 'pinned') ? (
+        {compact && (projectGroup || group.kind === 'pinned') ? (
           <span className="mobile-project-actions-anchor">
             <Button
               aria-label={`Actions for ${groupLabel}`}

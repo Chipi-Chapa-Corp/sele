@@ -339,7 +339,7 @@ export function useChatListController({
     }
   }
   const handleMarkCwdChatsDone = async (group: ChatListGroupData): Promise<void> => {
-    if (group.kind !== 'cwd') return
+    if (group.kind !== 'cwd' && group.kind !== 'working') return
     // Persist exactly the displayed chats in one request, regardless of provider availability.
     await changeChatDone(group.chats, true, () =>
       providerApi.markChatsDone(Array.from(new Set(group.chats.map((chat) => chat.id))))

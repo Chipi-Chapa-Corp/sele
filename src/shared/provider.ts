@@ -614,6 +614,12 @@ export type ProviderUserInputChoice = {
   description: string | null
 }
 
+export type ProviderMcpToolApproval = {
+  connectorName?: string
+  toolName?: string
+  parameters: { name: string; label: string; value: unknown }[]
+}
+
 export type ProviderPendingUserInput = {
   id: string
   question: string
@@ -623,7 +629,12 @@ export type ProviderPendingUserInput = {
   isSecret?: boolean
   startedAt: number
   elicitation?:
-    | { mode: 'form'; serverName: string; schema: Record<string, unknown> }
+    | {
+        mode: 'form'
+        serverName: string
+        schema: Record<string, unknown>
+        toolApproval?: ProviderMcpToolApproval
+      }
     | { mode: 'url'; serverName: string; url: string }
     | {
         mode: 'verification'

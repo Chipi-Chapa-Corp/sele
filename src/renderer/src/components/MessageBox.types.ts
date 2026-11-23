@@ -131,6 +131,7 @@ export type MessageBoxQuoteRequest = {
   scopeKey: string
   content: string
   comment: string
+  sendImmediately?: boolean
 }
 
 type MessageBoxContextUsage = ChatContextUsage

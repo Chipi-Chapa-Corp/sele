@@ -206,16 +206,16 @@
   transition: opacity 160ms ease;
 }
 
-.chat-list-group--cwd .chat-list-group__header {
+:is(.chat-list-group--cwd, .chat-list-group--working) .chat-list-group__header {
   gap: 0;
 }
 
-.chat-list-group--cwd .chat-list-group__action {
+:is(.chat-list-group--cwd, .chat-list-group--working) .chat-list-group__action {
   width: 0;
   overflow: hidden;
 }
 
-.chat-list-group--cwd
+:is(.chat-list-group--cwd, .chat-list-group--working)
   .chat-list-group__header:is(:hover, :has(:focus-visible), :has(.ui-button-group--open))
   .chat-list-group__action {
   width: auto;

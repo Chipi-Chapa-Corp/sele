@@ -129,6 +129,44 @@ exports.scenarios = {
       message: 'Allow the browser to visit example.com?'
     }
   ),
+  toolApproval: form(
+    { type: 'object', properties: {} },
+    {
+      serverName: 'codex_apps',
+      message: 'Allow GitHub to create a pull request?',
+      _meta: {
+        codex_approval_kind: 'mcp_tool_call',
+        connector_name: 'GitHub',
+        tool_name: 'github.create_pull_request',
+        tool_title: 'create_pull_request',
+        tool_description: 'Create a pull request in a GitHub repository.',
+        tool_params: {
+          repository_full_name: 'example/project',
+          title: 'Add report settings',
+          body: '## Summary\n\nAdds optional settings for reports.',
+          head: 'feature/report-settings',
+          base: 'main',
+          draft: false
+        },
+        tool_params_display: [
+          { name: 'title', display_name: 'Title', value: 'Add report settings' },
+          { name: 'base', display_name: 'base', value: 'main' },
+          {
+            name: 'body',
+            display_name: 'Pull request body',
+            value: '## Summary\n\nAdds optional settings for reports.'
+          },
+          { name: 'draft', display_name: 'draft', value: false },
+          { name: 'head', display_name: 'head', value: 'feature/report-settings' },
+          {
+            name: 'repository_full_name',
+            display_name: 'repository_full_name',
+            value: 'example/project'
+          }
+        ]
+      }
+    }
+  ),
   question: {
     id: 107,
     method: 'item/tool/requestUserInput',

@@ -6,7 +6,11 @@ import {
   getWorkingStepDefaultOpen,
   getWorkingStepProgressPolicy
 } from '../../../renderer/src/workingStepDisclosure.ts'
-import { CodexTranscriptProjection, getChatItems } from './CodexItemRenderers.ts'
+import {
+  CodexTranscriptProjection,
+  createCodexFileAttachmentInput,
+  getChatItems
+} from './CodexItemRenderers.ts'
 import { getNestedToolCalls } from './CodexToolCalls.ts'
 import { updateIndexedTranscriptRecord } from '../transcriptProjection/recordChanges.ts'
 
@@ -783,6 +787,56 @@ test('marks an inline follow-up as a steering message', () => {
   assert.equal(steeringMessage?.kind, 'steering')
   assert.equal(steeringMessage?.label, 'Steered with')
   assert.equal(steeringMessage?.editTargetId, 'steered-turn:steering-message')
+})
+
+test('renders only the revised instruction and its attachments from live and existing Codex history', () => {
+  const previous = 'Make blue things white'
+  const revised = 'Make blue things and icons white'
+  const image = { type: 'localImage', path: '/screenshot.png' }
+  const file = createCodexFileAttachmentInput('/notes.md')
+  for (const [payload, expectedText] of [
+    [
+      `Please replace my earlier instruction with this revision.\n\nEarlier instruction (quoted):\n${JSON.stringify(`${previous}\n\nRevised instruction:\nExample`)}\n\nRevised instruction:\n${revised}`,
+      revised
+    ],
+    [
+      `Please replace my earlier instruction with this revision.\n\nEarlier instruction:\n${previous}\n\nRevised instruction:\n${revised}`,
+      revised
+    ],
+    [
+      `Please replace my earlier instruction with this revision.\n\nEarlier instruction:\n${previous}\n\nRevised instruction:`,
+      ''
+    ]
+  ]) {
+    for (const items of [
+      [{ id: 'old', type: 'userMessage', content: [{ type: 'text', text: previous }, image] }],
+      []
+    ]) {
+      const rendered = getChatItems([
+        {
+          id: 'turn',
+          status: 'completed',
+          items: [
+            ...items,
+            {
+              id: 'revision',
+              type: 'userMessage',
+              content: [{ type: 'text', text: `${payload}\n${file.text}` }, image]
+            }
+          ]
+        }
+      ])
+      const revision = rendered.find((item) => item.id === 'turn:revision')
+      assert.equal(revision?.content, expectedText)
+      assert.equal(revision?.label, 'Steering revision')
+      assert.equal(revision?.editTargetId, 'turn:revision')
+      assert.deepEqual(
+        revision?.attachments.map((attachment) => attachment.path),
+        ['/notes.md', '/screenshot.png']
+      )
+      if (items.length) assert.equal(rendered[0].content, previous)
+    }
+  }
 })
 
 test('progress finished by steering uses steered collapse settings across displayed turns', () => {

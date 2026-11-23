@@ -54,6 +54,7 @@ const fixture = (status = 'idle', turnStatus = 'completed') => {
     queuedTurnsByThread: new Map([['chat', [{ id: 'queued', text: 'Next message' }]]]),
     queuedTurnStartThreads: new Set(),
     pausedQueuedTurnThreads: new Set(),
+    editingHistoryThreads: new Set(),
     pendingTurnStarts: new Map(),
     pendingTurnIds: new Map(),
     activeTurnIds: new Map(),
@@ -121,6 +122,14 @@ test('submission locks never allow reconciliation to clear an in-flight message'
   adapter.pendingTurnIds.clear()
   adapter.pendingTurnStarts.set('chat', { pendingTurnId: 'submitting' })
   assert.equal(adapter.getQueueDrainDecision('chat', false), 'wait')
+})
+
+test('the ordinary queue holds until an edit finishes replaying messages', () => {
+  const { adapter } = fixture()
+  adapter.editingHistoryThreads.add('chat')
+  assert.equal(adapter.getQueueDrainDecision('chat'), 'wait')
+  adapter.editingHistoryThreads.delete('chat')
+  assert.equal(adapter.getQueueDrainDecision('chat'), 'start')
 })
 
 test('stale active identity reconciles a terminal transcript then drains automatically', async () => {

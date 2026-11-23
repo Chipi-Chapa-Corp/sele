@@ -324,101 +324,109 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           }
         >
           <div className="chat-panel__new-session">
-            <span>{compact ? 'Project' : 'At'}</span>
-            <Dropdown
-              aria-label="Project"
-              title={newSessionNoProject ? 'No Project' : (newSessionCwd ?? 'Choose folder')}
-              disabled={sendState === 'sending'}
-              emptyContent="No matching projects"
-              menuActions={[
-                {
-                  id: 'add-project',
-                  label: 'Add project..',
-                  title: 'Add project..',
-                  icon: <FolderPlus aria-hidden="true" />,
-                  callback: () => setProjectDialogOpen(true)
-                }
-              ]}
-              options={projectOptions}
-              placement="top"
-              searchable
-              searchPlaceholder="Search projects"
-              size="small"
-              value={newSessionProjectValue}
-              valueLabel={
-                newSessionCwd && !projectOptions.some((option) => option.value === newSessionCwd)
-                  ? getFolderName(newSessionCwd)
-                  : undefined
-              }
-              onChange={(value) => {
-                if (value === newSessionNoProjectValue) {
-                  setNewSessionCwd(null)
-                  setNewSessionLocation('folder')
-                  return
-                }
-                if (value === newSessionProjectPlaceholderValue) return
-                setNewSessionCwd(value)
-              }}
-            />
-            <span>{compact ? 'Provider' : 'with'}</span>
-            <Dropdown
-              aria-label="Provider"
-              disabled={sendState === 'sending' || newSessionProviderOptions.length === 0}
-              emptyContent="No providers found"
-              options={newSessionProviderOptions}
-              placement="top"
-              size="small"
-              value={newSessionProvider}
-              valueContent={newSessionProviderValueContent}
-              onChange={setNewSessionProvider}
-            />
-            <span>{compact ? 'Location' : 'in'}</span>
-            <Dropdown
-              aria-label="Session location"
-              disabled={sendState === 'sending' || newSessionNoProject}
-              options={newSessionLocationOptions}
-              placement="top"
-              size="small"
-              value={newSessionNoProject ? 'folder' : newSessionLocation}
-              onChange={setNewSessionLocation}
-            />
-            <span>{compact ? 'Runtime' : newSessionSshEnvironmentId ? 'over' : 'from'}</span>
-            <Dropdown
-              aria-label="Runtime"
-              disabled={sendState === 'sending'}
-              menuActions={[
-                ...(sshEnvironmentError
-                  ? [
-                      {
-                        id: 'environment-error',
-                        label: sshEnvironmentError,
-                        title: sshEnvironmentError,
-                        disabled: true,
-                        icon: <X aria-hidden="true" />,
-                        callback: () => {}
-                      }
-                    ]
-                  : []),
-                {
-                  id: 'add-environment',
-                  label: 'Add environment',
-                  title: 'Add environment',
-                  icon: <PackagePlus aria-hidden="true" />,
-                  callback: () => {
-                    setEditingSshEnvironment(null)
-                    setSshEnvironmentError(null)
-                    setSshEnvironmentDialogOpen(true)
+            <div className="chat-panel__new-session-field">
+              <span>{compact ? 'Project' : 'At'}</span>
+              <Dropdown
+                aria-label="Project"
+                title={newSessionNoProject ? 'No Project' : (newSessionCwd ?? 'Choose folder')}
+                disabled={sendState === 'sending'}
+                emptyContent="No matching projects"
+                menuActions={[
+                  {
+                    id: 'add-project',
+                    label: 'Add project..',
+                    title: 'Add project..',
+                    icon: <FolderPlus aria-hidden="true" />,
+                    callback: () => setProjectDialogOpen(true)
                   }
+                ]}
+                options={projectOptions}
+                placement="top"
+                searchable
+                searchPlaceholder="Search projects"
+                size="small"
+                value={newSessionProjectValue}
+                valueLabel={
+                  newSessionCwd && !projectOptions.some((option) => option.value === newSessionCwd)
+                    ? getFolderName(newSessionCwd)
+                    : undefined
                 }
-              ]}
-              options={containerOptions}
-              placement="top"
-              size="small"
-              value={newSessionContainerValue}
-              onChange={handleNewSessionContainerChange}
-            />
+                onChange={(value) => {
+                  if (value === newSessionNoProjectValue) {
+                    setNewSessionCwd(null)
+                    setNewSessionLocation('folder')
+                    return
+                  }
+                  if (value === newSessionProjectPlaceholderValue) return
+                  setNewSessionCwd(value)
+                }}
+              />
+            </div>
+            <div className="chat-panel__new-session-field">
+              <span>{compact ? 'Provider' : 'with'}</span>
+              <Dropdown
+                aria-label="Provider"
+                disabled={sendState === 'sending' || newSessionProviderOptions.length === 0}
+                emptyContent="No providers found"
+                options={newSessionProviderOptions}
+                placement="top"
+                size="small"
+                value={newSessionProvider}
+                valueContent={newSessionProviderValueContent}
+                onChange={setNewSessionProvider}
+              />
+            </div>
+            <div className="chat-panel__new-session-field">
+              <span>{compact ? 'Location' : 'in'}</span>
+              <Dropdown
+                aria-label="Session location"
+                disabled={sendState === 'sending' || newSessionNoProject}
+                options={newSessionLocationOptions}
+                placement="top"
+                size="small"
+                value={newSessionNoProject ? 'folder' : newSessionLocation}
+                onChange={setNewSessionLocation}
+              />
+            </div>
+            <div className="chat-panel__new-session-field">
+              <span>{compact ? 'Runtime' : newSessionSshEnvironmentId ? 'over' : 'from'}</span>
+              <Dropdown
+                aria-label="Runtime"
+                disabled={sendState === 'sending'}
+                menuActions={[
+                  ...(sshEnvironmentError
+                    ? [
+                        {
+                          id: 'environment-error',
+                          label: sshEnvironmentError,
+                          title: sshEnvironmentError,
+                          disabled: true,
+                          icon: <X aria-hidden="true" />,
+                          callback: () => {}
+                        }
+                      ]
+                    : []),
+                  {
+                    id: 'add-environment',
+                    label: 'Add environment',
+                    title: 'Add environment',
+                    icon: <PackagePlus aria-hidden="true" />,
+                    callback: () => {
+                      setEditingSshEnvironment(null)
+                      setSshEnvironmentError(null)
+                      setSshEnvironmentDialogOpen(true)
+                    }
+                  }
+                ]}
+                options={containerOptions}
+                placement="top"
+                size="small"
+                value={newSessionContainerValue}
+                onChange={handleNewSessionContainerChange}
+              />
+            </div>
             {newSessionSshEnvironmentId && newSessionRemoteRuntime && (
-              <>
+              <div className="chat-panel__new-session-field">
                 <span>{compact ? 'Remote runtime' : 'from'}</span>
                 <Dropdown
                   aria-label="Remote runtime"
@@ -430,7 +438,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
                   valueContent={remoteContainerSuggestionsLoading ? 'Checking' : undefined}
                   onChange={handleNewSessionRemoteRuntimeChange}
                 />
-              </>
+              </div>
             )}
           </div>
         </MobileSessionSetup>

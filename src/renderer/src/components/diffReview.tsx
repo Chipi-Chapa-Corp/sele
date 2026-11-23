@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, MessageSquare, Plus, Trash2 } from 'lucide-react'
+import { ArrowUp, Check, MessageSquare, Plus, Trash2 } from 'lucide-react'
 import type { ProviderReviewComment } from '../../../shared/provider'
 import { toCssRem } from '../cssUnits'
 import { Button } from './Button'
@@ -227,6 +227,7 @@ export const ReviewInput = ({
   initialValue = '',
   submitLabel = 'Add comment',
   onCancel,
+  onSend,
   onSubmit,
   position
 }: {
@@ -234,6 +235,7 @@ export const ReviewInput = ({
   initialValue?: string
   submitLabel?: string
   onCancel: () => void
+  onSend?: (comment: string) => void
   onSubmit: (comment: string) => void
   position: { left: number; top: number; width?: number }
 }): React.JSX.Element => {
@@ -248,9 +250,9 @@ export const ReviewInput = ({
     return () => window.cancelAnimationFrame(frame)
   }, [])
 
-  const submit = (): void => {
+  const submit = (action = onSubmit): void => {
     if (!trimmedValue) return
-    onSubmit(trimmedValue)
+    action(trimmedValue)
   }
 
   return (
@@ -259,6 +261,7 @@ export const ReviewInput = ({
       style={{
         left: toCssRem(position.left),
         top: toCssRem(position.top),
+        gridTemplateColumns: onSend ? 'minmax(0, 1fr) auto auto' : undefined,
         width: position.width === undefined ? undefined : toCssRem(position.width)
       }}
       onMouseUp={(event) => event.stopPropagation()}
@@ -278,7 +281,7 @@ export const ReviewInput = ({
           if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
             event.preventDefault()
             event.stopPropagation()
-            submit()
+            submit(event.ctrlKey ? onSend : undefined)
             return
           }
           if (event.key !== 'Escape') return
@@ -287,9 +290,20 @@ export const ReviewInput = ({
           onCancel()
         }}
       />
+      {onSend && (
+        <Button
+          aria-label="Quote and send"
+          aria-keyshortcuts="Control+Enter"
+          callback={() => submit(onSend)}
+          disabled={!trimmedValue}
+          icon={<ArrowUp aria-hidden="true" />}
+          theme="primary"
+          title="Quote and send (Ctrl+Enter)"
+        />
+      )}
       <Button
         aria-label={submitLabel}
-        callback={submit}
+        callback={() => submit()}
         disabled={!trimmedValue}
         icon={
           submitLabel === 'Add comment' ? <Plus aria-hidden="true" /> : <Check aria-hidden="true" />

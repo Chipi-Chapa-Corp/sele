@@ -54,7 +54,7 @@ if (!process.versions.electron) {
             window.renderFixture = (props = {}) => {
               Object.assign(window.composerProps, props)
               flushSync(() => root.render(<React.StrictMode>
-              <MessageSelectionQuoteButton containerRef={containerRef} onQuote={(content, comment) => window.renderFixture({quoteRequest:{id:Date.now(),scopeKey:window.composerProps.draftScopeKey ?? 'test',content,comment}})}/>
+              <MessageSelectionQuoteButton containerRef={containerRef} onQuote={(content, comment, sendImmediately) => window.renderFixture({quoteRequest:{id:Date.now(),scopeKey:window.composerProps.draftScopeKey ?? 'test',content,comment,sendImmediately}})}/>
               <Profiler id="composer" onRender={() => window.commits++}>
                 {window.composerProps.fixtureVisible !== false && <MessageBox autoFocus draftScopeKey="test" providerId="codex"
                   cwd="/fixture" model="test" models={[]} agentMode="default" agentModes={[]}
@@ -205,6 +205,49 @@ if (!process.versions.electron) {
         enabled: true
       })
       await settle()
+      const placeholderHeights = await run(`(() => {
+        const root = document.getElementById('root');
+        root.style.width = '240px';
+        renderFixture({draftScopeKey:'new-chat:wrapping'});
+        const wrap = document.querySelector('.message-box__textarea-wrap');
+        const hint = wrap.querySelector('.composer-placeholder');
+        const input = wrap.querySelector('textarea');
+        const controls = document.querySelector('.message-box__controls');
+        const initialHeight = wrap.offsetHeight;
+        return new Promise(resolve => setTimeout(() => {
+          const range = document.createRange();
+          range.selectNodeContents(hint.firstChild);
+          const metrics = {
+            initialHeight,
+            finalHeight:wrap.offsetHeight,
+            lineCount:range.getClientRects().length,
+            hintBottom:range.getBoundingClientRect().bottom,
+            inputBottom:input.getBoundingClientRect().bottom,
+            controlsTop:controls.getBoundingClientRect().top
+          };
+          hint.style.whiteSpace = 'nowrap';
+          root.style.width = Math.ceil(range.getBoundingClientRect().width) + 2 + 'px';
+          hint.style.whiteSpace = '';
+          resolve({...metrics, lineCountWhenHintFits:range.getClientRects().length});
+          root.style.width = '';
+          renderFixture({draftScopeKey:'test'});
+        }, 900));
+      })()`)
+      assert.ok(placeholderHeights.lineCount >= 2, 'the hint wraps in a narrow composer')
+      assert.ok(
+        placeholderHeights.hintBottom <= placeholderHeights.inputBottom,
+        'the input contains the wrapped hint'
+      )
+      assert.ok(
+        placeholderHeights.inputBottom <= placeholderHeights.controlsTop,
+        'the hint stays above the composer controls'
+      )
+      assert.equal(
+        placeholderHeights.initialHeight,
+        placeholderHeights.finalHeight,
+        'the hint reserves its height before animating'
+      )
+      assert.equal(placeholderHeights.lineCountWhenHintFits, 1, 'the hint uses the full input width')
       await run(`window.input = document.querySelector('textarea'); window.focus(); input.focus();
         window.setText = value => {
           Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, value);
@@ -850,7 +893,8 @@ if (!process.versions.electron) {
       // usage badges and the extra controls shown during an active turn.
       await run(`
         document.getElementById('focus-controls').remove();
-        document.getElementById('messages').remove();
+        window.messagesFixture = document.getElementById('messages');
+        window.messagesFixture.remove();
         const shell = document.createElement('main');
         shell.className = 'chat';
         shell.dataset.mobilePane = shell.dataset.mobileView = 'conversation';
@@ -1180,6 +1224,50 @@ if (!process.versions.electron) {
       await settle()
       assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 1,
         'remounting preserves the unsent draft without duplicating its quote')
+
+      await run(`document.body.prepend(window.messagesFixture);
+        renderFixture({draftScopeKey:'immediate-quotes', onSend: message => {
+        (window.immediateQuoteSends ??= []).push(message); return true
+      }}); window.input = document.querySelector('textarea'); setText('Draft request')`)
+      const openQuote = async (comment) => {
+        await run(`input.blur(); (() => {
+          const text = document.querySelector('#messages p').firstChild;
+          getSelection().setBaseAndExtent(text, 0, text, text.length);
+        })()`)
+        await settle()
+        await run(`document.querySelector('[aria-label="Quote selected text"]').click()`)
+        await settle()
+        await win.webContents.debugger.sendCommand('Input.insertText', { text: comment })
+      }
+      await openQuote('Add to draft')
+      await key('Enter')
+      assert.equal(await run('window.immediateQuoteSends'), undefined)
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 1)
+
+      await openQuote('Send by button')
+      assert.deepEqual(
+        await run(`Array.from(document.querySelectorAll('.quote-comment-popover button'),
+          button => button.getAttribute('aria-label'))`),
+        ['Quote and send', 'Add comment']
+      )
+      await click('[aria-label="Quote and send"]')
+      await openQuote('Send by keyboard')
+      await key('Enter', 2) // Ctrl
+      assert.deepEqual(await run('window.immediateQuoteSends'), [
+        '> Quote these words\n\nAdd to draft\n\n> Quote these words\n\nSend by button\n\nDraft request',
+        '> Quote these words\n\nSend by keyboard'
+      ])
+      assert.equal(await run('document.querySelectorAll(".message-box__quote").length'), 0)
+      assert.equal(await run('input.value'), '')
+
+      await run(`renderFixture({pending:true})`)
+      await openQuote('Keep while pending')
+      await key('Enter', 2)
+      assert.equal(await run('window.immediateQuoteSends.length'), 2)
+      assert.equal(
+        await run('document.querySelector(".message-box__quote .attachment-chip__label").textContent'),
+        'Keep while pending'
+      )
       assert.deepEqual(errors, [])
       console.log(
         'Composer input checks passed: prompt keycaps, Enter sending, persistent focus, text selection, mentions, selection without renders, large drafts, native replacement, and message quotes.'

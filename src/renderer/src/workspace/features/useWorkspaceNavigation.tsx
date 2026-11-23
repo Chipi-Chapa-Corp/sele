@@ -219,7 +219,7 @@ export function useWorkspaceNavigation({
     startTransition(() => {
       selectionRequest.current++
       onConversationRequested?.()
-      if (group.kind !== 'cwd') return
+      if (group.kind !== 'cwd' && group.kind !== 'working') return
 
       chatRead.markSelectedChatSeen()
       chatState.selectedChatKeyRef.current = null

@@ -72,6 +72,7 @@ const fixture = (t, providerId = 'codex', queueUsageResetContinuation) => {
     getChat: async () => current,
     getChatWindow: async () => current,
     getChats: async () => ({ chats: [{ id: 'chat', status: current.status }], nextCursor: null }),
+    releaseChat: async () => {},
     stopChatProcesses: async () => ['chat'],
     stopChat: async () => {
       emit({ ...current, status: null })
@@ -418,6 +419,31 @@ test('a rejected retry submission is reported without blindly resending', async 
   t.mock.timers.tick(60000)
   await flush()
   assert.equal(calls.length, 2)
+})
+
+test('account handoff waits for a retry already submitting on the old worker', async (t) => {
+  const { adapter, native, fail } = fixture(t)
+  await adapter.continueChat('chat', 'task', options)
+  let finishRetry
+  native.continueChat = () =>
+    new Promise((resolve) => {
+      finishRetry = resolve
+    })
+  let released = false
+  native.releaseChat = async () => {
+    released = true
+  }
+  fail()
+  t.mock.timers.tick(2000)
+  await flush()
+  assert.equal(typeof finishRetry, 'function')
+
+  const release = adapter.releaseChat('chat')
+  await flush()
+  assert.equal(released, false)
+  finishRetry()
+  await release
+  assert.equal(released, true)
 })
 
 test('dispose clears scheduled retries and subscriptions', async (t) => {

@@ -322,7 +322,7 @@ test('a queued Codex turn that cannot start stays first in a paused queue', asyn
   const adapter = createAdapter(
     './codex/CodexProviderAdapter.ts',
     'CodexProviderAdapter',
-    ['deliverQueuedTurn'],
+    ['deliverQueuedTurn', 'editingHistoryThreads'],
     [],
     `pendingMessageEdits = new PendingMessageEdits(); queuedTurnsByThread = new Map();
     pausedQueuedTurnThreads = new Set(); pendingTurnIds = new Map();`,

@@ -3,8 +3,7 @@ export type RequestErrorPresentation = {
   summary: string
 }
 
-export const chatOpenElsewhereMessage =
-  'This chat is opened in another application. Please close it to proceed in Sele'
+export const chatOpenElsewhereMessage = 'Another Codex session has write access to this chat.'
 const activeWriterErrorPattern = /\bthread\s+\S+\s+already has an active writer\b/i
 
 export const getRequestErrorPresentation = (message: string): RequestErrorPresentation => {

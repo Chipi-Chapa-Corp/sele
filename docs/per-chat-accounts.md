@@ -8,9 +8,9 @@ inherit their source account. Native history stays shared.
 `ChatAccounts.ts` pools runtimes by account and environment. Retries, queued sends,
 approvals, subagents, edits, usage, and model discovery route through the saved binding.
 Missing credentials fail without using another account. Switching drains the chat's pending
-operations and stops its turn; other chats retain their sessions. Codex must receive
-`thread/closed` after unsubscribe before saving the new binding: the unsubscribe reply
-alone does not release its writer lock. A failed handoff keeps the previous binding.
+operations and stops its turn. Other chats retain their sessions. For writable Codex
+history, Sele waits for `thread/closed` after unsubscribe, then acquires the writer on
+the selected account before saving the binding. A failed handoff keeps the previous binding.
 
 ## Credential isolation
 

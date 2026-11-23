@@ -35,8 +35,8 @@ export function ComposerPlaceholder({
     return () => window.clearInterval(timer)
   }, [empty, reduced, scope])
   return empty ? (
-    <span ref={ref} className="composer-placeholder" aria-hidden="true">
-      {hint}
+    <span className="composer-placeholder" data-hint={hint} aria-hidden="true">
+      <span ref={ref}>{hint}</span>
     </span>
   ) : null
 }

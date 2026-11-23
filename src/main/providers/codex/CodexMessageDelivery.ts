@@ -47,6 +47,11 @@ export class CodexMessageDelivery {
     return delivery.promise.then(() => delivery.target)
   }
 
+  waitForPending = async (threadId: string): Promise<void> => {
+    const messages = this.threads.get(threadId)
+    if (messages) await Promise.allSettled(Array.from(messages.values(), ({ promise }) => promise))
+  }
+
   removeTurns = (threadId: string, turnIds: ReadonlySet<string>): void => {
     const messages = this.threads.get(threadId)
     if (!messages) return

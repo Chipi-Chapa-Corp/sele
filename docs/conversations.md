@@ -40,10 +40,10 @@ steering so it is not submitted twice. Attachments remain local paths.
 Restored messages stay paused until the user acts. Steering retains priority over queued
 messages. Sending resumes the queue; edit, delete, and per-message send controls still apply.
 
-Editing an accepted Codex steering message sends a new revision that identifies the earlier
-instruction. It preserves the running turn and existing responses: Codex only supports history
-reverts at whole-turn boundaries. Editing an opening prompt still reverts that turn and starts
-its replacement; editing a still-local queued message updates it in place.
+Editing an accepted Codex steering message rewinds to the start of its turn. Sele resubmits
+the user messages and attachments from that turn in order, with the edit replacing the selected
+message. Codex generates the responses again. Editing an opening prompt rewinds and starts its
+replacement. Editing a still-local queued message updates it in place.
 
 ## Linked chats
 

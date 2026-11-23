@@ -69,12 +69,12 @@ test('resuming for an edit updates the thread model before the replacement turn 
   assert.equal(resumeParams.serviceTier, null)
 })
 
-test('editing accepted steering passes the selected model to the revision without reverting', async () => {
+test('replaying an edited steering message starts the replacement turn with the selected model', async () => {
   const adapterClass = source.statements.find(
     (node) => ts.isClassDeclaration(node) && node.name?.text === 'CodexProviderAdapter'
   )
   const method = adapterClass.members.find(
-    (node) => node.name?.getText(source) === 'editMessageInContext'
+    (node) => node.name?.getText(source) === 'rewindAndEditMessage'
   )
   const requests = []
   const steering = []
@@ -102,6 +102,9 @@ test('editing accepted steering passes the selected model to the revision withou
       hasAttachmentInput: () => false,
       hasCodexUserInputAttachments: () => false,
       getUserInputContent: (input) => input.map((item) => item.text).join('\n'),
+      getCodexUserMessageClientId: (item) => item.clientId,
+      parseCodexSteeringRevision: () => null,
+      hydrateCodexTurnRange: async () => thread.turns,
       loadCodexTurnCatalog: async () => thread.turns,
       assertCodexTurnCatalogDidNotRegress: () => {},
       planCodexHistoryEdit: () => ({ retainedCatalog: [], rolledBackTurnIds: new Set(['turn']) }),
@@ -115,10 +118,12 @@ test('editing accepted steering passes the selected model to the revision withou
   Object.assign(adapter, {
     threads: new Map([['chat', thread]]),
     paginatedTurnCatalogs: new Map(),
+    steeringMessagesByThread: new Map(),
     pausedQueuedTurnThreads: new Set(),
     rememberThreadContainer() {},
     resumeThread: async () => thread,
-    stopActiveTurn: async () => assert.fail('a steering revision must not interrupt the turn'),
+    stopActiveTurn: async () => {},
+    getActiveTurnId: () => null,
     filterRolledBackTurns: (_chat, turns) => turns,
     client: {
       request: async (method, params) => {
@@ -139,14 +144,19 @@ test('editing accepted steering passes the selected model to the revision withou
     getCachedChatDetail: () => ({ id: 'chat' })
   })
 
-  await adapter.editMessageInContext('chat', 'turn:steering', 'Revised steering', {
+  await adapter.rewindAndEditMessage('chat', 'turn:steering', 'Revised steering', {
     model: 'gpt-6-sol'
   })
 
-  assert.deepEqual(requests, [])
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ['thread/revert', 'turn/start']
+  )
+  assert.equal(requests[1].params.model, 'gpt-6-sol')
+  assert.deepEqual(requests[1].params.input, originalInput)
   assert.deepEqual(steering, [
     {
-      text: 'Please replace my earlier instruction with this revision.\n\nEarlier instruction:\nOld steering\n\nRevised instruction:\nRevised steering',
+      text: 'Revised steering',
       options: { model: 'gpt-6-sol' }
     }
   ])

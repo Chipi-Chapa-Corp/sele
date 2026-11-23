@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { EncryptedChromePairingStore } from '../../desktop/ChromePairingStore'
 import { createInterface } from 'node:readline'
 import type { AppContainerTarget } from '../../../shared/app'
-import { getHostCommand, isRunningInFlatpak, resolveHostExecutable } from '../../hostProcess'
+import { isRunningInFlatpak, resolveHostExecutable } from '../../hostProcess'
 import {
   getCodexExecutable,
   getCodexExecutableError,
@@ -87,6 +87,10 @@ const getAppServerCommand = async (
   const scope = providerProcessContext.getStore()
   const container = scope ? scope.record.container : options.container
   const targetBinary = container?.kind === 'container' ? 'codex' : binary
+  // The account ID already identifies a retained worker. Its old credentials may
+  // have been removed, but we still need to attach to release any chats it owns.
+  if (options.existingOnly && options.accountId)
+    return { command: targetBinary, args: [], env: process.env }
   const executable = options.existingOnly
     ? { file: targetBinary, env: process.env }
     : await resolveHostExecutable(targetBinary, {
@@ -526,16 +530,13 @@ export class CodexAppServerClient {
         existingOnly
       }
     )
-    const hostCommand = await (existingOnly ? getHostCommand : getProviderHostCommand)(
-      appServerCommand.command,
-      appServerCommand.args,
-      {
+    const hostCommand = () =>
+      getProviderHostCommand(appServerCommand.command, appServerCommand.args, {
         container: this.container,
         env: appServerCommand.env ?? process.env
-      }
-    ).catch((error: unknown) => {
-      throw getCodexExecutableError(error)
-    })
+      }).catch((error: unknown) => {
+        throw getCodexExecutableError(error)
+      })
     const child: CodexProcess = this.persistent
       ? await connectCodexRuntime(
           app.getPath('userData'),
@@ -549,12 +550,11 @@ export class CodexAppServerClient {
               ? [providerProcessContext.getStore()!.record.id]
               : [])
           ],
-          existingOnly ? null : hostCommand
+          existingOnly ? null : await hostCommand()
         )
-      : spawn(hostCommand.file, hostCommand.args, {
-          env: hostCommand.env,
-          stdio: ['pipe', 'pipe', 'pipe']
-        })
+      : await hostCommand().then(({ file, args, env }) =>
+          spawn(file, args, { env, stdio: ['pipe', 'pipe', 'pipe'] })
+        )
 
     if (lifecycle !== this.lifecycle) {
       if (child.detach) child.detach()

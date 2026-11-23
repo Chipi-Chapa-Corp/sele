@@ -923,14 +923,30 @@
 }
 
 .composer-placeholder {
-  position: absolute;
-  inset: 0.25rem 0.4rem auto 0;
+  display: grid;
+  grid-area: 1 / 1;
+  min-width: 0;
+  padding-top: 0.25rem;
   pointer-events: none;
+  user-select: none;
   color: var(--quiet);
   font-family: var(--chat-font-family);
   font-size: var(--chat-font-size);
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
+
+.composer-placeholder > span,
+.composer-placeholder::after {
+  grid-area: 1 / 1;
+}
+
+/* Reserve space for the full hint while the visible text animates. */
+.composer-placeholder::after {
+  content: attr(data-hint);
+  visibility: hidden;
+}
+
 .message-box__textarea-wrap:has(.composer-placeholder) textarea::placeholder {
   color: transparent;
 }

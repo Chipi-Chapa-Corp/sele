@@ -77,6 +77,7 @@ export const withProviderNetworkRetries = (
   queueUsageResetContinuation?: QueueUsageResetContinuation
 ): ProviderAdapter => {
   const states = new Map<string, RetryState>()
+  const runningRetries = new Map<string, Promise<void>>()
   const revisionOffsets = new Map<string, number>()
   const listeners = new Set<Parameters<ProviderAdapter['onChatUpdated']>[0]>()
   const getActiveChatIds = adapter.getActiveChatIds
@@ -221,7 +222,16 @@ export const withProviderNetworkRetries = (
           state.failedStepId = failed.id
           state.attempt += 1
           state.timer = setTimeout(() => {
-            void retry(detail.id, state)
+            const previous = runningRetries.get(detail.id) ?? Promise.resolve()
+            const pending = previous.then(async () => {
+              if (!disposed && states.get(detail.id) === state) await retry(detail.id, state)
+            })
+            runningRetries.set(detail.id, pending)
+            void pending
+              .finally(() => {
+                if (runningRetries.get(detail.id) === pending) runningRetries.delete(detail.id)
+              })
+              .catch((error) => console.error('[ProviderNetworkRetry] Retry failed', error))
           }, state.policy.delaySeconds * 1000)
         }
       }
@@ -277,6 +287,7 @@ export const withProviderNetworkRetries = (
     releaseChat: adapter.releaseChat
       ? async (id, options) => {
           cancel(id)
+          await runningRetries.get(id)?.catch(() => {})
           await adapter.releaseChat!(id, options)
         }
       : undefined,

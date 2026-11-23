@@ -6,6 +6,8 @@ import test from 'node:test'
 import ts from 'typescript'
 import { CodexMessageDelivery } from './CodexMessageDelivery.ts'
 import { hydrateCodexTurnRange, planCodexHistoryEdit } from './CodexPaginatedHistory.ts'
+import { getUserInputContent, isCodexSteeringRevision } from './CodexItemRenderers.ts'
+import { parseCodexSteeringRevision } from './CodexSteeringRevision.ts'
 const source = ts.createSourceFile(
   'adapter.ts',
   readFileSync(new URL('./CodexProviderAdapter.ts', import.meta.url), 'utf8'),
@@ -51,6 +53,7 @@ const createAdapter = () => {
       isCodexTurnTerminal: (turn) => turn.status === 'completed',
       collectUserInputAttachments: () => [],
       getMessageAttachments: () => [],
+      parseCodexSteeringRevision,
       console: { error() {}, warn() {} }
     }
   )
@@ -61,6 +64,7 @@ const createAdapter = () => {
     hiddenPendingMessageIdsByThread: new Map(),
     activeTurnIds: new Map(),
     pendingTurnIds: new Map(),
+    editingHistoryThreads: new Set(),
     threads: new Map([['chat', { turns: [{ id: 'server-turn', status: 'inProgress' }] }]]),
     rememberThreadContainer() {},
     getThreadContainer: () => null,
@@ -343,6 +347,7 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn, histor
   const requests = []
   const steering = []
   const hydrated = []
+  let queuedCount = 0
   const catalog = [{ id: loadedTurn.id, status: 'completed', items: [] }]
   const thread = { id: 'chat', historyMode: 'paginated', turns: [loadedTurn] }
   const declarations = source.statements
@@ -356,7 +361,9 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn, histor
     .map((node) => node.getText(source))
     .join('\n')
   const methods = declaration.members.filter((node) =>
-    ['editMessageInContext', 'steerActiveChat'].includes(node.name?.getText(source))
+    ['editMessageInContext', 'rewindAndEditMessage', 'steerActiveChat'].includes(
+      node.name?.getText(source)
+    )
   )
   const adapter = vm.runInNewContext(
     ts.transpile(
@@ -374,11 +381,10 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn, histor
         hydrated.push([start, end])
         return [authoritativeTurn]
       },
-      getUserInputContent: (inputs) =>
-        inputs
-          .filter((input) => input.type === 'text')
-          .map((input) => input.text)
-          .join('\n'),
+      getUserInputContent,
+      isCodexSteeringRevision,
+      parseCodexSteeringRevision,
+      randomUUID: () => `queued-${++queuedCount}`,
       planCodexHistoryEdit: () => ({
         retainedCatalog: [],
         rolledBackTurnIds: new Set([loadedTurn.id])
@@ -394,6 +400,10 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn, histor
     threads: new Map([['chat', thread]]),
     paginatedTurnCatalogs: new Map(),
     pausedQueuedTurnThreads: new Set(),
+    editingHistoryThreads: new Set(),
+    queuedTurnsByThread: new Map(),
+    steeringMessagesByThread: new Map(),
+    messageDelivery: new CodexMessageDelivery(),
     rememberThreadContainer() {},
     resumeThread: async () => thread,
     stopActiveTurn: async () => {},
@@ -409,6 +419,8 @@ const createHistoryAdapter = (loadedTurn, authoritativeTurn = loadedTurn, histor
     rememberRolledBackTurns() {},
     cacheThread() {},
     emitChatUpdated() {},
+    scheduleQueueDrain() {},
+    removePendingTurn() {},
     addSubmittedPendingTurn: async () => ({ id: 'pending' }),
     startSubmittedCodexTurn: async (_chat, _pending, start) => start(),
     ensureChatTailLoaded: async () => {},
@@ -515,7 +527,7 @@ for (const images of [[image, { path: '/added.png' }], []]) {
   })
 }
 
-test('delivered steering resolves its authoritative item id without replaying earlier screenshots', async () => {
+test('delivered steering resolves its authoritative item id and replays earlier screenshots', async () => {
   const initialInput = [
     { type: 'text', text: 'original' },
     { type: 'localImage', path: '/original.png' }
@@ -537,18 +549,23 @@ test('delivered steering resolves its authoritative item id without replaying ea
     ]
   }
   const fixture = createHistoryAdapter(loaded, full)
-  fixture.adapter.stopActiveTurn = () => assert.fail('a steering revision must not stop the turn')
   const options = { images: [{ path: '/new.png' }], files: [] }
   await fixture.adapter.editMessageInContext('chat', 'turn', '', options, 'client-item')
   assert.deepEqual(fixture.hydrated, [[0, 1]])
-  assert.deepEqual(fixture.requests, [], 'no history revert or original prompt resubmission')
-  assert.equal(fixture.steering.length, 1)
-  assert.equal(fixture.steering[0][2], options)
-  assert.equal(full.items[0].content, initialInput)
-  assert.equal(full.items[1].content, earlierInput)
+  assert.deepEqual(
+    fixture.requests.map(({ method }) => method),
+    ['thread/revert', 'turn/start']
+  )
+  assert.deepEqual(fixture.requests[1].params.input, initialInput)
+  assert.deepEqual(fixture.steering[0][3], earlierInput)
+  assert.equal(fixture.steering[1][2], options)
+  assert.deepEqual(
+    Array.from(fixture.steering[1][3], ({ path }) => path),
+    ['/new.png']
+  )
 })
 
-test('editing a later steer preserves previous answers and sends only its revision before history echoes', async () => {
+test('editing an inline message replays its surrounding steering before their history echoes', async () => {
   const input = (text) => [{ type: 'text', text }]
   const originalInput = input('Original prompt')
   const turn = {
@@ -563,36 +580,77 @@ test('editing a later steer preserves previous answers and sends only its revisi
       ])
     ]
   }
-  const originalItems = [...turn.items]
-  const fixture = createHistoryAdapter(turn)
-  fixture.adapter.stopActiveTurn = () => assert.fail('must preserve the running turn')
-  fixture.adapter.cacheThread = () => assert.fail('must not replace existing history')
+  const afterStop = {
+    ...turn,
+    items: [
+      ...turn.items,
+      { type: 'userMessage', id: 'last', clientId: 'client-last', content: input('last') }
+    ]
+  }
+  let stopped = false
+  const fixture = createHistoryAdapter(turn, turn, {
+    hydrateCodexTurnRange: async () => [stopped ? afterStop : turn]
+  })
+  const pending = ['last', 'not-yet-in-history'].map((id) => ({
+    id,
+    itemId: `client-${id}`,
+    turnId: 'turn',
+    status: 'pending',
+    text: id
+  }))
+  fixture.adapter.steeringMessagesByThread.set('chat', pending)
+  for (const message of pending) {
+    await fixture.adapter.messageDelivery.run('chat', message.id, async () => {
+      fixture.adapter.messageDelivery.bind('chat', message.id, {
+        turnId: 'turn',
+        clientId: message.itemId
+      })
+    })
+  }
+  fixture.adapter.getActiveTurnId = () => (stopped ? 'replacement' : 'turn')
+  fixture.adapter.stopActiveTurn = async () => {
+    stopped = true
+  }
   fixture.adapter.hasPendingSteeringMessage = () => true
+  fixture.adapter.pendingMessageEdits.begin('chat', 'queued', 'edit')
   const delivered = []
   let inFlight = false
-  fixture.adapter.processWaitingSteeringMessage = async (_chat, id) => {
+  fixture.adapter.processWaitingSteeringMessage = async (_chat, id, replayHistory) => {
+    assert.equal(replayHistory, true)
     assert.equal(inFlight, false, 'replay waits for each submission acknowledgment')
     inFlight = true
     await new Promise((resolve) => setImmediate(resolve))
     delivered.push(id)
     inFlight = false
-    // Deliberately leave the accepted revision awaiting its history echo.
+    // Deliberately leave each accepted message awaiting its history echo.
+    assert.equal(fixture.adapter.editingHistoryThreads.has('chat'), true)
   }
 
   await fixture.adapter.editMessageInContext('chat', 'turn:target', 'Revised target')
 
-  assert.deepEqual(fixture.requests, [])
-  assert.deepEqual(turn.items, originalItems)
+  assert.equal(stopped, true)
+  assert.deepEqual(
+    fixture.requests.map(({ method }) => method),
+    ['thread/revert', 'turn/start']
+  )
+  assert.deepEqual(fixture.requests[1].params.input, originalInput)
   assert.deepEqual(
     fixture.steering.map((args) => args[1]),
-    [
-      'Please replace my earlier instruction with this revision.\n\nEarlier instruction:\ntarget\n\nRevised instruction:\nRevised target'
-    ]
+    ['first', 'second', 'third', 'Revised target', 'later', 'last', 'not-yet-in-history']
   )
-  assert.deepEqual(delivered, ['steer-1'])
+  assert.deepEqual(delivered, [
+    'steer-1',
+    'steer-2',
+    'steer-3',
+    'steer-4',
+    'steer-5',
+    'steer-6',
+    'steer-7'
+  ])
+  assert.equal(fixture.adapter.editingHistoryThreads.has('chat'), false)
 })
 
-test('a steering revision continues immediately if the active turn has finished', async () => {
+test('replay continues immediately if the replacement turn has already finished', async () => {
   const fixture = createHistoryAdapter({
     id: 'turn',
     status: 'completed',
@@ -607,14 +665,44 @@ test('a steering revision continues immediately if the active turn has finished'
   const continued = []
   fixture.adapter.continueChatImmediately = async (_chat, text) => continued.push(text)
   await fixture.adapter.editMessageInContext('chat', 'turn:target', 'Revised')
-  assert.deepEqual(continued, [
-    'Please replace my earlier instruction with this revision.\n\nEarlier instruction:\nOld\n\nRevised instruction:\nRevised'
-  ])
-  assert.deepEqual(fixture.requests, [])
+  assert.deepEqual(continued, ['Revised'])
+  assert.deepEqual(
+    fixture.requests.map(({ method }) => method),
+    ['thread/revert', 'turn/start']
+  )
+})
+
+test('replay uses the visible text of a saved correction without resending its generated prompt', async () => {
+  const fixture = createHistoryAdapter({
+    id: 'turn',
+    status: 'completed',
+    items: [
+      {
+        type: 'userMessage',
+        id: 'revision',
+        clientId: 'client',
+        content: [
+          {
+            type: 'text',
+            text: 'Please replace my earlier instruction with this revision.\n\nEarlier instruction:\nOriginal\n\nRevised instruction:\nFirst revision'
+          }
+        ]
+      },
+      {
+        type: 'userMessage',
+        id: 'target',
+        content: [{ type: 'text', text: 'Later steering' }]
+      }
+    ]
+  })
+  await fixture.adapter.editMessageInContext('chat', 'turn:target', 'Updated steering')
+
+  assert.equal(fixture.requests[1].params.input[0].text, 'First revision')
+  assert.equal(fixture.steering[0][1], 'Updated steering')
 })
 
 for (const clientId of [undefined, 'client']) {
-  test(`the first user message in a goal continuation can be revised without reverting its work (${clientId})`, async () => {
+  test(`the first user message in a goal continuation can be replayed as the opening input (${clientId})`, async () => {
     const turn = {
       id: 'turn',
       status: 'inProgress',
@@ -626,11 +714,15 @@ for (const clientId of [undefined, 'client']) {
           id: 'target',
           clientId: 'client',
           content: [{ type: 'text', text: 'Old' }]
+        },
+        {
+          type: 'userMessage',
+          id: 'later',
+          content: [{ type: 'text', text: 'Later steering' }]
         }
       ]
     }
     const fixture = createHistoryAdapter(turn)
-    fixture.adapter.stopActiveTurn = () => assert.fail('must preserve goal progress')
     await fixture.adapter.editMessageInContext(
       'chat',
       clientId ? 'turn' : 'turn:target',
@@ -638,26 +730,33 @@ for (const clientId of [undefined, 'client']) {
       undefined,
       clientId
     )
-    assert.deepEqual(fixture.requests, [])
-    assert.equal(fixture.steering.length, 1)
-    assert.match(fixture.steering[0][1], /Revised instruction:\nRevised$/)
-    assert.equal(turn.items[0].text, 'Existing progress')
+    assert.deepEqual(
+      fixture.requests.map(({ method }) => method),
+      ['thread/revert', 'turn/start']
+    )
+    assert.equal(fixture.requests[1].params.input[0].text, 'Revised')
+    assert.deepEqual(
+      fixture.steering.map((args) => args[1]),
+      ['Later steering']
+    )
   })
 }
 
-test('a failed steering revision preserves history and accepted input for retry', async () => {
+test('an interrupted replay leaves the remaining messages in the paused queue', async () => {
   const turn = {
     id: 'turn',
     status: 'inProgress',
     items: [
       { type: 'userMessage', id: 'original', content: [{ type: 'text', text: 'Original' }] },
       { type: 'agentMessage', id: 'answer', text: 'Existing answer' },
-      { type: 'userMessage', id: 'target', content: [{ type: 'text', text: 'Old' }] }
+      { type: 'userMessage', id: 'target', content: [{ type: 'text', text: 'Old' }] },
+      { type: 'userMessage', id: 'later', content: [{ type: 'localImage', path: '/later.png' }] }
     ]
   }
   const fixture = createHistoryAdapter(turn)
-  fixture.adapter.stopActiveTurn = () => assert.fail('must not interrupt on failure')
   const failure = new Error('Connection lost')
+  fixture.adapter.scheduleQueueDrain = () => {}
+  fixture.adapter.queuedTurnsByThread.set('chat', [{ id: 'existing', text: 'Existing queued' }])
   fixture.adapter.processWaitingSteeringMessage = async () => {
     throw failure
   }
@@ -666,9 +765,17 @@ test('a failed steering revision preserves history and accepted input for retry'
     fixture.adapter.editMessageInContext('chat', 'turn:target', 'Revised'),
     (error) => error === failure
   )
-  assert.deepEqual(fixture.requests, [])
-  assert.equal(turn.items[1].text, 'Existing answer')
-  assert.equal(turn.items[2].content[0].text, 'Old')
+  assert.deepEqual(
+    fixture.requests.map(({ method }) => method),
+    ['thread/revert', 'turn/start']
+  )
+  const pending = fixture.adapter.queuedTurnsByThread.get('chat')
+  assert.deepEqual(
+    Array.from(pending, (message) => message.text),
+    ['Revised', '', 'Existing queued']
+  )
+  assert.equal(pending[1].input[0].path, '/later.png')
+  assert.equal(fixture.adapter.pausedQueuedTurnThreads.has('chat'), true)
 })
 
 test('an unavailable steering target fails before interrupting or reverting history', async () => {

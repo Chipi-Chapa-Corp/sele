@@ -5,6 +5,7 @@ import vm from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { CodexMessageDelivery } from './CodexMessageDelivery.ts'
+import { parseCodexSteeringRevision } from './CodexSteeringRevision.ts'
 import {
   mergeCodexSnapshotsById,
   mergeCodexStreamedText,
@@ -58,7 +59,7 @@ test('steering reaches an active turn even after a completed final-tagged messag
     queueChatMessage: () => assert.fail('active steering must not silently requeue')
   })
   await adapter.steerActiveChat('chat', 'The audit is done')
-  assert.deepEqual(processed, [['chat', 'steer']])
+  assert.deepEqual(processed, [['chat', 'steer', false]])
 })
 
 const createAdapter = (methodNames, globals = {}) => {
@@ -360,7 +361,11 @@ test('steering accepted by Codex is no longer offered for editing', () => {
     ts.transpile(`class Adapter { ${pendingMethod.getText(source)} }; new Adapter()`, {
       target: ts.ScriptTarget.ES2022
     }),
-    { collectUserInputAttachments: () => [], getMessageAttachments: () => [] }
+    {
+      collectUserInputAttachments: () => [],
+      getMessageAttachments: () => [],
+      parseCodexSteeringRevision
+    }
   )
   Object.assign(adapter, {
     queuedTurnsByThread: new Map([['chat', [{ id: 'queued', text: 'later', createdAt: 3 }]]]),

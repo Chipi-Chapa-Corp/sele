@@ -44,7 +44,7 @@ export const ComposerTextInput = memo(function ComposerTextInput({
   const compact = useCompactLayout()
   return (
     <div ref={mentions.textareaWrapRef} className="message-box__textarea-wrap">
-      {autoFocus && draftScopeKey.startsWith('new-chat:') && (
+      {autoFocus && draftScopeKey.startsWith('new-chat:') && !visiblePromptSuggestion && (
         <ComposerPlaceholder scope={draftScopeKey} empty={!draft.message} />
       )}
       {mentions.mentionMenuOpen &&

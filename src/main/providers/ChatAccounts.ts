@@ -13,6 +13,7 @@ import { getContainerTargetKey } from '../containerTarget.ts'
 // including background retries, approvals, forks, subagents, and transcript navigation.
 const chatMethods = [
   'releaseChat',
+  'acquireChat',
   'getChat',
   'getChatWindow',
   'getChatCursorWindow',
@@ -82,6 +83,7 @@ export class ChatAccounts {
     { account: string; native: number; offset: number; latest: number }
   >()
   private changes = new Map<string, Promise<void>>()
+  private writerTransfers = new Set<Promise<void>>()
   private operations = new Map<string, Set<Promise<unknown>>>()
 
   private dependencies: Dependencies
@@ -202,6 +204,8 @@ export class ChatAccounts {
       },
       dispose: async () => {
         this.disposed = true
+        // Let an acquisition already sent to Codex release its writer before detaching.
+        await Promise.allSettled(this.writerTransfers)
         unsubscribeBaseUsage?.()
         await Promise.all([
           base.dispose(),
@@ -312,18 +316,35 @@ export class ChatAccounts {
     // Finish operations admitted before this switch so a late history open cannot
     // reclaim the old runtime's writer after releaseChat has handed it off.
     const operations = [...(this.operations.get(id) ?? [])]
-    const pending = (this.changes.get(id) ?? Promise.resolve()).then(async () => {
+    const previousChange = this.changes.get(id)?.catch(() => {}) ?? Promise.resolve()
+    const pending = previousChange.then(async () => {
       await Promise.allSettled(operations)
       this.assertOpen()
       const previous = await this.readAccount(id)
       if (previous === account) return
-      const runtime = this.runtimes.get(previous)
       const metadata = await this.dependencies.metadata(id)
       this.assertOpen()
-      if (runtime?.releaseChat) await runtime.releaseChat(id, { container: metadata.container })
+      const options = { container: metadata.container }
+      // A retained Codex worker may still own the thread before discovery has attached to it.
+      const transferWriter = Boolean(this.adapter.acquireChat)
+      const runtime = transferWriter ? this.runtime(previous) : this.runtimes.get(previous)
+      if (runtime?.releaseChat) await runtime.releaseChat(id, options)
       else if (runtime) await runtime.stopChat(id)
       this.assertOpen()
-      await this.dependencies.save(id, account, true)
+      const target = transferWriter ? this.runtime(account) : undefined
+      if (target) this.writerTransfers.add(pending)
+      try {
+        await target?.acquireChat?.(id, options)
+        this.assertOpen()
+        await this.dependencies.save(id, account, true)
+      } catch (error) {
+        await target?.releaseChat?.(id, options).catch((cleanupError) => {
+          console.error('Unable to release the chat after a failed account switch.', cleanupError)
+        })
+        throw error
+      } finally {
+        this.writerTransfers.delete(pending)
+      }
       this.assertOpen()
       this.bindings.set(id, account)
       this.latest.delete(id)

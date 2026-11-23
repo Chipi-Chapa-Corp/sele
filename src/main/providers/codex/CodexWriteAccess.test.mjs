@@ -34,14 +34,15 @@ test('runtime recovery refreshes chat and terminal state without a chat selectio
     'CodexProviderAdapter',
     ['handleNotification'],
     {
-      getThreadId: (params) => params.threadId ?? null
+      getThreadId: (params) => params.threadId ?? null,
+      rendererChatUpdateTurnLimit: 10
     }
   )
   Object.assign(adapter, {
     getCurrentContainer: () => remote,
     rememberThreadContainer: (id, container) => calls.push(['source', id, container]),
-    getChat: async (id, options) => {
-      calls.push(['chat', id, options.container])
+    getChatWindow: async (id, window, options) => {
+      calls.push(['window', id, window.startIndex, options.container])
     },
     getChatTerminalTasks: async (id, options) => {
       calls.push(['terminals', id, options.container])
@@ -55,7 +56,7 @@ test('runtime recovery refreshes chat and terminal state without a chat selectio
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(calls, [
     ['source', 'running', remote],
-    ['chat', 'running', remote],
+    ['window', 'running', null, remote],
     ['terminals', 'running', remote],
     ['publish', 'running']
   ])
@@ -316,20 +317,28 @@ test('failed or timed out handoffs retain ownership and clean up before a retry'
   }
 })
 
-test('switching an active chat stops it and waits for an outstanding ownership check before release', async () => {
+test('release pauses queued work, drains in-flight operations, and stops the retained writer', async () => {
   const events = []
   let checked
   const check = new Promise((resolve) => {
     checked = resolve
   })
   let closed
+  let delivered
   const adapter = extract('./CodexProviderAdapter.ts', 'CodexProviderAdapter', ['releaseChat'])
   Object.assign(adapter, {
-    activeTurnIds: new Map([['chat', 'turn']]),
-    pendingTurnIds: new Map(),
-    pendingTurnStarts: new Map(),
+    threads: new Map([['chat', {}]]),
+    hasActiveOrSubmittingTurn: () => true,
     pendingApprovalsByThread: new Map(),
-    queuedTurnsByThread: new Map(),
+    queuedTurnsByThread: new Map([['chat', [{}]]]),
+    queuedTurnStartThreads: new Set(),
+    pausedQueuedTurnThreads: new Set(),
+    messageDelivery: {
+      waitForPending: () =>
+        new Promise((resolve) => {
+          delivered = resolve
+        })
+    },
     writeAccessChecks: new Map([['chat', check]]),
     getThreadContainer: (_id, options) => options.container,
     runWithContainer: (container, run) => {
@@ -340,7 +349,8 @@ test('switching an active chat stops it and waits for an outstanding ownership c
       events.push('stop')
     },
     client: {
-      ownsThread: () => true,
+      recoverRuntime: async () => events.push('recover'),
+      ownsThread: () => events.includes('recover'),
       releaseThread: () => {
         events.push('release')
         return new Promise((resolve) => {
@@ -354,13 +364,60 @@ test('switching an active chat stops it and waits for an outstanding ownership c
     released = true
   })
   await new Promise(setImmediate)
-  assert.deepEqual(events, ['stop'])
+  assert.equal(adapter.pausedQueuedTurnThreads.has('chat'), true)
+  assert.deepEqual(events, [])
+  delivered()
+  await new Promise(setImmediate)
+  assert.deepEqual(events, [])
   checked()
   await new Promise(setImmediate)
-  assert.deepEqual(events, ['stop', 'release'])
+  assert.deepEqual(events, ['recover', 'stop', 'release'])
   assert.equal(released, false)
   closed()
   await release
+})
+
+test('account acquisition awaits thread/resume, surfaces writer conflicts and keeps legacy history read-only', async () => {
+  const events = []
+  const adapter = extract(
+    './CodexProviderAdapter.ts',
+    'CodexProviderAdapter',
+    ['acquireChat', 'claimChatWriteAccess'],
+    {
+      isLegacyCodexHistory: (mode) => mode === 'legacy',
+      assertSupportedCodexHistory: () => {},
+      isActiveWriterError: (error) => /active writer/.test(error.message)
+    }
+  )
+  let conflict = true
+  Object.assign(adapter, {
+    threads: new Map(),
+    externallyOwnedThreadIds: new Set(),
+    getThreadContainer: (_id, options) => options.container,
+    runWithContainer: (container, run) => {
+      assert.equal(container, 'selected-container')
+      return run()
+    },
+    readThread: async (id) => ({ thread: { historyMode: id === 'old' ? 'legacy' : 'cursor' } }),
+    client: {
+      ownsThread: () => false,
+      request: async (method, params) => {
+        events.push([method, params.threadId, params.excludeTurns])
+        if (conflict) throw Error('thread chat already has an active writer')
+      }
+    }
+  })
+  const options = { container: 'selected-container' }
+  await assert.rejects(adapter.acquireChat('chat', options), /active writer/)
+  assert.equal(adapter.externallyOwnedThreadIds.has('chat'), true)
+  conflict = false
+  await adapter.acquireChat('chat', options)
+  assert.equal(adapter.externallyOwnedThreadIds.has('chat'), false)
+  await adapter.acquireChat('old', options)
+  assert.deepEqual(events, [
+    ['thread/resume', 'chat', true],
+    ['thread/resume', 'chat', true]
+  ])
 })
 
 test('an owned writer wins over stale discovery metadata without crossing containers', () => {

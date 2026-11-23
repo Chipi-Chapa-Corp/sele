@@ -1,5 +1,9 @@
 import type { AppContainerTarget } from '../../../shared/app'
-import type { ProviderPendingUserInput, ProviderUserInputResponse } from '../../../shared/provider'
+import type {
+  ProviderMcpToolApproval,
+  ProviderPendingUserInput,
+  ProviderUserInputResponse
+} from '../../../shared/provider'
 import type { RpcRequest } from './CodexAppServerClient'
 import type { CodexThreadItem, CodexTurn } from './CodexItemRenderers'
 import { getUnchangedTranscriptPrefix } from '../transcriptProjection/recordChanges.ts'
@@ -32,6 +36,72 @@ const record = (value: unknown): Record<string, unknown> | null =>
 const requiredString = (value: unknown): string => {
   if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid Codex question')
   return value
+}
+
+const optionalText = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value.trim() || undefined : undefined
+
+function getToolApproval(
+  meta: Record<string, unknown> | null,
+  schema: Record<string, unknown>
+): ProviderMcpToolApproval | undefined {
+  const properties = record(schema.properties)
+  if (
+    meta?.codex_approval_kind !== 'mcp_tool_call' ||
+    meta.codex_requires_user_input === true ||
+    schema.type !== 'object' ||
+    !properties ||
+    Object.keys(properties).length ||
+    (Array.isArray(schema.required) && schema.required.length)
+  )
+    return undefined
+
+  const connectorName = optionalText(meta.connector_name)
+  const toolName = optionalText(meta.tool_name)
+  const pullRequestLabels: Record<string, string> =
+    toolName === 'github.create_pull_request'
+      ? {
+          repository_full_name: 'Repository',
+          title: 'Title',
+          head: 'Head branch',
+          base: 'Base branch',
+          draft: 'Draft',
+          body: 'Pull request body'
+        }
+      : {}
+  const displayEntries = Array.isArray(meta.tool_params_display) ? meta.tool_params_display : null
+  const display = displayEntries?.flatMap((entry) => {
+    const field = record(entry)
+    const name = optionalText(field?.name)
+    return name && field && Object.hasOwn(field, 'value')
+      ? [{ name, label: optionalText(field.display_name), value: field.value }]
+      : []
+  })
+  const fields =
+    display && (display.length || displayEntries?.length === 0)
+      ? display
+      : Object.entries(record(meta.tool_params) ?? {}).map(([name, value]) => ({
+          name,
+          label: undefined,
+          value
+        }))
+  if (toolName === 'github.create_pull_request') {
+    const order = Object.keys(pullRequestLabels)
+    const position = (name: string) => {
+      const index = order.indexOf(name)
+      return index === -1 ? order.length : index
+    }
+    fields.sort((left, right) => position(left.name) - position(right.name))
+  }
+  const parameters = fields.map(({ name, label, value }) => ({
+    name,
+    label:
+      (label !== name ? label : undefined) ??
+      (Object.hasOwn(pullRequestLabels, name) ? pullRequestLabels[name] : undefined) ??
+      name.replace(/[_-]+/g, ' ').replace(/^./, (first) => first.toUpperCase()),
+    value
+  }))
+  return { connectorName, toolName, parameters }
 }
 
 export class CodexUserQuestions {
@@ -74,7 +144,8 @@ export class CodexUserQuestions {
     } else if (['form', 'openai/form', 'openaiForm'].includes(String(params?.mode))) {
       const schema = record(params?.requestedSchema)
       if (!schema) throw new Error('Invalid MCP form schema')
-      elicitation = { mode: 'form', serverName, schema }
+      const toolApproval = getToolApproval(meta, schema)
+      elicitation = { mode: 'form', serverName, schema, ...(toolApproval && { toolApproval }) }
     } else if (params?.mode === 'url') {
       const url = new URL(requiredString(params.url))
       if (!['https:', 'http:'].includes(url.protocol))

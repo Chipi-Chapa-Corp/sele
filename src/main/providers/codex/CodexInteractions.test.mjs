@@ -85,6 +85,43 @@ test('all form spellings route correctly and decline, cancel and verification ne
   assert.equal(h.sent[0].result.action, 'cancel')
 })
 
+test('tool approvals expose Codex display parameters and accept an empty form', async () => {
+  const h = fixture('toolApproval')
+  const { toolApproval } = h.snapshot().pendingUserInput.elicitation
+  assert.equal(toolApproval.connectorName, 'GitHub')
+  assert.equal(toolApproval.toolName, 'github.create_pull_request')
+  assert.deepEqual(
+    toolApproval.parameters.map(({ label, value }) => [label, value]),
+    [
+      ['Repository', 'example/project'],
+      ['Title', 'Add report settings'],
+      ['Head branch', 'feature/report-settings'],
+      ['Base branch', 'main'],
+      ['Draft', false],
+      ['Pull request body', '## Summary\n\nAdds optional settings for reports.']
+    ]
+  )
+  await respond(h, { kind: 'elicitation', action: 'accept', content: {} })
+  assert.deepEqual(h.sent[0].result, { action: 'accept', content: {} })
+
+  const request = structuredClone(scenarios.toolApproval)
+  delete request.params._meta.tool_params_display
+  request.params._meta.tool_params.reviewers = ['avery', 'devon']
+  h.adapter.handleServerRequest(request)
+  const fallback = h.snapshot().pendingUserInput.elicitation.toolApproval
+  assert.ok(fallback.parameters.some(({ name, value }) => name === 'draft' && value === false))
+  assert.deepEqual(fallback.parameters.find(({ name }) => name === 'reviewers').value, [
+    'avery',
+    'devon'
+  ])
+  await respond(h, { kind: 'elicitation', action: 'decline' })
+  assert.deepEqual(h.sent[1].result, { action: 'decline', content: null })
+
+  request.params.requestedSchema = { type: 'object', properties: { name: { type: 'string' } } }
+  h.adapter.handleServerRequest(request)
+  assert.equal(h.snapshot().pendingUserInput.elicitation.toolApproval, undefined)
+})
+
 test('specialized automated-review requests cannot be accepted through general forms', async () => {
   for (const _meta of [
     { codex_strict_auto_review: true },

@@ -42,7 +42,7 @@ const chatMethods = new Set([
   'interruptPendingMessage',
   'resolveApproval',
   'stopChat',
-  'releaseChat'
+  'acquireChat'
 ])
 
 type Dependencies = {
@@ -264,6 +264,18 @@ export const withChatProcessRuntimes = <T extends ProviderAdapter>(
             )
               await recover(scope)
           }
+        }
+      : undefined,
+    releaseChat: base.releaseChat
+      ? async (id, options) => {
+          const scope = await selectChat(id, false)
+          if (scope) {
+            await runtime(scope).releaseChat?.(id, options)
+            if (!base.acquireChat) return
+          }
+          // A Codex open can have claimed the writer on the account runtime before
+          // the chat-specific process boundary was recorded.
+          await base.releaseChat!(id, options)
         }
       : undefined,
     stopChatProcesses: async (id, options) => {

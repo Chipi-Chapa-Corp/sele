@@ -22,6 +22,23 @@
   font-weight: 400;
 }
 
+.chat-panel__new-session-field {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.chat-panel__new-session-field > .ui-dropdown {
+  flex-shrink: 1;
+}
+
+.mobile-session-fields .chat-panel__new-session-field {
+  display: contents;
+}
+
 .chat-worktree-creation {
   margin-bottom: 0.6rem;
 }

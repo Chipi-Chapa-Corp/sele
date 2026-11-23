@@ -25,6 +25,7 @@ if (!process.versions.electron) {
             import React, {useState} from 'react'
             import {createRoot} from 'react-dom/client'
             import './src/renderer/src/assets/main.css'
+            import './src/renderer/src/workspace/styles/conversation-composer.css'
             import './src/renderer/src/workspace/styles/conversation-requests.css'
             const stored = new Map()
             window.preferencesApi = {
@@ -173,6 +174,26 @@ if (!process.versions.electron) {
       const count = () => run('document.querySelectorAll(".chat-provider-update").length')
       await ready('window.updates?.providerUpdateSuggestions.length===3')
       assert.equal(await count(), 3)
+      const sessionRows = await run(`(() => {
+        const main = document.querySelector('main');
+        const setup = main.querySelector('.chat-panel__new-session');
+        const dropdowns = [...setup.querySelectorAll('.ui-dropdown')];
+        // Leave room for "in" on the first row, but not the location dropdown.
+        const gap = parseFloat(getComputedStyle(setup).columnGap);
+        const firstRow = dropdowns.slice(0, 2).reduce((width, dropdown) =>
+          width + dropdown.offsetWidth + dropdown.previousElementSibling.offsetWidth + gap * 2, 0);
+        main.style.width = firstRow + dropdowns[2].previousElementSibling.offsetWidth + 52 + 'px';
+        const rows = dropdowns.map(dropdown => {
+          const button = dropdown.getBoundingClientRect();
+          const label = dropdown.previousElementSibling.getBoundingClientRect();
+          return {top:button.top, sameRow:label.top >= button.top && label.bottom <= button.bottom};
+        });
+        main.style.width = 'min(100%, 1100px)';
+        return rows;
+      })()`)
+      assert.equal(sessionRows.length, 4)
+      assert.ok(sessionRows[2].top > sessionRows[1].top, 'the setup wraps before the location field')
+      assert.ok(sessionRows.every((row) => row.sameRow), 'setup labels wrap with their dropdowns')
       assert.deepEqual(
         await run(
           'Array.from(document.querySelectorAll(".chat-provider-update__label"),x=>x.textContent)'

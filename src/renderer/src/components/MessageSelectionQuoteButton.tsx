@@ -9,7 +9,7 @@ import './MessageSelectionQuoteButton.css'
 type MessageSelectionQuoteButtonProps = {
   containerRef: RefObject<HTMLElement | null>
   enabled?: boolean
-  onQuote: (content: string, comment: string) => void
+  onQuote: (content: string, comment: string, sendImmediately?: boolean) => void
 }
 
 type SelectedQuote = {
@@ -216,18 +216,21 @@ export const MessageSelectionQuoteButton: React.FC<MessageSelectionQuoteButtonPr
 
   if (!enabled) return null
 
-  if (commentQuote)
+  if (commentQuote) {
+    const submitQuote = (comment: string, sendImmediately = false): void => {
+      onQuote(commentQuote.content, comment, sendImmediately)
+      setCommentQuote(null)
+    }
     return (
       <QuoteCommentPopover
         anchor={commentQuote.anchor}
         content={commentQuote.content}
         onClose={() => setCommentQuote(null)}
-        onSubmit={(comment) => {
-          onQuote(commentQuote.content, comment)
-          setCommentQuote(null)
-        }}
+        onSend={(comment) => submitQuote(comment, true)}
+        onSubmit={submitQuote}
       />
     )
+  }
 
   if (!selectedQuote?.host.isConnected) return null
 

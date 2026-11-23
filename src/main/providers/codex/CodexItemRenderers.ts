@@ -28,6 +28,7 @@ import {
   type ProviderConversationEntry
 } from '../ProviderConversationEngine.ts'
 import { getNestedToolCalls, isPatchToolCall } from './CodexToolCalls.ts'
+import { parseCodexSteeringRevision } from './CodexSteeringRevision.ts'
 
 export type CodexUserInput =
   | { type: 'text'; text: string; text_elements?: unknown[] }
@@ -1567,7 +1568,9 @@ const renderWorkingItems = (
 }
 
 const getUserInputText = (input: CodexUserInput): string => {
-  if (input.type === 'text') return stripCodexFileAttachmentsFromText(input.text)
+  if (input.type === 'text') {
+    return stripCodexFileAttachmentsFromText(parseCodexSteeringRevision(input.text) ?? input.text)
+  }
   if (input.type === 'skill') return `$${input.name}`
   if (input.type === 'mention') return `@${input.name}`
   return ''
@@ -1589,6 +1592,9 @@ export const getUserInputContent = (inputs: CodexUserInput[]): string => {
 
   return [text, ...references].filter(Boolean).join('\n').trim()
 }
+
+export const isCodexSteeringRevision = (inputs: CodexUserInput[]): boolean =>
+  inputs.some((input) => input.type === 'text' && parseCodexSteeringRevision(input.text) !== null)
 
 const getUserInputAttachments = (input: CodexUserInput): ProviderMessageAttachment[] => {
   if (input.type === 'text') return getCodexFileAttachmentsFromText(input.text)
@@ -1975,10 +1981,12 @@ const renderChatItems = (
         if (attachments.length === 0 && isImageSizingMetadata(content)) continue
         if (content || attachments.length > 0) {
           const itemId = `${turn.id}:${item.id}`
+          const isRevision = isCodexSteeringRevision(item.content)
 
           // Goal continuations have no opening user message. Their first user echo is
           // steering when a goal prompt or preceding activity already started the turn.
           if (
+            isRevision ||
             hasSeenInitialUserMessage ||
             turn.goalPrompt ||
             workingItemCount > 0 ||
@@ -1997,7 +2005,7 @@ const renderChatItems = (
               content,
               attachments,
               kind: 'steering',
-              label: 'Steered with',
+              label: isRevision ? 'Steering revision' : 'Steered with',
               createdAt: item.startedAtMs ?? toMilliseconds(startedAt),
               model: turn.model ?? null
             })
