@@ -33,8 +33,11 @@ export function getWorkspaceDialogs({
     accountDialogOpen: providerState.accountDialogOpen,
     reauthenticationTarget: providerState.reauthenticationTarget,
     setReauthenticationTarget: providerState.setReauthenticationTarget,
-    handleReauthenticateChatAccount: () =>
-      accountActions.handleCreateProviderAccount(providerState.reauthenticationTarget ?? undefined),
+    handleReauthenticateChatAccount: (signal: AbortSignal) =>
+      accountActions.handleCreateProviderAccount(
+        signal,
+        providerState.reauthenticationTarget ?? undefined
+      ),
     setAccountDialogOpen: providerState.setAccountDialogOpen,
     handleCreateProviderAccount: accountActions.handleCreateProviderAccount,
     projectDialogOpen: projectState.projectDialogOpen,

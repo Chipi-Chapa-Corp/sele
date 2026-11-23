@@ -1,6 +1,14 @@
 import { MotionSurface } from '../motion/MotionSurface'
 import { Check, Copy, ExternalLink, LogIn, X } from 'lucide-react'
-import { type FormEvent, type ReactElement, useEffect, useRef, useState } from 'react'
+import {
+  type FormEvent,
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from './Button'
 import { PopupWindow } from './PopupWindow'
@@ -23,7 +31,13 @@ type AccountDialogProps = {
   reauthenticate?: boolean
   providerLabel: string
   onClose: () => void
-  onLogin: () => Promise<AccountAuthorizationSession>
+  onLogin: (signal: AbortSignal) => Promise<AccountAuthorizationSession>
+}
+
+const cancelAuthorization = (session: AccountAuthorizationSession): void => {
+  void session.cancel().catch((error: unknown) => {
+    console.error('Unable to cancel account sign-in.', error)
+  })
 }
 
 export const AccountDialog = ({
@@ -33,9 +47,11 @@ export const AccountDialog = ({
   onLogin
 }: AccountDialogProps): ReactElement => {
   const mounted = useRef(true)
+  const closing = useRef(false)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const attemptRef = useRef<AbortController | null>(null)
   const authorizationRef = useRef<AccountAuthorizationSession | null>(null)
-  const cancelingRef = useRef(false)
-  const [phase, setPhase] = useState<'idle' | 'starting' | 'authorizing' | 'canceling'>('idle')
+  const [phase, setPhase] = useState<'idle' | 'starting' | 'authorizing'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [authorization, setAuthorization] = useState<AccountAuthorizationSession | null>(null)
   const userCode = authorization?.userCode
@@ -46,43 +62,87 @@ export const AccountDialog = ({
   const [code, setCode] = useState('')
   const [codePending, setCodePending] = useState(false)
 
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      void authorizationRef.current?.cancel().catch((error: unknown) => {
-        console.error('Unable to cancel sign-in after closing the account dialog.', error)
-      })
-    }
+  const stopLogin = useCallback((): void => {
+    const attempt = attemptRef.current
+    attemptRef.current = null
+    attempt?.abort()
+    const session = authorizationRef.current
+    authorizationRef.current = null
+    if (session) cancelAuthorization(session)
   }, [])
 
+  const handleClose = useCallback((): void => {
+    if (closing.current) return
+    closing.current = true
+    stopLogin()
+    onClose()
+  }, [onClose, stopLogin])
+
+  useLayoutEffect(() => {
+    mounted.current = true
+    const previousFocus = document.activeElement
+    const closeButton = closeButtonRef.current
+    closeButton?.focus({ preventScroll: true })
+    return () => {
+      mounted.current = false
+      stopLogin()
+      if (
+        previousFocus instanceof HTMLElement &&
+        closeButton?.form?.contains(document.activeElement)
+      )
+        previousFocus.focus({ preventScroll: true })
+    }
+  }, [stopLogin])
+
+  useLayoutEffect(() => {
+    const dismissOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || closing.current) return
+      event.preventDefault()
+      event.stopPropagation()
+      handleClose()
+    }
+    window.addEventListener('keydown', dismissOnEscape, true)
+    return () => window.removeEventListener('keydown', dismissOnEscape, true)
+  }, [handleClose])
+
   const handleLogin = async (): Promise<void> => {
-    if (phase !== 'idle') return
+    if (closing.current || attemptRef.current) return
+    const attempt = new AbortController()
+    attemptRef.current = attempt
+    const startupTimeout = window.setTimeout(() => {
+      if (attemptRef.current !== attempt) return
+      stopLogin()
+      setError(`${providerLabel} sign-in took too long to start. Try again.`)
+      setPhase('idle')
+    }, 45_000)
+    attempt.signal.addEventListener('abort', () => window.clearTimeout(startupTimeout), {
+      once: true
+    })
     setPhase('starting')
     setCode('')
     setCopied(null)
-    cancelingRef.current = false
     setError(null)
     try {
-      const session = await onLogin()
-      if (!mounted.current) {
-        void session.completion.catch((error: unknown) => {
-          console.warn('Account authorization ended after closing its dialog.', error)
-        })
-        await session.cancel()
+      const session = await onLogin(attempt.signal)
+      window.clearTimeout(startupTimeout)
+      if (attemptRef.current !== attempt) {
+        void session.completion.catch(() => {})
+        cancelAuthorization(session)
         return
       }
       authorizationRef.current = session
       setAuthorization(session)
       setPhase('authorizing')
       await session.completion
+      if (attemptRef.current !== attempt) return
+      attemptRef.current = null
       authorizationRef.current = null
-      if (!mounted.current) return
-      onClose()
+      handleClose()
     } catch (loginError) {
-      console.error('[caught:AccountDialog:handleLogin]', loginError)
+      if (attemptRef.current !== attempt) return
+      attemptRef.current = null
       authorizationRef.current = null
-      if (cancelingRef.current || !mounted.current) return
+      console.error('[caught:AccountDialog:handleLogin]', loginError)
       setError(
         loginError instanceof Error && loginError.message
           ? loginError.message
@@ -90,6 +150,8 @@ export const AccountDialog = ({
       )
       setAuthorization(null)
       setPhase('idle')
+    } finally {
+      window.clearTimeout(startupTimeout)
     }
   }
 
@@ -98,36 +160,15 @@ export const AccountDialog = ({
   useEffect(() => {
     // Start once on opening; rerenders must not create another OAuth flow.
     queueMicrotask(() => {
-      if (mounted.current && !signInStartedRef.current) {
+      if (mounted.current && !closing.current && !signInStartedRef.current) {
         signInStartedRef.current = true
         void startSignInRef.current()
       }
     })
   }, [])
 
-  const handleCancel = async (): Promise<void> => {
-    if (phase !== 'authorizing' || !authorization) return
-    cancelingRef.current = true
-    setPhase('canceling')
-    setError(null)
-    try {
-      await authorization.cancel()
-      authorizationRef.current = null
-      onClose()
-    } catch (cancelError) {
-      console.error('[caught:AccountDialog:handleCancel]', cancelError)
-      cancelingRef.current = false
-      setError(
-        cancelError instanceof Error && cancelError.message
-          ? cancelError.message
-          : 'Unable to cancel authorization.'
-      )
-      setPhase('authorizing')
-    }
-  }
-
   const handleAuthorize = async (): Promise<void> => {
-    if (phase !== 'authorizing' || !authorization || authorizationActionPending) return
+    if (closing.current || !authorization || authorizationActionPending) return
     setAuthorizationActionPending(true)
     setError(null)
     try {
@@ -145,7 +186,7 @@ export const AccountDialog = ({
   }
 
   const handleSubmitCode = async (): Promise<void> => {
-    if (!authorization?.submitCode || !code.trim() || codePending || phase !== 'authorizing') return
+    if (closing.current || !authorization?.submitCode || !code.trim() || codePending) return
     setCodePending(true)
     setError(null)
     try {
@@ -161,7 +202,7 @@ export const AccountDialog = ({
 
   const handleCopy = async (target: CopyTarget): Promise<void> => {
     const copy = target === 'code' ? authorization?.copyCode : authorization?.copyLink
-    if (!copy || phase !== 'authorizing' || copyPending) return
+    if (closing.current || !copy || copyPending) return
     setCopyPending(target)
     setError(null)
     try {
@@ -183,7 +224,6 @@ export const AccountDialog = ({
       aria-label="Copy sign-in link"
       aria-busy={copyPending === 'link'}
       callback={() => handleCopy('link')}
-      disabled={phase === 'canceling'}
       icon={copied === 'link' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       label={<span role="status">{copied === 'link' ? 'Copied' : 'Copy link'}</span>}
       theme="secondary"
@@ -194,7 +234,7 @@ export const AccountDialog = ({
     <Button
       aria-label="Open sign-in page"
       callback={handleAuthorize}
-      disabled={phase === 'canceling' || authorizationActionPending}
+      disabled={authorizationActionPending}
       icon={<ExternalLink aria-hidden="true" />}
       label="Open page"
       theme="secondary"
@@ -213,7 +253,7 @@ export const AccountDialog = ({
       className="account-dialog-overlay"
       role="presentation"
       onPointerDown={(event) => {
-        if (event.target === event.currentTarget && phase === 'idle') onClose()
+        if (event.button === 0 && event.target === event.currentTarget) handleClose()
       }}
     >
       <PopupWindow>
@@ -222,40 +262,34 @@ export const AccountDialog = ({
           role="dialog"
           aria-modal="true"
           aria-label={
-            phase === 'authorizing' || phase === 'canceling'
+            phase === 'authorizing'
               ? `Authorize ${providerLabel} account`
               : reauthenticate
                 ? `Sign in to ${providerLabel} again`
                 : `Create ${providerLabel} account`
           }
           onSubmit={handleSubmit}
-          onKeyDown={(event) => {
-            event.stopPropagation()
-            if (event.key !== 'Escape' || phase !== 'idle') return
-            event.preventDefault()
-            onClose()
-          }}
+          onKeyDown={(event) => event.stopPropagation()}
         >
           <div className="account-dialog__header">
-            {phase === 'authorizing' || phase === 'canceling' ? (
+            {phase === 'authorizing' ? (
               <span>Sign in to {providerLabel}</span>
             ) : reauthenticate ? (
               <span>Sign in again</span>
             ) : (
               <span>Sign in</span>
             )}
-            {phase === 'idle' && (
-              <Button
-                aria-label="Close account window"
-                callback={onClose}
-                icon={<X aria-hidden="true" />}
-                size="small"
-                theme="transparent"
-                title="Close"
-              />
-            )}
+            <Button
+              ref={closeButtonRef}
+              aria-label="Close account window"
+              callback={handleClose}
+              icon={<X aria-hidden="true" />}
+              size="small"
+              theme="transparent"
+              title="Close"
+            />
           </div>
-          {phase === 'authorizing' || phase === 'canceling' ? (
+          {phase === 'authorizing' ? (
             <div className="account-dialog__authorization">
               <p>
                 {userCode
@@ -275,7 +309,6 @@ export const AccountDialog = ({
                         aria-label="Copy one-time code"
                         aria-busy={copyPending === 'code'}
                         callback={() => handleCopy('code')}
-                        disabled={phase === 'canceling'}
                         icon={
                           copied === 'code' ? (
                             <Check aria-hidden="true" />
@@ -309,7 +342,7 @@ export const AccountDialog = ({
                     autoComplete="off"
                     value={code}
                     maxLength={4096}
-                    disabled={phase !== 'authorizing' || codePending}
+                    disabled={codePending}
                     onChange={(event) => setCode(event.currentTarget.value)}
                   />
                 </>
@@ -328,25 +361,20 @@ export const AccountDialog = ({
             </p>
           )}
           <div className="account-dialog__footer">
-            {phase === 'authorizing' || phase === 'canceling' ? (
+            {phase === 'authorizing' ? (
               <>
-                <Button
-                  callback={handleCancel}
-                  disabled={phase === 'canceling'}
-                  label={phase === 'canceling' ? 'Canceling…' : 'Cancel'}
-                  theme="secondary"
-                />
+                <Button callback={handleClose} label="Cancel" theme="secondary" />
                 {authorization?.submitCode ? (
                   <Button
                     callback={handleSubmitCode}
                     label={codePending ? 'Submitting…' : 'Submit code'}
-                    disabled={phase !== 'authorizing' || !code.trim() || codePending}
+                    disabled={!code.trim() || codePending}
                     theme="primary"
                   />
                 ) : userCode ? null : (
                   <Button
                     callback={handleAuthorize}
-                    disabled={phase === 'canceling' || authorizationActionPending}
+                    disabled={authorizationActionPending}
                     icon={<ExternalLink aria-hidden="true" />}
                     label={authorizationActionPending ? 'Opening…' : 'Open'}
                     theme="primary"

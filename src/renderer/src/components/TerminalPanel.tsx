@@ -194,6 +194,16 @@ const createTerminalTab = (
   closeOnCommandFinish: false
 })
 
+const createTerminalWorkspace = (
+  cwd: string | null,
+  container: AppContainerTarget | null,
+  chatKey: string | null
+): TerminalWorkspace => {
+  const tab = createTerminalTab(1, cwd, container)
+  tab.chatKey = chatKey
+  return { activeTabId: tab.id, tabs: [tab] }
+}
+
 const getCommandTabLabel = (command: string): string => {
   const firstLine = command.split(/\r?\n/, 1)[0]?.trim().replace(/\s+/g, ' ')
 
@@ -879,21 +889,27 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     []
   )
 
-  useEffect(() => {
-    if (!active || !sessionsDiscovered) return
+  useLayoutEffect(() => {
+    if (!active || !sessionsDiscovered || workspace?.tabs.length) return
 
     setWorkspaces((currentWorkspaces) => {
-      if (currentWorkspaces.has(workspaceKey)) return currentWorkspaces
-
-      const initialLocalTab = createTerminalTab(1, projectCwd ?? cwd, container)
-      initialLocalTab.chatKey = chatKey
+      if (currentWorkspaces.get(workspaceKey)?.tabs.length) return currentWorkspaces
       nextTabNumberByWorkspaceRef.current.set(workspaceKey, 2)
-      return new Map(currentWorkspaces).set(workspaceKey, {
-        activeTabId: initialLocalTab.id,
-        tabs: [initialLocalTab]
-      })
+      return new Map(currentWorkspaces).set(
+        workspaceKey,
+        createTerminalWorkspace(projectCwd ?? cwd, container, chatKey)
+      )
     })
-  }, [active, container, cwd, projectCwd, workspaceKey, chatKey, sessionsDiscovered])
+  }, [
+    active,
+    container,
+    cwd,
+    projectCwd,
+    workspaceKey,
+    chatKey,
+    sessionsDiscovered,
+    workspace?.tabs.length
+  ])
 
   useEffect(() => {
     if (
@@ -907,13 +923,12 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     const tab = createCommandTerminalTab(commandLaunchRequest)
     setWorkspaces((currentWorkspaces) => {
       let targetWorkspace = currentWorkspaces.get(commandLaunchRequest.workspaceKey)
-      if (!targetWorkspace) {
-        const initialLocalTab = createTerminalTab(
-          1,
+      if (!targetWorkspace?.tabs.length) {
+        targetWorkspace = createTerminalWorkspace(
           commandLaunchRequest.projectCwd ?? commandLaunchRequest.cwd,
-          commandLaunchRequest.container
+          commandLaunchRequest.container,
+          null
         )
-        targetWorkspace = { activeTabId: initialLocalTab.id, tabs: [initialLocalTab] }
         nextTabNumberByWorkspaceRef.current.set(commandLaunchRequest.workspaceKey, 2)
       }
       const isEmptyTab = (candidate: TerminalTab): boolean =>
@@ -1054,6 +1069,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
     try {
       const runtime = tabRuntimesRef.current.get(tab.id)
+      let hasActiveProcess = false
       const nativeStarting =
         tab.agentSessionId &&
         runtime?.agentAttached !== false &&
@@ -1066,10 +1082,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               return null
             })
 
+        hasActiveProcess = processStatus?.hasActiveProcess ?? false
         if (
-          processStatus?.hasActiveProcess &&
+          hasActiveProcess &&
           !window.confirm(
-            processStatus.processName
+            processStatus?.processName
               ? `${processStatus.processName} is still running in ${tab.label}. Close it anyway?`
               : runtime?.agentAttached !== false && tab.agentStopScope === 'turn'
                 ? `This command is controlled by the agent's current turn. Stop that turn and close ${tab.label}?`
@@ -1084,8 +1101,16 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         await terminalApi.stopAgentSession(tab.agentSessionId)
         await terminalApi.dismissAgentSession(tab.agentSessionId)
       }
-      tabRuntimesRef.current.delete(tab.id)
-      usedTabIdsRef.current.delete(tab.id)
+      const state = tabRuntimesRef.current.get(tab.id)?.state
+      const isUnusedShell =
+        !tab.agentSessionId &&
+        !tab.initialCommand &&
+        !tab.initialOutput &&
+        !usedTabIdsRef.current.has(tab.id) &&
+        !hasActiveProcess &&
+        state !== 'exited' &&
+        state !== 'error'
+
       setWorkspaces((currentWorkspaces) => {
         const currentWorkspace = currentWorkspaces.get(workspaceKey)
         if (!currentWorkspace) return currentWorkspaces
@@ -1093,10 +1118,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           (currentTab) => currentTab.id === tab.id
         )
         if (closingIndex < 0) return currentWorkspaces
+        const isLastTab = currentWorkspace.tabs.length === 1
+        if (isLastTab && isUnusedShell) return currentWorkspaces
+
+        tabRuntimesRef.current.delete(tab.id)
+        usedTabIdsRef.current.delete(tab.id)
 
         return new Map(currentWorkspaces).set(
           workspaceKey,
-          withoutTab(currentWorkspace, closingIndex)
+          isLastTab
+            ? createTerminalWorkspace(projectCwd ?? cwd, container, chatKey)
+            : withoutTab(currentWorkspace, closingIndex)
         )
       })
     } catch (error) {

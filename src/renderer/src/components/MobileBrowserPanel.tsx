@@ -64,7 +64,7 @@ export function MobileBrowserPanel({
 }: Props): React.ReactElement {
   const [workspaces, setWorkspaces] = useState(() => {
     const stored = readStoredBrowserWorkspaces(workspaceKey)
-    if (!stored[workspaceKey]) {
+    if (!stored[workspaceKey]?.tabs.length) {
       const tab = blank()
       stored[workspaceKey] = { activeTabId: tab.id, tabs: [tab] }
     }
@@ -128,6 +128,14 @@ export function MobileBrowserPanel({
   useEffect(() => {
     writeStoredBrowserWorkspaces(workspaces)
   }, [workspaces])
+  useEffect(() => {
+    if (!active || session?.tabs.length) return
+    updateSession(workspaceKey, (current) => {
+      if (current.tabs.length) return current
+      const tab = blank()
+      return { activeTabId: tab.id, tabs: [tab] }
+    })
+  }, [active, session?.tabs.length, updateSession, workspaceKey])
   useEffect(() => {
     let live = true
     let cleanup: (() => void) | undefined
@@ -386,16 +394,23 @@ export function MobileBrowserPanel({
           updateSession(workspaceKey, (current) => ({ ...current, activeTabId: id }))
         }}
         onCloseTab={(id) => {
-          act('close', id)
+          if (session?.tabs.length === 1 && !session.tabs[0].url) return
+          if (opened.current.delete(id)) act('close', id)
           syncFor(workspaceKey).close(id)
-          opened.current.delete(id)
-          updateSession(workspaceKey, (current) => ({
-            tabs: current.tabs.filter((tab) => tab.id !== id),
-            activeTabId:
-              current.activeTabId === id
-                ? (current.tabs.find((tab) => tab.id !== id)?.id ?? null)
-                : current.activeTabId
-          }))
+          setError(null)
+          updateSession(workspaceKey, (current) => {
+            const closing = current.tabs.find((tab) => tab.id === id)
+            if (!closing || (current.tabs.length === 1 && !closing.url)) return current
+            const tabs = current.tabs.filter((tab) => tab.id !== id)
+            if (!tabs.length) {
+              const tab = blank()
+              return { tabs: [tab], activeTabId: tab.id }
+            }
+            return {
+              tabs,
+              activeTabId: current.activeTabId === id ? tabs[0].id : current.activeTabId
+            }
+          })
         }}
         onNewTab={() => add()}
         onNavigate={navigate}

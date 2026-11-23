@@ -190,6 +190,8 @@ export const createRendererBridge = (
       transport.invoke(providerIpcChannels.login, providerId, options),
     reauthenticateAccount: (providerId, options) =>
       transport.invoke(providerIpcChannels.reauthenticateAccount, providerId, options),
+    cancelAccountLoginStart: (attemptId) =>
+      transport.invoke(providerIpcChannels.cancelAccountLoginStart, attemptId),
     getAccounts: (providerId, options) =>
       transport.invoke(providerIpcChannels.getAccounts, providerId, options),
     createAccount: (providerId, options) =>

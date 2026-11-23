@@ -861,6 +861,23 @@ const codexReauthentications = new Map<
   { source: string; loginId: string | null; adapter: CodexProviderAdapter }
 >()
 
+const claudeLoginStarts = new Map<string, AbortController>()
+
+const startClaudeLogin = async <T>(
+  attemptId: string | undefined,
+  start: (signal?: AbortSignal) => Promise<T>
+): Promise<T> => {
+  if (!attemptId) return start()
+  if (claudeLoginStarts.has(attemptId)) throw new Error('This Claude sign-in is already starting.')
+  const controller = new AbortController()
+  claudeLoginStarts.set(attemptId, controller)
+  try {
+    return await start(controller.signal)
+  } finally {
+    claudeLoginStarts.delete(attemptId)
+  }
+}
+
 const uncommittedResetHandoffs = new Set<string>()
 const limitResetQueue = new LimitResetQueue(
   limitResetMessageBackend,
@@ -999,15 +1016,21 @@ export const providerApi: ProviderApi = {
     }
     if (providerId !== 'claude')
       throw new Error('Reauthentication is not available for this provider.')
-    return claudeAccounts.reauthenticate(
-      options?.chatId
+    return startClaudeLogin(options?.attemptId, async (signal) => {
+      const source = options?.chatId
         ? { ...options, accountId: await accountRuntimes.claude.account(options.chatId) }
         : options
-    )
+      return claudeAccounts.reauthenticate(source, signal)
+    })
   },
   login: (providerId, options) => {
     persistentChatHistory.forgetAccount(providerId, options?.container)
+    if (providerId === 'claude')
+      return startClaudeLogin(options?.attemptId, (signal) => claudeAdapter.login(options, signal))
     return adapters[providerId].login(options)
+  },
+  cancelAccountLoginStart: async (attemptId) => {
+    claudeLoginStarts.get(attemptId)?.abort(new Error('Claude sign-in was canceled.'))
   },
   getAccounts: async (providerId, options) => {
     if (providerId === 'codex')
@@ -1109,11 +1132,13 @@ export const providerApi: ProviderApi = {
         await claudeAccounts.waitForLogin(accountId, loginId, options)
         const configuration = await (
           claudeAccountAdapters.get(accountId) ?? claudeAdapter
-        ).changeAccount(options?.container, () => claudeAccounts.complete(accountId, options))
+        ).changeAccount(options?.container, () =>
+          claudeAccounts.complete(accountId, options, loginId)
+        )
         return { success: true, error: null, configuration }
       } catch (error) {
         console.error('Unable to complete Claude account sign-in.', error)
-        const configuration = await claudeAccounts.cancel(accountId, options)
+        const configuration = await claudeAccounts.cancel(accountId, options, loginId)
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Claude sign-in failed.',
@@ -1156,7 +1181,7 @@ export const providerApi: ProviderApi = {
       }
       return getCodexAccounts(options?.container)
     }
-    if (providerId === 'claude') return claudeAccounts.cancel(accountId, options)
+    if (providerId === 'claude') return claudeAccounts.cancel(accountId, options, loginId)
     if (providerId !== 'codex') {
       throw new Error(getUnavailableAccountConfiguration(providerId).unavailableMessage ?? '')
     }

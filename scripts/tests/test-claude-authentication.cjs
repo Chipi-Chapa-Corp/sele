@@ -29,6 +29,7 @@ if (!process.versions.electron) {
             window.retried = []
             window.sends = []
             window.loginCalls = 0
+            window.startupAborts = 0
             window.canceled = 0
             window.authorized = 0
             window.linksCopied = 0
@@ -37,12 +38,16 @@ if (!process.versions.electron) {
             window.newChatMode = false
             const openSignIn = () => { window.dialogOpen = true; window.renderFailure() }
             const closeSignIn = () => { window.dialogOpen = false; window.renderFailure() }
-            const startSignIn = async () => {
+            const startSignIn = async signal => {
               window.loginCalls++
+              if (window.pauseStartup) {
+                signal.addEventListener('abort', () => window.startupAborts++, { once: true })
+                await new Promise(resolve => { window.finishStartup = resolve })
+              }
               let finish
               const completion = new Promise(resolve => { finish = resolve })
               window.confirmSignIn = () => { window.authenticationRequired = false; finish(); window.renderFailure() }
-              return { userCode: null, completion, authorize: async () => { window.authorized++ }, cancel: async () => { window.canceled++ }, submitCode: async () => {}, copyLink: async () => {window.linksCopied++;await new Promise(resolve => setTimeout(resolve,250))} }
+              return { userCode: null, completion, authorize: async () => { window.authorized++ }, cancel: async () => { window.canceled++; if (window.stallCancel) await new Promise(() => {}) }, submitCode: async () => {}, copyLink: async () => {window.linksCopied++;await new Promise(resolve => setTimeout(resolve,250))} }
             }
             const noop = () => {}
             const settings = { ...defaultAppSettings, chat: { ...defaultAppSettings.chat, enableActions: false, enableNotesButton: false, displayUsage: {context:true,short:false,long:false} } }
@@ -425,6 +430,78 @@ if (!process.versions.electron) {
       )
       await run(
         "[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Cancel').click()"
+      )
+      const frames = () =>
+        run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+      const dialogOpen = () => run('!!document.querySelector(".account-dialog")')
+      const dismissals = {
+        Escape:
+          'document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))',
+        backdrop:
+          'document.querySelector(".account-dialog-overlay").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }))',
+        'close button': 'document.querySelector(\'[aria-label="Close account window"]\').click()'
+      }
+      await frames()
+      await run('window.pauseStartup = true')
+      for (const [index, [action, dismiss]] of Object.entries(dismissals).entries()) {
+        const canceled = await run('window.canceled')
+        await run(
+          'document.querySelector(\'[aria-label="Account sign-in required"] button\').click()'
+        )
+        await frames()
+        assert.match(
+          await run('document.querySelector(".account-dialog").textContent'),
+          /Starting Claude/
+        )
+        await run(dismiss)
+        await frames()
+        assert.equal(await dialogOpen(), false, `${action} dismisses during startup`)
+        assert.equal(await run('window.startupAborts'), index + 1)
+        await run('window.finishStartup()')
+        await frames()
+        assert.equal(await dialogOpen(), false, 'a late session must never reopen the dialog')
+        assert.equal(await run('window.canceled'), canceled + 1, 'a late session is canceled once')
+      }
+
+      await run(`{
+        const realSetTimeout = window.setTimeout
+        window.setTimeout = (callback, delay, ...args) => {
+          if (delay !== 45000) return realSetTimeout(callback, delay, ...args)
+          window.fireStartupDeadline = callback
+          window.setTimeout = realSetTimeout
+          return 0
+        }
+        document.querySelector('[aria-label="Account sign-in required"] button').click()
+      }`)
+      await frames()
+      await run('window.fireStartupDeadline()')
+      await frames()
+      assert.match(
+        await run('document.querySelector(".account-dialog [role=alert]").textContent'),
+        /took too long/
+      )
+      const calls = await run('window.loginCalls')
+      await run(`window.lateStartup = window.finishStartup; window.pauseStartup = false;
+        document.querySelector('.account-dialog__footer button').click()`)
+      await frames()
+      assert.equal(await run('window.loginCalls'), calls + 1, 'a timed-out startup can be retried')
+      await run('window.lateStartup()')
+      await frames()
+      assert.equal(await run('!!document.querySelector("#account-dialog-code")'), true)
+      await run('window.stallCancel = true')
+      await run(dismissals.Escape)
+      await frames()
+      assert.equal(await dialogOpen(), false, 'Escape closes without waiting for cancellation')
+      await run(
+        'document.querySelector(\'[aria-label="Account sign-in required"] button\').click()'
+      )
+      await frames()
+      await run(dismissals.backdrop)
+      await frames()
+      assert.equal(
+        await dialogOpen(),
+        false,
+        'the backdrop closes without waiting for cancellation'
       )
       console.log('Claude authentication UI checks passed')
     } catch (error) {

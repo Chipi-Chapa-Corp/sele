@@ -108,6 +108,7 @@ export function useWorkspaceProviderAccounts({
   }
 
   const handleCreateProviderAccount = async (
+    signal: AbortSignal,
     reauthentication?: {
       providerId: 'codex' | 'claude'
       container: AppContainerTarget | null
@@ -125,45 +126,64 @@ export function useWorkspaceProviderAccounts({
           : sourceState.newSessionContainer
     )
     const chatId = reauthentication?.chatId
-    const restart = reauthentication
-      ? await providerApi.reauthenticateAccount(providerId, { container, chatId })
-      : null
-    const creation = restart ?? (await providerApi.createAccount(providerId, { container, chatId }))
+    const source = { container, chatId }
+    const attemptId = providerId === 'claude' ? crypto.randomUUID() : undefined
+    const cancelStartup = (): void => {
+      if (attemptId)
+        void providerApi.cancelAccountLoginStart(attemptId).catch((error: unknown) => {
+          console.error('Unable to cancel Claude sign-in startup.', error)
+        })
+    }
+    const cancel = async (accountId: string, loginId: string | null): Promise<void> => {
+      await providerApi.cancelAccountCreation(providerId, accountId, loginId, source)
+      applyProviderAccountConfiguration(providerId, container)
+      if (!reauthentication) providerState.setProviderAccountRevision((revision) => revision + 1)
+    }
+    let accountId: string | undefined
     let loginId: string | null = null
     let userCode: string | null = null
     let authUrl: string | null = null
     let acceptsCode = false
     try {
-      const login = restart?.login ?? (await providerApi.login(providerId, { container, chatId }))
+      signal.throwIfAborted()
+      if (!reauthentication)
+        accountId = (await providerApi.createAccount(providerId, source)).accountId
+      signal.throwIfAborted()
+      signal.addEventListener('abort', cancelStartup, { once: true })
+      const loginOptions = { ...source, attemptId }
+      const restart = reauthentication
+        ? await providerApi.reauthenticateAccount(providerId, loginOptions)
+        : null
+      if (restart) accountId = restart.accountId
+      const login = restart?.login ?? (await providerApi.login(providerId, loginOptions))
       if (login.status === 'pending') {
         loginId = login.loginId
         userCode = login.userCode ?? null
         authUrl = login.authUrl
         acceptsCode = login.acceptsCode === true
       }
+      signal.throwIfAborted()
     } catch (error) {
-      try {
-        await providerApi.cancelAccountCreation(providerId, creation.accountId, loginId, {
-          container,
-          chatId
+      if (accountId)
+        await cancel(accountId, loginId).catch((cleanupError: unknown) => {
+          console.error('Unable to clean up an incomplete provider account.', cleanupError)
         })
-        applyProviderAccountConfiguration(providerId, container)
-        if (!reauthentication) providerState.setProviderAccountRevision((revision) => revision + 1)
-      } catch (cleanupError) {
-        console.error('Unable to clean up an incomplete provider account.', cleanupError)
-        // Keep the original login error when cleanup cannot be completed.
-      }
       throw error
+    } finally {
+      signal.removeEventListener('abort', cancelStartup)
     }
+    if (!accountId) throw new Error('Account sign-in did not return an account.')
+    const authorizedAccountId = accountId
 
     const completion = (async (): Promise<void> => {
       try {
         const result = await providerApi.completeAccountCreation(
           providerId,
-          creation.accountId,
+          authorizedAccountId,
           loginId,
-          { container, chatId }
+          source
         )
+        if (signal.aborted) return
         applyProviderAccountConfiguration(providerId, container)
         if (!result.success) {
           throw new Error(result.error || 'Account authorization was not completed.')
@@ -174,6 +194,7 @@ export function useWorkspaceProviderAccounts({
           chatState.setSendError(null)
         }
       } catch (error) {
+        if (signal.aborted) throw error
         const restoredConfiguration = await providerApi
           .getAccounts(providerId, { container, chatId })
           .catch((restoreError: unknown) => {
@@ -208,14 +229,7 @@ export function useWorkspaceProviderAccounts({
         if (!pendingUrl) return
         await appApi.handleExternalLink({ url: pendingUrl, action: 'open' })
       },
-      cancel: async () => {
-        await providerApi.cancelAccountCreation(providerId, creation.accountId, loginId, {
-          container,
-          chatId
-        })
-        applyProviderAccountConfiguration(providerId, container)
-        if (!reauthentication) providerState.setProviderAccountRevision((revision) => revision + 1)
-      }
+      cancel: () => cancel(authorizedAccountId, loginId)
     }
   }
   return {

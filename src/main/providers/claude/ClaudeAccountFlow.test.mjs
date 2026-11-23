@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import vm from 'node:vm'
 import test from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { build } from 'esbuild'
 
 const require = createRequire(import.meta.url)
@@ -388,6 +389,62 @@ for (const named of [false, true]) {
     }
   })
 }
+
+test('reauthentication can cancel before the CLI prints a URL', { timeout: 5_000 }, async () => {
+  const h = await setup()
+  const controller = new AbortController()
+  const command = h.fixture.command
+  const marker = join(h.root, 'login-started')
+  h.fixture.command = async (file, args, options) =>
+    args[1] === 'login'
+      ? {
+          file: process.execPath,
+          args: [
+            '-e',
+            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, ''); setInterval(() => {}, 1000)`
+          ],
+          env: options.env
+        }
+      : command(file, args, options)
+  try {
+    const started = h.accounts.reauthenticate({}, controller.signal)
+    const canceled = assert.rejects(started, /canceled/)
+    let markerContents = null
+    for (let attempt = 0; attempt < 200 && markerContents === null; attempt++) {
+      markerContents = await readFile(marker).catch(() => null)
+      if (markerContents !== null) break
+      await delay(10)
+    }
+    assert.notEqual(markerContents, null, 'the CLI was running before cancellation')
+    controller.abort()
+    await canceled
+    h.fixture.command = command
+    const { accountId, login } = await h.accounts.reauthenticate()
+    await h.accounts.cancel(accountId, {}, login.loginId)
+  } finally {
+    controller.abort()
+    await h.cleanup()
+  }
+})
+
+test('a delayed Claude cancellation cannot stop a replacement sign-in for the same account', async () => {
+  const h = await setup()
+  try {
+    const first = await h.accounts.reauthenticate()
+    await h.accounts.cancel(first.accountId, {}, first.login.loginId)
+    const second = await h.accounts.reauthenticate()
+    await h.accounts.cancel(first.accountId, {}, first.login.loginId)
+    await assert.rejects(
+      h.accounts.complete(first.accountId, {}, first.login.loginId),
+      /no longer pending/
+    )
+    await h.accounts.submitCode(second.login.loginId, 'fixture-code')
+    await h.accounts.waitForLogin(second.accountId, second.login.loginId)
+    await h.accounts.complete(second.accountId, {}, second.login.loginId)
+  } finally {
+    await h.cleanup()
+  }
+})
 
 test('fallback caching never carries usage from Default to the added account', async () => {
   const h = await setup()

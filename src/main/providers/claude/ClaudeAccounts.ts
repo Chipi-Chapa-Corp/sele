@@ -433,14 +433,26 @@ export class ClaudeAccounts {
     return outcome
   }
 
-  login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult | null> => {
+  login = async (
+    options: ProviderSourceOptions = {},
+    signal?: AbortSignal
+  ): Promise<ProviderLoginResult | null> => {
+    signal?.throwIfAborted()
     const store = await this.store(options)
     const pending = await store.getPending()
+    signal?.throwIfAborted()
     if (!pending) return null
-    return this.startLogin(pending.id, store.credentialDirectory(pending.id), false, options)
+    return this.startLogin(
+      pending.id,
+      store.credentialDirectory(pending.id),
+      false,
+      options,
+      signal
+    )
   }
 
-  reauthenticate = async (options: ProviderSourceOptions = {}) => {
+  reauthenticate = async (options: ProviderSourceOptions = {}, signal?: AbortSignal) => {
+    signal?.throwIfAborted()
     const store = await this.store(options)
     if (await store.getPending())
       throw new Error('Finish or cancel the current Claude sign-in first.')
@@ -452,7 +464,8 @@ export class ClaudeAccounts {
       accountId,
       accountId !== 'default' ? store.credentialDirectory(accountId) : null,
       true,
-      options
+      options,
+      signal
     )
     return { accountId, login }
   }
@@ -461,9 +474,12 @@ export class ClaudeAccounts {
     accountId: string,
     directory: string | null,
     reauthentication: boolean,
-    options: ProviderSourceOptions
+    options: ProviderSourceOptions,
+    signal?: AbortSignal
   ): Promise<ProviderLoginResult> => {
+    signal?.throwIfAborted()
     const store = await this.store(options)
+    signal?.throwIfAborted()
     const key = getContainerTargetKey(options.container)
     if (this.logins.has(key)) throw new Error('Claude sign-in is already running.')
     // Sele opens the printed manual URL. The CLI's automatic browser URL uses
@@ -471,12 +487,14 @@ export class ClaudeAccounts {
     const command = await this.command(['auth', 'login', '--claudeai'], options, directory, {
       BROWSER: 'true'
     })
+    signal?.throwIfAborted()
     // Recheck after command resolution, which can involve SSH and shell discovery.
     const expectedId = reauthentication
       ? (await store.get()).accounts.some((account) => account.id === accountId)
         ? accountId
         : undefined
       : (await store.getPending())?.id
+    signal?.throwIfAborted()
     if (expectedId !== accountId || this.logins.has(key)) {
       throw new Error('Claude sign-in is no longer available.')
     }
@@ -488,17 +506,25 @@ export class ClaudeAccounts {
       flow: new ClaudeAccountLogin(command)
     }
     this.logins.set(key, login)
+    const cancel = (): void => {
+      void login.flow.cancel()
+    }
+    signal?.addEventListener('abort', cancel, { once: true })
     try {
+      const authUrl = await login.flow.ready
+      signal?.throwIfAborted()
       return {
         status: 'pending',
         loginId: login.id,
-        authUrl: await login.flow.ready,
+        authUrl,
         acceptsCode: true
       }
     } catch (error) {
       await login.flow.cancel()
       if (this.logins.get(key) === login) this.logins.delete(key)
       throw error
+    } finally {
+      signal?.removeEventListener('abort', cancel)
     }
   }
 
@@ -543,23 +569,34 @@ export class ClaudeAccounts {
     login.verified = true
   }
 
-  complete = async (accountId: string, options: ProviderSourceOptions = {}) => {
-    const login = this.logins.get(getContainerTargetKey(options.container))
+  complete = async (
+    accountId: string,
+    options: ProviderSourceOptions = {},
+    loginId?: string | null
+  ) => {
+    const key = getContainerTargetKey(options.container)
     const store = await this.store(options)
+    const login = this.logins.get(key)
+    if (loginId !== undefined && (!login || login.accountId !== accountId || login.id !== loginId))
+      throw new Error('Claude sign-in was canceled or is no longer pending.')
     if (login?.reauthentication && !login.verified)
       throw new Error('Claude sign-in has not been verified.')
-    const result =
-      login?.accountId === accountId && login.reauthentication
-        ? await store.get()
-        : await store.complete(accountId)
-    this.logins.delete(getContainerTargetKey(options.container))
+    const reauthentication = login?.accountId === accountId && login.reauthentication
+    const result = reauthentication ? await store.get() : await store.complete(accountId)
+    if (this.logins.get(key) === login) this.logins.delete(key)
+    else if (reauthentication) throw new Error('Claude sign-in was canceled.')
     return result
   }
 
-  cancel = async (accountId: string, options: ProviderSourceOptions = {}) => {
+  cancel = async (
+    accountId: string,
+    options: ProviderSourceOptions = {},
+    loginId?: string | null
+  ) => {
     const key = getContainerTargetKey(options.container)
     const login = this.logins.get(key)
     if (login?.accountId === accountId) {
+      if (loginId !== undefined && login.id !== loginId) return (await this.store(options)).get()
       await login.flow.cancel()
       if (this.logins.get(key) === login) this.logins.delete(key)
       if (login.reauthentication) return (await this.store(options)).get()

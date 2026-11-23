@@ -484,6 +484,64 @@ if (!process.versions.electron) {
       const target = (await cdp('Target.getTargets')).targetInfos[0]
       await cdp('Target.closeTarget', { targetId: target.targetId })
       assert.equal((await rpc('getTabs')).length, 1)
+      const run = (source) => window.webContents.executeJavaScript(source)
+      const waitForSession = async (predicate, key = 'tab-reuse') => {
+        const deadline = Date.now() + 8000
+        while (Date.now() < deadline) {
+          const stored = await run(`window.preferencesApi.getItem('sele:browser-tabs:v2').value`)
+          const session = JSON.parse(stored || '{}')[key]
+          if (session && predicate(session)) return session
+          await new Promise((resolve) => setTimeout(resolve, 25))
+        }
+        assert.fail(`Timed out waiting for browser workspace: ${key}`)
+      }
+      const lastTabKey = 'last-tab-test'
+      const waitForLastTab = (predicate) =>
+        waitForSession(
+          (session) => session.tabs.length === 1 && predicate(session.tabs[0]),
+          lastTabKey
+        )
+      const closeFirstTab = () =>
+        run(`document.querySelector('.browser-panel__tabs .ui-segmented-control__action').click()`)
+      const lastPageUrl = url + '/last-tab'
+      const openLastPage = async () => {
+        await run(`window.browserTabReuseFixture.open(${JSON.stringify(lastPageUrl)})`)
+        return waitForLastTab((tab) => tab.url === lastPageUrl)
+      }
+      await run(`window.browserTabReuseFixture.workspace(${JSON.stringify(lastTabKey)})`)
+      const originalBlank = await waitForLastTab((tab) => !tab.url)
+      await closeFirstTab()
+      const firstPage = await openLastPage()
+      assert.equal(firstPage.activeTabId, originalBlank.activeTabId)
+      await closeFirstTab()
+      const freshBlank = await waitForLastTab((tab) => !tab.url)
+      assert.notEqual(freshBlank.activeTabId, firstPage.activeTabId)
+      await openLastPage()
+      window.webContents.send('browser:close-active-tab-requested')
+      await waitForLastTab((tab) => !tab.url)
+
+      const scoped = browserService.createClient({
+        providerId: 'codex',
+        sessionId: lastTabKey,
+        cwd: '/work',
+        containerKey: 'host',
+        workspaceKey: lastTabKey
+      })
+      try {
+        await openLastPage()
+        const [page] = await scoped.listTabs()
+        await scoped.closeTab(page.id)
+        await waitForLastTab((tab) => !tab.url)
+        const [blank] = await scoped.listTabs()
+        assert.equal(blank.url, 'about:blank')
+        assert.notEqual(blank.id, page.id)
+        await scoped.closeTab(blank.id)
+        assert.deepEqual((await scoped.listTabs()).map((tab) => tab.id), [blank.id])
+      } finally {
+        scoped.close()
+        await run('window.browserTabReuseFixture.workspace(null)')
+      }
+      console.log('PASS: last browser tab stays open through close controls and automation')
       const { checkClaudeBrowserTools, checkInstalledClaudeBrowserSdk } = await import(
         './fixtures/claude-browser-check.mjs'
       )
@@ -544,17 +602,6 @@ if (!process.versions.electron) {
         registerCodexBrowserTools, CodexDynamicTools, registerBrowserUseSession,
         removeBrowserUseSessions, window, url
       })
-      const run = (source) => window.webContents.executeJavaScript(source)
-      const waitForSession = async (predicate) => {
-        const deadline = Date.now() + 8000
-        while (Date.now() < deadline) {
-          const stored = await run(`window.preferencesApi.getItem('sele:browser-tabs:v2').value`)
-          const session = JSON.parse(stored || '{}')['tab-reuse']
-          if (session && predicate(session)) return session
-          await new Promise((resolve) => setTimeout(resolve, 25))
-        }
-        assert.fail('Timed out waiting for browser tab reuse')
-      }
       await run(`window.browserTabReuseFixture.active(true);
         window.browserTabReuseFixture.workspace('tab-reuse')`)
       const emptySession = await waitForSession((session) => session.tabs.length === 1)

@@ -256,6 +256,8 @@ const authUrl =
 const manualUrl = new URL(authUrl)
 manualUrl.searchParams.set('redirect_uri', 'https://platform.claude.com/oauth/code/callback')
 const manualAuthUrl = manualUrl.href
+const opaqueAuthUrl =
+  'https://claude.ai/oauth/authorize?z-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO_1'
 const loginProcess = (script, timeout) =>
   new ClaudeAccountLogin(
     {
@@ -270,6 +272,14 @@ test('authorization URLs require a complete, allowlisted OAuth URL', () => {
   assert.equal(findClaudeAuthorizationUrl(authUrl), null)
   assert.equal(findClaudeAuthorizationUrl(`${authUrl}\n`), manualAuthUrl)
   assert.equal(findClaudeAuthorizationUrl(`${manualAuthUrl}\n`), manualAuthUrl)
+  assert.equal(findClaudeAuthorizationUrl(opaqueAuthUrl), null)
+  assert.equal(findClaudeAuthorizationUrl(`${opaqueAuthUrl}\n`), opaqueAuthUrl)
+  assert.equal(findClaudeAuthorizationUrl(`${opaqueAuthUrl}=value\n`), null)
+  assert.equal(findClaudeAuthorizationUrl(`${opaqueAuthUrl}#fragment\n`), null)
+  assert.equal(
+    findClaudeAuthorizationUrl(`${opaqueAuthUrl.replace('claude.ai', 'claude.ai.example.com')}\n`),
+    null
+  )
   assert.equal(
     findClaudeAuthorizationUrl(`\u001b]8;;${authUrl}\u0007link\u001b]8;;\u0007`),
     manualAuthUrl
@@ -299,15 +309,15 @@ test('authorization URLs require a complete, allowlisted OAuth URL', () => {
 })
 
 test('recognizes the current CLI sign-in output before the login process exits', async () => {
-  // Output shape captured from Claude Code 2.1.281; OAuth values are synthetic.
-  const output = `Opening browser to sign in…\nIf the browser didn't open, visit: ${authUrl}\nPaste code here if prompted > `
+  // Output shape captured from Claude Code 2.1.331 with a synthetic authorization request.
+  const output = `Opening browser to sign in…\nIf the browser didn't open, visit:\n${opaqueAuthUrl}\nPaste code here if prompted > `
   const login = loginProcess(
     `process.stdout.write(${JSON.stringify(output)});
     process.stdin.once('data', () => process.exit(0));`,
     2_000
   )
   try {
-    assert.equal(await login.ready, manualAuthUrl)
+    assert.equal(await login.ready, opaqueAuthUrl)
     login.submitCode('fixture-code')
     assert.equal((await login.completion).success, true)
   } finally {

@@ -20,7 +20,7 @@ type SidebarProviderAccountProps = {
   updating: boolean
   hasVisibleLimits: boolean
   onSelect: (accountId: string) => Promise<void>
-  onCreate: () => Promise<AccountAuthorizationSession>
+  onCreate: (signal: AbortSignal) => Promise<AccountAuthorizationSession>
   onDelete: (accountId: string) => Promise<void>
 }
 

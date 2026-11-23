@@ -24,6 +24,7 @@ type Options = {
   workspaces: Map<string, Workspace>
   setWorkspaces: Dispatch<SetStateAction<Map<string, Workspace>>>
   webviews: React.RefObject<Map<string, WebviewTag>>
+  closeTab: (workspaceKey: string, tabId: string) => void
   showWorkspace: (key: string) => void
 }
 
@@ -209,15 +210,7 @@ export function useBrowserAutomation(options: Options): void {
           return new Map(workspaces).set(key, { ...latest, activeTabId: tab.id })
         })
       } else if (request.method === 'close') {
-        state.setWorkspaces((workspaces) => {
-          const latest = workspaces.get(key)
-          if (!latest) return workspaces
-          const tabs = latest.tabs.filter((item) => item.id !== tab.id)
-          return new Map(workspaces).set(key, {
-            tabs,
-            activeTabId: latest.activeTabId === tab.id ? (tabs[0]?.id ?? null) : latest.activeTabId
-          })
-        })
+        state.closeTab(key, tab.id)
       }
       return null
     }

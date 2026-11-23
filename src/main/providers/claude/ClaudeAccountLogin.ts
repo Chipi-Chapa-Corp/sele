@@ -19,10 +19,17 @@ export const findClaudeAuthorizationUrl = (output: string): string | null => {
       if (
         claudeAuthorizationEndpoints.has(`${url.origin}${url.pathname}`) &&
         !url.username &&
-        !url.password &&
-        url.searchParams.has('state') &&
-        url.searchParams.get('response_type') === 'code'
+        !url.password
       ) {
+        // Newer CLIs print an opaque, server-side authorization request on claude.ai.
+        if (
+          url.origin === 'https://claude.ai' &&
+          !url.hash &&
+          /^\?[A-Za-z0-9_-]{32,}$/.test(url.search)
+        )
+          return url.href
+        if (!url.searchParams.has('state') || url.searchParams.get('response_type') !== 'code')
+          continue
         // Older CLIs can print the automatic URL. A pasted code is exchanged
         // using Claude's hosted manual callback, never the loopback callback.
         const redirect = url.searchParams.get('redirect_uri')
@@ -142,8 +149,12 @@ export class ClaudeAccountLogin {
 
   cancel = async (): Promise<void> => {
     if (this.closed) return
+    if (this.canceling) return this.closePromise
     this.canceling = true
     this.child.stdin.end()
+    // Other processes may inherit the pipes. Their output is irrelevant once canceled.
+    this.child.stdout.destroy()
+    this.child.stderr.destroy()
     if (process.platform === 'win32' && this.child.pid) {
       // npm-installed CLIs can be launched through cmd.exe; terminate its children too.
       execFile(

@@ -355,9 +355,11 @@ if (!process.versions.electron) {
       assert.equal(await run(`document.querySelectorAll('code .token').length>0`), true)
       const citationPath = '/fixture/output/pdf/mark-velt.pdf'
       const citation = `:codex-file-citation{path="${citationPath}" purpose="output"}`
+      const imagePath = '/outside-project/shots/overview.png'
+      const fileLinks = `${citation}\n\n[Screenshot](\u200b\u200b${imagePath})`
       for (const [key, text] of [
-        ['file-citation', citation],
-        ['file-citation-worker', 'Download ' + citation + '\n\n' + content]
+        ['file-citation', fileLinks],
+        ['file-citation-worker', 'Download ' + fileLinks + '\n\n' + content]
       ]) {
         await run(
           `window.links=[];window.render(${JSON.stringify(text)},${JSON.stringify(key)},true)`
@@ -374,7 +376,12 @@ if (!process.versions.electron) {
           false
         )
         await run(`document.querySelector('[data-file-link-path="${citationPath}"]').click()`)
-        assert.deepEqual(await run('window.links'), [[citationPath, citationPath, undefined]])
+        await waitFor(`document.querySelector('[data-file-link-path="${imagePath}"]')`)
+        await run(`document.querySelector('[data-file-link-path="${imagePath}"]').click()`)
+        assert.deepEqual(await run('window.links'), [
+          [citationPath, citationPath, undefined],
+          [imagePath, imagePath, undefined]
+        ])
       }
       const htmlLinks =
         '[Preview](docs/my%20page.html:12) and [other](file:///fixture/index%20%231.HTM) and [source](/fixture/source.ts)'

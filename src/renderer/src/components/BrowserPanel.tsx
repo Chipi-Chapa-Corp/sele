@@ -116,11 +116,12 @@ const restoreBrowserTab = (tab: StoredBrowserTab): BrowserTab =>
     title: tab.title
   })
 
+const isBlankBrowserTab = (tab: BrowserTab): boolean => !tab.url || tab.url === 'about:blank'
+
 const openBrowserPage = (workspace: BrowserWorkspace, url: string): BrowserWorkspace => {
-  const isEmptyTab = (tab: BrowserTab): boolean => !tab.url || tab.url === 'about:blank'
   const emptyTab =
-    workspace.tabs.find((tab) => tab.id === workspace.activeTabId && isEmptyTab(tab)) ??
-    workspace.tabs.find(isEmptyTab)
+    workspace.tabs.find((tab) => tab.id === workspace.activeTabId && isBlankBrowserTab(tab)) ??
+    workspace.tabs.find(isBlankBrowserTab)
   const tab = createBrowserTab(url, { id: emptyTab?.id })
   return {
     activeTabId: tab.id,
@@ -391,15 +392,6 @@ const DesktopBrowserPanel: React.FC<BrowserPanelProps> = ({
   const [findQuery, setFindQuery] = useState('')
   const [findResult, setFindResult] = useState(emptyBrowserFindResult)
 
-  useBrowserAutomation({
-    active,
-    view,
-    workspaces,
-    setWorkspaces,
-    webviews: webviewsRef,
-    showWorkspace: (key) => setAutomationWorkspace({ selected: selectedWorkspaceKey, key })
-  })
-
   const workspace = workspaces.get(workspaceKey) ?? null
   const tabs = workspace?.tabs ?? []
   const activeTabId = workspace?.activeTabId ?? null
@@ -478,7 +470,7 @@ const DesktopBrowserPanel: React.FC<BrowserPanelProps> = ({
       if (!current) return
       setWorkspaces((currentWorkspaces) => {
         const currentWorkspace = currentWorkspaces.get(workspaceKey)
-        if (!currentWorkspace) {
+        if (!currentWorkspace?.tabs.length) {
           const blankTab = createBrowserTab()
           const nextWorkspaces = new Map(currentWorkspaces)
           nextWorkspaces.set(workspaceKey, { activeTabId: blankTab.id, tabs: [blankTab] })
@@ -656,30 +648,37 @@ const DesktopBrowserPanel: React.FC<BrowserPanelProps> = ({
     })
   }
 
-  const handleCloseTab = useCallback((closingWorkspaceKey: string, tabId: string): void => {
+  const handleCloseTab = useCallback((key: string, tabId: string, selectFirst = false) => {
     setWorkspaces((currentWorkspaces) => {
-      const currentWorkspace = currentWorkspaces.get(closingWorkspaceKey)
+      const currentWorkspace = currentWorkspaces.get(key)
       if (!currentWorkspace) return currentWorkspaces
 
       const closingIndex = currentWorkspace.tabs.findIndex((tab) => tab.id === tabId)
       if (closingIndex < 0) return currentWorkspaces
 
+      if (currentWorkspace.tabs.length === 1) {
+        if (isBlankBrowserTab(currentWorkspace.tabs[closingIndex])) return currentWorkspaces
+        const blankTab = createBrowserTab()
+        return new Map(currentWorkspaces).set(key, {
+          activeTabId: blankTab.id,
+          tabs: [blankTab]
+        })
+      }
+
+      const remainingTabs = currentWorkspace.tabs.filter((tab) => tab.id !== tabId)
+      const replacementIndex = selectFirst ? 0 : Math.min(closingIndex, remainingTabs.length - 1)
       const nextActiveTabId =
         currentWorkspace.activeTabId === tabId
-          ? (currentWorkspace.tabs[closingIndex + 1]?.id ??
-            currentWorkspace.tabs[closingIndex - 1]?.id ??
-            null)
+          ? remainingTabs[replacementIndex].id
           : currentWorkspace.activeTabId
       const nextWorkspaces = new Map(currentWorkspaces)
-      nextWorkspaces.set(closingWorkspaceKey, {
+      nextWorkspaces.set(key, {
         activeTabId: nextActiveTabId,
-        tabs: currentWorkspace.tabs
-          .filter((tab) => tab.id !== tabId)
-          .map((tab) =>
-            tab.id === nextActiveTabId && !tab.loaded
-              ? { ...tab, initialUrl: tab.url || 'about:blank', loaded: true }
-              : tab
-          )
+        tabs: remainingTabs.map((tab) =>
+          tab.id === nextActiveTabId && !tab.loaded
+            ? { ...tab, initialUrl: tab.url || 'about:blank', loaded: true }
+            : tab
+        )
       })
       return nextWorkspaces
     })
@@ -690,6 +689,16 @@ const DesktopBrowserPanel: React.FC<BrowserPanelProps> = ({
       return nextRuntimes
     })
   }, [])
+
+  useBrowserAutomation({
+    active,
+    view,
+    workspaces,
+    setWorkspaces,
+    webviews: webviewsRef,
+    closeTab: (key, id) => handleCloseTab(key, id, true),
+    showWorkspace: (key) => setAutomationWorkspace({ selected: selectedWorkspaceKey, key })
+  })
 
   useEffect(
     () =>

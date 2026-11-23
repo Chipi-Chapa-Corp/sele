@@ -882,6 +882,15 @@ const requireSourceOptions = (value: unknown): ProviderSourceOptions | undefined
   }
 }
 
+const requireAccountLoginOptions = (value: unknown) => {
+  const source = requireSourceOptions(value)
+  if (!source) return undefined
+  const { attemptId } = value as { attemptId?: unknown }
+  return attemptId === undefined
+    ? source
+    : { ...source, attemptId: requireProviderResourceString(attemptId, 'sign-in attempt ID', 128) }
+}
+
 const requireRateLimitResetOptions = (
   value: unknown
 ): ProviderRateLimitResetOptions | undefined => {
@@ -1560,7 +1569,8 @@ export const registerProviderIpc = (): void => {
 
   forwardOperations(
     {
-      login: [requireProviderId, requireSourceOptions],
+      login: [requireProviderId, requireAccountLoginOptions],
+      cancelAccountLoginStart: [requireLoginId],
       getAccounts: [requireProviderId, requireSourceOptions],
       cancelAccountCreation: [
         requireProviderId,
@@ -1621,7 +1631,7 @@ export const registerProviderIpc = (): void => {
 
   forwardOperations(
     {
-      reauthenticateAccount: [requireProviderId, requireSourceOptions],
+      reauthenticateAccount: [requireProviderId, requireAccountLoginOptions],
       createAccount: [requireProviderId, requireSourceOptions],
       completeAccountCreation: [
         requireProviderId,

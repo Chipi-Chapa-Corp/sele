@@ -544,6 +544,8 @@ export type ProviderSourceOptions = {
   forceRefresh?: boolean
 }
 
+export type ProviderAccountLoginOptions = ProviderSourceOptions & { attemptId?: string }
+
 export type ProviderUpdateOptions = ProviderSourceOptions & {
   stopActiveChats?: boolean
 }
@@ -1261,9 +1263,13 @@ export type ProviderApi = {
   ) => Promise<void>
   reauthenticateAccount: (
     providerId: ProviderId,
-    options?: ProviderSourceOptions
+    options?: ProviderAccountLoginOptions
   ) => Promise<{ accountId: string; login: ProviderLoginResult }>
-  login: (providerId: ProviderId, options?: ProviderSourceOptions) => Promise<ProviderLoginResult>
+  login: (
+    providerId: ProviderId,
+    options?: ProviderAccountLoginOptions
+  ) => Promise<ProviderLoginResult>
+  cancelAccountLoginStart: (attemptId: string) => Promise<void>
   getAccounts: (
     providerId: ProviderId,
     options?: ProviderSourceOptions
@@ -1640,6 +1646,7 @@ export const providerIpcChannels = {
   importChat: 'provider:import-chat',
   cancelChatImport: 'provider:cancel-chat-import',
   reauthenticateAccount: 'provider:reauthenticate-account',
+  cancelAccountLoginStart: 'provider:cancel-account-login-start',
   login: 'provider:login',
   getAccounts: 'provider:get-accounts',
   createAccount: 'provider:create-account',

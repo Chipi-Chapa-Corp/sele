@@ -9,6 +9,7 @@ import type {
   ProviderReviewComment
 } from '../../../shared/provider'
 import { getRecentChatReferenceKey, type PinnedChatTextReference } from '../chatRecents'
+import { normalizeAbsoluteFileLinkPath } from '../markdownFileLink'
 import type { FileEditorTarget } from '../components/FileEditorDialog'
 import { appApi } from '../appApi'
 import { providerApi } from '../providerApi'
@@ -345,7 +346,7 @@ export function useFileNavigationController({
       if (!changesCwd) return
 
       const normalizedCwd = changesCwd.replace(/\\/g, '/').replace(/\/+$/, '')
-      const normalizedDisplayPath = displayPath.replace(/\\/g, '/')
+      const normalizedDisplayPath = normalizeAbsoluteFileLinkPath(displayPath).replace(/\\/g, '/')
       const relativeDisplayPath = normalizedDisplayPath.startsWith(`${normalizedCwd}/`)
         ? normalizedDisplayPath.slice(normalizedCwd.length + 1)
         : normalizedDisplayPath
@@ -354,7 +355,7 @@ export function useFileNavigationController({
         {
           container: changesContainer,
           cwd: changesCwd,
-          path,
+          path: normalizeAbsoluteFileLinkPath(path),
           displayPath: relativeDisplayPath,
           line,
           endLine

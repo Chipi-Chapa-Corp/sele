@@ -110,13 +110,19 @@ if (!process.versions.electron) {
         const dialog = document.querySelector('.account-dialog')
         return {
           code: dialog.querySelector('[aria-label="One-time code"]')?.textContent,
-          buttons: [...dialog.querySelectorAll('button')].map(button => button.textContent.trim()),
+          buttons: [...dialog.querySelectorAll('button')].map(button => button.textContent.trim() || button.ariaLabel),
           inputs: dialog.querySelectorAll('input').length,
           text: dialog.textContent
         }
       })()`)
       assert.equal(initial.code, 'ABCD-12345', 'the code stays readable for another device')
-      assert.deepEqual(initial.buttons, ['Copy code', 'Open page', 'Copy link', 'Cancel'])
+      assert.deepEqual(initial.buttons, [
+        'Close account window',
+        'Copy code',
+        'Open page',
+        'Copy link',
+        'Cancel'
+      ])
       assert.equal(initial.inputs, 0, 'device-code sign-in needs no pasted code')
       assert.match(initial.text, /another device/)
 

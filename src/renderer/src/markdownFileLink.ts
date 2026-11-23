@@ -11,6 +11,14 @@ const windowsAbsolutePathPattern = /^[a-z]:[\\/]/i
 const sourceLocationPattern = /^(.*?):(\d+)(?::\d+)?$/
 const fragmentLocationPattern = /#L(\d+)(?:C\d+)?$/i
 
+export const normalizeAbsoluteFileLinkPath = (path: string): string => {
+  // Some generated links put zero-width spaces before an absolute path.
+  const unprefixedPath = path.replace(/^\u200b+/, '')
+  return unprefixedPath.startsWith('/') || windowsAbsolutePathPattern.test(unprefixedPath)
+    ? unprefixedPath
+    : path
+}
+
 const decodeLinkTarget = (target: string): string => {
   try {
     return decodeURIComponent(target)
@@ -49,7 +57,7 @@ export const getMarkdownFileTarget = (href: string | undefined): MarkdownFileTar
       return null
     }
   } else {
-    path = decodeLinkTarget(path)
+    path = normalizeAbsoluteFileLinkPath(decodeLinkTarget(path))
     if (/^[a-z][a-z\d+.-]*:/i.test(path) && !windowsAbsolutePathPattern.test(path)) return null
   }
 

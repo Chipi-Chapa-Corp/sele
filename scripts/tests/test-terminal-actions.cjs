@@ -713,19 +713,38 @@ if (!process.versions.electron) {
           await run(`document.querySelector('[aria-label="First chat 1"][aria-pressed]') !== null`),
           true
         )
-        // Close the last tab, then create a first tab while the panel is already open.
-        await run(
-          `document.querySelector('[aria-label="Close First chat 1"]').click(); document.getElementById('focus-target').focus()`
-        )
+        // Closing the last occupied tab leaves a fresh shell in the same workspace.
+        const terminalTabs = '.terminal-panel__tabs [aria-pressed]'
+        await run(`document.querySelector('[aria-label="Close First chat 1"]').click()`)
         await waitFor(
-          `document.querySelectorAll('.terminal-panel__tabs [aria-pressed]').length === 0`
+          `document.querySelectorAll('${terminalTabs}').length === 1 &&
+           document.querySelector('${terminalTabs}[aria-label="Terminal 1"][aria-pressed="true"]') !== null &&
+           !window.terminals.at(-1).options.disableStdin`
         )
+        await run(`window.freshShell = window.terminals.at(-1);
+          document.querySelector('[aria-label="Close Terminal 1"]').click()`)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        assert.equal(await run('window.terminals.at(-1) === window.freshShell'), true)
+        assert.equal(await run(`document.querySelectorAll('${terminalTabs}').length`), 1)
+        await run(`window.freshShell.input('printf "LAST_TAB_%s\\\\n" used\\r', true)`)
+        await waitFor(`window.text(window.freshShell).includes('LAST_TAB_used')`)
+        await run(`document.querySelector('[aria-label="Close Terminal 1"]').click()`)
+        await waitFor(`window.terminals.at(-1) !== window.freshShell &&
+          !window.terminals.at(-1).options.disableStdin`)
+        assert.equal(await run(`document.querySelectorAll('${terminalTabs}').length`), 1)
+
+        await run(`document.getElementById('focus-target').focus()`)
         const firstInOpenPanel = sources.register('native-first-open', {
           ...sourceOptions,
           chatId: 'first',
           chatTitle: 'First chat',
           cwd: otherDirectory
         })
+        await waitFor(
+          `document.querySelector('[aria-label="First chat 2"][aria-pressed="false"]') !== null`
+        )
+        await run(`document.querySelector('[aria-label="First chat 2"][aria-pressed]').click();
+          document.getElementById('focus-target').focus()`)
         await waitFor(
           `document.querySelector('[aria-label="First chat 2"][role="region"]')?.hidden === false`
         )
@@ -735,7 +754,7 @@ if (!process.versions.electron) {
         assert.equal(
           await run(`document.querySelector('[aria-label="First chat 2"][aria-pressed]') !== null`),
           true,
-          'The first tab in an already opened terminal panel remains after completion'
+          'A viewed agent tab in an already open terminal panel remains after completion'
         )
 
         // Tasks that finish before discovery were never opened. Dismiss them

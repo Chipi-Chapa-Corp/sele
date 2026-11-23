@@ -44,6 +44,9 @@ const bundled = await build({
                getUsage: (...args) => globalThis.harness.getUsage(...args),
                resetRateLimits: (...args) => globalThis.harness.resetRateLimits(...args),
                createAccount: (...args) => globalThis.harness.createAccount(...args),
+               login: (...args) => globalThis.harness.accountLogin('login', ...args),
+               reauthenticateAccount: (...args) => globalThis.harness.accountLogin('reauthenticate', ...args),
+               cancelAccountLoginStart: (...args) => globalThis.harness.accountLogin('cancel', ...args),
                getConnections: (...args) => globalThis.harness.connection('list', ...args),
                connectProvider: (...args) => globalThis.harness.connection('connect', ...args),
                getConnectionAttempt: (...args) => globalThis.harness.connection('status', ...args),
@@ -1155,6 +1158,26 @@ test('account IPC preserves validated chat scope and rejects malformed IDs', asy
   assert.deepEqual(calls, [['claude', { chatId: 'saved-chat' }]])
   for (const chatId of ['', 42, 'a\0b', 'x'.repeat(513)])
     assert.throws(() => create({}, 'claude', { chatId }), /Invalid chat ID/)
+})
+
+test('account login IPC forwards the same attempt ID for startup and cancellation', async () => {
+  const h = setup()
+  const calls = []
+  h.harness.accountLogin = async (...args) => calls.push(JSON.parse(JSON.stringify(args)))
+  const login = h.harness.handlers.get(channels.login)
+  const reauthenticate = h.harness.handlers.get(channels.reauthenticateAccount)
+  const cancel = h.harness.handlers.get(channels.cancelAccountLoginStart)
+  const options = { attemptId: 'fixture-attempt', chatId: 'saved-chat' }
+  await login({}, 'claude', options)
+  await reauthenticate({}, 'claude', options)
+  await cancel({}, options.attemptId)
+  assert.deepEqual(calls, [
+    ['login', 'claude', options],
+    ['reauthenticate', 'claude', options],
+    ['cancel', options.attemptId]
+  ])
+  assert.throws(() => login({}, 'claude', { attemptId: 13 }), /Invalid sign-in attempt ID/)
+  assert.throws(() => cancel({}, 'a\0b'), /Invalid login ID/)
 })
 
 test('new-chat account operations accept the null scope produced by JSON serialization', async () => {

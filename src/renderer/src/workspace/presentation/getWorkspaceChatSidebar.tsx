@@ -107,8 +107,8 @@ export function getWorkspaceChatSidebar({
           )
         }
       },
-      onCreate: () =>
-        accountActions.handleCreateProviderAccount(undefined, {
+      onCreate: (signal: AbortSignal) =>
+        accountActions.handleCreateProviderAccount(signal, undefined, {
           providerId,
           container: session.changesContainer
         }),

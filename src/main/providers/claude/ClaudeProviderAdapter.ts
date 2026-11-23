@@ -686,8 +686,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     this.closeControlQueryEntry(entry)
   )
 
-  login = async (options: ProviderSourceOptions = {}): Promise<ProviderLoginResult> => {
-    const pending = await claudeAccounts.login(options)
+  login = async (
+    options: ProviderSourceOptions = {},
+    signal?: AbortSignal
+  ): Promise<ProviderLoginResult> => {
+    const pending = await claudeAccounts.login(options, signal)
     if (pending) return pending
     return this.withControlQuery(options, 'account', async (control) => {
       const account = await control.accountInfo()

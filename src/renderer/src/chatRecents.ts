@@ -1,6 +1,10 @@
 import { marked, type Token, type Tokens } from 'marked'
 import type { ProviderChatItem, ProviderId, ProviderMessage } from '../../shared/provider'
-import { getMarkdownFileLinkLabel, getMarkdownFileTarget } from './markdownFileLink.ts'
+import {
+  getMarkdownFileLinkLabel,
+  getMarkdownFileTarget,
+  normalizeAbsoluteFileLinkPath
+} from './markdownFileLink.ts'
 import { appRecentsMessageLimitDefault } from './performanceSettings.ts'
 import { createBoundedTextCache } from './boundedTextCache.ts'
 
@@ -155,7 +159,7 @@ export const getRecentChatReferenceKey = (reference: RecentChatReferenceKeySourc
     ? `text:${reference.providerId}:${reference.chatId}:${reference.messageId}`
     : reference.kind === 'link'
       ? `link:${reference.href}`
-      : `file:${reference.path.replace(/\\/g, '/')}`
+      : `file:${normalizeAbsoluteFileLinkPath(reference.path).replace(/\\/g, '/')}`
 
 export const getRecentChatReferences = (
   items: readonly ProviderChatItem[],
