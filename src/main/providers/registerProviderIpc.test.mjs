@@ -117,7 +117,7 @@ const setup = () => {
       providerId: 'claude',
       chatId: 'first-chat',
       turnCompleted: completed,
-      summary: { id: 'first-chat', status: completed ? null : 'active' },
+      summary: { id: 'first-chat', revision, status: completed ? null : 'active' },
       detail: {
         id: 'first-chat',
         revision,
@@ -202,10 +202,27 @@ test('first-chat updates and completion arrive normally when acknowledged', () =
   assert.equal(h.sent.length, 2)
   assert.equal(h.sent[1].event.turnCompleted, true)
   assert.equal(h.sent[1].event.detail.revision, 2)
+  assert.equal(h.sent[1].event.conversationView, undefined)
   h.emit(channels.chatUpdateAcknowledged, h.sent[1].event.sequence, true)
   assert.equal(h.timers.size, 0)
   h.expire()
   assert.equal(h.harness.logs.length, 0)
+})
+
+test('a chat that finishes after navigation receives its completed opening alongside the sidebar update', () => {
+  const h = setup()
+  h.publish(1)
+  h.publish(2, true)
+  h.emit(channels.viewedChatChanged, 'claude', 'second-chat')
+  h.emit(channels.chatUpdateAcknowledged, h.sent[0].event.sequence, true)
+
+  const { event } = h.sent[1]
+  assert.equal(event.detail, null)
+  assert.equal(event.summary.status, null)
+  assert.equal(event.conversationView.conversationViewSourceRevision, 2)
+  assert.equal(event.conversationView.items.at(-1).content, 'PRIVATE ANSWER')
+  assert.equal(event.conversationView.historyPreview, true)
+  assert.equal(event.conversationView.writeAccess, 'checking')
 })
 
 test('opening records renderer-prepared pages and cached IPC preserves source validation', async () => {
@@ -235,11 +252,36 @@ test('opening records renderer-prepared pages and cached IPC preserves source va
   assert.equal(await read({}, 'codex', 'chat', { container: { kind: 'host' } }), null)
   assert.equal(scopes[0][0], 'codex')
   assert.equal(scopes[0][2].container.kind, 'host')
-  await read({}, 'codex', 'chat', { container: { kind: 'host' }, opening: true })
+  await read({ sender: h.contents }, 'codex', 'chat', {
+    container: { kind: 'host' },
+    opening: true
+  })
   assert.equal(scopes[1][2].opening, true)
   assert.throws(() => read({}, 'codex', 'chat', { opening: 'invalid' }))
   assert.throws(() => read({}, 'invalid-provider', 'chat'))
   assert.throws(() => read({}, 'codex', 'chat', { container: { kind: 'invalid' } }))
+})
+
+test('a locally prepared chat receives its completion even before it is selected', async () => {
+  const h = setup()
+  await h.harness.handlers.get(channels.getCachedChat)(
+    { sender: h.contents },
+    'claude',
+    'preview',
+    {
+      opening: true
+    }
+  )
+  const answer = { type: 'message', id: 'reply', role: 'assistant', content: 'Ready to open' }
+  h.harness.publish({
+    providerId: 'claude',
+    chatId: 'preview',
+    turnCompleted: true,
+    summary: { id: 'preview', revision: 2, status: null },
+    detail: { id: 'preview', revision: 2, status: null, items: [answer] }
+  })
+  assert.equal(h.sent[0].event.detail, null)
+  assert.equal(h.sent[0].event.conversationView.items[0].content, answer.content)
 })
 
 test('local known-chat listing returns views while native discovery is unavailable', async () => {
@@ -263,26 +305,28 @@ test('local known-chat listing returns views while native discovery is unavailab
   assert.equal(page.chats[0].id, 'known')
 })
 
-test('processed background updates deliver metadata without transferring an unopened transcript', () => {
-  const h = setup()
-  h.harness.publish({
-    providerId: 'codex',
-    chatId: 'background',
-    conversationKnown: true,
-    turnCompleted: false,
-    summary: { id: 'background', revision: 1, status: 'active' },
-    detail: {
-      id: 'background',
-      revision: 1,
-      items: [
-        { type: 'message', id: 'u', role: 'user', content: 'Background message'.repeat(100_000) }
-      ]
-    }
+for (const turnCompleted of [false, true]) {
+  test(`unopened background chats deliver only metadata (completed=${turnCompleted})`, () => {
+    const h = setup()
+    h.harness.publish({
+      providerId: 'codex',
+      chatId: 'background',
+      conversationKnown: true,
+      turnCompleted,
+      summary: { id: 'background', revision: 1, status: turnCompleted ? null : 'active' },
+      detail: {
+        id: 'background',
+        revision: 1,
+        items: [
+          { type: 'message', id: 'u', role: 'user', content: 'Background message'.repeat(100_000) }
+        ]
+      }
+    })
+    assert.equal(h.sent[0].event.detail, null)
+    assert.equal(h.sent[0].event.conversationView, undefined)
+    assert.ok(JSON.stringify(h.sent[0].event).length < 1000)
   })
-  assert.equal(h.sent[0].event.detail, null)
-  assert.equal(h.sent[0].event.conversationView, undefined)
-  assert.ok(JSON.stringify(h.sent[0].event).length < 1000)
-})
+}
 
 test('first processing commits its durable view before replying, and discovery attaches known views', async () => {
   const h = setup()

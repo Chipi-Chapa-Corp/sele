@@ -2,9 +2,19 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { spawn, execFileSync } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, mkdir, readFile, writeFile, rm, access } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  writeFile,
+  rm,
+  access,
+  symlink,
+  utimes
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { test } from 'node:test'
 import {
   selectMacUpdate,
@@ -12,6 +22,7 @@ import {
   macSupervisorScript,
   shellQuote,
   macAuthorizationScript,
+  installMacUpdate,
   readMacUpdateResult
 } from './macAppUpdate.ts'
 
@@ -175,14 +186,17 @@ test('helper waits for exit, installs, and supervisor records success with quote
   assert.equal(code, 0, f.output())
   assert.equal(await readFile(join(f.target, 'version'), 'utf8'), 'new')
   assert.equal((await readFile(join(f.stage, 'result'), 'utf8')).trim(), 'success')
+  assert.equal(await exists(join(f.stage, 'update.zip')), false)
 })
 
 test('cancel before quit preserves the installed app', { timeout: 20000 }, async (t) => {
-  const f = await fixture(t)
+  const f = await fixture(t, { supervisor: true })
   await waitFor(join(f.stage, 'ready'))
   await mkdir(join(f.stage, 'cancel'))
   assert.notEqual((await f.completion)[0], 0)
   assert.equal(await readFile(join(f.target, 'version'), 'utf8'), 'old')
+  assert.equal((await readFile(join(f.stage, 'result'), 'utf8')).trim(), 'error')
+  assert.equal(await exists(join(f.stage, 'update.zip')), false)
 })
 
 test('failed relaunch rolls back the replacement', { timeout: 20000 }, async (t) => {
@@ -236,7 +250,7 @@ test('rename failure restores the old bundle before reporting failure', {
   assert.ok(await exists(join(f.stage, 'rolled-back')))
 })
 
-test('post-exit results preserve failure diagnostics and clean successful staging', async (t) => {
+test('post-exit results report failure diagnostics and clean finished staging', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'sele-result-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   for (const result of ['error', 'success']) {
@@ -250,9 +264,53 @@ test('post-exit results preserve failure diagnostics and clean successful stagin
     const recovered = await readMacUpdateResult(root)
     assert.equal(recovered.version, '2.16.0')
     assert.equal(recovered.error === null, result === 'success')
-    assert.equal(await exists(stage), result === 'error')
+    if (result === 'error') assert.match(recovered.error, /transaction diagnostics/)
+    assert.equal(await exists(stage), false)
     assert.equal(await exists(join(root, 'mac-update-pending.json')), false)
   }
+})
+
+test('startup reclaims finished and old legacy stages while protecting fresh stages and links', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'sele-stage-cleanup-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const stale = await mkdtemp(join(root, 'mac-update-'))
+  const finished = await mkdtemp(join(root, 'mac-update-'))
+  const fresh = await mkdtemp(join(root, 'mac-update-'))
+  const active = await mkdtemp(join(root, 'mac-update-'))
+  const other = join(root, 'mac-update-not-staging')
+  await mkdir(other)
+  const link = join(root, 'mac-update-link00')
+  await symlink(other, link, 'dir')
+  await writeFile(join(stale, 'update.zip'), 'abandoned archive')
+  await writeFile(join(finished, 'result'), 'error')
+  await writeFile(join(active, 'supervisor.pid'), String(process.pid))
+  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000)
+  await utimes(stale, twoDaysAgo, twoDaysAgo)
+  await utimes(active, twoDaysAgo, twoDaysAgo)
+
+  assert.equal(await readMacUpdateResult(root), null)
+  assert.deepEqual(
+    (await readdir(root)).sort(),
+    [active, fresh, link, other].map((path) => basename(path)).sort()
+  )
+})
+
+test('an update that fails before starting the helper removes its staging directory', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'sele-download-failure-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const userData = join(root, 'profile')
+  const executableDir = join(root, 'Sele.app', 'Contents', 'MacOS')
+  const executable = join(executableDir, 'Sele')
+  await mkdir(userData)
+  await mkdir(executableDir, { recursive: true })
+  await writeFile(executable, '')
+  const update = selectMacUpdate(release, '2.15.0', 'arm64')
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 503 }))
+  await assert.rejects(
+    installMacUpdate({ update, executable, userData, progress() {}, quit() {} }),
+    /Update download failed \(503\)/
+  )
+  assert.deepEqual(await readdir(userData), [])
 })
 
 test('administrator AppleScript compiles on macOS without executing or prompting', {

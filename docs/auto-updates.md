@@ -13,6 +13,8 @@ Windows starts the downloaded NSIS installer only on Electron's final `quit` eve
 after provider/terminal cleanup, renderer saves, and database shutdown have finished.
 An abnormal exit does not launch the installer. Windows updater activity and the
 shutdown-to-installer handoff are recorded under `app-update` in diagnostics.
+On startup, Sele clears the pending download once its checksum matches the installer
+saved by NSIS. The saved installer and blockmap support differential downloads.
 
 ## Release requirements
 
@@ -85,8 +87,11 @@ The macOS updater verifies size, checksum, archive paths, bundle identity, versi
 architecture before replacement. A helper stages on the destination filesystem, waits for
 exit, replaces the bundle, and rolls back on replacement/relaunch failure. macOS handles
 administrator authorization when needed. Unsigned apps are supported; only quarantine is
-removed. Homebrew receipts are unchanged. `mac-update-pending.json` and staging `helper.log`
-files in user data retain post-exit diagnostics; failed staging is kept for recovery.
+removed. Homebrew receipts are unchanged. Sele removes the validation copy after use,
+and the helper deletes the downloaded archive when it finishes. At startup, Sele logs
+the result and removes finished staging folders. It also removes abandoned folders
+after 24 hours. If rollback itself fails, the helper preserves the recovery backup
+beside the installed bundle.
 
 Run `npm test -- appUpdate` for platform adapters and filesystem transaction tests.
 Before release, also verify real install-to-install updates on macOS, NSIS Windows, and

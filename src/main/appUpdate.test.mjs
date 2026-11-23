@@ -25,6 +25,7 @@ function harness({
   flatpakRoot = '/var/lib/flatpak',
   platform,
   macError = false,
+  cleanWindowsUpdate = async () => {},
   installed = true
 } = {}) {
   const commands = []
@@ -128,6 +129,7 @@ app-commit=${'b'.repeat(64)}`
         quit()
       }
     },
+    './windowsAppUpdate': { cleanInstalledWindowsUpdate: cleanWindowsUpdate },
     './logging': {
       logDiagnostic: (...args) => diagnostics.push(args),
       handleLoggedIpc: (channel, callback) => {
@@ -216,6 +218,22 @@ test('Windows pins update metadata and downloads to its selected platform releas
     'https://github.com/Chipi-Chapa-Corp/sele/releases/download/v2.14.0-windows-x64/'
   )
   assert.equal(h.feeds[0].useMultipleRangeRequest, false)
+})
+
+test('Windows checks wait for startup cleanup and continue if a cache file is locked', async () => {
+  let failCleanup
+  const cleanup = new Promise((_, reject) => {
+    failCleanup = reject
+  })
+  const h = harness({ cleanWindowsUpdate: () => cleanup })
+  await settle()
+  h.tick()
+  await settle()
+  assert.equal(h.counts().checks, 0)
+  failCleanup(new Error('Installer still in use'))
+  await settle()
+  assert.equal(h.state().status, 'available')
+  assert.ok(h.diagnostics.some((entry) => entry[2] === 'Unable to clean Windows update cache:'))
 })
 
 test('Windows rejects updater metadata for a version other than the selected release', async () => {

@@ -19,12 +19,13 @@ if (!process.versions.electron) {
           contents: `
             import React from 'react'
             import {createRoot} from 'react-dom/client'
+            import {createConversationView} from './src/shared/conversationView'
             import './src/renderer/src/assets/main.css'
             const noop = () => {}
             const now = Date.now()
             const chats = Array.from({length:20}, (_,i) => ({id:String(i),providerId:'${provider}',
               title:'Conversation '+i,preview:'',createdAt:now-i*1000,updatedAt:now-i*1000,
-              status:i===6||i===7?'active':null,cwd:'/fixture',cwdKind:'directory',projectCwd:null,branchName:null,
+              status:[6,7,8].includes(i)?'active':null,cwd:'/fixture',cwdKind:'directory',projectCwd:null,branchName:null,
               worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,done:false,
               seenUpdatedAt:now,purpose:null,container:null}))
             const items = Array.from({length:10}, (_,i) => [
@@ -45,6 +46,19 @@ if (!process.versions.electron) {
               subagents:[],turnCount:history.length===0?0:id==='3'?1:10,itemsStartTurnIndex:0,
               ...('${provider}'==='claude'?{turnPagination:{kind:'cursor',olderCursor:null,newerCursor:null}}:{})})
             let revision=1
+            const backgroundPrompt={id:'background-prompt',type:'message',role:'user',content:'Finish in the background'}
+            const backgroundWork={id:'background-working',type:'working',status:'working',items:[]}
+            const workingBackground=detail('8',1,[backgroundPrompt,backgroundWork])
+            workingBackground.turnCount=1
+            let completedBackground
+            window.finishBackground=()=>{
+              completedBackground={...workingBackground,revision:++revision,status:null,updatedAt:Date.now()+1000,
+                items:[backgroundPrompt,{...backgroundWork,status:'worked'},
+                  {id:'background-answer',type:'message',role:'assistant',content:'Finished while away.'}]}
+              window.chatListener({providerId:'${provider}',chatId:'8',sequence:revision,
+                detail:null,turnCompleted:true,summary:completedBackground,
+                conversationView:createConversationView(completedBackground)})
+            }
             window.publishTurn=(id, stopped, includeDetail)=>{
               const snapshot=detail(id,++revision,[items.at(-2),
                 {id:'working-'+id,type:'working',status:stopped?'stopped':'working',items:[]}])
@@ -69,9 +83,15 @@ if (!process.versions.electron) {
               getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'${provider}',available:true}]}),
               getChats:()=>({chats,nextCursor:null}),
               getKnownChats:()=>({chats,nextCursor:null}),
-              getChat:(_provider,id)=>['4','5'].includes(id)?new Promise(resolve=>{
-                window.pendingChatReads??={};window.pendingChatReads[id]=()=>resolve(detail(id,1,id==='5'?[]:items))
-              }):detail(id),
+              getChat:(_provider,id)=>{
+                if(id==='8') return completedBackground
+                  ? new Promise(resolve=>{window.releaseBackgroundRead=()=>resolve(completedBackground)})
+                  : workingBackground
+                if(!['4','5'].includes(id)) return detail(id)
+                return new Promise(resolve=>{
+                  window.pendingChatReads??={};window.pendingChatReads[id]=()=>resolve(detail(id,1,id==='5'?[]:items))
+                })
+              },
               markChatSeen:(_provider,id,seenUpdatedAt)=>({...chats.find(chat=>chat.id===id),seenUpdatedAt}),
               getModels:()=>[{id:'fixture',label:'Fixture model',description:'Fixture',isDefault:true,
                 supportedReasoningEfforts:[],defaultReasoningEffort:'medium'}],
@@ -180,7 +200,9 @@ if (!process.versions.electron) {
          document.querySelector('#chat-search-content [data-chat-message-id="answer-9"]')`
       )
       await run(`window.publishTurn('6',true,true)`)
-      await ready(`document.querySelector('#chat-search-content .chat-detail__working-label')?.textContent.trim()==='Stopped'`)
+      await ready(
+        `document.querySelector('#chat-search-content .chat-detail__working-label')?.textContent.trim()==='Stopped'`
+      )
       assert.equal(
         await run(`Boolean(document.querySelector('[data-chat-id="6"] [aria-label="Stopped"]'))`),
         true,
@@ -242,6 +264,36 @@ if (!process.versions.electron) {
         ),
         false
       )
+
+      await run(`document.querySelector('[data-chat-id="8"] .chat-list-item__main').click()`)
+      await ready(
+        `document.querySelector('[data-chat-view="${provider}:8"] [data-chat-message-id="background-prompt"]') &&
+         document.querySelector('[data-chat-view="${provider}:8"] .chat-detail__working-label')?.textContent.includes('Working')`
+      )
+      await run(`document.querySelector('[data-chat-id="5"] .chat-list-item__main').click()`)
+      await ready(`document.querySelector('[data-chat-id="5"].chat-list-item--selected')`)
+      await run(`window.finishBackground()`)
+      await ready(
+        `document.querySelector('[data-chat-id="8"] [aria-label="Finished since last viewed"]')`
+      )
+      const finishedOpening = await run(`new Promise(resolve=>{
+        const deadline=performance.now()+3000;
+        document.querySelector('[data-chat-id="8"] .chat-list-item__main').click();
+        function check(){
+          if(document.querySelector('[data-chat-id="8"].chat-list-item--selected')){
+            const view=document.querySelector('[data-chat-view="${provider}:8"]');
+            return resolve(view?.querySelector('[data-chat-message-id="background-answer"]')?.textContent.trim());
+          }
+          if(performance.now()>deadline)return resolve(null);requestAnimationFrame(check)
+        }check()
+      })`)
+      assert.equal(
+        finishedOpening,
+        'Finished while away.',
+        'the first reopened frame has the answer'
+      )
+      await ready('window.releaseBackgroundRead')
+      await run('window.releaseBackgroundRead()')
 
       const cachedOpening = await run(`new Promise(resolve=>{
         const frames=[];const deadline=performance.now()+3000;

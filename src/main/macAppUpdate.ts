@@ -10,10 +10,11 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   writeFile
 } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
@@ -27,6 +28,10 @@ import {
 
 const exec = promisify(execFile)
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const stagingPrefix = 'mac-update-'
+const stagingName = /^mac-update-[a-zA-Z0-9]{6}$/
+// Give interrupted downloads and legacy helpers a grace period before pruning.
+const staleStageAgeMs = 24 * 60 * 60 * 1000
 export type MacUpdate = { version: string; url: string; sha256: string; size: number }
 export function selectMacUpdate(
   release: PlatformRelease,
@@ -113,6 +118,7 @@ work=$(/usr/bin/mktemp -d ${shellQuote(join(dirname(target), '.sele-update.XXXXX
 actual=$(/usr/bin/shasum -a 256 "$work/update.zip")
 [ "\${actual%% *}" = ${shellQuote(sha256)} ]
 /usr/bin/ditto --noqtn -x -k "$work/update.zip" "$work/unpacked"
+/bin/rm -f "$work/update.zip"
 /bin/mv "$work/unpacked/Sele.app" "$work/new.app"
 /usr/bin/xattr -dr com.apple.quarantine "$work/new.app"
 [ ! -d "$stage/cancel" ]
@@ -159,6 +165,7 @@ export function macSupervisorScript(
     : command
   return `export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 stage=${shellQuote(stage)}
+echo "$$" > "$stage/supervisor.pid"
 ${invocation} &
 worker=$!
 while /bin/kill -0 "$worker" 2>/dev/null; do
@@ -173,14 +180,16 @@ while /bin/kill -0 "$worker" 2>/dev/null; do
 done
 wait "$worker"
 result=$?
+/bin/rm -f "$stage/update.zip"
 if [ "$result" -eq 0 ]; then
-  echo success > "$stage/result"
+  echo success > "$stage/result.tmp"
 else
-  echo error > "$stage/result"
+  echo error > "$stage/result.tmp"
   if [ -d "$stage/rolled-back" ] || { [ -d "$stage/commit" ] && [ ! -d "$stage/installed" ]; }; then
     /usr/bin/open -n ${shellQuote(target)}
   fi
 fi
+/bin/mv "$stage/result.tmp" "$stage/result"
 exit "$result"
 `
 }
@@ -234,8 +243,10 @@ export async function installMacUpdate(options: {
   if (index < 0 || executable.startsWith('/Volumes/') || executable.includes('/AppTranslocation/'))
     throw new Error('Install Sele on a writable disk before updating.')
   const target = executable.slice(0, index + 4)
-  const stage = await mkdtemp(join(options.userData, 'mac-update-'))
-  let handedOff = false
+  const stage = await mkdtemp(join(options.userData, stagingPrefix))
+  const pending = join(options.userData, 'mac-update-pending.json')
+  let helperStarted = false
+  let pendingWritten = false
   try {
     const archive = join(stage, 'update.zip')
     const response = await fetch(update.url, { signal: AbortSignal.timeout(15 * 60_000) })
@@ -273,6 +284,7 @@ export async function installMacUpdate(options: {
     })
     const bundle = join(extracted, 'Sele.app')
     await validateBundle(bundle, update.version)
+    await rm(extracted, { recursive: true, force: true })
     let elevated = false
     try {
       await access(dirname(target), constants.W_OK)
@@ -286,11 +298,10 @@ export async function installMacUpdate(options: {
       console.warn('Mac update requires administrator authorization:', error)
       elevated = true
     }
-    await writeFile(
-      join(options.userData, 'mac-update-pending.json'),
-      JSON.stringify({ stage, version: update.version }),
-      { mode: 0o600 }
-    )
+    const record = join(stage, 'pending.json')
+    await writeFile(record, JSON.stringify({ stage, version: update.version }), { mode: 0o600 })
+    await rename(record, pending)
+    pendingWritten = true
     const log = await open(join(stage, 'helper.log'), 'wx', 0o600)
     const helper = spawn(
       '/bin/bash',
@@ -309,12 +320,13 @@ export async function installMacUpdate(options: {
         cwd: '/'
       }
     )
-    await log.close()
     let spawnError: Error | null = null
     helper.on('error', (error) => {
       spawnError = error
     })
+    helperStarted = helper.pid !== undefined
     helper.unref()
+    await log.close()
     // Keep the app open through staging and the system's authorization dialog.
     for (let attempt = 0; attempt < 600; attempt++) {
       if (spawnError) throw spawnError
@@ -324,7 +336,6 @@ export async function installMacUpdate(options: {
         )
       if (await exists(join(stage, 'ready'))) {
         await mkdir(join(stage, 'commit'))
-        handedOff = true
         options.quit()
         return
       }
@@ -332,11 +343,17 @@ export async function installMacUpdate(options: {
     }
     throw new Error('Timed out waiting for update authorization.')
   } catch (error) {
-    await mkdir(join(stage, 'cancel'), { recursive: true })
+    try {
+      if (helperStarted) {
+        await mkdir(join(stage, 'cancel'), { recursive: true })
+      } else {
+        if (pendingWritten) await rm(pending, { force: true })
+        await rm(stage, { recursive: true, force: true })
+      }
+    } catch (cleanupError) {
+      console.warn(`Unable to clean Mac update staging ${stage}:`, cleanupError)
+    }
     throw error
-  } finally {
-    if (!handedOff)
-      console.warn(`Mac update did not complete. Diagnostics: ${join(stage, 'helper.log')}`)
   }
 }
 
@@ -354,34 +371,104 @@ export async function readMacUpdateResult(
   userData: string
 ): Promise<{ version: string; error: string | null } | null> {
   const pending = join(userData, 'mac-update-pending.json')
-  if (!(await exists(pending))) return null
-  const { stage, version } = JSON.parse(await readFile(pending, 'utf8')) as {
-    stage: string
-    version: string
+  let pendingStage: string | undefined
+  try {
+    const record = await readOptionalUpdateFile(pending)
+    if (record === null) return null
+    const { stage: recordedStage, version } = JSON.parse(record) as {
+      stage: string
+      version: string
+    }
+    if (
+      typeof recordedStage !== 'string' ||
+      dirname(resolve(recordedStage)) !== resolve(userData) ||
+      !stagingName.test(basename(recordedStage))
+    )
+      throw new Error('Invalid pending Mac update path.')
+    const stage = resolve(recordedStage)
+    pendingStage = stage
+    const stat = await lstat(stage).catch((error: unknown) => {
+      if (isExpectedFileAbsenceError(error)) return null
+      throw error
+    })
+    if (stat && !stat.isDirectory()) throw new Error('Invalid pending Mac update directory.')
+    // The helper may still be recording the result while the new app starts.
+    let result = stat ? await readStageResult(stage) : null
+    const mayBeRunning =
+      stat !== null && result === null && !(await isStaleStage(stage, stat.mtimeMs))
+    for (let attempt = 0; mayBeRunning && result === null && attempt < 130; attempt++) {
+      await sleep(500)
+      result = await readStageResult(stage)
+    }
+    const log = stat ? ((await readOptionalUpdateFile(join(stage, 'helper.log'))) ?? '') : ''
+    const outcome = result ?? 'incomplete'
+    console[result === 'success' ? 'warn' : 'error'](`Mac update ${version}: ${outcome}`, log)
+    if (result || !mayBeRunning) {
+      await rm(pending, { force: true })
+      pendingStage = undefined
+      if (stat) {
+        await rm(stage, { recursive: true, force: true }).catch((error: unknown) =>
+          console.warn(`Unable to clean Mac update staging ${stage}:`, error)
+        )
+      }
+    }
+    return {
+      version,
+      error:
+        result === 'success'
+          ? null
+          : `Previous Mac update ${outcome}. ${log.trim() || 'The helper did not finish.'}`
+    }
+  } finally {
+    await cleanMacUpdateStages(userData, pendingStage).catch((error: unknown) =>
+      console.warn('Unable to scan Mac update staging:', error)
+    )
   }
-  if (
-    typeof stage !== 'string' ||
-    dirname(resolve(stage)) !== resolve(userData) ||
-    !stage.startsWith(join(userData, 'mac-update-'))
-  )
-    throw new Error('Invalid pending Mac update path.')
-  // The helper may still be recording the result while the new app starts.
-  for (let attempt = 0; attempt < 130 && !(await exists(join(stage, 'result'))); attempt++)
-    await sleep(500)
-  const result = (await exists(join(stage, 'result')))
-    ? (await readFile(join(stage, 'result'), 'utf8')).trim()
-    : 'incomplete'
-  const log = (await exists(join(stage, 'helper.log')))
-    ? await readFile(join(stage, 'helper.log'), 'utf8')
-    : ''
-  console[result === 'success' ? 'warn' : 'error'](`Mac update ${version}: ${result}`, log)
-  await rm(pending)
-  if (result === 'success') await rm(stage, { recursive: true, force: true })
-  return {
-    version,
-    error:
-      result === 'success'
-        ? null
-        : `Previous Mac update ${result}. ${log.trim() || 'The helper did not finish.'}`
+}
+
+async function readOptionalUpdateFile(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, 'utf8')
+  } catch (error) {
+    if (isExpectedFileAbsenceError(error)) return null
+    throw error
+  }
+}
+
+async function readStageResult(stage: string): Promise<'success' | 'error' | null> {
+  const result = (await readOptionalUpdateFile(join(stage, 'result')))?.trim()
+  return result === 'success' || result === 'error' ? result : null
+}
+
+async function isStaleStage(stage: string, modifiedAt: number): Promise<boolean> {
+  if (Date.now() - modifiedAt < staleStageAgeMs) return false
+  const pid = Number(await readOptionalUpdateFile(join(stage, 'supervisor.pid')))
+  if (!Number.isInteger(pid) || pid <= 1 || pid > 0x7fffffff) return true
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return true
+    if (code === 'EPERM') return false
+    throw error
+  }
+}
+
+async function cleanMacUpdateStages(userData: string, pendingStage?: string): Promise<void> {
+  const entries = await readdir(userData, { withFileTypes: true })
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !stagingName.test(entry.name)) continue
+    const stage = resolve(userData, entry.name)
+    if (stage === pendingStage) continue
+    try {
+      const result = await readStageResult(stage)
+      if (!result && !(await isStaleStage(stage, (await lstat(stage)).mtimeMs))) continue
+      const log = await readOptionalUpdateFile(join(stage, 'helper.log'))
+      if (log) console.warn(`Removing Mac update staging ${stage} (${result ?? 'incomplete'})`, log)
+      await rm(stage, { recursive: true, force: true })
+    } catch (error) {
+      if (!isExpectedFileAbsenceError(error)) console.warn(`Unable to clean ${stage}:`, error)
+    }
   }
 }

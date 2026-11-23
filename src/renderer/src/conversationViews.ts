@@ -63,14 +63,12 @@ export const createConversationViews = () => {
       const request = Promise.resolve()
         .then(load)
         .then((detail) => {
-          if (
-            epoch !== generation ||
-            !detail ||
-            keyOf(chat.providerId, detail.id, detail.container) !== key
-          )
-            return null
-          install(chat.providerId, [detail])
-          return detail
+          if (epoch !== generation) return null
+          const matches = detail && keyOf(chat.providerId, detail.id, detail.container) === key
+          if (matches) install(chat.providerId, [detail])
+          const latest = views.get(key)
+          if (latest) return restoreConversationView(latest, chat)
+          return matches ? detail : null
         })
         .finally(() => {
           if (pending.get(key) === request) pending.delete(key)

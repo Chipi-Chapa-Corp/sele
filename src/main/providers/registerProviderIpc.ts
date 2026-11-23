@@ -64,6 +64,7 @@ import {
 } from '../../shared/provider'
 import { providerSubagentTurnPageSize } from '../../shared/provider'
 import { requireContainerTarget } from '../containerTarget'
+import { createConversationView, isConversationOpeningDetail } from '../../shared/conversationView'
 import { getProviderChatTurnCount, sliceProviderChatTurns } from '../../shared/chatTurns'
 import {
   getChatUpdateSummary,
@@ -94,8 +95,12 @@ import {
 } from './workingStepLazy'
 import { getErrorMessage } from './providerValues'
 
-type QueuedWindowChatUpdate = Omit<ProviderWindowChatUpdatedEvent, 'detail' | 'sequence'> & {
+type QueuedWindowChatUpdate = Omit<
+  ProviderWindowChatUpdatedEvent,
+  'conversationView' | 'detail' | 'sequence'
+> & {
   detail: ProviderChatDetail | null
+  openingDetail?: ProviderChatDetail
 }
 
 type InFlightChatUpdate = {
@@ -113,6 +118,7 @@ type AcknowledgedChatDetail = {
 type ChatUpdateDeliveryState = {
   ready: boolean
   viewedChatKey: string | null
+  preparedChatKeys: Set<string>
   inFlightUpdate: InFlightChatUpdate | null
   acknowledgedDetail: AcknowledgedChatDetail | null
   acknowledgmentTimer: ReturnType<typeof setTimeout> | null
@@ -260,6 +266,7 @@ const getChatUpdateDeliveryState = (client: RendererClient): ChatUpdateDeliveryS
   const state: ChatUpdateDeliveryState = {
     ready: false,
     viewedChatKey: null,
+    preparedChatKeys: new Set(),
     inFlightUpdate: null,
     acknowledgedDetail: null,
     acknowledgmentTimer: null,
@@ -367,7 +374,8 @@ const withLatestMetadata = (update: QueuedWindowChatUpdate): QueuedWindowChatUpd
   return {
     ...update,
     summary: merge(update.summary),
-    detail: update.detail ? merge(update.detail) : null
+    detail: update.detail ? merge(update.detail) : null,
+    openingDetail: update.openingDetail ? merge(update.openingDetail) : undefined
   }
 }
 
@@ -389,6 +397,15 @@ const sendChatUpdate = (
   const detailUpdate = rendererDetail
     ? createChatDetailUpdate(rendererDetail, previousDetail)
     : null
+  const { openingDetail, ...event } = update
+  const conversationView =
+    !detailUpdate &&
+    openingDetail &&
+    !event.summary.done &&
+    !event.summary.purpose &&
+    isConversationOpeningDetail(openingDetail)
+      ? createConversationView(prepareChatDetailForRenderer(openingDetail))
+      : undefined
   state.inFlightUpdate = {
     sequence,
     chatKey,
@@ -396,8 +413,9 @@ const sendChatUpdate = (
     update: { ...update, detail: rendererDetail }
   }
   client.send(providerIpcChannels.chatUpdated, {
-    ...update,
+    ...event,
     detail: detailUpdate,
+    conversationView,
     sequence
   } satisfies ProviderWindowChatUpdatedEvent)
   watchChatAcknowledgment(client, state)
@@ -430,12 +448,15 @@ const queueChatUpdateForWindow = (
   state.latestRevisionByChatKey.set(chatKey, event.detail.revision)
 
   const pendingUpdate = state.pendingByChatKey.get(chatKey)
+  const turnCompleted = event.turnCompleted || pendingUpdate?.turnCompleted === true
+  // Refresh transcripts this client may already cache when background work finishes.
   const update = {
     providerId: event.providerId,
     chatId: event.chatId,
     detail: state.viewedChatKey === chatKey ? event.detail : null,
     summary: event.summary,
-    turnCompleted: event.turnCompleted || pendingUpdate?.turnCompleted === true
+    turnCompleted,
+    openingDetail: turnCompleted && state.preparedChatKeys.has(chatKey) ? event.detail : undefined
   } satisfies QueuedWindowChatUpdate
 
   if (!state.ready || state.inFlightUpdate !== null) {
@@ -1484,6 +1505,7 @@ export const registerProviderIpc = (): void => {
           : getProviderChatKey(requireProviderId(providerIdValue), requireChatId(chatIdValue))
         if (state.viewedChatKey !== nextViewedChatKey) state.acknowledgedDetail = null
         state.viewedChatKey = nextViewedChatKey
+        if (nextViewedChatKey) state.preparedChatKeys.add(nextViewedChatKey)
         setChatUpdateInterest(event.sender.id, state.ready ? nextViewedChatKey : null)
       } catch (error) {
         console.error('[caught:registerProviderIpc:registerProviderIpc]', error)
@@ -1717,20 +1739,28 @@ export const registerProviderIpc = (): void => {
 
   handleClientRequest(
     providerIpcChannels.getCachedChat,
-    (_, providerId: unknown, chatId: unknown, options: unknown) =>
-      getProviderCachedChat(
-        requireProviderId(providerId),
-        requireChatId(chatId),
+    (event, providerId: unknown, chatId: unknown, options: unknown) => {
+      const requiredProviderId = requireProviderId(providerId)
+      const requiredChatId = requireChatId(chatId)
+      const source = requireSourceOptions(options)
+      const opening =
         options && typeof options === 'object' && 'opening' in options
-          ? {
-              ...requireSourceOptions(options),
-              opening: requireBoolean(options.opening)
-            }
-          : requireSourceOptions(options)
+          ? requireBoolean(options.opening)
+          : undefined
+      if (opening) {
+        getChatUpdateDeliveryState(event.sender).preparedChatKeys.add(
+          getProviderChatKey(requiredProviderId, requiredChatId)
+        )
+      }
+      return getProviderCachedChat(
+        requiredProviderId,
+        requiredChatId,
+        opening === undefined ? source : { ...source, opening }
       ).catch((error: unknown) => {
         console.warn('Unable to read prepared chat history.', error)
         return null
       })
+    }
   )
 
   handleClientRequest(

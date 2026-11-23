@@ -177,6 +177,30 @@ test('a low live revision after restart replaces its baseline and late list page
   assert.equal(views.get(chat()).items[0].id, 'new')
 })
 
+test('an in-flight disk read returns the completed view if its saved snapshot was superseded', async () => {
+  const views = createConversationViews()
+  const working = createConversationView(
+    detail('one', {
+      status: 'active',
+      items: [detail().items[0], { id: 'working', type: 'working', status: 'working', items: [] }]
+    })
+  )
+  let finishRead
+  const pending = views.read(
+    chat(),
+    () =>
+      new Promise((resolve) => {
+        finishRead = resolve
+      })
+  )
+  await Promise.resolve()
+  views.install('codex', [createConversationView(detail('one', { revision: 51 }))], true)
+  finishRead(working)
+
+  assert.equal((await pending).items.at(-1).content, 'Answer')
+  assert.equal(views.get(chat()).conversationViewSourceRevision, 51)
+})
+
 for (const outcome of ['stopped', 'failed']) {
   test(`restart reconciles a saved working viewport with the sidebar's ${outcome} outcome`, () => {
     const views = createConversationViews()

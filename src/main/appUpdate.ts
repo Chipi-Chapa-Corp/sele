@@ -16,6 +16,7 @@ import { appIpcChannels } from '../shared/app'
 import { isNewerStableVersion, type AppUpdateState } from '../shared/appUpdate'
 import { isExpectedFileAbsenceError } from '../shared/expectedAbsence.ts'
 import { findLatestPlatformRelease, releaseDownloadUrl } from './platformRelease'
+import { cleanInstalledWindowsUpdate } from './windowsAppUpdate'
 
 const exec = promisify(execFile)
 const appId = 'com.chipichapa.sele'
@@ -24,6 +25,7 @@ const intervalMs = 5 * 60 * 1000
 export function registerAppUpdate(): void {
   let state: AppUpdateState = { version: null, status: 'idle', progress: null, error: null }
   let checking = false
+  let initialized = false
   let disabled = false
   let ignored: string[] = []
   const skipped = new Set<string>()
@@ -65,7 +67,7 @@ export function registerAppUpdate(): void {
     })
   }
   const check = async (): Promise<void> => {
-    if (!supported || disabled || checking || state.status === 'updating') return
+    if (!supported || !initialized || disabled || checking || state.status === 'updating') return
     checking = true
     try {
       let version: string | null = null
@@ -273,7 +275,7 @@ export function registerAppUpdate(): void {
       }
       /* Missing preferences use the defaults. */
     }
-    if (installedMac) {
+    if (supported && installedMac) {
       try {
         const result = await readMacUpdateResult(app.getPath('userData'))
         if (result?.error)
@@ -281,7 +283,14 @@ export function registerAppUpdate(): void {
       } catch (error) {
         fail(error)
       }
+    } else if (supported && installedWindows) {
+      try {
+        await cleanInstalledWindowsUpdate()
+      } catch (error) {
+        logDiagnostic('warn', 'app-update', 'Unable to clean Windows update cache:', error)
+      }
     }
+    initialized = true
     await check()
   })()
   const timer = setInterval(() => void check(), intervalMs)
