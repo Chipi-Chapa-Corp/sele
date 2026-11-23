@@ -2,6 +2,78 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 
+const hostOnly = process.argv.includes('--host-only')
+
+async function testHostPairing(state, handlers, channels) {
+  const { randomBytes } = require('node:crypto')
+  const { once } = require('node:events')
+  const { connect: connectTls } = require('node:tls')
+  const { WebSocket } = require('ws')
+  const { origin, hostname, port } = new URL(state.urls[0])
+  const token = randomBytes(32).toString('hex')
+  const connect = async () => {
+    // Pairing uses a self-signed leaf. Verify the exact host fingerprint before
+    // exposing this connection to WebSocket or writing any application data.
+    const transport = connectTls({ host: hostname, port: Number(port), rejectUnauthorized: false })
+    try {
+      await once(transport, 'secureConnect')
+      const peer = transport.getPeerX509Certificate()
+      assert.equal(
+        peer?.fingerprint256.replaceAll(':', '').toLowerCase(),
+        state.certificateFingerprint
+      )
+      assert.ok(Date.parse(peer.validFrom) <= Date.now() && Date.now() < Date.parse(peer.validTo))
+    } catch (error) {
+      transport.destroy()
+      throw error
+    }
+    const socket = new WebSocket(`${origin.replace('https:', 'wss:')}/sele/ws`, {
+      origin: 'http://sele.localhost',
+      createConnection: () => transport
+    })
+    await once(socket, 'open')
+    return socket
+  }
+  const exchange = async (socket, message) => {
+    const response = once(socket, 'message')
+    socket.send(JSON.stringify(message))
+    return JSON.parse((await response)[0])
+  }
+  const deviceId = '12345678-1234-4234-8234-123456789012'
+  const pair = await connect()
+  try {
+    const approval = exchange(pair, {
+      type: 'pair',
+      version: 2,
+      deviceId,
+      name: 'Fixture phone',
+      token
+    })
+    const timeout = Date.now() + 5000
+    let request
+    while (!request && Date.now() < timeout) {
+      request = (await handlers.get(channels.getState)({})).pairingRequests[0]
+      if (!request) await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.match(request?.securityCode ?? '', /^[A-F0-9]{4}( [A-F0-9]{4}){2}$/)
+    await handlers.get(channels.decidePairing)({}, request.id, true)
+    assert.equal((await approval).approved, true)
+  } finally {
+    pair.terminate()
+  }
+  const client = await connect()
+  try {
+    assert.equal(
+      (await exchange(client, { type: 'hello', version: 2, deviceId, token })).type,
+      'ready'
+    )
+    await handlers.get(channels.retryDiscovery)({})
+    assert.equal((await exchange(client, { type: 'ping' })).type, 'pong')
+  } finally {
+    client.terminate()
+  }
+}
+
 if (!process.versions.electron) {
   ;(async () => {
     await fs.mkdir(path.resolve('tmp'), { recursive: true })
@@ -10,7 +82,11 @@ if (!process.versions.electron) {
     let viteCache
     try {
       await fs.mkdir(path.join(directory, 'main'))
-      await fs.symlink(path.resolve('node_modules'), path.join(directory, 'node_modules'), 'dir')
+      await fs.symlink(
+        path.resolve('node_modules'),
+        path.join(directory, 'node_modules'),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
       await require('esbuild').build({
         stdin: {
           resolveDir: process.cwd(),
@@ -36,7 +112,7 @@ if (!process.versions.electron) {
           {
             name: 'fixture-provider-service',
             setup(build) {
-              build.onLoad({ filter: /\/providers\/providerService\.ts$/ }, () => ({
+              build.onLoad({ filter: /[\\/]providers[\\/]providerService\.ts$/ }, () => ({
                 loader: 'ts',
                 contents: `
               const fixture = globalThis.lanFixture
@@ -90,7 +166,14 @@ if (!process.versions.electron) {
         await new Promise((resolve, reject) => {
           const child = require('node:child_process').spawn(
             require('electron'),
-            [__filename, directory, '--no-sandbox', '--ozone-platform=x11', ...extra],
+            [
+              __filename,
+              directory,
+              '--no-sandbox',
+              '--ozone-platform=x11',
+              ...(hostOnly ? ['--host-only'] : []),
+              ...extra
+            ],
             { env, timeout: env.SELE_ANDROID_TEST_SERIAL ? 240000 : 100000 }
           )
           let stderr = ''
@@ -106,11 +189,13 @@ if (!process.versions.electron) {
           child.on('close', (code) => {
             const marker = extra.includes('--restore')
               ? 'LOCAL ACCESS RESTART PASSED'
-              : env.SELE_TEST_MOBILE_WEB
-                ? 'ANDROID WEB BUNDLE PASSED'
-                : env.SELE_ANDROID_TEST_SERIAL
-                  ? 'ANDROID APK PASSED'
-                  : 'LOCAL ACCESS UI PASSED'
+              : hostOnly
+                ? 'LOCAL ACCESS HOST PASSED'
+                : env.SELE_TEST_MOBILE_WEB
+                  ? 'ANDROID WEB BUNDLE PASSED'
+                  : env.SELE_ANDROID_TEST_SERIAL
+                    ? 'ANDROID APK PASSED'
+                    : 'LOCAL ACCESS UI PASSED'
             if (code === 0 && stdout.includes(marker)) resolve()
             else reject(new Error(stderr || `Fixture exited before completing: ${marker}`))
           })
@@ -445,6 +530,13 @@ if (!process.versions.electron) {
           { enabled: true, port }
         )
         assert.ok(state.urls.length, 'an actual LAN address is needed to test encrypted LAN access')
+        if (hostOnly) {
+          await testHostPairing(state, handlers, host.localAccessChannels)
+          console.log(
+            'LOCAL ACCESS HOST PASSED: pinned TLS, approval, reconnect, and discovery retry'
+          )
+          return
+        }
         const lanAddress = new URL(state.urls[0]).hostname
         const discovery = require('multicast-dns')({ bind: '0.0.0.0', interface: lanAddress })
         try {
@@ -501,7 +593,11 @@ if (!process.versions.electron) {
         // Trust only this fixture's exact certificate, never all self-signed certificates.
         const fingerprint = state.certificateFingerprint
         require('electron').session.defaultSession.setCertificateVerifyProc((request, done) => {
-          const actual = new (require('node:crypto').X509Certificate)(request.certificate.data).fingerprint256.replaceAll(':', '').toLowerCase()
+          const actual = new (require('node:crypto').X509Certificate)(
+            request.certificate.data
+          ).fingerprint256
+            .replaceAll(':', '')
+            .toLowerCase()
           done(actual === fingerprint ? 0 : -2)
         })
         const link = state.urls[0]
@@ -574,10 +670,17 @@ if (!process.versions.electron) {
         )
         assert.equal(await run('typeof crypto.randomUUID'), 'function')
         assert.equal(await run('location.hash'), '')
-        assert.match(
-          await run('localAccessApi.getState().catch(error => error.message)'),
-          /desktop app/
-        )
+        for (const operation of [
+          'getState',
+          'openNetworkSettings',
+          'allowWindowsFirewall',
+          'retryDiscovery'
+        ]) {
+          assert.match(
+            await run(`localAccessApi.${operation}().catch(error => error.message)`),
+            /desktop app/
+          )
+        }
         await run(
           'document.querySelector(\'[data-chat-id="lan-fixture"] .chat-list-item__main\').click()'
         )

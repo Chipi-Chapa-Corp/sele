@@ -118,6 +118,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test Android pairing transport on Windows
+        run: npm test -- localAccess mobileDiscovery mobileConnection lanTransport
+
+      - name: Exercise Android pairing against a Windows Electron host
+        run: node scripts/tests/test-local-access.cjs --host-only
+
       - name: Wait for shared application bundle
         timeout-minutes: 10
         env:
@@ -194,8 +200,11 @@ jobs:
           ruby -c Casks/sele.rb
           brew style Casks/sele.rb
 
-      - name: Test macOS update helper
-        run: npm test -- appUpdate
+      - name: Test macOS update helper and Android pairing transport
+        run: npm test -- appUpdate localAccess mobileDiscovery mobileConnection lanTransport
+
+      - name: Exercise Android pairing against a macOS Electron host
+        run: node scripts/tests/test-local-access.cjs --host-only
 
       - name: Wait for shared application bundle
         timeout-minutes: 10
@@ -209,10 +218,36 @@ jobs:
           name: application-bundle
           path: out
 
-      - name: Build unsigned DMG and update ZIP
+      - name: Build DMG and update ZIP
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx --no-install electron-builder --mac dmg zip --arm64 --publish never
+          CSC_LINK: ${{ github.event_name != 'pull_request' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY: ${{ github.event_name != 'pull_request' && secrets.MAC_APPLE_API_KEY || '' }}
+          APPLE_API_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.MAC_APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ github.event_name != 'pull_request' && secrets.MAC_APPLE_API_ISSUER || '' }}
+        run: |
+          options=()
+          if [[ -n "$CSC_LINK" ]]; then
+            options+=(-c.forceCodeSigning=true)
+            if [[ -n "$APPLE_API_KEY" ]]; then
+              key_path="$RUNNER_TEMP/sele-notary-key.p8"
+              trap 'rm -f "$key_path"' EXIT
+              (umask 077; printf '%s' "$APPLE_API_KEY" > "$key_path")
+              export APPLE_API_KEY="$key_path"
+            fi
+          else
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then
+              echo '::warning::Set MAC_CSC_LINK and MAC_CSC_KEY_PASSWORD to sign Sele and give macOS a stable Local Network permission identity.'
+            fi
+          fi
+          npx --no-install electron-builder --mac dmg zip --arm64 --publish never "${options[@]}"
+          if [[ -n "${CSC_LINK:-}" ]]; then
+            bundle="dist/mac-arm64/Sele.app"
+            codesign --verify --strict "$bundle"
+            codesign -dv --verbose=2 "$bundle" 2>&1 | grep '^Authority=Developer ID Application:'
+          fi
 
       - name: Verify artifact
         run: |

@@ -11,6 +11,7 @@ export type LocalAccessState = {
   devices?: LocalAccessDevice[]
   pairingRequests?: LocalAccessPairingRequest[]
   discoveryError?: string | null
+  canConfigureFirewall?: boolean
 }
 
 export type LocalAccessDevice = { id: string; name: string; pairedAt: number }
@@ -25,6 +26,9 @@ export type LocalAccessOptions = { enabled: boolean; port: number; resetToken?: 
 export type LocalAccessApi = {
   getState(): Promise<LocalAccessState>
   configure(options: LocalAccessOptions): Promise<LocalAccessState>
+  retryDiscovery(): Promise<LocalAccessState>
+  openNetworkSettings(): Promise<void>
+  allowWindowsFirewall(): Promise<boolean>
   decidePairing(id: string, approve: boolean): Promise<LocalAccessState>
   revokeDevice(id: string): Promise<LocalAccessState>
   remoteBrowser(request: RemoteBrowserRequest): Promise<RemoteBrowserState | null>
@@ -33,6 +37,9 @@ export type LocalAccessApi = {
 export const localAccessChannels = {
   getState: 'local-access:get-state',
   configure: 'local-access:configure',
+  retryDiscovery: 'local-access:retry-discovery',
+  openNetworkSettings: 'local-access:open-network-settings',
+  allowWindowsFirewall: 'local-access:allow-windows-firewall',
   uploadAttachments: 'local-access:upload-attachments',
   readDiagnosticLog: 'local-access:read-diagnostic-log',
   remoteBrowser: 'local-access:remote-browser',

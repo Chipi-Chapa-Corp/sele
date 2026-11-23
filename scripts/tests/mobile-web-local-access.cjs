@@ -13,6 +13,9 @@ module.exports = async ({
   revokeDevice
 }) => {
   const computer = await getState()
+  const reachableOrigin = new URL(link).origin
+  const unreachableOrigin = `https://127.0.0.2:${port}`
+  const discoveredName = `Nearby ${computer.computerName}`
   let discoveryVisible = false
   const browser = session.fromPartition('persist:sele-android-web-fixture')
   browser.setCertificateVerifyProc((request, done) => {
@@ -39,7 +42,8 @@ module.exports = async ({
       return new Response(
         `
       window.CapacitorCustomPlatform = { name: 'android' };
-      window.fixtureServices = ${JSON.stringify(discoveryVisible ? [{ id: computer.computerId, name: computer.computerName, origin: new URL(link).origin }] : [])};
+      window.fixtureServices = ${JSON.stringify(discoveryVisible ? [{ id: computer.computerId, name: discoveredName, origin: unreachableOrigin, origins: [unreachableOrigin, reachableOrigin] }] : [])};
+      window.fixtureCertificateChecks = [];
       const methods = ['startDiscovery','stopDiscovery','getServices','deviceInfo','readStorage','writeStorage','setSystemBars','showKeyboard','consumeKeyboardBack'];
       const listeners = new Map(), sockets = new Map(); let nextListener = 1;
       const emit = value => listeners.forEach(callback=>callback(value));
@@ -52,7 +56,11 @@ module.exports = async ({
           // Native TLS itself is exercised on the emulator. This web fixture uses
           // Electron's exact-certificate verifier and simulates the plugin bridge.
           if (plugin === 'SecureLan') {
-            if (method === 'inspect') return {fingerprint:${JSON.stringify(computer.certificateFingerprint)}};
+            if (method === 'inspect') {
+              window.fixtureCertificateChecks.push(options.origin);
+              if (options.origin === ${JSON.stringify(unreachableOrigin)}) throw new Error('Fixture address is unreachable');
+              return {fingerprint:${JSON.stringify(computer.certificateFingerprint)}};
+            }
             if (method === 'removeListener') {listeners.delete(options.callbackId);return {};}
             if (method === 'open') {
               if (options.fingerprint !== ${JSON.stringify(computer.certificateFingerprint)}) {emit({id:options.id,type:'certificateError',code:4003});return {};}
@@ -223,7 +231,9 @@ module.exports = async ({
     window.destroy()
     await open()
     await wait('document.querySelector(".mobile-connect [role=alert]")?.textContent.includes("revoked")')
+    await wait(`document.querySelector('.mobile-connect__computers button')?.textContent.includes(${JSON.stringify(discoveredName)})`)
     await connect()
+    assert.deepEqual(await run('window.fixtureCertificateChecks'), [unreachableOrigin, reachableOrigin])
     assert.equal(sends(), 1)
     await run('document.querySelector(\'[aria-label="Settings"]\').click()')
     await wait('Boolean(document.getElementById("settings-tab-localNetwork"))')
@@ -243,7 +253,7 @@ module.exports = async ({
       []
     )
     console.log(
-      'ANDROID WEB BUNDLE PASSED: app origin, pairing by address with no discovery, matching security codes, chat send/stream, saved host, restart, key revocation, host switching'
+      'ANDROID WEB BUNDLE PASSED: app origin, manual pairing, alternate discovery address, matching codes, chat send/stream, restart, revocation, host switching'
     )
   } finally {
     window?.destroy()

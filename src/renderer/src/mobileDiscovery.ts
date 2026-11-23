@@ -16,21 +16,42 @@ export const pairComputer = async (
   signal: AbortSignal,
   onSecurityCode?: (code: string) => void
 ): Promise<MobileConnection> => {
-  const fingerprint = await inspectComputerCertificate(computer.origin, signal)
+  const device = nativeDiscoveryAvailable()
+    ? await localNetwork.deviceInfo()
+    : { id: crypto.randomUUID(), name: 'Android preview' }
+  let failure: unknown
+  for (const origin of new Set([computer.origin, ...(computer.origins ?? [])])) {
+    if (signal.aborted) throw new Error('Pairing canceled.')
+    let approvalRequested = false
+    try {
+      return await requestPairing(computer, origin, device, signal, (code) => {
+        approvalRequested = true
+        onSecurityCode?.(code)
+      })
+    } catch (error) {
+      if (approvalRequested || signal.aborted) throw error
+      failure ??= error
+    }
+  }
+  throw failure ?? new Error('No address is available for this computer.')
+}
+
+async function requestPairing(
+  computer: NearbyComputer,
+  origin: string,
+  device: { id: string; name: string },
+  signal: AbortSignal,
+  onSecurityCode: (code: string) => void
+): Promise<MobileConnection> {
+  const fingerprint = await inspectComputerCertificate(origin, signal)
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
-  onSecurityCode?.(await localAccessPairingCode(fingerprint, token))
+  const securityCode = await localAccessPairingCode(fingerprint, token)
   const connection: MobileConnection = {
-    ...parseMobileConnection(`${computer.origin}/#token=${token}&fingerprint=${fingerprint}`),
+    ...parseMobileConnection(`${origin}/#token=${token}&fingerprint=${fingerprint}`),
     name: computer.name,
     ...(/^[a-f0-9-]{36}$/.test(computer.id) ? { hostId: computer.id } : {})
   }
-  const device = nativeDiscoveryAvailable()
-    ? await localNetwork.deviceInfo()
-    : {
-        id: crypto.randomUUID(),
-        name: 'Android preview'
-      }
   if (signal.aborted) throw new Error('Pairing canceled.')
   return new Promise((resolve, reject) => {
     const socket = createLanSocket(mobileWebSocketUrl(connection), fingerprint)
@@ -45,22 +66,38 @@ export const pairComputer = async (
       else resolve(connection)
     }
     const abort = (): void => finish(new Error('Pairing canceled.'))
-    const timeout = setTimeout(
-      () =>
-        finish(new Error('Approval timed out. Try again and allow the request on your computer.')),
-      125_000
+    let timeout = setTimeout(
+      () => finish(new Error('The computer did not open an encrypted Sele connection.')),
+      5000
     )
     signal.addEventListener('abort', abort, { once: true })
-    socket.onopen = () =>
-      socket.send(
-        JSON.stringify({
-          type: 'pair',
-          version: localAccessProtocolVersion,
-          deviceId: device.id,
-          name: device.name,
-          token
-        })
+    socket.onopen = () => {
+      if (settled) return
+      clearTimeout(timeout)
+      timeout = setTimeout(
+        () =>
+          finish(
+            new Error('Approval timed out. Try again and allow the request on your computer.')
+          ),
+        125_000
       )
+      // After requesting approval an automatic retry could prompt twice, or
+      // send the approval request to a different computer.
+      onSecurityCode(securityCode)
+      try {
+        socket.send(
+          JSON.stringify({
+            type: 'pair',
+            version: localAccessProtocolVersion,
+            deviceId: device.id,
+            name: device.name,
+            token
+          })
+        )
+      } catch (error) {
+        finish(error as Error)
+      }
+    }
     socket.onmessage = (event) => {
       try {
         const result = JSON.parse(event.data)

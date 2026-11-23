@@ -49,7 +49,7 @@ The cask tracks numbered stable releases and verifies the DMG checksum. Direct D
 downloads remain available for installations without Homebrew.
 
 > [!IMPORTANT]
-> macOS builds are currently unsigned. If Gatekeeper says Sele is damaged, corrupted, or
+> Older or unsigned macOS builds can trigger Gatekeeper. If it says Sele is damaged, corrupted, or
 > cannot be opened, remove the download quarantine and start the app again:
 >
 > ```bash
@@ -230,6 +230,10 @@ Browser connections use HTTPS and require trusting the computer’s certificate 
 Keep Sele open and the computer awake. The default TCP port is **4589**; allow the
 selected port through your computer's firewall if the phone cannot connect. Guest
 Wi-Fi and access-point client isolation can prevent devices from reaching each other.
+
+On Windows, Sele's **Allow through Windows Firewall** action requests administrator approval
+for the private network. On macOS, allow Sele in the system's **Local Network** prompt.
+The [mobile setup guide](docs/mobile.md) covers both permission flows and pairing by address.
 
 Access is off by default. A connection link grants control of the host's projects,
 agents, files, Git, and terminals. The control connection uses HTTPS and encrypted

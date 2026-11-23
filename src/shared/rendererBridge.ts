@@ -635,6 +635,9 @@ export const createRendererBridge = (
   const localAccessApi: LocalAccessApi = {
     getState: () => transport.invoke(localAccessChannels.getState),
     configure: (options) => transport.invoke(localAccessChannels.configure, options),
+    retryDiscovery: () => transport.invoke(localAccessChannels.retryDiscovery),
+    openNetworkSettings: () => transport.invoke(localAccessChannels.openNetworkSettings),
+    allowWindowsFirewall: () => transport.invoke(localAccessChannels.allowWindowsFirewall),
     decidePairing: (id, approve) =>
       transport.invoke(localAccessChannels.decidePairing, id, approve),
     revokeDevice: (id) => transport.invoke(localAccessChannels.revokeDevice, id),

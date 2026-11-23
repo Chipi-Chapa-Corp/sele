@@ -22,6 +22,8 @@ export function LocalAccessSettings(): React.ReactElement {
   const [port, setPort] = useState(String(localAccessDefaultPort))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [firewallMessage, setFirewallMessage] = useState<string | null>(null)
+  const platform = document.documentElement.dataset.platform
   const pairingAddresses = (state?.urls ?? [])
     .map((link) => new URL(link))
     .filter(({ hostname }) => isLocalIpv4Address(hostname))
@@ -57,13 +59,11 @@ export function LocalAccessSettings(): React.ReactElement {
     }
   }, [])
 
-  const configure = async (enabled: boolean, resetToken = false): Promise<void> => {
+  const runAction = async (action: () => Promise<void>): Promise<void> => {
     setBusy(true)
     setError(null)
     try {
-      const value = await api().configure({ enabled, port: Number(port), resetToken })
-      setState(value)
-      setPort(String(value.port))
+      await action()
     } catch (error) {
       console.error('Unable to configure local access.', error)
       setError(error instanceof Error ? error.message : String(error))
@@ -71,6 +71,23 @@ export function LocalAccessSettings(): React.ReactElement {
       setBusy(false)
     }
   }
+  const configure = (enabled: boolean): Promise<void> =>
+    runAction(async () => {
+      setFirewallMessage(null)
+      const value = await api().configure({ enabled, port: Number(port) })
+      setState(value)
+      setPort(String(value.port))
+      if (
+        state?.enabled &&
+        value.enabled &&
+        value.canConfigureFirewall &&
+        !value.error &&
+        state.port !== value.port
+      )
+        setFirewallMessage(
+          'The pairing port changed. Update Sele’s Windows Firewall rules for the new port.'
+        )
+    })
 
   return (
     <section
@@ -154,14 +171,74 @@ export function LocalAccessSettings(): React.ReactElement {
                   Open Sele on your phone and choose {state.computerName ?? 'this computer'}. Allow
                   its request only if the security codes match.
                 </p>
-                {document.documentElement.dataset.platform === 'darwin' && (
-                  <p>
-                    If the phone can’t find this Mac, allow Sele in System Settings → Privacy &
-                    Security → Local Network, then reopen Sele.
-                  </p>
+                {platform === 'darwin' && (
+                  <div className="settings-dialog__field settings-dialog__field--stack">
+                    <p>
+                      Allow Sele if macOS asks for Local Network access or permission to accept
+                      incoming connections. To change Local Network access, open Privacy &amp;
+                      Security and select Local Network.
+                    </p>
+                    <div className="settings-dialog__field-footer">
+                      <Button
+                        label="Open Privacy & Security"
+                        theme="secondary"
+                        disabled={busy}
+                        callback={() => runAction(() => api().openNetworkSettings())}
+                      />
+                    </div>
+                  </div>
                 )}
-
-                {state.discoveryError && <p role="status">{state.discoveryError}</p>}
+                {platform === 'windows' && (
+                  <div className="settings-dialog__field settings-dialog__field--stack">
+                    <p>
+                      On a trusted Private network, allow Sele if Windows Firewall asks for access.
+                      {state.canConfigureFirewall &&
+                        ' You can also grant access here with administrator approval.'}
+                    </p>
+                    <div className="settings-dialog__field-footer settings-dialog__field-footer--actions">
+                      {state.canConfigureFirewall && (
+                        <Button
+                          label="Allow through Windows Firewall"
+                          theme="secondary"
+                          disabled={busy || Boolean(state.error)}
+                          callback={() =>
+                            runAction(async () => {
+                              setFirewallMessage(null)
+                              const allowed = await api().allowWindowsFirewall()
+                              setFirewallMessage(
+                                allowed
+                                  ? 'Sele’s private-network firewall rules are saved. Try connecting from your phone again.'
+                                  : 'Windows Firewall approval canceled.'
+                              )
+                            })
+                          }
+                        />
+                      )}
+                      <Button
+                        label="Open Windows Firewall"
+                        theme="secondary"
+                        disabled={busy}
+                        callback={() => runAction(() => api().openNetworkSettings())}
+                      />
+                    </div>
+                    {firewallMessage && <p role="status">{firewallMessage}</p>}
+                  </div>
+                )}
+                {state.discoveryError && (
+                  <div className="settings-dialog__field settings-dialog__field--stack">
+                    <p role="status">{state.discoveryError}</p>
+                    <div className="settings-dialog__field-footer">
+                      <Button
+                        label="Retry nearby discovery"
+                        theme="secondary"
+                        disabled={busy}
+                        callback={() =>
+                          runAction(async () => setState(await api().retryDiscovery()))
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
                 {pairingAddresses.length > 0 && (
                   <div>
                     <h3>Pair by address</h3>

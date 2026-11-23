@@ -1,10 +1,11 @@
-import { app } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { hostname } from 'node:os'
-import { getResponder, type Responder } from '@homebridge/ciao'
 import { LocalAccessPairing } from './localAccessPairing'
+import { startLocalAccessDiscovery } from './localAccessDiscovery'
+import { allowWindowsLocalAccess } from './windowsLocalAccess'
 import { remoteBrowserRequest } from './remoteBrowser'
 import { browseHostDirectory } from './hostDirectory'
 import type { AppSelectedAttachment } from '../shared/app'
@@ -37,23 +38,43 @@ let serverError: string | null = null
 let configuring: Promise<unknown> = Promise.resolve()
 let shuttingDown = false
 let pairing: LocalAccessPairing
-let discovery: Responder | null = null
+let stopAdvertisement: (() => Promise<void>) | undefined
 let discoveryError: string | null = null
 let tls: LocalAccessTls | null = null
 
-const reportDiscoveryError = (error: unknown): void => {
-  discoveryError = 'Nearby discovery is unavailable. Check your network multicast settings.'
-  console.warn('Local-access discovery failed.', error)
+const stopDiscovery = async (): Promise<void> => {
+  const stop = stopAdvertisement
+  stopAdvertisement = undefined
+  discoveryError = null
+  await stop?.()
 }
 
-const stopDiscovery = async (): Promise<void> => {
-  const previous = discovery
-  discovery = null
-  discoveryError = null
-  await previous
-    ?.shutdown()
-    .catch((error) => console.warn('Unable to stop local discovery.', error))
+const startDiscovery = (): void => {
+  if (!server || shuttingDown) return
+  stopAdvertisement = startLocalAccessDiscovery(
+    { computerId: configuration.computerId, computerName: hostname(), port: server.port },
+    (error) => {
+      discoveryError = error
+    }
+  )
 }
+
+const queueConfiguration = <T>(operation: () => Promise<T>): Promise<T> => {
+  const next = configuring
+    .catch((error) => console.warn('Previous local-access configuration failed.', error))
+    .then(operation)
+  configuring = next
+  return next
+}
+
+const restartDiscovery = (): Promise<LocalAccessState> =>
+  queueConfiguration(async () => {
+    if (server && !shuttingDown) {
+      await stopDiscovery()
+      startDiscovery()
+    }
+    return state()
+  })
 
 const validPort = (port: unknown): port is number =>
   typeof port === 'number' && Number.isInteger(port) && port >= 1024 && port <= 65535
@@ -73,7 +94,8 @@ const state = (): LocalAccessState => ({
   certificateFingerprint: tls?.fingerprint,
   devices: pairing?.list() ?? [],
   pairingRequests: pairing?.pending() ?? [],
-  discoveryError
+  discoveryError,
+  canConfigureFirewall: process.platform === 'win32' && app.isPackaged
 })
 
 const start = async (assets: RendererAssets): Promise<void> => {
@@ -98,26 +120,7 @@ const start = async (assets: RendererAssets): Promise<void> => {
       invoke: invokeClientRequest,
       receive: receiveClientMessage
     })
-    try {
-      // Use per-interface mDNS with IPv4 records for the IPv4-only listener.
-      const responder = getResponder({ disableIpv6: true })
-      discovery = responder
-      const computerName = hostname()
-      const label = `Sele ${configuration.computerId.slice(0, 8)}`
-      const advertisement = responder.createService({
-        name: label,
-        hostname: `sele-${configuration.computerId}`,
-        type: 'sele',
-        port: server.port,
-        txt: { version: '2', tls: '1', name: computerName, id: configuration.computerId }
-      })
-      void advertisement.advertise().catch((error) => {
-        if (discovery === responder) reportDiscoveryError(error)
-      })
-    } catch (error) {
-      await stopDiscovery()
-      reportDiscoveryError(error)
-    }
+    startDiscovery()
   } catch (error) {
     serverError = error instanceof Error ? error.message : String(error)
     console.error('Unable to start local access.', error)
@@ -177,6 +180,35 @@ export const registerLocalAccess = async (
     }
   }
   handleLoggedIpc(localAccessChannels.getState, () => state())
+  handleLoggedIpc(localAccessChannels.retryDiscovery, restartDiscovery)
+  handleLoggedIpc(localAccessChannels.openNetworkSettings, async () => {
+    if (process.platform === 'darwin') {
+      await shell.openExternal(
+        'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension'
+      )
+    } else if (process.platform === 'win32') {
+      await shell.openExternal('windowsdefender://network/')
+    }
+  })
+  handleLoggedIpc(localAccessChannels.allowWindowsFirewall, async (event) => {
+    const listener = server
+    if (process.platform !== 'win32' || !app.isPackaged || !listener || shuttingDown) return false
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) return false
+    const { response } = await dialog.showMessageBox(window, {
+      type: 'question',
+      title: 'Allow Sele through Windows Firewall',
+      message: 'Allow connections to Sele from your private network?',
+      detail: `Windows will ask for administrator approval to allow nearby discovery (UDP 5353) and pairing (TCP ${listener.port}) for Sele on the local subnet.`,
+      buttons: ['Allow', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1
+    })
+    if (response !== 0 || listener !== server || shuttingDown) return false
+    const allowed = await allowWindowsLocalAccess(app.getPath('exe'), listener.port)
+    if (allowed && listener === server) await restartDiscovery()
+    return allowed
+  })
   handleLoggedIpc(
     localAccessChannels.decidePairing,
     async (_event, id: unknown, approve: unknown) => {
@@ -192,8 +224,8 @@ export const registerLocalAccess = async (
     server?.disconnectUnauthorized()
     return state()
   })
-  handleLoggedIpc(localAccessChannels.configure, (_event, value: LocalAccessOptions) => {
-    const operation = async (): Promise<LocalAccessState> => {
+  handleLoggedIpc(localAccessChannels.configure, (_event, value: LocalAccessOptions) =>
+    queueConfiguration(async (): Promise<LocalAccessState> => {
       if (shuttingDown) throw new Error('Sele is shutting down.')
       if (
         !value ||
@@ -221,12 +253,8 @@ export const registerLocalAccess = async (
       await previous?.stop()
       await start(assets)
       return state()
-    }
-    configuring = configuring
-      .catch((error) => console.warn('Previous local-access configuration failed.', error))
-      .then(operation)
-    return configuring
-  })
+    })
+  )
 
   handleClientRequest(localAccessChannels.uploadAttachments, async (_event, value: unknown) => {
     if (!Array.isArray(value) || !value.length || value.length > 10) {

@@ -8,9 +8,18 @@ Enable **Settings → Local network → Allow local network access** on the comp
 computer in the Android app and approve the request only when the security codes match
 on both devices. Approved devices reconnect
 without entering a code or copying a link. The computer must remain awake with Sele running.
-On macOS, allow Sele when prompted for Local Network access. If discovery is empty after
-denying the prompt, enable Sele in **System Settings → Privacy & Security → Local Network**
-and reopen Sele.
+On Windows, use a **Private** network and allow Sele on private networks if Windows Firewall
+prompts you. If the phone still can't connect, choose **Allow through Windows Firewall** in
+Sele's Local network settings and approve the Windows administrator prompt. This adds rules for
+Sele on the local subnet for UDP 5353 and the configured TCP pairing port. Apply the firewall
+rules again after changing the pairing port. If Windows reports an existing block or a managed
+policy, open Windows Firewall from the same settings panel.
+
+On macOS, choose **Allow** when macOS asks for Local Network access. If you previously declined,
+use **Open Privacy & Security** in Sele, then select **Local Network**. Nearby discovery
+retries automatically after permission or network changes. If macOS Firewall asks separately
+whether Sele can accept incoming connections, allow it there too.
+
 If discovery comes up empty, select **Pair by address** on the phone. Enter the IPv4 address
 and port shown in **Local network** on the computer, then compare the same approval code.
 
@@ -23,7 +32,10 @@ to discover computers. The device picker merges nearby computers with saved pair
 computer ID. The last connected computer is tried
 immediately while discovery runs in the background. Switching computers preserves previous pairings.
 Android holds a multicast lock during discovery, restarts discovery when its default network changes,
-and advertises all resolved usable addresses to the transport. Wi-Fi bands do not define device
+and passes all resolved addresses to pairing and reconnection. First-time pairing tries another
+address if it cannot reach the first before requesting approval. The desktop advertises on available
+IPv4 adapters, checks that its announcement can be resolved, and retries discovery independently
+of the HTTPS listener. Wi-Fi bands do not define device
 identity; the router still needs to permit communication between the devices.
 
 The phone generates an independent device credential. `LocalAccessPairing` exposes a bounded,
@@ -199,6 +211,17 @@ Pure transport, connection, host picker, and browser boundary checks need no dis
 npm test -- localAccessServer remoteBrowser browserSync hostDirectory mobileConnection mobileBrowser chatSleep
 npm test -- CopilotGoal
 ```
+
+Windows and macOS CI run the pairing transport tests and an Electron host fixture. The fixture
+starts a real LAN listener, verifies its pinned certificate, approves a simulated Android device,
+and checks that retrying discovery keeps its WebSocket connected. To verify OS prompts, use a
+fresh Windows or macOS profile with the installed build and a phone on the same network.
+
+The macOS release job uses `MAC_CSC_LINK` and `MAC_CSC_KEY_PASSWORD` for a Developer ID Application
+certificate. Apple uses the signing identity to track Local Network permission across updates.
+For notarization, set `MAC_APPLE_API_KEY` to the contents of the App Store Connect `.p8` key and set
+`MAC_APPLE_API_KEY_ID` and `MAC_APPLE_API_ISSUER`. The workflow emits a warning when it builds a
+release without a signing certificate.
 
 GUI checks, run within the private session:
 
