@@ -51,7 +51,8 @@ export type MessageBoxProps = {
     type?: 'message' | 'pending'
   } | null
   error?: string | null
-  /** Used when native compaction fails or leaves no readable summary for a linked chat. */
+  noticeContainer?: HTMLElement | null
+  /** Used by Codex, whose native compaction output is encrypted. */
   linkedChatSummaryPrompt?: string
   container?: AppContainerTarget | null
   model: ProviderModelId

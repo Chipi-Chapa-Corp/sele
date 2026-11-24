@@ -8,6 +8,7 @@ import {
   cleanClaudeCompactSummary,
   isLinkedChatContextCancelled,
   raceLinkedChatCancellation,
+  summarizeLinkedChatWithFallback,
   watchLinkedChatForkTurn
 } from './linkedChatContext.ts'
 import { getClaudeLinkedChatSummary } from './claude/ClaudeLinkedChatSummary.ts'
@@ -184,7 +185,7 @@ const summaryHarness = (provider, nativeOutcome) => {
   const declaration = sourceFile.statements.find(
     (node) => ts.isClassDeclaration(node) && node.name.text === `${name}ProviderAdapter`
   )
-  const methods = new Set(['summarizeChatInFork', 'summarizeChatNativelyInFork', 'forkSession'])
+  const methods = new Set(['summarizeChatInFork', 'forkSession'])
   const code = ts.transpileModule(
     `class Harness { ${declaration.members
       .filter((member) => methods.has(member.name?.getText(sourceFile)))
@@ -196,15 +197,15 @@ const summaryHarness = (provider, nativeOutcome) => {
   const controller = new AbortController()
   const created = []
   const stopped = []
-  const manualCalls = []
+  const historyReads = []
+  const container = { kind: 'container', tool: 'toolbox', name: 'dev' }
   const nativeText = 'Native summary'
   const turnOptions = { model: 'provider/model' }
   const source = {
     active: false,
     options: turnOptions,
-    container: null,
-    directory: '/fixture',
-    messages: [{ info: { role: 'user', model: { providerID: 'provider', modelID: 'model' } } }]
+    container,
+    directory: '/fixture'
   }
   const native = () => {
     if (nativeOutcome === 'cancel') controller.abort()
@@ -265,16 +266,14 @@ const summaryHarness = (provider, nativeOutcome) => {
   })
   vm.runInContext(code, context)
   const adapter = new context.Harness()
-  let manualDetail = {
-    id: 'manual-fork',
+  let sourceDetail = {
     status: null,
     lastTurnOutcome: null,
     items: [
       { type: 'message', role: 'user', content: 'Earlier request' },
-      { type: 'message', role: 'assistant', content: 'Earlier answer' },
-      { type: 'message', role: 'user', content: 'Custom summary prompt' },
       { type: 'working', items: [{ type: 'message', content: 'Private reasoning' }] },
-      { type: 'message', role: 'assistant', content: 'Manual summary' }
+      { type: 'message', role: 'assistant', content: 'Earlier answer' },
+      { type: 'pendingMessage', content: 'Unsent prompt' }
     ]
   }
   Object.assign(adapter, {
@@ -288,24 +287,18 @@ const summaryHarness = (provider, nativeOutcome) => {
     stopChat: async (id) => {
       stopped.push(id)
     },
-    getChat: async (id) => {
-      assert.equal(id, 'manual-fork')
-      return manualDetail
+    getChatWindow: async (id, window, options) => {
+      historyReads.push({ id, window, options })
+      return sourceDetail
     },
     continueChatInFork: async (id, prompt, options, onCreated) => {
       assert.equal(id, 'source')
-      if (prompt === '/compact') {
-        await onCreated('native-fork')
-        native()
-        if (nativeOutcome === 'failed') updates.emit('native-fork', 'error')
-        return { id: 'native-fork', status: null }
-      }
-      manualCalls.push({ prompt, options })
-      await onCreated('manual-fork')
-      // A fast provider may complete before continueChatInFork returns.
-      updates.emit('manual-fork', 'active')
-      updates.emit('manual-fork', null)
-      return manualDetail
+      assert.equal(prompt, '/compact')
+      assert.equal(options, turnOptions)
+      await onCreated('native-fork')
+      native()
+      if (nativeOutcome === 'failed') updates.emit('native-fork', 'error')
+      return { id: 'native-fork', status: null }
     }
   })
   return {
@@ -313,16 +306,17 @@ const summaryHarness = (provider, nativeOutcome) => {
     updates,
     created,
     stopped,
-    manualCalls,
+    historyReads,
     source,
     controller,
-    setManualDetail: (detail) => {
-      manualDetail = { ...manualDetail, ...detail }
+    setSourceDetail: (detail) => {
+      sourceDetail = { ...sourceDetail, ...detail }
     },
     run: () =>
-      adapter.summarizeChatInFork(
+      summarizeLinkedChatWithFallback(
+        adapter,
         'source',
-        { summaryPrompt: 'Custom summary prompt', signal: controller.signal },
+        { summaryPrompt: 'Custom summary prompt', signal: controller.signal, container },
         async (id) => {
           created.push(id)
         }
@@ -330,12 +324,18 @@ const summaryHarness = (provider, nativeOutcome) => {
   }
 }
 
+const transcriptSummary = [
+  '## Most recent messages',
+  '**User:**\n\nEarlier request',
+  '**Assistant:**\n\nEarlier answer'
+].join('\n\n')
+
 for (const provider of ['claude', 'copilot', 'opencode']) {
-  test(`${provider}: successful native compression does not send a manual prompt`, async () => {
+  test(`${provider}: uses successful native compression directly`, async () => {
     const h = summaryHarness(provider, 'success')
     assert.equal(await h.run(), 'Native summary')
     assert.deepEqual(h.created, ['native-fork'])
-    assert.equal(h.manualCalls.length, 0)
+    assert.equal(h.historyReads.length, 0)
     assert.equal(h.updates.size, 0)
   })
 
@@ -345,69 +345,86 @@ for (const provider of ['claude', 'copilot', 'opencode']) {
     'failed',
     ...(provider === 'opencode' ? ['declined'] : [])
   ]) {
-    test(`${provider}: ${outcome} native compression falls back to the configured prompt`, async () => {
+    test(`${provider}: ${outcome} native compression falls back to source messages`, async () => {
       const h = summaryHarness(provider, outcome)
-      assert.equal(await h.run(), 'Manual summary')
-      assert.deepEqual(h.created, ['native-fork', 'manual-fork'])
-      assert.equal(h.manualCalls.length, 1)
-      assert.equal(h.manualCalls[0].prompt, 'Custom summary prompt')
-      assert.equal(h.manualCalls[0].options.model, 'provider/model')
+      assert.equal(await h.run(), transcriptSummary)
+      assert.deepEqual(h.created, ['native-fork'])
+      assert.deepEqual(h.historyReads, [
+        {
+          id: 'source',
+          window: { startIndex: null, limit: 20 },
+          options: { container: h.source.container }
+        }
+      ])
       assert.equal(h.updates.size, 0)
     })
   }
 
-  test(`${provider}: cancelling native compression never starts manual compression`, async () => {
+  test(`${provider}: cancelling native compression skips the transcript fallback`, async () => {
     const h = summaryHarness(provider, 'cancel')
     await assert.rejects(h.run(), isLinkedChatContextCancelled)
-    assert.equal(h.manualCalls.length, 0)
+    assert.deepEqual(h.stopped, ['native-fork'])
+    assert.equal(h.historyReads.length, 0)
     assert.equal(h.updates.size, 0)
   })
 
-  test(`${provider}: an active source does not start either compression path`, async () => {
+  test(`${provider}: an active source uses transcript text without starting a fork`, async () => {
     const h = summaryHarness(provider, 'throw')
     h.source.active = true
-    await assert.rejects(h.run(), /Wait for the current response/)
+    assert.equal(await h.run(), transcriptSummary)
     assert.deepEqual(h.created, [])
-  })
-
-  test(`${provider}: an empty manual answer rejects instead of returning an older answer`, async () => {
-    const h = summaryHarness(provider, 'throw')
-    h.setManualDetail({
-      items: [
-        { type: 'message', role: 'assistant', content: 'Earlier answer' },
-        { type: 'message', role: 'user', content: 'Custom summary prompt' }
-      ]
-    })
-    await assert.rejects(h.run(), /did not return a summary/)
-    assert.equal(h.updates.size, 0)
-  })
-
-  test(`${provider}: cancellation during the manual turn stops its fork`, async () => {
-    const h = summaryHarness(provider, 'throw')
-    let started
-    const ready = new Promise((resolve) => {
-      started = resolve
-    })
-    const createFork = h.adapter.continueChatInFork
-    h.adapter.continueChatInFork = async (id, prompt, options, onCreated) => {
-      if (prompt === '/compact') return createFork(id, prompt, options, onCreated)
-      await onCreated('manual-fork')
-      started()
-      return { id: 'manual-fork', status: 'active' }
-    }
-    const result = h.run()
-    await ready
-    h.controller.abort()
-    await assert.rejects(result, isLinkedChatContextCancelled)
-    assert.ok(h.stopped.includes('manual-fork'))
-    assert.equal(h.updates.size, 0)
-  })
-
-  test(`${provider}: a failed manual turn reports the failure and removes its watcher`, async () => {
-    const h = summaryHarness(provider, 'throw')
-    h.setManualDetail({ lastTurnOutcome: 'failed' })
-    await assert.rejects(h.run(), /provider failed while summarizing/)
-    assert.equal(h.manualCalls.length, 1)
-    assert.equal(h.updates.size, 0)
+    assert.equal(h.historyReads.length, 1)
   })
 }
+
+test('the transcript summary omits a streaming answer and pending messages', async () => {
+  const h = summaryHarness('claude', 'throw')
+  h.setSourceDetail({
+    status: 'active',
+    items: [
+      { type: 'message', role: 'user', content: 'Earlier request' },
+      { type: 'message', role: 'assistant', content: 'Earlier answer' },
+      { type: 'message', role: 'user', content: 'Current request' },
+      { type: 'message', role: 'assistant', content: 'Streaming answer' },
+      { type: 'pendingMessage', content: 'Unsent prompt' }
+    ]
+  })
+  assert.equal(await h.run(), `${transcriptSummary}\n\n**User:**\n\nCurrent request`)
+})
+
+test('the transcript summary limits large messages and prioritizes the latest exchanges', async () => {
+  const h = summaryHarness('claude', 'throw')
+  h.setSourceDetail({
+    items: Array.from({ length: 20 }, (_, index) => ({
+      type: 'message',
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `Message ${index + 1}: ${'x'.repeat(3_000)}`
+    }))
+  })
+  const result = await h.run()
+  assert.doesNotMatch(result, /Message 1:/)
+  assert.match(result, /Message 19: x+…\n\n\*\*Assistant:\*\*\n\nMessage 20: x+…$/)
+  assert.ok(result.length < 12_200)
+})
+
+test('an empty source transcript reports that there is no text to attach', async () => {
+  const h = summaryHarness('claude', 'throw')
+  h.setSourceDetail({ items: [{ type: 'message', role: 'user', content: ' ' }] })
+  await assert.rejects(h.run(), /no user messages or final replies/)
+})
+
+test('cancelling a pending transcript read discards the fallback', async () => {
+  const h = summaryHarness('claude', 'throw')
+  let reading
+  const started = new Promise((resolve) => {
+    reading = resolve
+  })
+  h.adapter.getChatWindow = () => {
+    reading()
+    return new Promise(() => {})
+  }
+  const result = h.run()
+  await started
+  h.controller.abort()
+  await assert.rejects(result, isLinkedChatContextCancelled)
+})

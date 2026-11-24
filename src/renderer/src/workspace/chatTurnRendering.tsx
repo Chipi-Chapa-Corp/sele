@@ -45,7 +45,7 @@ type SharedTurnInputs = {
   onLoadWorkingToolPage: ItemProps['onLoadWorkingToolPage']
 }
 
-export type RootChatTurnInputs = SharedTurnInputs & {
+type RootChatTurnOptions = {
   latestRenderedTurn: ProviderChatTurn | undefined
   windowIncludesLatest: boolean
   firstPendingChatItemId: string | null
@@ -85,7 +85,8 @@ export type RootChatTurnInputs = SharedTurnInputs & {
   onUsageReset: ItemProps['onUsageReset']
 }
 
-export type SubagentChatTurnInputs = SharedTurnInputs
+export type ChatTurnInputs = SharedTurnInputs & Partial<RootChatTurnOptions>
+export type RootChatTurnInputs = SharedTurnInputs & RootChatTurnOptions
 
 // Large turns mount item by item; the newest item and user prompts always mount first.
 const shouldDeferItems = (turn: ProviderChatTurn): boolean =>
@@ -109,8 +110,8 @@ const getNextTurnStartItem = (
   return lastItemIndex === undefined ? undefined : inputs.visibleChatItems[lastItemIndex + 1]
 }
 
-export const renderRootChatTurn = (
-  inputs: RootChatTurnInputs,
+export const renderConversationTurn = (
+  inputs: ChatTurnInputs,
   turnIndex: number,
   turn: ProviderChatTurn
 ): ReactElement => {
@@ -155,9 +156,11 @@ export const renderRootChatTurn = (
             onMount={inputs.scheduleChatAutoScroll}
           >
             {subagentCompletions.before.get(item.id)?.map(renderSubagentCompletion)}
-            {chatCommitMarkersByBeforeItemId.get(item.id)?.map(renderChatCommitMarker)}
-            {item.id === firstPendingChatItemId &&
-              trailingChatCommitMarkers.map(renderChatCommitMarker)}
+            {renderChatCommitMarker &&
+              chatCommitMarkersByBeforeItemId?.get(item.id)?.map(renderChatCommitMarker)}
+            {renderChatCommitMarker &&
+              item.id === firstPendingChatItemId &&
+              trailingChatCommitMarkers?.map(renderChatCommitMarker)}
             <ChatDetailItem
               mcpAppScope={mcpAppScope}
               motionChatKey={inputs.motionChatKey}
@@ -166,7 +169,9 @@ export const renderRootChatTurn = (
                   ? inputs.authenticationRequired
                   : undefined
               }
-              availableRateLimitResets={rateLimitFailure ? inputs.availableRateLimitResets : 0}
+              availableRateLimitResets={
+                rateLimitFailure ? (inputs.availableRateLimitResets ?? 0) : 0
+              }
               rateLimitResetOptions={rateLimitFailure ? inputs.rateLimitResetOptions : undefined}
               canEditOwnMessages={
                 item.type === 'message' && item.role === 'user' && inputs.canEditOwnMessages
@@ -174,12 +179,12 @@ export const renderRootChatTurn = (
               container={inputs.container}
               continuePrompt={stopped ? inputs.continuePrompt : undefined}
               continueStoppedTurnDisabled={stopped && inputs.stoppedTurnActionDisabled}
-              continuedStoppedTurn={inputs.continuedStoppedWorkingStepIds.has(item.id)}
+              continuedStoppedTurn={inputs.continuedStoppedWorkingStepIds?.has(item.id)}
               followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
               followingWorkingStepStatus={followingWorkingStep?.status}
               hasNextWorkingStep={inputs.workingStepIdsWithNextWorkingStep.has(item.id)}
               item={item}
-              messagePinned={item.type === 'message' && inputs.pinnedChatMessageIds.has(item.id)}
+              messagePinned={item.type === 'message' && inputs.pinnedChatMessageIds?.has(item.id)}
               cwd={inputs.cwd}
               modelLabelsById={inputs.modelLabelsById}
               resolvedModelIdsById={inputs.resolvedModelIdsById}
@@ -221,7 +226,7 @@ export const renderRootChatTurn = (
               rateLimitResetDisabled={rateLimitFailure && inputs.rateLimitResetDisabled}
               retryMessage={
                 stopped && inputs.canRetryStoppedTurns
-                  ? (inputs.stoppedTurnRetryMessages.get(item.id) ?? null)
+                  ? (inputs.stoppedTurnRetryMessages?.get(item.id) ?? null)
                   : null
               }
               retryStoppedTurnDisabled={stopped && inputs.stoppedTurnActionDisabled}
@@ -229,77 +234,17 @@ export const renderRootChatTurn = (
               streaming={item.id === inputs.streamingChatItemId}
               turnIndex={turnIndex}
             />
-            {chatCommitMarkersByAfterItemId.get(item.id)?.map(renderChatCommitMarker)}
+            {renderChatCommitMarker &&
+              chatCommitMarkersByAfterItemId?.get(item.id)?.map(renderChatCommitMarker)}
             {subagentCompletions.after.get(item.id)?.map(renderSubagentCompletion)}
           </DeferredChatTurn>
         )
       })}
-      {turn === inputs.latestRenderedTurn &&
+      {renderChatCommitMarker &&
+        turn === inputs.latestRenderedTurn &&
         inputs.windowIncludesLatest &&
         !firstPendingChatItemId &&
-        trailingChatCommitMarkers.map(renderChatCommitMarker)}
-    </div>
-  )
-}
-
-export const renderSubagentChatTurn = (
-  inputs: SubagentChatTurnInputs,
-  turnIndex: number,
-  turn: ProviderChatTurn
-): ReactElement => {
-  const { itemIndexesById, visibleChatItems, subagentCompletions, renderSubagentCompletion } =
-    inputs
-  const deferItems = shouldDeferItems(turn)
-  const nextTurnStartItem = getNextTurnStartItem(inputs, turn)
-
-  return (
-    <div
-      className="chat-detail__turn"
-      data-chat-turn-id={turn.id}
-      data-chat-turn-index={turnIndex}
-      key={turn.id}
-    >
-      {turn.items.map((item) => {
-        const itemIndex = itemIndexesById.get(item.id) ?? -1
-        const followingWorkingStep = inputs.followingWorkingStepsById.get(item.id)
-
-        return (
-          <DeferredChatTurn
-            key={item.id}
-            priority={itemIndex}
-            eager={isEagerItem(turn, item, deferItems)}
-          >
-            {subagentCompletions.before.get(item.id)?.map(renderSubagentCompletion)}
-            <ChatDetailItem
-              container={inputs.container}
-              followingWorkingStepHasNext={followingWorkingStep?.hasNextWorkingStep}
-              followingWorkingStepStatus={followingWorkingStep?.status}
-              hasNextWorkingStep={inputs.workingStepIdsWithNextWorkingStep.has(item.id)}
-              item={item}
-              key={item.id}
-              cwd={inputs.cwd}
-              modelLabelsById={inputs.modelLabelsById}
-              resolvedModelIdsById={inputs.resolvedModelIdsById}
-              onLoadWorkingStep={inputs.onLoadWorkingStep}
-              onLoadWorkingItem={inputs.onLoadWorkingItem}
-              onLoadWorkingToolPage={inputs.onLoadWorkingToolPage}
-              onOpenFileLink={inputs.onOpenFileLink}
-              previousItem={itemIndex > 0 ? visibleChatItems[itemIndex - 1] : null}
-              projectCwd={inputs.projectCwd}
-              progressPolicy={
-                item.type === 'working'
-                  ? getWorkingStepProgressPolicy(item, turn.items, nextTurnStartItem)
-                  : undefined
-              }
-              progressSettings={inputs.progressSettings}
-              progressDisclosureTarget={inputs.steeredWorkingStepDisclosureTargets.get(item.id)}
-              selectedModelId={inputs.selectedModelId}
-              turnIndex={turnIndex}
-            />
-            {subagentCompletions.after.get(item.id)?.map(renderSubagentCompletion)}
-          </DeferredChatTurn>
-        )
-      })}
+        trailingChatCommitMarkers?.map(renderChatCommitMarker)}
     </div>
   )
 }

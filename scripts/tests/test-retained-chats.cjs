@@ -82,7 +82,7 @@ if (!process.versions.electron) {
                 handleReturnFromSubagentChat:noop,handleNavigateSubagentTurns:noop,loadChatTurnPage:noop,
                 renderChatTurn:(_index,turn)=><Turn turn={turn} version={version} id={id}
                   streaming={active&&turn===model.turns.at(-1)}/>,
-                renderSubagentChatTurn:noop,renderedChatTurns:model.turns,
+                renderedChatTurns:model.turns,
                 selectedChat:id?{id,providerId:'codex'}:null,selectedChatCommitMarkers:[],selectedChatKey:id?'codex:'+id:null,
                 selectedChatSubagents:[],sendState:'idle',showChatTurnDownButton:false,
                 subagentChatConversationModel:{turns:[]},subagentContentRef:subagentRef,

@@ -53,7 +53,6 @@ export function getWorkspaceConversationMessages({
     handleNavigateSubagentTurns: subagents.handleNavigateSubagentTurns,
     loadChatTurnPage: conversation.loadChatTurnPage,
     renderChatTurn: turnRendering.renderChatTurn,
-    renderSubagentChatTurn: turnRendering.renderSubagentChatTurn,
     renderedChatTurns: conversation.renderedChatTurns,
     selectedChat: chatState.selectedChat
       ? { id: chatState.selectedChat.id, providerId: chatState.selectedChat.providerId }

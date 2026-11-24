@@ -212,8 +212,9 @@ export function SettingsChatPanel(props: SettingsPanelProps): React.ReactNode {
           settingsPanelSettings.chat.linkedChatSummaryPrompt,
           handleLinkedChatSummaryPromptChange,
           <p>
-            Sent to a hidden copy of a chat dropped into the composer when its provider has no
-            readable compaction summary (Codex). Claude, OpenCode and Copilot use native compaction.
+            Sent to a hidden copy of a Codex chat dropped into the composer. Claude, OpenCode, and
+            Copilot use native compaction. If summarization fails, Sele uses recent user messages
+            and final replies from the source chat.
           </p>,
           true
         )}

@@ -1,4 +1,10 @@
 import { useCallback, useLayoutEffect, useRef } from 'react'
+import { flushSync } from 'react-dom'
+import {
+  assertUniqueProviderChatItemIds,
+  getProviderChatTurnCount,
+  startsProviderChatTurn
+} from '../../../shared/chatTurns'
 import { mergeWorkingStepPage, mergeWorkingToolPage } from '../chatDetailWindow'
 import { readChatScrollAnchor, restoreChatScrollAnchor, type ChatScrollAnchor } from '../chatLayout'
 import { useLatestHandler } from './stableProps'
@@ -240,7 +246,14 @@ export function useSubagentController({
   const handleNavigateSubagentTurns = async (
     direction: 'older' | 'newer' | 'latest'
   ): Promise<void> => {
-    if (!selectedProviderId || !selectedChatId || !activeSubagentChatView?.detail) return
+    if (
+      !selectedProviderId ||
+      !selectedChatId ||
+      !selectedChatKey ||
+      !activeSubagentChatView?.detail ||
+      activeSubagentChatView.pageLoading
+    )
+      return
     const requestId = subagentChatLoadRequestRef.current
     if (subagentPageRequests.get(subagentChatLoadRequestRef) === requestId) return
     const detail = activeSubagentChatView.detail
@@ -274,25 +287,66 @@ export function useSubagentController({
         selectedChatKeyRef.current !== selectedChatKey
       )
         return
-      setSubagentChatView((view) =>
-        view?.summary.id === subagentId && view.rootChatKey === selectedChatKey
-          ? {
-              ...view,
-              summary: page,
-              detail: page,
-              followLatest: page.turnPagination
-                ? !page.turnPagination.newerCursor
-                : nextStart === null || nextStart + pageSize >= (page.turnCount ?? 0),
-              pageLoading: true,
-              loadState: 'ready',
-              error: null
+      const retainedPagination =
+        selectedProviderId === 'claude' &&
+        direction === 'older' &&
+        pagination &&
+        page.turnPagination
+          ? { ...pagination, olderCursor: page.turnPagination.olderCursor }
+          : null
+      const element = subagentContentRef.current
+      const anchor =
+        retainedPagination && element ? readChatScrollAnchor(element, selectedChatKey) : null
+      if (retainedPagination) assertUniqueProviderChatItemIds([...page.items, ...detail.items])
+      const applyPage = () =>
+        setSubagentChatView((view) => {
+          if (
+            view?.summary.id !== subagentId ||
+            view.rootChatKey !== selectedChatKey ||
+            !view.detail
+          )
+            return view
+          let nextDetail = page
+          if (retainedPagination) {
+            const retainedItems = view.detail.items
+            const first = retainedItems[0]
+            // Claude can split one long turn across byte ranges. Keep the previous
+            // chunk's turn mounted so its working disclosures and scroll anchor survive.
+            const items =
+              first && !startsProviderChatTurn(first)
+                ? [...page.items, { ...first, startsTurn: true }, ...retainedItems.slice(1)]
+                : [...page.items, ...retainedItems]
+            nextDetail = {
+              ...page,
+              items,
+              turnCount: getProviderChatTurnCount(items),
+              turnPagination: retainedPagination
             }
-          : view
-      )
+          }
+          return {
+            ...view,
+            summary: page,
+            detail: nextDetail,
+            followLatest: page.turnPagination
+              ? !retainedPagination && !page.turnPagination.newerCursor
+              : nextStart === null || nextStart + pageSize >= (page.turnCount ?? 0),
+            pageLoading: true,
+            loadState: 'ready',
+            error: null
+          }
+        })
+      if (retainedPagination) {
+        flushSync(applyPage)
+        if (element && anchor) restoreChatScrollAnchor(element, anchor)
+      } else {
+        applyPage()
+      }
       window.requestAnimationFrame(() => {
+        if (subagentChatLoadRequestRef.current !== requestId) return
         const element = subagentContentRef.current
-        if (element) element.scrollTop = direction === 'older' ? element.scrollHeight : 0
-        // Native scroll events from positioning the replacement page must not load it back.
+        if (element && !retainedPagination)
+          element.scrollTop = direction === 'newer' ? 0 : element.scrollHeight
+        // Wait for native scroll events from positioning before enabling paging again.
         window.requestAnimationFrame(() => {
           if (subagentChatLoadRequestRef.current !== requestId) return
           setSubagentChatView((view) =>

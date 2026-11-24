@@ -16,7 +16,7 @@ if (!process.versions.electron) {
             import React from 'react'
             import {createRoot} from 'react-dom/client'
             import {flushSync} from 'react-dom'
-            import {renderRootChatTurn} from './src/renderer/src/workspace/chatTurnRendering'
+            import {renderConversationTurn} from './src/renderer/src/workspace/chatTurnRendering'
             import {renderSettingsPanel} from './src/renderer/src/components/SettingsPanel'
             import {readStoredAppSettings,writeStoredAppSettings} from './src/renderer/src/settings'
             import {LimitResetQueueMessages} from './src/renderer/src/components/LimitResetQueueMessages'
@@ -67,7 +67,7 @@ if (!process.versions.electron) {
               flushSync(() => root.render(<main style={{padding:20,display:'grid',gridTemplateColumns:'600px 420px',gap:24}}>
                 <div id="settings" style={{height:860,overflow:'auto'}}>{renderSettingsPanel(props)}</div>
                 <div key={inputs.motionChatKey}>
-                  {renderRootChatTurn(inputs,0,{id:'turn',items:inputs.visibleChatItems})}
+                  {renderConversationTurn(inputs,0,{id:'turn',items:inputs.visibleChatItems})}
                   <LimitResetQueueMessages providerId="claude" target="chat"/>
                 </div>
               </main>))

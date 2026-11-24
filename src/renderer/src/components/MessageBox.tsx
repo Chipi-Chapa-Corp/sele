@@ -1,6 +1,7 @@
 import { ComposerImageLightbox } from '../composer/ComposerImageLightbox'
 import { MessagesSquare, Paperclip, X } from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ComposerAttachments } from '../composer/ComposerAttachments'
 import { ComposerTextInput } from '../composer/ComposerTextInput'
 import { ComposerToolbar } from '../composer/ComposerToolbar'
@@ -12,6 +13,7 @@ import { useComposerLinkedChats } from '../composer/useComposerLinkedChats'
 import { useComposerMentions } from '../composer/useComposerMentions'
 import { useComposerSubmission } from '../composer/useComposerSubmission'
 import { useComposerFocus } from '../useComposerFocus'
+import { Banner } from './Banner'
 import { Button } from './Button'
 import './MessageBox.css'
 
@@ -27,6 +29,7 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     disabled = false,
     editSession = null,
     error = null,
+    noticeContainer,
     promptSuggestion = null,
     operationsDisabled = false,
     pending = false,
@@ -227,26 +230,28 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
     if (error) setDismissedError(error)
   }
 
+  const errorBanner = messageBoxError && (
+    <Banner
+      className="chat-request-error"
+      ariaLabel={messageBoxErrorLabel}
+      role="alert"
+      label={messageBoxErrorLabel}
+      summary={messageBoxError}
+    >
+      <Button
+        aria-label="Dismiss error"
+        title="Dismiss error"
+        callback={handleDismissMessageBoxError}
+        icon={<X aria-hidden="true" />}
+        size="small"
+        theme="transparent"
+      />
+    </Banner>
+  )
+
   return (
     <form className="message-box" aria-busy={pending} onSubmit={handleSubmit}>
-      {messageBoxError && (
-        <div className="message-box__error" role="alert">
-          <div className="message-box__error-main">
-            <span className="message-box__error-label">{messageBoxErrorLabel}</span>
-            <span className="message-box__error-summary">{messageBoxError}</span>
-          </div>
-          <div className="message-box__error-actions">
-            <Button
-              aria-label="Dismiss error"
-              title="Dismiss error"
-              callback={handleDismissMessageBoxError}
-              icon={<X aria-hidden="true" />}
-              size="small"
-              theme="transparent"
-            />
-          </div>
-        </div>
-      )}
+      {errorBanner && (noticeContainer ? createPortal(errorBanner, noticeContainer) : errorBanner)}
       <label className="sr-only" htmlFor="message-input">
         Message
       </label>

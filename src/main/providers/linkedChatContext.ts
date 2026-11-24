@@ -1,4 +1,6 @@
-import type { ProviderChatDetail, ProviderTurnOptions } from '../../shared/provider'
+import type { AppContainerTarget } from '../../shared/app'
+import { startsProviderChatTurn } from '../../shared/chatTurns.ts'
+import type { ProviderChatDetail } from '../../shared/provider'
 import type { ProviderAdapter } from './ProviderAdapter'
 
 export class LinkedChatContextCancelledError extends Error {
@@ -174,70 +176,71 @@ export const requireLinkedChatSummary = (summary: string | null | undefined): st
   return text
 }
 
-/** Retry failed native compression with the configured prompt in a fresh source fork. */
+const linkedChatFallbackTurnLimit = 20
+const linkedChatFallbackCharacterBudget = 12_000
+const linkedChatFallbackMessageLimit = 2_000
+
+const summarizeLinkedChatTranscript = (detail: ProviderChatDetail): string => {
+  const { items, status, lastTurnOutcome } = detail
+  // Some providers project a streaming final answer before the turn finishes.
+  const unfinishedTurnStart =
+    status || lastTurnOutcome
+      ? Math.max(
+          0,
+          items.findLastIndex(
+            (item) => item.type !== 'pendingMessage' && startsProviderChatTurn(item)
+          )
+        )
+      : items.length
+  const messages: LinkedChatTranscriptMessage[] = []
+  let remaining = linkedChatFallbackCharacterBudget
+  for (let index = items.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const item = items[index]
+    if (item.type !== 'message' || (item.role === 'assistant' && index >= unfinishedTurnStart))
+      continue
+    const content = item.content.trim()
+    if (!content) continue
+    const limit = Math.min(remaining, linkedChatFallbackMessageLimit)
+    const text = content.length > limit ? `${content.slice(0, limit - 1).trimEnd()}…` : content
+    messages.push({ role: item.role, text })
+    remaining -= text.length
+  }
+  return formatLinkedChatRecentMessages(messages.reverse())
+}
+
+/** If provider summarization fails, prepare context locally from the original transcript. */
 export const summarizeLinkedChatWithFallback = async (
-  adapter: Pick<ProviderAdapter, 'continueChatInFork' | 'getChat' | 'stopChat' | 'onChatUpdated'>,
+  adapter: Pick<ProviderAdapter, 'summarizeChatInFork' | 'getChatWindow'>,
   chatId: string,
   {
     summaryPrompt,
     signal,
-    nativeSummary,
-    turnOptions
-  }: {
-    summaryPrompt: string
-    signal: AbortSignal
-    nativeSummary: () => Promise<string>
-    turnOptions?: ProviderTurnOptions
-  },
+    container
+  }: { summaryPrompt: string; signal: AbortSignal; container?: AppContainerTarget | null },
   onForkCreated: (chatId: string) => Promise<void>
 ): Promise<string> => {
   throwIfLinkedChatCancelled(signal)
   try {
-    return requireLinkedChatSummary(await nativeSummary())
+    return requireLinkedChatSummary(
+      await adapter.summarizeChatInFork(chatId, { summaryPrompt, signal }, onForkCreated)
+    )
   } catch (error) {
     if (isLinkedChatContextCancelled(error)) throw error
     throwIfLinkedChatCancelled(signal)
   }
 
-  const watcher = watchLinkedChatForkTurn(adapter.onChatUpdated, signal)
-  let forkId: string | null = null
-  try {
-    const initial = await raceLinkedChatCancellation(
-      signal,
-      adapter.continueChatInFork(chatId, summaryPrompt, turnOptions, async (id) => {
-        forkId = id
-        watcher.track(id)
-        await onForkCreated(id)
-        throwIfLinkedChatCancelled(signal)
-      })
+  const detail = await raceLinkedChatCancellation(
+    signal,
+    adapter.getChatWindow(
+      chatId,
+      { startIndex: null, limit: linkedChatFallbackTurnLimit },
+      {
+        container
+      }
     )
-    await watcher.finished(initial)
-    const detail = await raceLinkedChatCancellation(signal, adapter.getChat(initial.id))
-    if (detail.status || detail.lastTurnOutcome) {
-      throw new Error('The provider failed while summarizing the linked chat.')
-    }
-    // Only the new summary turn counts; an earlier answer must never become the summary.
-    const promptIndex = detail.items.findLastIndex(
-      (item) => item.type === 'message' && item.role === 'user'
-    )
-    return requireLinkedChatSummary(
-      promptIndex < 0
-        ? null
-        : detail.items
-            .slice(promptIndex + 1)
-            .flatMap((item) =>
-              item.type === 'message' && item.role === 'assistant' ? [item.content] : []
-            )
-            .join('\n\n')
-    )
-  } catch (error) {
-    if (signal.aborted && forkId) {
-      void adapter.stopChat(forkId).catch((stopError: unknown) => {
-        console.error('[caught:summarizeLinkedChatWithFallback:stop]', stopError)
-      })
-    }
-    throw error
-  } finally {
-    watcher.dispose()
-  }
+  )
+  throwIfLinkedChatCancelled(signal)
+  const summary = summarizeLinkedChatTranscript(detail)
+  if (!summary) throw new Error('The linked chat has no user messages or final replies to attach.')
+  return summary
 }

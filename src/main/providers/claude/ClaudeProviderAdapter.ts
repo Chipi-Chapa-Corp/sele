@@ -106,7 +106,6 @@ import { getClaudeLinkedChatSummary } from './ClaudeLinkedChatSummary'
 import {
   raceLinkedChatCancellation,
   requireLinkedChatSummary,
-  summarizeLinkedChatWithFallback,
   throwIfLinkedChatCancelled,
   watchLinkedChatForkTurn
 } from '../linkedChatContext'
@@ -1280,7 +1279,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
         {
           active: !historical && (status === 'running' || status === 'pending'),
           stopped: !historical && status === 'stopped',
-          failed: !historical && status === 'failed'
+          failed: !historical && status === 'failed',
+          recordScopedBlockIds: true
         },
         { startIndex: 0, limit: Number.MAX_SAFE_INTEGER }
       ),
@@ -1937,31 +1937,13 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
 
   summarizeChatInFork = async (
     chatId: string,
-    options: { summaryPrompt: string; signal: AbortSignal },
-    onForkCreated: (chatId: string) => Promise<void>
-  ): Promise<string> => {
-    throwIfLinkedChatCancelled(options.signal)
-    const source = await this.ensureState(chatId)
-    if (source.active) throw new Error('Wait for the current response before linking this chat.')
-    return summarizeLinkedChatWithFallback(
-      this,
-      chatId,
-      {
-        ...options,
-        turnOptions: source.options,
-        nativeSummary: () => this.summarizeChatNativelyInFork(chatId, options, onForkCreated)
-      },
-      onForkCreated
-    )
-  }
-
-  private summarizeChatNativelyInFork = async (
-    chatId: string,
-    { signal }: { summaryPrompt: string; signal: AbortSignal },
+    { signal }: { signal: AbortSignal },
     onForkCreated: (chatId: string) => Promise<void>
   ): Promise<string> => {
     throwIfLinkedChatCancelled(signal)
     const source = await this.ensureState(chatId)
+    if (source.active) throw new Error('Wait for the current response before linking this chat.')
+    throwIfLinkedChatCancelled(signal)
     const watcher = watchLinkedChatForkTurn(this.onChatUpdated, signal)
     let forkId: string | null = null
     try {
@@ -1987,7 +1969,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       return requireLinkedChatSummary(getClaudeLinkedChatSummary(messages))
     } catch (error) {
       const startedForkId = forkId
-      if (signal.aborted && startedForkId) {
+      if (startedForkId) {
         void this.stopChat(startedForkId).catch((stopError: unknown) => {
           console.error('[caught:ClaudeProviderAdapter:summarizeChatInFork:stop]', stopError)
         })

@@ -85,7 +85,11 @@ import {
   setMessageReview
 } from '../database/messageReviews'
 import { withProviderNetworkRetries } from './ProviderNetworkRetry'
-import { isLinkedChatContextCancelled, throwIfLinkedChatCancelled } from './linkedChatContext'
+import {
+  isLinkedChatContextCancelled,
+  summarizeLinkedChatWithFallback,
+  throwIfLinkedChatCancelled
+} from './linkedChatContext'
 import { withLiveChatPermissions } from './ProviderLivePermissions'
 import { CodexProviderAdapter } from './codex/CodexProviderAdapter'
 import {
@@ -1561,9 +1565,14 @@ export const providerApi: ProviderApi = {
     try {
       const sourceMetadata = await getChatMetadata(chatId)
       throwIfLinkedChatCancelled(controller.signal)
-      const summary = await adapters[providerId].summarizeChatInFork(
+      const summary = await summarizeLinkedChatWithFallback(
+        adapters[providerId],
         chatId,
-        { summaryPrompt: options.summaryPrompt, signal: controller.signal },
+        {
+          summaryPrompt: options.summaryPrompt,
+          signal: controller.signal,
+          container: sourceMetadata.container
+        },
         async (forkedChatId) => {
           await Promise.all([
             setChatPurpose(forkedChatId, 'linkedChat'),

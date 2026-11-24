@@ -83,7 +83,6 @@ export function ConversationMessagesContent(
     handleNavigateSubagentTurns,
     loadChatTurnPage,
     renderChatTurn,
-    renderSubagentChatTurn,
     renderedChatTurns,
     selectedChat,
     selectedChatCommitMarkers,
@@ -101,6 +100,10 @@ export function ConversationMessagesContent(
   const [resetMessageCount, setResetMessageCount] = useState(0)
   const attachedContent = useRef<HTMLDivElement | null>(null)
   const showingSubagent = Boolean(activeSubagentChatView)
+  const showSubagentLatestButton =
+    selectedChat?.providerId === 'claude' &&
+    activeSubagentChatView?.followLatest === false &&
+    Boolean(activeSubagentChatView.detail?.turnPagination)
   const attachContent = useCallback(
     (element: HTMLDivElement | null) => {
       const previous = attachedContent.current
@@ -286,6 +289,9 @@ export function ConversationMessagesContent(
   const displayedTurns = activeSubagentChatView
     ? subagentChatConversationModel.turns
     : renderedChatTurns
+  const displayedStartIndex = activeSubagentChatView
+    ? (activeSubagentChatView.detail?.itemsStartTurnIndex ?? 0)
+    : (effectiveChatTurnWindow?.startIndex ?? 0)
   const mountKey = `${selectedChatKey}:${activeSubagentChatView?.summary.id ?? ''}`
   const windowSignature = displayedTurns.map((turn) => turn.id).join('\n')
   const initialWindow = useRef<{ key: string; signature: string; changed: boolean } | null>(null)
@@ -352,12 +358,7 @@ export function ConversationMessagesContent(
         Boolean(activeSubagentChatView?.pageLoading)
       }
     >
-      {activeSubagentChatView
-        ? renderSubagentChatTurn(
-            (activeSubagentChatView.detail?.itemsStartTurnIndex ?? 0) + index,
-            turn
-          )
-        : renderChatTurn((effectiveChatTurnWindow?.startIndex ?? 0) + index, turn)}
+      {renderChatTurn(displayedStartIndex + index, turn)}
     </DeferredChatTurn>
   ))
   if (workingPlaceholderStep) {
@@ -533,14 +534,20 @@ export function ConversationMessagesContent(
               No messages found in this subagent chat.
             </p>
           ))}
-        {showChatTurnDownButton && (
+        {(showChatTurnDownButton || showSubagentLatestButton) && (
           <div className="chat-detail__down-button">
             <Button
               aria-label="Jump to latest messages"
-              disabled={chatTurnPageLoadDirection === 'latest'}
+              disabled={
+                showingSubagent
+                  ? activeSubagentChatView?.pageLoading
+                  : chatTurnPageLoadDirection === 'latest'
+              }
               theme="secondary"
               title="Jump to latest messages"
-              callback={() => loadChatTurnPage('latest')}
+              callback={() =>
+                showingSubagent ? handleNavigateSubagentTurns('latest') : loadChatTurnPage('latest')
+              }
               icon={<ChevronDown aria-hidden="true" />}
             />
           </div>

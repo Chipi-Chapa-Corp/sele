@@ -15,7 +15,7 @@ if (!process.versions.electron) {
             import React, {Activity} from 'react'
             import {createRoot} from 'react-dom/client'
             import {flushSync} from 'react-dom'
-            import {renderRootChatTurn} from './src/renderer/src/workspace/chatTurnRendering'
+            import {renderConversationTurn} from './src/renderer/src/workspace/chatTurnRendering'
             import {RollingValue} from './src/renderer/src/components/RollingValue'
             window.rowRenders=[]
             const root=createRoot(document.getElementById('root'))
@@ -40,7 +40,7 @@ if (!process.versions.electron) {
             window.renderRows=(changes={})=>{
               Object.assign(inputs,changes)
               flushSync(()=>root.render(<>
-                {renderRootChatTurn(inputs,0,turn)}
+                {renderConversationTurn(inputs,0,turn)}
                 <Activity mode={inputs.fixtureHideCounter?'hidden':'visible'}>
                   <RollingValue value={inputs.fixtureRollingValue??'10'}/>
                 </Activity>

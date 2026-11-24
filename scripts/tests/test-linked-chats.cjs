@@ -15,6 +15,9 @@ if (!process.versions.electron) {
             import { createRoot } from 'react-dom/client'
             import { flushSync } from 'react-dom'
             import './src/renderer/src/assets/main.css'
+            import './src/renderer/src/workspace/styles/conversation-panel.css'
+            import './src/renderer/src/workspace/styles/conversation-requests.css'
+            import './src/renderer/src/workspace/styles/conversation-composer.css'
             import { MessageBox } from './src/renderer/src/components/MessageBox'
             import { LinkedChatOpenerContext } from './src/renderer/src/components/LinkedChatOpener'
             import { buildLinkedChatPrompt, linkedChatDragType, serializeLinkedChatDrag } from './src/renderer/src/linkedChats'
@@ -33,6 +36,7 @@ if (!process.versions.electron) {
             window.renderComposer = (editSession = null) => flushSync(() => root.render(<React.StrictMode>
               <LinkedChatOpenerContext.Provider value={chat => window.opened.push(chat)}>
                 <MessageBox draftScopeKey="codex:current" chatId="current" linkedChatSummaryPrompt="Summarize it"
+                  noticeContainer={document.querySelector('.chat-panel__composer-notices')}
                   editSession={editSession} onCancelEdit={() => window.renderComposer()}
                   providerId="codex" model={fallbackProviderModels[0].id} models={fallbackProviderModels}
                   agentMode="interactive" agentModes={[]} approvalMode="never" approvalModes={fallbackProviderApprovalModes}
@@ -76,7 +80,11 @@ if (!process.versions.electron) {
       })
       await fs.writeFile(
         path.join(directory, 'linked.html'),
-        `<!doctype html><link rel="stylesheet" href="linked.css"><div id="root" style="padding: 24px; max-width: 760px"></div><script>
+        `<!doctype html><link rel="stylesheet" href="linked.css">
+        <div class="chat-panel__composer" style="padding: 24px; max-width: 760px; --chat-content-max-width: 760px; --chat-content-padding: 16px">
+          <div class="chat-panel__composer-inner chat-panel__composer-notices"></div>
+          <div class="chat-panel__composer-input"><div id="root" class="chat-panel__composer-inner"></div></div>
+        </div><script>
         window.appApi = {}
         window.preparations = []
         window.cancelled = []
@@ -188,10 +196,11 @@ if (!process.versions.electron) {
       assert.equal(await run(`document.querySelector('.message-box__linked-chat')`), null)
       assert.equal(await sendDisabled(), false)
 
-      // A finished summary is injected ahead of the request; the chip opens the original chat.
+      // A prepared transcript excerpt is injected ahead of the request.
       await run(`window.dragChat('drop', ${alpha})`)
       await settle()
-      await run(`window.preparations[1].resolve({summary: '## Objective\\n- Ship it'})`)
+      const summary = '## Most recent messages\n\n**User:**\n\nShip it\n\n**Assistant:**\n\nShipped'
+      await run(`window.preparations[1].resolve({summary: ${JSON.stringify(summary)}})`)
       await settle()
       assert.equal(await sendDisabled(), false)
       await run(`window.click('Open linked chat Alpha chat')`)
@@ -213,8 +222,7 @@ if (!process.versions.electron) {
         [
           '# Linked chats',
           '<linked-chat-context name="Alpha chat" provider="claude" chat-id="alpha">',
-          '## Objective',
-          '- Ship it',
+          summary,
           '</linked-chat-context>',
           '# User request:',
           'Use this'
@@ -233,10 +241,16 @@ if (!process.versions.electron) {
       await settle()
       assert.equal(await sendDisabled(), true)
       assert.match(
-        await run(`document.querySelector('.message-box__error')?.textContent ?? ''`),
+        await run(
+          `document.querySelector('.chat-panel__composer-notices > .chat-approval[role="alert"]')?.textContent ?? ''`
+        ),
         /Beta: Provider offline/
       )
-      await run(`document.querySelector('.message-box__error button')?.click()`)
+      assert.ok(
+        await run(`document.querySelector('.chat-request-error').getBoundingClientRect().bottom <
+          document.querySelector('.chat-panel__composer-input').getBoundingClientRect().top`)
+      )
+      await run(`window.click('Dismiss error')`)
       await settle()
       assert.equal(await run(`document.querySelector('.message-box__linked-chat')`), null)
       assert.equal(await sendDisabled(), false)
@@ -246,10 +260,10 @@ if (!process.versions.electron) {
       await settle()
       assert.equal(await run('window.preparations.length'), 3)
       assert.match(
-        await run(`document.querySelector('.message-box__error')?.textContent ?? ''`),
+        await run(`document.querySelector('.chat-request-error')?.textContent ?? ''`),
         /cannot be linked to itself/
       )
-      await run(`document.querySelector('.message-box__error button')?.click()`)
+      await run(`window.click('Dismiss error')`)
       await settle()
 
       // Editing a sent message shows its request as text and its linked chats as chips. The

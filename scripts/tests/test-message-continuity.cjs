@@ -17,7 +17,7 @@ if (!process.versions.electron) {
             import {createRoot} from 'react-dom/client'
             import {flushSync} from 'react-dom'
             import {ConversationMessages} from './src/renderer/src/workspace/components/ConversationMessages'
-            import {renderRootChatTurn} from './src/renderer/src/workspace/chatTurnRendering'
+            import {renderConversationTurn} from './src/renderer/src/workspace/chatTurnRendering'
             import {buildChatConversationModel} from './src/renderer/src/chatConversationModel'
             import {reuseChatSnapshotItems} from './src/renderer/src/chatSnapshotItems'
             import {bindMessageFlight,captureMessageFlight} from './src/renderer/src/motion/messageFlight'
@@ -49,7 +49,7 @@ if (!process.versions.electron) {
                 contentRef,subagentContentRef:subagentRef,editingMessage:null,
                 effectiveChatTurnWindow:{startIndex:0,endIndex:model.turns.length},
                 handleNativeChatContentScroll:noop,handleNativeChatContentWheel:noop,
-                renderChatTurn:(index,turn)=>renderRootChatTurn(inputs,index,turn),
+                renderChatTurn:(index,turn)=>renderConversationTurn(inputs,index,turn),
                 renderedChatTurns:model.turns,selectedChat:{id:'chat',providerId:'codex'},
                 selectedChatKey:'codex:chat',selectedChatCommitMarkers:[],selectedChatSubagents:[],
                 subagentChatConversationModel:{turns:[]},subagentVisibleChatItems:[],

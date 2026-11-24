@@ -3,12 +3,11 @@ import { type ProviderChatTurn } from '../../../../shared/chatTurns'
 import { shouldDisableRateLimitReset } from '../../accountRateLimits'
 import { providerApi } from '../../providerApi'
 import {
-  renderRootChatTurn,
-  renderSubagentChatTurn as renderSubagentTurn,
-  type RootChatTurnInputs,
-  type SubagentChatTurnInputs
+  renderConversationTurn,
+  type ChatTurnInputs,
+  type RootChatTurnInputs
 } from '../chatTurnRendering'
-import { useLatestHandler, useStableProps } from '../stableProps'
+import { useStableProps } from '../stableProps'
 import { useWorkspaceSubagentPresentation } from './useWorkspaceSubagentPresentation'
 import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 
@@ -91,15 +90,7 @@ export function useWorkspaceTurnRendering({
     accountUsage?.rateLimitResetCredits?.options !== undefined
   )
 
-  // Handlers call the current controller, but changing their closures must not
-  // invalidate every cached message during unrelated workspace updates.
-  const rootChatTurnInputs = useStableProps<RootChatTurnInputs>({
-    itemIndexesById: chatItemIndexesById,
-    visibleChatItems,
-    followingWorkingStepsById,
-    workingStepIdsWithNextWorkingStep,
-    steeredWorkingStepDisclosureTargets,
-    subagentCompletions: subagentPresentation.rootSubagentCompletions,
+  const sharedTurnInputs = {
     renderSubagentCompletion: subagentPresentation.renderSubagentCompletion,
     container: changesContainer,
     cwd: changesCwd,
@@ -108,7 +99,18 @@ export function useWorkspaceTurnRendering({
     resolvedModelIdsById: effectiveSelection.resolvedModelIdsById,
     progressSettings: settings.effectiveAppSettings.chat,
     selectedModelId: providerState.model,
-    onOpenFileLink: changesCwd ? handleOpenFileLink : undefined,
+    onOpenFileLink: changesCwd ? handleOpenFileLink : undefined
+  }
+  // Handlers call the current controller, but changing their closures must not
+  // invalidate every cached message during unrelated workspace updates.
+  const rootChatTurnInputs = useStableProps<RootChatTurnInputs>({
+    ...sharedTurnInputs,
+    itemIndexesById: chatItemIndexesById,
+    visibleChatItems,
+    followingWorkingStepsById,
+    workingStepIdsWithNextWorkingStep,
+    steeredWorkingStepDisclosureTargets,
+    subagentCompletions: subagentPresentation.rootSubagentCompletions,
     onLoadWorkingStep: handleLoadWorkingStep,
     onLoadWorkingItem: handleLoadWorkingItem,
     onLoadWorkingToolPage: handleLoadWorkingToolPage,
@@ -155,21 +157,8 @@ export function useWorkspaceTurnRendering({
     onUsageReset: resetAccountRateLimits
   })
 
-  // Stable while the inputs are, so the memoized message list skips workspace
-  // renders that change nothing it shows.
-  const renderChatTurn = useCallback(
-    (turnIndex: number, turn: ProviderChatTurn): React.ReactElement =>
-      renderRootChatTurn(rootChatTurnInputs, turnIndex, turn),
-    [rootChatTurnInputs]
-  )
-
-  const loadSubagentWorkingStep = useLatestHandler(handleLoadSubagentWorkingStep)
-
-  const loadSubagentWorkingItem = useLatestHandler(handleLoadSubagentWorkingItem)
-
-  const loadSubagentWorkingToolPage = useLatestHandler(handleLoadSubagentWorkingToolPage)
-
-  const subagentChatTurnInputs = useStableProps<SubagentChatTurnInputs>({
+  const subagentChatTurnInputs = useStableProps<ChatTurnInputs>({
+    ...sharedTurnInputs,
     itemIndexesById: subagentChatItemIndexesById,
     visibleChatItems: subagentVisibleChatItems,
     followingWorkingStepsById: subagentChatConversationModel.followingWorkingStepsById,
@@ -178,24 +167,16 @@ export function useWorkspaceTurnRendering({
     steeredWorkingStepDisclosureTargets:
       subagentChatConversationModel.steeredWorkingStepDisclosureTargets,
     subagentCompletions: subagentPresentation.childSubagentCompletions,
-    renderSubagentCompletion: subagentPresentation.renderSubagentCompletion,
-    container: changesContainer,
-    cwd: changesCwd,
-    projectCwd: changesProjectCwd,
-    modelLabelsById: effectiveSelection.modelLabelsById,
-    resolvedModelIdsById: effectiveSelection.resolvedModelIdsById,
-    progressSettings: settings.effectiveAppSettings.chat,
-    selectedModelId: providerState.model,
-    onOpenFileLink: changesCwd ? handleOpenFileLink : undefined,
-    onLoadWorkingStep: loadSubagentWorkingStep,
-    onLoadWorkingItem: loadSubagentWorkingItem,
-    onLoadWorkingToolPage: loadSubagentWorkingToolPage
+    onLoadWorkingStep: handleLoadSubagentWorkingStep,
+    onLoadWorkingItem: handleLoadSubagentWorkingItem,
+    onLoadWorkingToolPage: handleLoadSubagentWorkingToolPage
   })
 
-  const renderSubagentChatTurn = useCallback(
+  const turnInputs = activeSubagentChatView ? subagentChatTurnInputs : rootChatTurnInputs
+  const renderChatTurn = useCallback(
     (turnIndex: number, turn: ProviderChatTurn): React.ReactElement =>
-      renderSubagentTurn(subagentChatTurnInputs, turnIndex, turn),
-    [subagentChatTurnInputs]
+      renderConversationTurn(turnInputs, turnIndex, turn),
+    [turnInputs]
   )
 
   const showChatTurnDownButton = Boolean(
@@ -218,5 +199,5 @@ export function useWorkspaceTurnRendering({
       objective
     )
   }
-  return { renderChatTurn, renderSubagentChatTurn, showChatTurnDownButton, handleSaveGoalObjective }
+  return { renderChatTurn, showChatTurnDownButton, handleSaveGoalObjective }
 }

@@ -53,8 +53,10 @@ cancelling a chip stops its preparation. Chips are not persisted with drafts.
 `provider:prepare-linked-chat-context` creates a hidden fork without modifying the source.
 Claude, Copilot, and OpenCode use native compaction summaries; Codex uses the configurable
 summary prompt because its compaction output is encrypted. Forks inherit the source account.
-Sending prepends the summaries as linked-chat context. Editing reuses the saved summaries;
-a failed send restores the chips. See `linkedChatContext.ts` and `linkedChats.ts`.
+If summarization fails, Sele prepares an excerpt of recent user messages and final replies
+from the source transcript in memory. Sending prepends the prepared text as linked-chat context.
+Editing reuses the saved summaries, and a failed send restores the chips. See
+`linkedChatContext.ts` and `linkedChats.ts`.
 
 ## Background state recovery
 

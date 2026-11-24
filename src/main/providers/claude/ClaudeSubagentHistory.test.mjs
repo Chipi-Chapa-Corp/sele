@@ -198,6 +198,34 @@ test('subagent source paths reject traversal and observed appends refresh summar
     assert.ok(h.bytes < 160000)
   }))
 
+test('subagent pages give distinct text blocks of the same API reply distinct IDs', () =>
+  fixture(async (h) => {
+    const records = [
+      h.rows[0],
+      ...h.rows.slice(1, 3).map((record, index) => ({
+        ...record,
+        message: {
+          ...record.message,
+          id: 'msg_same_reply',
+          content: [{ type: 'text', text: `Part ${index} ${'x'.repeat(40_000)}` }]
+        }
+      }))
+    ]
+    await writeFile(h.path, records.map((record) => JSON.stringify(record)).join('\n') + '\n')
+    const latest = await h.adapter.getSubagent(h.id, 'child')
+    assert.ok(latest.turnPagination.olderCursor)
+    const older = await h.adapter.getSubagent(
+      h.id,
+      'child',
+      {},
+      { startIndex: null, limit: 10, cursor: latest.turnPagination.olderCursor, direction: 'older' }
+    )
+    const previous = older.items.find((item) => item.content?.startsWith('Part 0'))
+    const next = latest.items.find((item) => item.content?.startsWith('Part 1'))
+    assert.ok(previous && next)
+    assert.notEqual(previous.id, next.id)
+  }))
+
 test('a child section remains expandable after an append shifts the latest file page', () =>
   fixture(async (h) => {
     const page = await h.adapter.getSubagent(h.id, 'child')

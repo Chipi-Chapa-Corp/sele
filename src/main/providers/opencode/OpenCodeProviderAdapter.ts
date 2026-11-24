@@ -16,7 +16,6 @@ import { getOpenCodeContextUsage } from './OpenCodeContextUsage'
 import {
   raceLinkedChatCancellation,
   requireLinkedChatSummary,
-  summarizeLinkedChatWithFallback,
   throwIfLinkedChatCancelled
 } from '../linkedChatContext'
 import { OpenCodeCredentialHealth, checkOpenCodeCredential } from './OpenCodeCredentialHealth'
@@ -1842,39 +1841,10 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
 
   summarizeChatInFork = async (
     chatId: string,
-    options: { summaryPrompt: string; signal: AbortSignal },
+    { signal }: { signal: AbortSignal },
     onForkCreated: (chatId: string) => Promise<void>
   ): Promise<string> => {
-    throwIfLinkedChatCancelled(options.signal)
-    const source = await this.ensureState(chatId)
-    if (source.active) throw new Error('Wait for the current response before linking this chat.')
-    const latestUser = source.messages.findLast((message) => message.info.role === 'user')
-    const model = latestUser?.info.role === 'user' ? latestUser.info.model : null
-    return summarizeLinkedChatWithFallback(
-      this,
-      chatId,
-      {
-        ...options,
-        turnOptions: model
-          ? {
-              model: `${model.providerID}/${model.modelID}`,
-              approvalPolicy: 'never',
-              approvalsReviewer: 'user',
-              sandboxMode: 'read-only',
-              serviceTier: null
-            }
-          : undefined,
-        nativeSummary: () => this.summarizeChatNativelyInFork(chatId, options, onForkCreated)
-      },
-      onForkCreated
-    )
-  }
-
-  private summarizeChatNativelyInFork = async (
-    chatId: string,
-    { signal }: { summaryPrompt: string; signal: AbortSignal },
-    onForkCreated: (chatId: string) => Promise<void>
-  ): Promise<string> => {
+    throwIfLinkedChatCancelled(signal)
     const sourceState = await this.ensureState(chatId)
     if (sourceState.active)
       throw new Error('Wait for the current response before linking this chat.')

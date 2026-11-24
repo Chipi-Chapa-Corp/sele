@@ -19,7 +19,8 @@ if (!process.versions.electron) {
           window.addEventListener('error',event=>console.error(event.error?.stack??event.message))
           const noop=()=>{}
           const now=Date.now()
-          const chat={id:'root',providerId:'codex',title:'Subagent fixture',preview:'',createdAt:now,
+          const providerId=location.search==='?provider=claude'?'claude':'codex'
+          const chat={id:'root',providerId,title:'Subagent fixture',preview:'',createdAt:now,
             updatedAt:now,status:null,cwd:'/fixture',cwdKind:'directory',projectCwd:null,
             branchName:null,worktreeBaseBranchName:null,pinned:false,sidebarOrder:null,done:false,
             seenUpdatedAt:now,purpose:null,container:null}
@@ -29,6 +30,9 @@ if (!process.versions.electron) {
             {...chat,id:'pinned-working',title:'Pinned working chat',createdAt:now-3,
               cwd:'/other-project',pinned:true,status:'active'}]
           const message=(id,content,role='assistant')=>({type:'message',id,role,content})
+          const worked=(seconds,content)=>({type:'working',status:'worked',id:'work-'+seconds,
+            startedAt:now,completedAt:now+seconds*1000,
+            items:[{type:'message',id:'tool-output-'+seconds,content}]})
           const detail={...chat,revision:1,capabilities:{editMessages:true,activeMessages:true},
             pendingApproval:null,pendingUserInput:null,contextUsage:null,subagents:[],
             items:[message('prompt','The parent prompt','user'),message('answer','Parent answer')],
@@ -44,7 +48,7 @@ if (!process.versions.electron) {
             detail.items=items;detail.revision++;detail.subagents=window.agents
             detail.turnCount=items.filter(item=>item.type==='message'&&item.role==='user').length
             const snapshot={...detail}
-            window.chatListener?.({providerId:'codex',chatId:'root',sequence:detail.revision,
+            window.chatListener?.({providerId,chatId:'root',sequence:detail.revision,
               detail:{...snapshot,baseRevision:null,baseItemIds:null,itemIds:items.map(item=>item.id),changedItems:items},
               turnCompleted:true,summary:chat})
           }
@@ -66,7 +70,7 @@ if (!process.versions.electron) {
           const usage={updatedAt:now,statisticsLoaded:false,summary:null,dailyUsageBuckets:null,
             rateLimits:[],rateLimitResetCredits:null,errors:[]}
           const defaults={
-            getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId:'codex',available:true}]}),
+            getSourceAvailability:()=>({gitAvailable:false,providers:[{providerId,available:true}]}),
             getChats:()=>({chats:sidebarChats,nextCursor:null}),getChat:()=>detail,
             getConversationViews:()=>[],getKnownChats:()=>({chats:[],nextCursor:null}),getLimitResetMessages:()=>[],
             markChatSeen:(_provider,_id,seenUpdatedAt)=>{chat.seenUpdatedAt=Math.max(chat.seenUpdatedAt,seenUpdatedAt);return {...chat}},
@@ -85,6 +89,20 @@ if (!process.versions.electron) {
               window.pageRequests.push(page??null)
               const summary=window.agents.find(agent=>agent.id===id)
               window.childReads++
+              if(providerId==='claude'){
+                const cursor=page?.cursor??'tail'
+                const items=cursor==='tail'
+                  ? [worked(9,Array.from({length:40},(_,i)=>'Latest work detail '+i).join(String.fromCharCode(10,10))),
+                    message('claude-report',window.updatedReport?'Updated report':'Initial report')]
+                  : cursor==='work-2' ? [worked(2,'Recent tool output')]
+                  : cursor==='work-5' ? [worked(5,'Earlier tool output')]
+                  : [message('claude-prompt','Delegated prompt','user')]
+                const cursors=['prompt','work-5','work-2','tail']
+                const index=cursors.indexOf(cursor)
+                return {...summary,items,itemsStartTurnIndex:0,turnCount:1,
+                  turnPagination:{kind:'cursor',olderCursor:cursors[index-1]??null,
+                    newerCursor:cursors[index+1]??null}}
+              }
               if(window.completedMode)return {...summary,items:id==='child'?[
                 {type:'timelineAnchor',id:'child-turn:subagent-completed:grandchild'},
                 message('child-done','Child agent finished.')]:[message('grandchild-done','Grandchild finished.')],
@@ -192,6 +210,78 @@ if (!process.versions.electron) {
         run(
           'new Promise(resolve=>{let frames=4;const tick=()=>--frames?requestAnimationFrame(tick):resolve();requestAnimationFrame(tick)})'
         )
+      const checkClaudeScrolling = async () => {
+        await win.loadFile(path.join(process.argv[2], 'index.html'), {
+          query: { provider: 'claude' }
+        })
+        await ready(`document.querySelector('[data-chat-id="root"] .chat-list-item__main')`)
+        await run(
+          `window.startAgents();document.querySelector('[data-chat-id="root"] .chat-list-item__main').click()`
+        )
+        await ready(`document.querySelector('.chat-subagent-list .chat-list-item__main')`)
+        await run(`document.querySelector('.chat-subagent-list .chat-list-item__main').click()`)
+        const latestWork = `document.querySelector('[data-chat-turn-id="work-9"] details')`
+        await ready(latestWork)
+        await run(`${latestWork}.querySelector('summary').click()`)
+        await ready(
+          `${latestWork}.open && ${latestWork}.textContent.includes('Latest work detail 39')`
+        )
+        await settle()
+        const pageUp = () =>
+          run(`(() => {
+          const content=document.querySelector('#chat-search-content')
+          content.scrollTop=0
+          content.dispatchEvent(new WheelEvent('wheel',{deltaY:-500,bubbles:true}))
+        })()`)
+        await run(`document.querySelector('#chat-search-content').scrollTop=0`)
+        await settle()
+        await run(
+          `window.latestWork=${latestWork};window.latestWorkTop=window.latestWork.getBoundingClientRect().top`
+        )
+        await pageUp()
+        await ready(`document.querySelector('[data-chat-turn-id="work-2"]')`)
+        await settle()
+        assert.equal(await run(`${latestWork}===window.latestWork && window.latestWork.open`), true)
+        assert.ok(
+          await run(
+            `Math.abs(window.latestWork.getBoundingClientRect().top-window.latestWorkTop)<2`
+          ),
+          'prepending an older fragment preserves the latest fragment’s viewport position'
+        )
+        await pageUp()
+        await ready(`document.querySelector('[data-chat-turn-id="work-5"]')`)
+        await settle()
+        await pageUp()
+        await ready(`document.querySelector('[data-chat-message-id="claude-prompt"]')`)
+        await settle()
+        assert.deepEqual(
+          await run(`Array.from(document.querySelectorAll('#chat-search-content [data-chat-turn-id]'),
+            element=>element.dataset.chatTurnId)`),
+          ['claude-prompt', 'work-5', 'work-2', 'work-9']
+        )
+        assert.equal(await run(`${latestWork}===window.latestWork && window.latestWork.open`), true)
+
+        const reads = await run(`window.updatedReport=true;window.childReads`)
+        await ready(`window.childReads>${reads}`)
+        assert.equal(
+          await run(
+            `document.querySelector('[data-chat-message-id="claude-report"]').textContent.includes('Initial report')`
+          ),
+          true,
+          'tail polling preserves loaded Claude history while reading older messages'
+        )
+        await run(`document.querySelector('[aria-label="Jump to latest messages"]').click()`)
+        await ready(
+          `document.querySelector('[data-chat-message-id="claude-report"]').textContent.includes('Updated report')`
+        )
+        await settle()
+        assert.ok(
+          await run(`(() => {
+          const content=document.querySelector('#chat-search-content')
+          return content.scrollHeight-content.clientHeight-content.scrollTop<2
+        })()`)
+        )
+      }
       const checkCursorNavigation = async () => {
         await run(`window.cursorMode=true;window.historyMode=false;window.pageRequests=[];
         document.querySelector('.chat-subagent-list .chat-list-item__main').click()`)
@@ -612,9 +702,10 @@ if (!process.versions.electron) {
       await ready(`document.querySelector('.chat-home__filter-tabs [aria-label="Working chats"]') &&
         !document.querySelector('.chat-sidebar__working')`)
 
+      await checkClaudeScrolling()
       assert.equal(errors.length, 0, errors.join('\n'))
       console.log(
-        'Subagent workspace checks passed: live rows/spinners, nested depth, empty recovery, draft round trips, automatic history paging, native sleep activity, completion bubbles in both themes, scoped rows, selected completed agents, parent read state and scroll restoration, cascading stop, and working chats at the bottom of the sidebar.'
+        'Subagent workspace checks passed: live rows/spinners, nested depth, empty recovery, draft round trips, automatic history paging, Claude scroll continuity, native sleep activity, completion bubbles in both themes, scoped rows, selected completed agents, parent read state and scroll restoration, cascading stop, and working chats at the bottom of the sidebar.'
       )
     } catch (error) {
       console.error(error.stack)

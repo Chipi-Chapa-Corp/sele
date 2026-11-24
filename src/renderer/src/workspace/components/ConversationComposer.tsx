@@ -23,6 +23,7 @@ type ConversationComposerProps = WorkspaceController['conversationComposer']
 
 export function ConversationComposer(props: ConversationComposerProps): ReactElement {
   const compact = useCompactLayout()
+  const [noticeContainer, setNoticeContainer] = useState<HTMLDivElement | null>(null)
   const [narrowLayout, setNarrowLayout] = useState(
     () => window.matchMedia('(max-width: 50rem)').matches
   )
@@ -166,7 +167,10 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
           : undefined
       }
     >
-      <div className="chat-panel__composer-inner chat-panel__composer-notices">
+      <div
+        className="chat-panel__composer-inner chat-panel__composer-notices"
+        ref={setNoticeContainer}
+      >
         {!activeSubagentChatView && openCodeConnectionFailure && (
           <OpenCodeConnectionError
             failure={openCodeConnectionFailure}
@@ -453,6 +457,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             />
           )}
           <MessageBox
+            noticeContainer={noticeContainer}
             active={activeSubagentChatView ? false : editingMessage ? false : chatHasActiveTurn}
             activePrimaryMode={
               chatHasPendingSteeringMessage

@@ -90,6 +90,8 @@ type RenderOptions = TranscriptRenderWindow & {
   stopped: boolean
   failed?: boolean
   pendingItems?: ProviderChatItem[]
+  /** A subagent byte range can start partway through an API reply. */
+  recordScopedBlockIds?: boolean
 }
 
 type Segment = {
@@ -168,13 +170,12 @@ type ClaudeBlockKind = 'text' | 'thinking'
  * several transcript records: the nth rendered block of a kind for an API message always gets
  * `${base}:${kind}:${n}`.
  */
-const createClaudeBlockIds = (): ((
-  message: ClaudeTranscriptMessage,
-  kind: ClaudeBlockKind
-) => string) => {
+const createClaudeBlockIds = (
+  getBaseId = getClaudeBlockBaseId
+): ((message: ClaudeTranscriptMessage, kind: ClaudeBlockKind) => string) => {
   const counters = new Map<string, number>()
   return (message, kind) => {
-    const key = `${getClaudeBlockBaseId(message)}:${kind}`
+    const key = `${getBaseId(message)}:${kind}`
     const index = counters.get(key) ?? 0
     counters.set(key, index + 1)
     return `${key}:${index}`
@@ -516,7 +517,9 @@ export const renderClaudeChatItems = (
   if (options.turnWindow) return renderClaudeChatWindow(messages, options, options.turnWindow).items
   const parts: Array<{ item: ProviderChatItem } | { segment: Segment }> = []
   const skillToolIds = new Set<string>()
-  const nextBlockId = createClaudeBlockIds()
+  const nextBlockId = createClaudeBlockIds(
+    options.recordScopedBlockIds ? (message) => message.uuid : undefined
+  )
   let planState = createClaudePlanState()
   let segment = null as Segment | null
   let backgroundTurnEnded = false

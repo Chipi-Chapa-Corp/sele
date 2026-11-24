@@ -13,7 +13,6 @@ import { sqlitePendingMessageBackend } from '../../database/pendingMessages'
 import {
   raceLinkedChatCancellation,
   requireLinkedChatSummary,
-  summarizeLinkedChatWithFallback,
   throwIfLinkedChatCancelled
 } from '../linkedChatContext'
 import type { McpAppConnection } from '../../../shared/mcpApps'
@@ -2340,29 +2339,10 @@ export class CopilotProviderAdapter implements ProviderAdapter {
 
   summarizeChatInFork = async (
     chatId: string,
-    options: { summaryPrompt: string; signal: AbortSignal },
+    { signal }: { signal: AbortSignal },
     onForkCreated: (chatId: string) => Promise<void>
   ): Promise<string> => {
-    throwIfLinkedChatCancelled(options.signal)
-    const source = await this.ensureSession(chatId)
-    if (source.active) throw new Error('Wait for the current response before linking this chat.')
-    return summarizeLinkedChatWithFallback(
-      this,
-      chatId,
-      {
-        ...options,
-        turnOptions: source.options,
-        nativeSummary: () => this.summarizeChatNativelyInFork(chatId, options, onForkCreated)
-      },
-      onForkCreated
-    )
-  }
-
-  private summarizeChatNativelyInFork = async (
-    chatId: string,
-    { signal }: { summaryPrompt: string; signal: AbortSignal },
-    onForkCreated: (chatId: string) => Promise<void>
-  ): Promise<string> => {
+    throwIfLinkedChatCancelled(signal)
     const sourceState = await this.ensureSession(chatId)
     if (sourceState.active)
       throw new Error('Wait for the current response before linking this chat.')
