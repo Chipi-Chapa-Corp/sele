@@ -6,6 +6,7 @@ import type {
   ProviderAgentMode,
   ProviderAgentModeOption,
   ProviderAppInput,
+  ProviderBenchmarkSide,
   ProviderApprovalMode,
   ProviderApprovalModeOption,
   ProviderCwdNote,
@@ -26,12 +27,23 @@ import type { MessageBoxSelection } from '../messageBoxPreferences'
 import type { AppChatDropdownSelectionAction, AppChatUsageDisplay } from '../settings'
 import { type ChatContextUsage } from './UsageIndicator'
 
+export type BenchmarkToggle = {
+  enabled: boolean
+  disabled: boolean
+  onToggle: () => void
+}
+
 export type MessageBoxProps = {
   agentMode: ProviderAgentMode
   agentModes: ProviderAgentModeOption[]
   agentModesLoading?: boolean
   approvalMode: ProviderApprovalMode
   approvalModes: ProviderApprovalModeOption[]
+  benchmarkToggle?: BenchmarkToggle
+  benchmarkSecondary?: {
+    selection: MessageBoxSelection
+    onChange: (selection: Partial<MessageBoxSelection>) => void
+  }
   active?: boolean
   activePrimaryMode?: Extract<ProviderActiveSendMode, 'steer' | 'queue'>
   activeSteeringEnabled?: boolean
@@ -124,6 +136,10 @@ export type MessageBoxProps = {
     review?: Omit<ProviderReview, 'prompt'> | null,
     skills?: ProviderSkillInput[],
     apps?: ProviderAppInput[]
+  ) => Promise<boolean> | boolean
+  onSendBenchmarkSide?: (
+    side: ProviderBenchmarkSide,
+    ...args: Parameters<MessageBoxProps['onSend']>
   ) => Promise<boolean> | boolean
 }
 

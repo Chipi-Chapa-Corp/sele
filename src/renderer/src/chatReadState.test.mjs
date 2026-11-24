@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
-import { mergeSeenUpdatedAt } from './chatMetadata.ts'
+import { mergeBenchmarkMetadata, mergeSeenUpdatedAt } from './chatMetadata.ts'
 
 const load = (path, name, context) => {
   const file = ts.createSourceFile(
@@ -27,6 +27,7 @@ test('delayed detail and metadata snapshots keep read chats read while new repli
   const context = vm.createContext({
     getChatPreview: (detail) => detail.items.at(-1)?.content,
     mergeSeenUpdatedAt,
+    mergeBenchmarkMetadata,
     getLastTurnOutcome: () => 'failed',
     getChatUpdateActivity: () => null,
     truncateChatUpdateText: (value) => value,
@@ -201,6 +202,7 @@ test('active transcript chunks preserve sidebar identity; status, title, account
   const context = vm.createContext({
     getChatPreview: (detail) => detail.items.at(-1)?.content,
     mergeSeenUpdatedAt,
+    mergeBenchmarkMetadata,
     arePendingApprovalsEqual: (a, b) => a === b,
     areContainerTargetsEqual: (a, b) => a === b,
     isActiveChatStatus: (status) => status === 'active'
@@ -249,6 +251,7 @@ test('stream summaries with delayed read markers and omitted fields do not advan
   const context = vm.createContext({
     getChatPreview: () => 'Existing preview',
     mergeSeenUpdatedAt,
+    mergeBenchmarkMetadata,
     arePendingApprovalsEqual: (a, b) => (a == null && b == null) || a === b,
     areContainerTargetsEqual: (a, b) => a === b
   })

@@ -11,6 +11,11 @@
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
+.changes-sidebar__controls--benchmark {
+  justify-content: end;
+  grid-template-columns: auto;
+}
+
 .changes-sidebar__content {
   display: flex;
   min-width: 0;

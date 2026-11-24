@@ -11,6 +11,8 @@ import { extname, isAbsolute } from 'node:path'
 import type {
   ProviderApprovalDecision,
   ProviderActiveSendMode,
+  ProviderBenchmarkContender,
+  ProviderBenchmarkResultInput,
   ProviderAccountUsage,
   ProviderApi,
   ProviderChatDetail,
@@ -55,6 +57,7 @@ import {
   isProviderApprovalPolicy,
   isProviderApprovalsReviewer,
   isProviderActiveSendMode,
+  isProviderBenchmarkOutcome,
   isProviderId,
   isProviderModelId,
   isProviderReasoningEffort,
@@ -110,17 +113,15 @@ type InFlightChatUpdate = {
   update: QueuedWindowChatUpdate
 }
 
-type AcknowledgedChatDetail = {
-  chatKey: string
-  detail: ProviderChatDetail
-}
-
 type ChatUpdateDeliveryState = {
   ready: boolean
   viewedChatKey: string | null
+  /** Streams full details beside the viewed chat, such as a benchmark's secondary agent. */
+  companionChatKey: string | null
   preparedChatKeys: Set<string>
   inFlightUpdate: InFlightChatUpdate | null
-  acknowledgedDetail: AcknowledgedChatDetail | null
+  /** Delta bases, one per chat whose details this window currently receives. */
+  acknowledgedDetails: Map<string, ProviderChatDetail>
   acknowledgmentTimer: ReturnType<typeof setTimeout> | null
   pendingByChatKey: Map<string, QueuedWindowChatUpdate>
   latestRevisionByChatKey: Map<string, number>
@@ -259,6 +260,12 @@ const readWorkingStep = async (
   return workingStep
 }
 
+const isDetailChatKey = (state: ChatUpdateDeliveryState, chatKey: string): boolean =>
+  chatKey === state.viewedChatKey || chatKey === state.companionChatKey
+
+const getDetailChatKeys = (state: ChatUpdateDeliveryState): string[] =>
+  [state.viewedChatKey, state.companionChatKey].filter((key): key is string => key !== null)
+
 const getChatUpdateDeliveryState = (client: RendererClient): ChatUpdateDeliveryState => {
   const existingState = chatUpdateDeliveryByClientId.get(client.id)
   if (existingState) return existingState
@@ -266,9 +273,10 @@ const getChatUpdateDeliveryState = (client: RendererClient): ChatUpdateDeliveryS
   const state: ChatUpdateDeliveryState = {
     ready: false,
     viewedChatKey: null,
+    companionChatKey: null,
     preparedChatKeys: new Set(),
     inFlightUpdate: null,
-    acknowledgedDetail: null,
+    acknowledgedDetails: new Map(),
     acknowledgmentTimer: null,
     pendingByChatKey: new Map(),
     latestRevisionByChatKey: new Map()
@@ -302,12 +310,12 @@ const resetChatUpdateAcknowledgment = (state: ChatUpdateDeliveryState): void => 
     const latest = state.pendingByChatKey.get(inFlight.chatKey) ?? inFlight.update
     state.pendingByChatKey.set(inFlight.chatKey, {
       ...latest,
-      detail: state.viewedChatKey === inFlight.chatKey ? latest.detail : null,
+      detail: isDetailChatKey(state, inFlight.chatKey) ? latest.detail : null,
       turnCompleted: latest.turnCompleted || inFlight.update.turnCompleted
     })
   }
   state.inFlightUpdate = null
-  state.acknowledgedDetail = null
+  state.acknowledgedDetails.clear()
 }
 
 const suspendChatUpdateDelivery = (
@@ -391,8 +399,7 @@ const sendChatUpdate = (
   nextChatUpdateSequence =
     nextChatUpdateSequence >= Number.MAX_SAFE_INTEGER ? 1 : nextChatUpdateSequence + 1
   const chatKey = getProviderChatKey(update.providerId, update.chatId)
-  const previousDetail =
-    state.acknowledgedDetail?.chatKey === chatKey ? state.acknowledgedDetail.detail : null
+  const previousDetail = state.acknowledgedDetails.get(chatKey) ?? null
   const rendererDetail = update.detail ? prepareChatDetailForRenderer(update.detail) : null
   const detailUpdate = rendererDetail
     ? createChatDetailUpdate(rendererDetail, previousDetail)
@@ -425,9 +432,8 @@ const sendNextChatUpdate = (client: RendererClient, state: ChatUpdateDeliverySta
   if (!state.ready || state.inFlightUpdate !== null || state.pendingByChatKey.size === 0) return
 
   const preferredChatKey =
-    state.viewedChatKey && state.pendingByChatKey.has(state.viewedChatKey)
-      ? state.viewedChatKey
-      : state.pendingByChatKey.keys().next().value
+    getDetailChatKeys(state).find((chatKey) => state.pendingByChatKey.has(chatKey)) ??
+    state.pendingByChatKey.keys().next().value
   if (typeof preferredChatKey !== 'string') return
 
   const update = state.pendingByChatKey.get(preferredChatKey)
@@ -453,7 +459,7 @@ const queueChatUpdateForWindow = (
   const update = {
     providerId: event.providerId,
     chatId: event.chatId,
-    detail: state.viewedChatKey === chatKey ? event.detail : null,
+    detail: isDetailChatKey(state, chatKey) ? event.detail : null,
     summary: event.summary,
     turnCompleted,
     openingDetail: turnCompleted && state.preparedChatKeys.has(chatKey) ? event.detail : undefined
@@ -494,8 +500,63 @@ const requireChatPurpose = (value: unknown): ProviderChatPurpose => {
   return value
 }
 
-const requireOptionalChatPurpose = (value: unknown): ProviderChatPurpose | undefined =>
-  value == null ? undefined : requireChatPurpose(value)
+// New chats may also be the hidden secondary agent of a benchmark.
+const requireOptionalStartChatPurpose = (value: unknown): ProviderChatPurpose | undefined =>
+  value == null ? undefined : value === 'benchmark' ? value : requireChatPurpose(value)
+
+const requireBenchmarkContender = (value: unknown): ProviderBenchmarkContender => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid benchmark contender')
+  }
+  const { chatId, model, reasoningEffort, serviceTier } = value as Record<string, unknown>
+  if (!isProviderModelId(model)) throw new Error('Invalid benchmark model')
+  if (reasoningEffort != null && !isProviderReasoningEffort(reasoningEffort)) {
+    throw new Error('Invalid benchmark reasoning effort')
+  }
+  if (serviceTier != null && !isProviderServiceTier(serviceTier)) {
+    throw new Error('Invalid benchmark speed')
+  }
+  return {
+    chatId: requireChatId(chatId),
+    model,
+    reasoningEffort: reasoningEffort ?? null,
+    serviceTier: serviceTier ?? null
+  }
+}
+
+const requireBenchmarkResultInput = (value: unknown): ProviderBenchmarkResultInput => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid benchmark result')
+  }
+  const { chatId, turnId, outcome, primary, secondary, secondaryTurnId, discardLater } =
+    value as Record<string, unknown>
+  if (!isProviderBenchmarkOutcome(outcome)) throw new Error('Invalid benchmark outcome')
+  return {
+    chatId: requireChatId(chatId),
+    turnId: requireMessageId(turnId),
+    outcome,
+    secondaryTurnId: outcome === 'tie' ? undefined : requireMessageId(secondaryTurnId),
+    discardLater: discardLater === undefined ? undefined : requireBoolean(discardLater),
+    primary: requireBenchmarkContender(primary),
+    secondary: requireBenchmarkContender(secondary)
+  }
+}
+
+const requireBenchmarkSide = (value: unknown) => {
+  if (value == null) return undefined
+  if (value === 'primary' || value === 'secondary') return value
+  throw new Error('Invalid benchmark side')
+}
+
+const requireBenchmarkCheckpoint = (value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Invalid benchmark checkpoint')
+  const { primary, secondary } = value as Record<string, unknown>
+  return {
+    primary: primary === null ? null : requireMessageId(primary),
+    secondary: secondary === null ? null : requireMessageId(secondary)
+  }
+}
 
 const maxLinkedChatSummaryPromptLength = 20_000
 
@@ -1490,7 +1551,7 @@ export const registerProviderIpc = (): void => {
     // the new consumer inherit an old in-flight sequence or transcript delta base.
     resetChatUpdateAcknowledgment(state)
     state.ready = true
-    setChatUpdateInterest(event.sender.id, state.viewedChatKey)
+    setChatUpdateInterest(event.sender.id, getDetailChatKeys(state))
     sendNextChatUpdate(event.sender, state)
   })
 
@@ -1501,7 +1562,7 @@ export const registerProviderIpc = (): void => {
 
   onClientMessage(
     providerIpcChannels.viewedChatChanged,
-    (event, providerIdValue: unknown, chatIdValue: unknown) => {
+    (event, providerIdValue: unknown, chatIdValue: unknown, companionChatIdValue?: unknown) => {
       const state = getChatUpdateDeliveryState(event.sender)
       const clearingViewedChat = providerIdValue == null && chatIdValue == null
       if (!clearingViewedChat && (providerIdValue == null || chatIdValue == null)) {
@@ -1509,20 +1570,30 @@ export const registerProviderIpc = (): void => {
       }
 
       try {
-        const nextViewedChatKey = clearingViewedChat
-          ? null
-          : getProviderChatKey(requireProviderId(providerIdValue), requireChatId(chatIdValue))
-        if (state.viewedChatKey !== nextViewedChatKey) state.acknowledgedDetail = null
+        const providerId = clearingViewedChat ? null : requireProviderId(providerIdValue)
+        const nextViewedChatKey = providerId
+          ? getProviderChatKey(providerId, requireChatId(chatIdValue))
+          : null
+        const nextCompanionChatKey =
+          providerId && companionChatIdValue != null
+            ? getProviderChatKey(providerId, requireChatId(companionChatIdValue))
+            : null
         state.viewedChatKey = nextViewedChatKey
+        state.companionChatKey =
+          nextCompanionChatKey === nextViewedChatKey ? null : nextCompanionChatKey
+        // Keep a delta base only while that chat still receives details.
+        for (const chatKey of state.acknowledgedDetails.keys()) {
+          if (!isDetailChatKey(state, chatKey)) state.acknowledgedDetails.delete(chatKey)
+        }
         if (nextViewedChatKey) state.preparedChatKeys.add(nextViewedChatKey)
-        setChatUpdateInterest(event.sender.id, state.ready ? nextViewedChatKey : null)
+        setChatUpdateInterest(event.sender.id, state.ready ? getDetailChatKeys(state) : [])
       } catch (error) {
         console.error('[caught:registerProviderIpc:registerProviderIpc]', error)
         return
       }
 
       for (const [chatKey, update] of state.pendingByChatKey) {
-        if (chatKey === state.viewedChatKey || update.detail === null) continue
+        if (isDetailChatKey(state, chatKey) || update.detail === null) continue
         state.pendingByChatKey.set(chatKey, {
           ...update,
           detail: null
@@ -1551,14 +1622,11 @@ export const registerProviderIpc = (): void => {
       if (
         detailAppliedValue &&
         inFlightUpdate.detail &&
-        state.viewedChatKey === inFlightUpdate.chatKey
+        isDetailChatKey(state, inFlightUpdate.chatKey)
       ) {
-        state.acknowledgedDetail = {
-          chatKey: inFlightUpdate.chatKey,
-          detail: inFlightUpdate.detail
-        }
-      } else if (state.acknowledgedDetail?.chatKey === inFlightUpdate.chatKey) {
-        state.acknowledgedDetail = null
+        state.acknowledgedDetails.set(inFlightUpdate.chatKey, inFlightUpdate.detail)
+      } else {
+        state.acknowledgedDetails.delete(inFlightUpdate.chatKey)
       }
 
       clearChatAcknowledgmentTimer(state)
@@ -1618,6 +1686,11 @@ export const registerProviderIpc = (): void => {
       markChatSeen: [requireProviderId, requireChatId, requireTimestamp],
       setChatPinned: [requireProviderId, requireChatId, requireBoolean],
       setChatOrder: [requireChatIds],
+      setChatBenchmark: [requireProviderId, requireChatId, requireChatId],
+      recordBenchmarkResult: [requireProviderId, requireBenchmarkResultInput],
+      rewindChatBenchmark: [requireProviderId, requireChatId, requireBenchmarkCheckpoint],
+      getBenchmarkResults: [requireProviderId, requireChatId],
+      endChatBenchmark: [requireProviderId, requireChatId],
       addLimitResetMessage: [
         requireProviderId,
         requireLimitResetTarget,
@@ -1688,7 +1761,7 @@ export const registerProviderIpc = (): void => {
         requireProviderId,
         requireMessage,
         requireStartChatOptions,
-        requireOptionalChatPurpose
+        requireOptionalStartChatPurpose
       ],
       ...summarizedOperations,
       continueChatInFork: [
@@ -1710,6 +1783,13 @@ export const registerProviderIpc = (): void => {
         requireTurnOptions
       ],
       compactChat: [requireProviderId, requireChatId],
+      startChatBenchmark: [
+        requireProviderId,
+        requireMessage,
+        requireQueuedTurnOptions,
+        requireQueuedTurnOptions,
+        requireBenchmarkSide
+      ],
       stopChat: [requireProviderId, requireChatId],
       resolveApproval: [requireProviderId, requireChatId, requireApprovalDecision],
       resolveUserInput: [

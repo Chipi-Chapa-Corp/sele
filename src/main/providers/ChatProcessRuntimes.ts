@@ -25,6 +25,8 @@ const chatMethods = new Set([
   'getChatWindow',
   'getChatCursorWindow',
   'getChatWindowForItem',
+  'replaceTurnAnswer',
+  'rewindBenchmarkHistory',
   'getChatTerminalTasks',
   'getMcpApp',
   'getSubagents',

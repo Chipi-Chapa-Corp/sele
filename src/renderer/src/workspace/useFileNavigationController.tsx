@@ -17,7 +17,6 @@ import { type PinnedRecentReference } from '../recentReferencePins'
 import { addRecentlyOpenedFile } from '../recentlyOpenedFiles'
 import { type ChatTurnWindow } from '../chatTurnWindow'
 import {
-  getChangedFileDisplayPath,
   getCollapsedTreeFolders,
   type ChangedFile,
   type ChangeTreeNode,
@@ -30,7 +29,7 @@ import { getContainerTargetKey } from '../containerSelection'
 import { getChatDetailTurnCount, mergeChatDetailTurnPage } from '../chatDetailWindow'
 import { chatTurnWindowSize } from './controllerTypes'
 import { getErrorMessage, getProviderChatKey } from './chatControllerUtils'
-import type { useChangesData } from './useChangesData'
+import { getTreeFileEditorTarget, type useChangesData } from './useChangesData'
 import type { useGitViewModel } from './useGitViewModel'
 import { useLatestHandler } from './stableProps'
 import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
@@ -65,6 +64,7 @@ export function useFileNavigationController({
     setGitBranches,
     setGitBranchesScope,
     setGitBranchLoadState,
+    setGitBranchLoadRequest,
     setGitChangeLoadRequest,
     setFileTreeLoadRequest,
     gitBranchDeleteRetry,
@@ -188,6 +188,26 @@ export function useFileNavigationController({
       finishBranchAction()
     }
   }
+  const handleSwitchBenchmarkBranch = useLatestHandler(
+    async (cwd: string, branchName: string, create: boolean) => {
+      if (branchSwitchDisabled || !startBranchAction()) return null
+
+      try {
+        const result = await appApi.switchGitBranch({
+          branchName,
+          container: changesContainer,
+          create,
+          cwd
+        })
+        setGitChangeLoadRequest((request) => request + 1)
+        setGitBranchLoadRequest((request) => request + 1)
+        setFileTreeLoadRequest((request) => request + 1)
+        return result
+      } finally {
+        finishBranchAction()
+      }
+    }
+  )
   const handleDeleteBranch = async (
     branchName: string,
     scope?: AppGitDeleteBranchScope,
@@ -326,14 +346,7 @@ export function useFileNavigationController({
   const handleOpenFile = (file: TreeFile): void => {
     if (!changesCwd) return
 
-    openFileEditorTarget({
-      container: changesContainer,
-      cwd: changesCwd,
-      path: file.path,
-      displayPath: getChangedFileDisplayPath(file),
-      kind: file.kind ?? null,
-      previousPath: file.previousPath ?? null
-    })
+    openFileEditorTarget(getTreeFileEditorTarget(file, changesCwd, changesContainer))
   }
   const handleOpenFileLink = useCallback(
     (
@@ -597,6 +610,7 @@ export function useFileNavigationController({
     handleReorderPinnedRecentReferences,
     handleReviewCommentsChange,
     handleSelectFileEditorTarget,
+    handleSwitchBenchmarkBranch,
     handleSelectedReviewChange,
     handleSwitchBranch,
     handleToggleActiveTreeFolders,

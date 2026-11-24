@@ -227,6 +227,8 @@ test('single and bulk Done schedule cleanup; undo cancels it and scheduling fail
   const events = []
   let fail = false
   const globals = {
+    getChatMetadata: async () => ({}),
+    getChatMetadataByIds: async () => new Map(),
     deferredChatProcessCleanup: {
       schedule: async (...args) => {
         events.push(['schedule', ...args])

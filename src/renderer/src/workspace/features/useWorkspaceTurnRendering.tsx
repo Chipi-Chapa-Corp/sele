@@ -1,9 +1,21 @@
-import { useCallback } from 'react'
-import { type ProviderChatTurn } from '../../../../shared/chatTurns'
+import { Captions, ThumbsUp } from 'lucide-react'
+import { Fragment, useCallback, useMemo } from 'react'
+import {
+  alignBenchmarkTurns,
+  getBenchmarkTurnOutput,
+  getUserTurnStart,
+  splitBenchmarkSideHistory,
+  toBenchmarkRound
+} from '../../benchmark'
+import { buildChatConversationModel } from '../../chatConversationModel'
+import { getChatItemRenderKey } from '../../chatItemIdentity'
+import { Button } from '../../components/Button'
+import { getProviderChatTurns, type ProviderChatTurn } from '../../../../shared/chatTurns'
 import { shouldDisableRateLimitReset } from '../../accountRateLimits'
 import { providerApi } from '../../providerApi'
 import {
   renderConversationTurn,
+  renderConversationTurnContents,
   type ChatTurnInputs,
   type RootChatTurnInputs
 } from '../chatTurnRendering'
@@ -19,6 +31,7 @@ export function useWorkspaceTurnRendering({
   scroll,
   chatState,
   chatErrors,
+  benchmark,
   session,
   messaging,
   interactions,
@@ -128,24 +141,29 @@ export function useWorkspaceTurnRendering({
     authenticationRequired: chatErrors.authenticationRequired,
     availableRateLimitResets: accountUsage?.rateLimitResetCredits?.availableCount ?? 0,
     rateLimitResetOptions: accountUsage?.rateLimitResetCredits?.options,
-    canEditOwnMessages,
+    canEditOwnMessages: !benchmark.active && canEditOwnMessages,
     continuePrompt: settings.effectiveAppSettings.chat.continuePrompt,
     stoppedTurnActionDisabled,
     continuedStoppedWorkingStepIds,
     pinnedChatMessageIds,
     rateLimitResetDisabled,
-    canRetryStoppedTurns,
+    canRetryStoppedTurns: !benchmark.active && canRetryStoppedTurns,
     stoppedTurnRetryMessages,
     streamingChatItemId,
     onDeletePendingMessage: handleDeletePendingMessage,
-    onEditPendingMessage: handleEditPendingMessage,
+    onEditPendingMessage: benchmark.active ? undefined : handleEditPendingMessage,
     onSteerPendingMessage:
-      chatHasActiveTurn && !chatHasPendingSteeringMessage ? handleSteerPendingMessage : undefined,
+      (chatHasActiveTurn || benchmark.companionActive) && !chatHasPendingSteeringMessage
+        ? handleSteerPendingMessage
+        : undefined,
     onInterruptPendingMessage: handleInterruptPendingMessage,
-    onContinueStoppedTurn: handleContinueStoppedTurn,
+    onContinueStoppedTurn: benchmark.active ? undefined : handleContinueStoppedTurn,
     onEditMessage: handleEditMessage,
     onForkMessage:
-      chatHasActiveTurn || chatState.forkingMessageId || chatState.chatDetail?.historyPreview
+      benchmark.active ||
+      chatHasActiveTurn ||
+      chatState.forkingMessageId ||
+      chatState.chatDetail?.historyPreview
         ? undefined
         : handleForkMessage,
     onDisclosureToggle: scroll.handleChatDisclosureToggle,
@@ -172,11 +190,174 @@ export function useWorkspaceTurnRendering({
     onLoadWorkingToolPage: handleLoadSubagentWorkingToolPage
   })
 
+  const secondaryModel = useMemo(
+    () => buildChatConversationModel(benchmark.companionItems),
+    [benchmark.companionItems]
+  )
+  const secondaryItemIndexes = useMemo(
+    () => new Map(benchmark.companionItems.map(({ id }, index) => [id, index])),
+    [benchmark.companionItems]
+  )
+  const secondaryChatTurnInputs = useStableProps<ChatTurnInputs>({
+    ...sharedTurnInputs,
+    cwd: benchmark.companion?.cwd ?? null,
+    selectedModelId: benchmark.secondarySelection.model,
+    itemIndexesById: secondaryItemIndexes,
+    visibleChatItems: benchmark.companionItems,
+    followingWorkingStepsById: secondaryModel.followingWorkingStepsById,
+    workingStepIdsWithNextWorkingStep: secondaryModel.workingStepIdsWithNextWorkingStep,
+    steeredWorkingStepDisclosureTargets: secondaryModel.steeredWorkingStepDisclosureTargets,
+    subagentCompletions: { before: new Map(), after: new Map() },
+    onLoadWorkingStep: benchmark.loadWorkingStep,
+    onLoadWorkingItem: benchmark.loadWorkingItem,
+    onLoadWorkingToolPage: benchmark.loadWorkingToolPage,
+    mcpAppScopeProviderId: chatState.selectedChat?.providerId ?? null,
+    mcpAppScopeChatId: benchmark.companion?.id,
+    motionChatKey: benchmark.companion?.id ?? null,
+    streamingChatItemId: benchmark.companionActive
+      ? benchmark.companionItems.findLast(
+          (item) => item.type === 'message' && item.role === 'assistant'
+        )?.id
+      : undefined,
+    scheduleChatAutoScroll: scroll.scheduleChatAutoScroll
+  })
+  const benchmarkTranscript = useMemo(() => {
+    const secondary = getProviderChatTurns(benchmark.companionItems)
+    const split =
+      benchmark.active && benchmark.sideHistory
+        ? splitBenchmarkSideHistory(renderedChatTurns, secondary, benchmark.sideHistory)
+        : null
+    return {
+      pairs: alignBenchmarkTurns(
+        split?.primary ?? renderedChatTurns,
+        split?.secondary ?? secondary
+      ),
+      trials: new Map(split?.trials.map(({ turn, side }) => [turn.id, side])),
+      turns: split ? [...split.primary, ...split.trials.map(({ turn }) => turn)] : renderedChatTurns
+    }
+  }, [renderedChatTurns, benchmark.companionItems, benchmark.sideHistory, benchmark.active])
+  const benchmarkTurn = useStableProps({
+    active: benchmark.active,
+    busy: benchmark.busy || chatState.sendState === 'sending',
+    working: benchmark.working,
+    round: benchmark.round,
+    results: benchmark.results,
+    vote: benchmark.vote,
+    sync: benchmark.sync
+  })
   const turnInputs = activeSubagentChatView ? subagentChatTurnInputs : rootChatTurnInputs
   const renderChatTurn = useCallback(
-    (turnIndex: number, turn: ProviderChatTurn): React.ReactElement =>
-      renderConversationTurn(turnInputs, turnIndex, turn),
-    [turnInputs]
+    (turnIndex: number, turn: ProviderChatTurn): React.ReactElement => {
+      const pair = activeSubagentChatView ? undefined : benchmarkTranscript.pairs.get(turn.id)
+      const trial = activeSubagentChatView ? undefined : benchmarkTranscript.trials.get(turn.id)
+      const start = getUserTurnStart(turn)
+      if ((!pair && !trial) || !start) return renderConversationTurn(turnInputs, turnIndex, turn)
+      const outcome = benchmarkTurn.results.get(turn.id)?.outcome
+      const single = outcome === 'primary' || outcome === 'secondary'
+      const judged =
+        pair && benchmarkTurn.active && !single
+          ? benchmarkTurn.round?.turnId === turn.id
+            ? benchmarkTurn.round
+            : toBenchmarkRound(turn, pair)
+          : null
+      return (
+        <div
+          className="chat-detail__turn benchmark-round"
+          data-benchmark-side={trial}
+          data-chat-turn-id={turn.id}
+          data-chat-turn-index={turnIndex}
+          key={getChatItemRenderKey(start)}
+        >
+          {renderConversationTurnContents(
+            trial === 'secondary' ? secondaryChatTurnInputs : turnInputs,
+            turnIndex,
+            { ...turn, items: [start] }
+          )}
+          <div
+            className={
+              single
+                ? 'benchmark-round__answers benchmark-round__answers--single'
+                : 'benchmark-round__answers'
+            }
+          >
+            {(['primary', 'secondary'] as const).map((side) => {
+              if (single && outcome !== side) return null
+              const primary = side === 'primary'
+              const label = primary ? 'Main agent' : 'Secondary agent'
+              const output = trial
+                ? trial === side
+                  ? [turn]
+                  : []
+                : primary
+                  ? [turn]
+                  : pair
+                    ? [pair.secondary, ...pair.trailing]
+                    : []
+              const inputs = primary ? turnInputs : secondaryChatTurnInputs
+              const lastAnswer = output
+                .findLast(({ items }) =>
+                  items.some((item) => item.type === 'message' && item.role === 'assistant')
+                )
+                ?.items.findLast((item) => item.type === 'message' && item.role === 'assistant')
+              const actions =
+                benchmarkTurn.active && !benchmarkTurn.working && lastAnswer
+                  ? {
+                      itemId: lastAnswer.id,
+                      content: (
+                        <>
+                          {judged?.votable && (
+                            <Button
+                              theme="secondary"
+                              size="small"
+                              title={`Like ${label.toLowerCase()} answer`}
+                              aria-label={`Like ${label.toLowerCase()} answer`}
+                              icon={<ThumbsUp aria-hidden="true" />}
+                              disabled={benchmarkTurn.busy}
+                              callback={() => benchmarkTurn.vote(side, judged)}
+                            />
+                          )}
+                          <Button
+                            theme="secondary"
+                            size="small"
+                            title={`Copy ${label.toLowerCase()} worktree to the other agent`}
+                            aria-label={`Copy ${label.toLowerCase()} worktree to the other agent`}
+                            icon={<Captions aria-hidden="true" />}
+                            disabled={benchmarkTurn.busy}
+                            callback={() => benchmarkTurn.sync(side)}
+                          />
+                        </>
+                      )
+                    }
+                  : undefined
+              return (
+                <section className="benchmark-round__answer" aria-label={label} key={side}>
+                  {output.map((part) => (
+                    <Fragment key={part.id}>
+                      {renderConversationTurnContents(
+                        inputs,
+                        turnIndex,
+                        {
+                          ...part,
+                          items: getBenchmarkTurnOutput(part)
+                        },
+                        actions
+                      )}
+                    </Fragment>
+                  ))}
+                </section>
+              )
+            })}
+          </div>
+        </div>
+      )
+    },
+    [
+      turnInputs,
+      secondaryChatTurnInputs,
+      activeSubagentChatView,
+      benchmarkTranscript,
+      benchmarkTurn
+    ]
   )
 
   const showChatTurnDownButton = Boolean(
@@ -199,5 +380,10 @@ export function useWorkspaceTurnRendering({
       objective
     )
   }
-  return { renderChatTurn, showChatTurnDownButton, handleSaveGoalObjective }
+  return {
+    renderChatTurn,
+    renderedChatTurns: benchmarkTranscript.turns,
+    showChatTurnDownButton,
+    handleSaveGoalObjective
+  }
 }

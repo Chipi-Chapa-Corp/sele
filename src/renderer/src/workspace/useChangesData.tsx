@@ -1,14 +1,29 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: controller refs and state setters are stable inputs
 import { useMemo } from 'react'
 import type { FileEditorTarget } from '../components/FileEditorDialog'
+import type { AppContainerTarget } from '../../../shared/app'
 import {
   getChangedFileDisplayPath,
   getGitChangedFiles,
-  getTreeFilesWithDisplayPaths
+  getTreeFilesWithDisplayPaths,
+  type TreeFile
 } from '../changeTree'
 import { type GitSyncAction } from './controllerTypes'
 import { isFileTreeScope, isGitChangesScope } from './chatControllerUtils'
 import type { WorkspaceChat } from './composition/useWorkspaceChatModel'
+
+export const getTreeFileEditorTarget = (
+  file: TreeFile,
+  cwd: string,
+  container: AppContainerTarget | null | undefined
+): FileEditorTarget => ({
+  container,
+  cwd,
+  path: file.path,
+  displayPath: getChangedFileDisplayPath(file),
+  kind: file.kind ?? null,
+  previousPath: file.previousPath ?? null
+})
 
 // Return shape is inferred from the derived change data below.
 export function useChangesData({ panes, gitState, session, chatState }: WorkspaceChat) {
@@ -102,14 +117,7 @@ export function useChangesData({ panes, gitState, session, chatState }: Workspac
   const fileEditorDiffTargets = useMemo<FileEditorTarget[]>(
     () =>
       changesCwd
-        ? changedFiles.map((file) => ({
-            container: changesContainer,
-            cwd: changesCwd,
-            path: file.path,
-            displayPath: getChangedFileDisplayPath(file),
-            kind: file.kind,
-            previousPath: file.previousPath ?? null
-          }))
+        ? changedFiles.map((file) => getTreeFileEditorTarget(file, changesCwd, changesContainer))
         : [],
     [changedFiles, changesContainer, changesCwd]
   )
@@ -143,6 +151,7 @@ export function useChangesData({ panes, gitState, session, chatState }: Workspac
     changesLoadState,
     currentBranchName,
     displayedGitChangeLoadError,
+    displayedGitChanges,
     fileEditorDiffTargets,
     filesLoadState,
     hasSyncChanges,

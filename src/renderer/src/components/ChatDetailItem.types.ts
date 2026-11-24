@@ -32,6 +32,7 @@ export type ChatDetailItemProps = {
   followingWorkingStepStatus?: ProviderWorkingStep['status']
   hasNextWorkingStep?: boolean
   item: ProviderChatItem
+  messageActions?: ReactNode
   messagePinned?: boolean
   pendingMessageLabel?: ReactNode
   pendingMessageDeleteDisabled?: boolean

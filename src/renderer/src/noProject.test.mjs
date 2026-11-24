@@ -8,7 +8,7 @@ import {
   readWorkspaceControllerSource
 } from '../../../scripts/tests/helpers/workspace-controller.mjs'
 import { isNoProjectChat, isNoProjectCwd, noProjectGroupKey } from '../../shared/noProject.ts'
-import { mergeChatMetadata, mergeSeenUpdatedAt } from './chatMetadata.ts'
+import { mergeBenchmarkMetadata, mergeChatMetadata, mergeSeenUpdatedAt } from './chatMetadata.ts'
 import {
   sortChatsForSidebarSection,
   sortDoneChats,
@@ -204,6 +204,7 @@ test('detail, live summaries and metadata changes preserve the saved No Project 
   const context = createWorkspaceTestContext({
     getChatPreview: () => '',
     mergeSeenUpdatedAt,
+    mergeBenchmarkMetadata,
     arePendingApprovalsEqual: (a, b) => a === b,
     areContainerTargetsEqual: (a, b) => a === b
   })

@@ -1,3 +1,10 @@
+import { findCodexHistorySegments, nativeHistoryFileAt } from '../NativeHistoryFile'
+import {
+  findCodexBenchmarkTurnStart,
+  getCodexBenchmarkTurnRecords,
+  numberCodexBenchmarkReplay,
+  replaceCodexBenchmarkAnswer
+} from './CodexBenchmarkHistory'
 import { getInitialProviderContainers } from '../../providerProcessContext'
 import { createCodexTerminalSessions } from './CodexTerminalSessions'
 import { PendingMessageEdits } from '../PendingMessageEdits'
@@ -1257,6 +1264,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     return next
   })
   private threadRevisions = new Map<string, number>()
+  private emptyThreads = new Set<string>()
   private externallyOwnedThreadIds = new Set<string>()
   /** Set once the CLI build rejects paginated turn listing; history then uses thread reads. */
   private turnPaginationUnsupported = false
@@ -1317,10 +1325,11 @@ export class CodexProviderAdapter implements ProviderAdapter {
   private readThread = (threadId: string, includeTurns: boolean): Promise<ThreadResponse> =>
     retryCodexEmptyRolloutRead(
       () =>
-        this.client.request<ThreadResponse>('thread/read', {
-          threadId,
-          includeTurns
-        }),
+        this.client.request<ThreadResponse>(
+          'thread/read',
+          { threadId, includeTurns },
+          { isExpectedError: (error) => includeTurns && isUnsupportedTurnPaginationError(error) }
+        ),
       {
         onRetry: (error, attempt, attempts) =>
           console.warn(
@@ -2265,17 +2274,16 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
   /** The latest turn's status and timestamps, without its item payloads. */
   private readLatestTurnShell = (threadId: string): Promise<ThreadTurnsListResponse> =>
-    this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
-      threadId,
-      cursor: null,
-      limit: 1,
-      sortDirection: 'desc',
-      itemsView: 'notLoaded'
-    })
+    this.client.request<ThreadTurnsListResponse>(
+      'thread/turns/list',
+      { threadId, cursor: null, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' },
+      { isExpectedError: isUnsupportedTurnPaginationError }
+    )
 
   private getSidebarTurnSummary = async (thread: CodexThread) => {
     const response = await this.readLatestTurnShell(thread.id).catch((error) => {
-      console.error('Unable to read latest Codex sidebar turn.', error)
+      if (!isUnsupportedTurnPaginationError(error))
+        console.error('Unable to read latest Codex sidebar turn.', error)
       return null
     })
     if (!response) return undefined
@@ -2545,6 +2553,9 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.rememberThreadContainer(chatId)
     const loadStartedAtRevision = this.threadRevisions.get(chatId) ?? 0
     const cachedThread = this.threads.get(chatId)
+    if (cachedThread && this.emptyThreads.has(chatId) && window.cursor === null) {
+      return this.createChatDetail(cachedThread)
+    }
     const threadMetadata = cachedThread ?? (await this.readThread(chatId, false)).thread
     if (this.usesLegacyHistory(threadMetadata.historyMode)) {
       if (window.cursor != null) {
@@ -2590,27 +2601,63 @@ export class CodexProviderAdapter implements ProviderAdapter {
       window.direction === 'older' && window.cursor == null
         ? this.getProviderPendingMessages(chatId).slice(-window.limit)
         : []
+    const liveOpening = (): ProviderChatDetail | null => {
+      const live = this.threads.get(chatId)
+      if (
+        !cacheLatest ||
+        window.direction !== 'older' ||
+        window.cursor != null ||
+        !live?.turns.length ||
+        !this.client.ownsThread(chatId) ||
+        !this.hasActiveOrSubmittingTurn(chatId)
+      )
+        return null
+      return this.createChatDetail(live, {
+        turnWindow: { startIndex: null, limit: window.limit },
+        cursorPendingMessages: this.getProviderPendingMessages(chatId).slice(-window.limit)
+      })
+    }
     const rawLimit = Math.max(1, window.limit - pendingMessages.length)
     let cursorWindow: Awaited<ReturnType<typeof loadCodexTurnCursorWindow>>
-    try {
-      cursorWindow = await loadCodexTurnCursorWindow(
-        (method, params) => this.client.request(method, params),
-        threadMetadata.id,
-        { ...window, cursor: requestedCursor, limit: rawLimit }
-      )
-    } catch (error) {
-      if (!isUnsupportedTurnPaginationError(error) || window.cursor != null) throw error
-      this.turnPaginationUnsupported = true
-      // A partially cached thread would truncate history; read the whole transcript instead.
-      // Some builds reject cursors for threads they still report as paginated.
-      return this.loadLegacyChatWindowInContext(
-        chatId,
-        window,
-        cacheLatest,
-        threadMetadata,
-        null,
-        loadStartedAtRevision
-      )
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        cursorWindow = await loadCodexTurnCursorWindow(
+          (method, params) =>
+            this.client.request(method, params, {
+              isExpectedError: isUnsupportedTurnPaginationError
+            }),
+          threadMetadata.id,
+          { ...window, cursor: requestedCursor, limit: rawLimit }
+        )
+        break
+      } catch (error) {
+        if (!isUnsupportedTurnPaginationError(error) || window.cursor != null) throw error
+        try {
+          // Some app-servers support only the full read. Remember that capability only
+          // after it works: a new thread can reject both reads while its rollout is indexed.
+          const detail = await this.loadLegacyChatWindowInContext(
+            chatId,
+            window,
+            cacheLatest,
+            threadMetadata,
+            null,
+            loadStartedAtRevision
+          )
+          this.turnPaginationUnsupported = true
+          return detail
+        } catch (fallbackError) {
+          if (!isUnsupportedTurnPaginationError(fallbackError)) throw fallbackError
+          if (attempt === 3) {
+            // While the owned turn is still streaming, it is safe to display its live items.
+            const detail = liveOpening()
+            if (detail) return detail
+            throw new Error('Codex could not read this chat’s history. Retry loading the chat.', {
+              cause: fallbackError
+            })
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 50 * 2 ** attempt))
+        }
+      }
     }
     if (
       cacheLatest &&
@@ -2619,6 +2666,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
       cursorWindow.turns.length === 0 &&
       (threadMetadata.preview.trim().length > 0 || Boolean(cachedThread?.turns.length))
     ) {
+      const detail = liveOpening()
+      if (detail) return detail
       // Empty and unavailable are different states. Never commit an empty page over a transcript
       // known to contain turns; the renderer keeps its last good detail and enters its error state.
       throw new Error('Codex message history is unavailable. Please retry.')
@@ -3405,6 +3454,166 @@ export class CodexProviderAdapter implements ProviderAdapter {
       return id
     })
 
+  replaceTurnAnswer: NonNullable<ProviderAdapter['replaceTurnAnswer']> = (
+    chatId,
+    messageId,
+    answer,
+    options
+  ) =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      const container = this.getThreadContainer(chatId, options)
+      const [turnId, userItemId] = messageId.split(':')
+      if (!turnId || !userItemId) throw new Error('The Codex prompt is unavailable.')
+      const detail = await this.getChat(chatId, options)
+      if (
+        detail.status ||
+        detail.writeAccess === 'readOnly' ||
+        this.hasActiveOrSubmittingTurn(chatId) ||
+        this.queuedTurnsByThread.get(chatId)?.length
+      )
+        throw new Error('Wait for Codex to finish the benchmark round.')
+      const thread = this.threads.get(chatId)
+      if (!thread?.path) throw new Error('The Codex transcript is unavailable.')
+      const remote = Boolean(
+        container || isRunningInFlatpak() || (await getCurrentContainerHostBridge())
+      )
+      await this.releaseChat(chatId, options)
+      const current = await nativeHistoryFileAt(thread.path, container, remote).read()
+      let original = current
+      if (options?.discardLater && findCodexBenchmarkTurnStart(current, turnId) < 0) {
+        for (const segment of await findCodexHistorySegments(
+          thread.path,
+          chatId,
+          container,
+          remote
+        )) {
+          const candidate = await nativeHistoryFileAt(segment, container, remote).read()
+          if (findCodexBenchmarkTurnStart(candidate, turnId) < 0) continue
+          original = candidate
+          break
+        }
+        if (original === current)
+          throw new Error('The selected Codex round is unavailable in retained history.')
+      }
+      const originalTurn = getCodexBenchmarkTurnRecords(original, turnId)
+      const preferredTurn = getCodexBenchmarkTurnRecords(
+        replaceCodexBenchmarkAnswer(
+          original,
+          chatId,
+          turnId,
+          userItemId,
+          answer,
+          options?.discardLater
+        ),
+        turnId
+      )
+      const resumed = await this.resumeThread(chatId, undefined, thread.cwd ?? null, 'edit')
+      const catalog = await loadCodexTurnCatalog(
+        (method, params) => this.client.request(method, params),
+        chatId
+      )
+      const index = catalog.findIndex((turn) => turn.id === turnId)
+      if (index < 0 || (!options?.discardLater && index !== catalog.length - 1))
+        throw new Error('The selected Codex round is no longer available for replacement.')
+      // Codex indexes persisted turns separately from the rollout. Rewind to clear the original
+      // entry and write into the new segment so other histories sharing the old one stay intact.
+      const reverted = await this.client.request<ThreadResponse>('thread/revert', {
+        threadId: chatId,
+        beforeTurnId: turnId
+      })
+      this.cacheThread({ ...resumed, ...reverted.thread, turns: [] })
+      await this.releaseChat(chatId, options)
+      const nextPath = reverted.thread.path ?? (await this.readThread(chatId, false)).thread.path
+      if (!nextPath || nextPath === thread.path)
+        throw new Error('Codex did not create a new history segment for the selected round.')
+      const path = nativeHistoryFileAt(nextPath, container, remote)
+      const base = await path.read()
+      try {
+        await path.append(numberCodexBenchmarkReplay(base, preferredTurn))
+        await this.resumeThread(chatId, undefined, thread.cwd ?? null, 'mutation')
+        // Reading the resumed thread flushes the rollout to Codex's native turn index.
+        await this.readThread(chatId, false)
+        const latest = await this.client.request<ThreadTurnsListResponse>('thread/turns/list', {
+          threadId: chatId,
+          limit: 1,
+          sortDirection: 'desc',
+          itemsView: 'full'
+        })
+        const turn = latest.data[0]
+        if (turn?.id !== turnId || getAgentMessageText(turn) !== answer.trim())
+          throw new Error('Codex did not load the preferred answer.')
+      } catch (error) {
+        await this.releaseChat(chatId, options)
+        await path.replace([...base, ...numberCodexBenchmarkReplay(base, originalTurn)])
+        throw error
+      }
+      const discarded = catalog.slice(index + 1).map(({ id }) => id)
+      this.rememberRolledBackTurns(chatId, new Set(discarded))
+      await deleteCodexSubmittedMessagesForTurns(chatId, discarded)
+      this.paginatedTurnCatalogs.delete(chatId)
+      await this.loadChatCursorWindowInContext(
+        chatId,
+        { cursor: null, direction: 'older', limit: rendererChatUpdateTurnLimit },
+        true
+      )
+      this.emitChatUpdated(chatId)
+      return this.getCachedChatDetail(chatId) ?? this.getChat(chatId, options)
+    })
+
+  rewindBenchmarkHistory: NonNullable<ProviderAdapter['rewindBenchmarkHistory']> = (
+    chatId,
+    throughMessageId,
+    options
+  ) =>
+    this.runWithContainer(this.getThreadContainer(chatId, options), async () => {
+      const waitingForFirstMessage = this.threads.get(chatId)
+      if (throughMessageId === null && waitingForFirstMessage && this.emptyThreads.has(chatId))
+        return this.createChatDetail(waitingForFirstMessage)
+      const thread = await this.resumeThread(
+        chatId,
+        undefined,
+        this.threads.get(chatId)?.cwd ?? null,
+        'edit'
+      )
+      assertSupportedCodexHistory(thread)
+      if (this.hasActiveOrSubmittingTurn(chatId) || this.queuedTurnsByThread.get(chatId)?.length)
+        throw new Error('Wait for Codex to finish before discarding turns.')
+      const turns = this.filterRolledBackTurns(
+        chatId,
+        await loadCodexTurnCatalog((method, params) => this.client.request(method, params), chatId)
+      )
+      const turnId = throughMessageId?.split(':', 1)[0]
+      const index = turnId ? turns.findIndex((turn) => turn.id === turnId) : -1
+      if (turnId && index < 0)
+        throw new Error('The selected round is no longer in the Codex transcript.')
+      const removed = turns.slice(index + 1)
+      if (removed.length > 0) {
+        const response = await this.client.request<ThreadResponse>('thread/revert', {
+          threadId: chatId,
+          beforeTurnId: removed[0].id
+        })
+        const removedIds = removed.map((turn) => turn.id)
+        this.rememberRolledBackTurns(chatId, new Set(removedIds))
+        await deleteCodexSubmittedMessagesForTurns(chatId, removedIds)
+        this.cacheThread({
+          ...thread,
+          ...response.thread,
+          turns: [],
+          ...(index < 0 && { preview: '' })
+        })
+        this.paginatedTurnCatalogs.delete(chatId)
+        if (index < 0) this.emptyThreads.add(chatId)
+        else
+          await this.loadChatCursorWindowInContext(
+            chatId,
+            { cursor: null, direction: 'older', limit: rendererChatUpdateTurnLimit },
+            true
+          )
+        this.emitChatUpdated(chatId)
+      }
+      return this.getCachedChatDetail(chatId) ?? this.getChat(chatId, options)
+    })
+
   startChat = (
     message: string,
     options?: ProviderStartChatOptions,
@@ -3453,6 +3662,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.cacheThread(thread)
 
     if (options?.deferInitialMessage) {
+      this.emptyThreads.add(thread.id)
       const detail = this.getCachedChatDetail(thread.id)
       if (!detail) throw new Error('Unable to create the scheduled chat.')
       this.emitChatUpdated(thread.id)
@@ -4446,6 +4656,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     this.queuedTurnRetryTimers.forEach((timer) => clearTimeout(timer))
     this.queuedTurnRetryTimers.clear()
     this.threads.clear()
+    this.emptyThreads.clear()
     this.externallyOwnedThreadIds.clear()
     this.writeAccessChecks.clear()
     this.messageDelivery.clear()
@@ -4716,7 +4927,8 @@ export class CodexProviderAdapter implements ProviderAdapter {
 
     return this.startSubmittedCodexTurn(chatId, pendingTurnId, async () => {
       const existingCwd = this.threads.get(chatId)?.cwd ?? null
-      await this.resumeThread(chatId, options, existingCwd, 'mutation')
+      if (!this.emptyThreads.has(chatId) || !this.client.ownsThread(chatId))
+        await this.resumeThread(chatId, options, existingCwd, 'mutation')
 
       return this.client.request<TurnStartResponse>('turn/start', {
         threadId: chatId,
@@ -4758,6 +4970,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
           }
           started = { turn: accepted }
         }
+        this.emptyThreads.delete(threadId)
         // The RPC reply is an authoritative identity binding. Install it before yielding
         // to persistence: live events and history reads can finish this turn meanwhile.
         const turn = this.reconcileStartedTurn(threadId, pendingTurnId, started.turn)

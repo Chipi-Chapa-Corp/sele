@@ -68,7 +68,10 @@ export function ChangesFooterContent(props: ChangesFooterContentProps): ReactEle
   const syncDisplayDisabled = useSwitchSettledDisabled(syncDisabled, navigationKey)
 
   return (
-    <footer className="changes-sidebar__footer">
+    <footer
+      className="changes-sidebar__footer"
+      aria-label={props.benchmarkActive ? 'Main worktree actions' : undefined}
+    >
       {showCommitInput && (
         <div className="changes-sidebar__input-row">
           <label className="changes-sidebar__commit-message">

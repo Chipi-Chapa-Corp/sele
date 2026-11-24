@@ -89,6 +89,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     handleSandboxModeChange,
     handleSelectedReviewChange,
     handleSendMessage,
+    handleSendBenchmarkSide,
     handleQueueLimitReset,
     limitResetTarget,
     handleSkipProviderUpdate,
@@ -120,6 +121,16 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
     newSessionProviderValueContent,
     newSessionRemoteRuntime,
     newSessionSshEnvironmentId,
+    benchmarkToggle,
+    benchmarkSecondary,
+    benchmarkBlocked,
+    benchmarkMergeSuggestion,
+    benchmarkApproval,
+    benchmarkUserInput,
+    benchmarkApprovalResolution,
+    benchmarkUserInputResolution,
+    benchmarkCompanionId,
+    handleResolveBenchmarkApproval,
     pendingApproval,
     pendingUserInput,
     projectOptions,
@@ -280,38 +291,59 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             </div>
           </section>
         )}
-        {selectedChat && !activeSubagentChatView && pendingApproval && (
-          <ApprovalRequestBox
-            approval={pendingApproval}
-            disabled={Boolean(approvalDecisionInFlight)}
-            error={approvalError}
-            onResolve={handleResolveApproval}
-          />
+        {selectedChat && !activeSubagentChatView && (
+          <>
+            {[pendingApproval, benchmarkApproval].map(
+              (approval, side) =>
+                approval && (
+                  <ApprovalRequestBox
+                    key={`${side}:${approval.id}`}
+                    approval={approval}
+                    disabled={Boolean(
+                      approvalDecisionInFlight || benchmarkApprovalResolution?.decision
+                    )}
+                    error={
+                      side === 0 ? approvalError : (benchmarkApprovalResolution?.error ?? null)
+                    }
+                    onResolve={side === 0 ? handleResolveApproval : handleResolveBenchmarkApproval}
+                  />
+                )
+            )}
+            {[pendingUserInput, benchmarkUserInput].map((request, index) => {
+              if (!request) return null
+              const side = index === 0 ? 'primary' : 'secondary'
+              const chatKey = `${selectedChat.providerId}:${index === 0 ? selectedChat.id : benchmarkCompanionId}`
+              const key = `${chatKey}:${request.id}`
+              const resolving =
+                index === 0
+                  ? userInputResolving
+                  : (benchmarkUserInputResolution?.resolving ?? false)
+              const error =
+                index === 0 ? userInputError : (benchmarkUserInputResolution?.error ?? null)
+              return request.elicitation ? (
+                <ElicitationRequestBox
+                  key={key}
+                  request={request}
+                  disabled={resolving}
+                  error={error}
+                  onRespond={(response) => resolveSelectedUserInput(response, side)}
+                />
+              ) : (
+                <UserInputRequestBox
+                  chatKey={chatKey}
+                  disabled={resolving}
+                  error={error}
+                  key={key}
+                  request={request}
+                  onCancel={() => resolveSelectedUserInput({ kind: 'cancel' }, side)}
+                  onSubmit={(answer, wasFreeform) =>
+                    resolveSelectedUserInput({ kind: 'answer', answer, wasFreeform }, side)
+                  }
+                />
+              )
+            })}
+          </>
         )}
-        {selectedChat &&
-          !activeSubagentChatView &&
-          pendingUserInput &&
-          (pendingUserInput.elicitation ? (
-            <ElicitationRequestBox
-              key={pendingUserInput.id}
-              request={pendingUserInput}
-              disabled={userInputResolving}
-              error={userInputError}
-              onRespond={resolveSelectedUserInput}
-            />
-          ) : (
-            <UserInputRequestBox
-              chatKey={`${selectedChat.providerId}:${selectedChat.id}`}
-              disabled={userInputResolving}
-              error={userInputError}
-              key={`${selectedChat.providerId}:${selectedChat.id}:${pendingUserInput.id}`}
-              request={pendingUserInput}
-              onCancel={() => resolveSelectedUserInput({ kind: 'cancel' })}
-              onSubmit={(answer, wasFreeform) =>
-                resolveSelectedUserInput({ kind: 'answer', answer, wasFreeform })
-              }
-            />
-          ))}
       </div>
       {!selectedChat && newChatOpen && (
         <MobileSessionSetup
@@ -449,7 +481,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
       )}
       <div className="chat-panel__composer-input">
         <div className="chat-panel__composer-inner">
-          {!selectedChat && newChatOpen && !activeSubagentChatView && (
+          {!selectedChat && newChatOpen && !activeSubagentChatView && !benchmarkSecondary && (
             <LimitResetQueueMessages
               key={JSON.stringify([newSessionProvider, limitResetTarget])}
               providerId={newSessionProvider}
@@ -472,11 +504,16 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
             approvalMode={effectiveApprovalMode}
             approvalModes={approvalModes}
             autoFocus={!selectedChat && newChatOpen}
-            disabled={messageBoxDisabled}
+            disabled={messageBoxDisabled || benchmarkBlocked}
+            benchmarkToggle={benchmarkToggle}
+            benchmarkSecondary={benchmarkSecondary}
             editSession={editingMessage}
             promptSuggestion={
-              effectiveAppSettings.chat.promptSuggestions && !activeSubagentChatView
-                ? promptSuggestion
+              !activeSubagentChatView
+                ? (benchmarkMergeSuggestion ??
+                  (effectiveAppSettings.chat.promptSuggestions && !benchmarkSecondary
+                    ? promptSuggestion
+                    : null))
                 : null
             }
             accountUsage={accountUsage}
@@ -576,6 +613,7 @@ export function ConversationComposer(props: ConversationComposerProps): ReactEle
                 : undefined
             }
             onSend={handleSendMessage}
+            onSendBenchmarkSide={handleSendBenchmarkSide}
           />
         </div>
       </div>

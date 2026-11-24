@@ -18,6 +18,8 @@ const chatMethods = [
   'getChatWindow',
   'getChatCursorWindow',
   'getChatWindowForItem',
+  'replaceTurnAnswer',
+  'rewindBenchmarkHistory',
   'getChatTerminalTasks',
   'getMcpApp',
   'getSubagents',

@@ -111,6 +111,12 @@ export const createRendererBridge = (
     switchGitBranch: (options) => transport.invoke(appIpcChannels.switchGitBranch, options),
     deleteGitBranch: (options) => transport.invoke(appIpcChannels.deleteGitBranch, options),
     createGitWorktree: (options) => transport.invoke(appIpcChannels.createGitWorktree, options),
+    createGitBenchmarkWorktrees: (options) =>
+      transport.invoke(appIpcChannels.createGitBenchmarkWorktrees, options),
+    removeGitBenchmarkWorktree: (options) =>
+      transport.invoke(appIpcChannels.removeGitBenchmarkWorktree, options),
+    syncGitWorktreeState: (options) =>
+      transport.invoke(appIpcChannels.syncGitWorktreeState, options),
     getFileTree: (options) => transport.invoke(appIpcChannels.getFileTree, options),
     getFileTreeListing: (options) => transport.invoke(appIpcChannels.getFileTreeListing, options),
     getFileContents: (options) => transport.invoke(appIpcChannels.getFileContents, options),
@@ -507,8 +513,27 @@ export const createRendererBridge = (
     setChatPinned: (providerId, chatId, pinned) =>
       transport.invoke(providerIpcChannels.setChatPinned, providerId, chatId, pinned),
     setChatOrder: (chatIds) => transport.invoke(providerIpcChannels.setChatOrder, chatIds),
-    setViewedChat: (providerId, chatId) =>
-      transport.send(providerIpcChannels.viewedChatChanged, providerId, chatId),
+    setChatBenchmark: (providerId, chatId, benchmarkChatId) =>
+      transport.invoke(providerIpcChannels.setChatBenchmark, providerId, chatId, benchmarkChatId),
+    recordBenchmarkResult: (providerId, result) =>
+      transport.invoke(providerIpcChannels.recordBenchmarkResult, providerId, result),
+    rewindChatBenchmark: (providerId, chatId, checkpoint) =>
+      transport.invoke(providerIpcChannels.rewindChatBenchmark, providerId, chatId, checkpoint),
+    getBenchmarkResults: (providerId, chatId) =>
+      transport.invoke(providerIpcChannels.getBenchmarkResults, providerId, chatId),
+    endChatBenchmark: (providerId, chatId) =>
+      transport.invoke(providerIpcChannels.endChatBenchmark, providerId, chatId),
+    startChatBenchmark: (providerId, message, primary, secondary, side) =>
+      transport.invoke(
+        providerIpcChannels.startChatBenchmark,
+        providerId,
+        message,
+        primary,
+        secondary,
+        side
+      ),
+    setViewedChat: (providerId, chatId, companionChatId = null) =>
+      transport.send(providerIpcChannels.viewedChatChanged, providerId, chatId, companionChatId),
     acknowledgeChatUpdate: (sequence, detailApplied) =>
       transport.send(providerIpcChannels.chatUpdateAcknowledged, sequence, detailApplied),
     onChatMetadataUpdated: (listener) => {

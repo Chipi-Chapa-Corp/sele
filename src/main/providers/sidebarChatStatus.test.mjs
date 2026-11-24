@@ -1,3 +1,4 @@
+import { isUnsupportedTurnPaginationError } from './codex/CodexPaginatedHistory.ts'
 import { isNoProjectChat } from '../../shared/noProject.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -95,6 +96,7 @@ test('Codex cold sidebar reads a stopped last turn before opening it, and after 
       {
         ...codexStatuses,
         getCodexTurnOutcome,
+        isUnsupportedTurnPaginationError,
         isCodexSubagentThread: () => false,
         loadSessionThreadNames: async () => new Map(),
         getThreadTitle: () => 'Chat',
@@ -497,6 +499,7 @@ const coldFixture = (provider, outcome) => {
         ...bindings,
         ...codex,
         getCodexTurnOutcome,
+        isUnsupportedTurnPaginationError,
         isCodexSubagentThread: () => false,
         loadSessionThreadNames: async () => new Map(),
         getThreadTitle: () => 'Chat',

@@ -1,5 +1,5 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
-import type { ProviderActiveSendMode } from '../../../shared/provider'
+import type { ProviderActiveSendMode, ProviderBenchmarkSide } from '../../../shared/provider'
 import { restoreFailedComposerDraft } from '../composerDraft'
 import { buildQuotedPrompt } from '../composerQuotes'
 import { buildLinkedChatPrompt, getLinkedChatKey } from '../linkedChats'
@@ -28,6 +28,7 @@ type ComposerSubmissionDependencies = {
     | 'disabled'
     | 'draftScopeKey'
     | 'onSend'
+    | 'onSendBenchmarkSide'
     | 'onSelectedReviewChange'
   >
   draft: Pick<
@@ -78,6 +79,7 @@ export function useComposerSubmission({
     disabled = false,
     draftScopeKey,
     onSend,
+    onSendBenchmarkSide,
     onSelectedReviewChange
   } = options
   const {
@@ -99,7 +101,8 @@ export function useComposerSubmission({
   const submitMessage = (
     activeMode: ProviderActiveSendMode = activePrimaryMode,
     content: string = message,
-    quotes = selectedQuotes
+    quotes = selectedQuotes,
+    side?: ProviderBenchmarkSide
   ): boolean => {
     const nextMessage = content.trim()
     const typedSkillInputs = getSelectedSkillInputs(
@@ -133,6 +136,7 @@ export function useComposerSubmission({
       attachmentSelectionPending ||
       linkedChatsBlockSend ||
       pending ||
+      (side && (active || editing || !onSendBenchmarkSide)) ||
       (!active && disabled)
     ) {
       return false
@@ -204,16 +208,17 @@ export function useComposerSubmission({
     onSelectedReviewChange?.(null)
     setAttachmentSelectionError(null)
     void Promise.resolve()
-      .then(() =>
-        onSend(
+      .then(() => {
+        const args: Parameters<MessageBoxProps['onSend']> = [
           outgoingMessage,
           active ? activeMode : undefined,
           selectedAttachments,
           submittingReview,
           selectedSkillInputs,
           selectedAppInputs
-        )
-      )
+        ]
+        return side ? onSendBenchmarkSide?.(side, ...args) : onSend(...args)
+      })
       .then((sent) => {
         if (sent) return
         restoreFailedSend()
@@ -224,5 +229,10 @@ export function useComposerSubmission({
       })
     return true
   }
-  return { submitMessage }
+  return {
+    submitMessage,
+    submitBenchmarkSide: onSendBenchmarkSide
+      ? (side: ProviderBenchmarkSide) => submitMessage(undefined, undefined, undefined, side)
+      : undefined
+  }
 }

@@ -34,6 +34,8 @@ export const getConversationViewSummary = (
   doneAt: view.doneAt,
   seenUpdatedAt: view.seenUpdatedAt,
   purpose: view.purpose,
+  benchmarkChatId: view.benchmarkChatId ?? null,
+  benchmarkEnded: view.benchmarkEnded ?? false,
   container: view.container,
   pendingApproval: null
 })

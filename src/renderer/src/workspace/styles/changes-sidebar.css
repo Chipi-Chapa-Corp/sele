@@ -109,6 +109,76 @@
   overflow: hidden;
 }
 
+.changes-sidebar__benchmark {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.changes-sidebar__worktree {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-block: 0.35rem;
+}
+
+.changes-sidebar__worktree + .changes-sidebar__worktree {
+  border-inline-start: 0.0625rem solid var(--menu-border);
+  padding-inline-start: 0.35rem;
+}
+
+.changes-sidebar__worktree:first-child {
+  padding-inline-end: 0.35rem;
+}
+
+.changes-sidebar__worktree-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.changes-sidebar__worktree-controls .branch-switcher__trigger {
+  padding-inline: 0.35rem;
+}
+
+.changes-sidebar__worktree-files {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--glass-edge) transparent;
+}
+
+@container changes-sidebar (max-width: 16rem) {
+  .changes-sidebar__worktree-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .changes-sidebar__worktree-controls > .ui-button,
+  .changes-sidebar__worktree-controls .branch-switcher__value > svg,
+  .changes-sidebar__worktree-files .changes-sidebar__tree-spacer {
+    display: none;
+  }
+
+  .changes-sidebar__worktree-controls .branch-switcher__value > span {
+    direction: rtl;
+    text-align: left;
+  }
+
+  .changes-sidebar__worktree-files .changes-sidebar__tree-row {
+    gap: 0.2rem;
+    padding-inline-end: 0.15rem;
+  }
+
+  .changes-sidebar__worktree-files .changes-sidebar__tree-row--file {
+    grid-template-columns: 1.2rem minmax(0, 1fr);
+  }
+}
+
 .changes-sidebar__terminal,
 .changes-sidebar__browser {
   display: none;

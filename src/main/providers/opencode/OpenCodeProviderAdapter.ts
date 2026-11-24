@@ -1439,6 +1439,115 @@ export class OpenCodeProviderAdapter implements ProviderAdapter {
     return id
   }
 
+  replaceTurnAnswer: NonNullable<ProviderAdapter['replaceTurnAnswer']> = async (
+    chatId,
+    messageId,
+    answer,
+    options
+  ) => {
+    const state = await this.ensureState(chatId, options?.container)
+    const { client } = await this.getClientEntry(state.container)
+    await this.refreshState(state, client)
+    if (
+      state.active ||
+      state.queuedMessages.length ||
+      state.pendingApprovals.length ||
+      state.pendingQuestions.length
+    )
+      throw new Error('OpenCode is still working in this conversation.')
+    const index = state.messages.findIndex(
+      (entry) => entry.info.role === 'user' && entry.info.id === messageId
+    )
+    const original = state.messages[index + 1]
+    if (
+      index < 0 ||
+      !original ||
+      (!options?.discardLater &&
+        state.messages.slice(index + 1).some(({ info }) => info.role === 'user'))
+    )
+      throw new Error('The selected OpenCode benchmark round cannot be replaced.')
+
+    const native = requireOpenCodeV2Client(client)
+    const sessionID = chatId
+    // Keep the worktree intact while replacing model context.
+    await native.session.revert.stage({ sessionID, messageID: original.info.id, files: false })
+    try {
+      await native.session.revert.commit({ sessionID })
+    } catch (error) {
+      await native.session.revert
+        .clear({ sessionID })
+        .catch((clearError) =>
+          console.error('Unable to clear the OpenCode transcript revert.', clearError)
+        )
+      throw error
+    }
+    const replacement = await native.session.synthetic({
+      sessionID,
+      text: `Preferred assistant response:\n${answer}`,
+      resume: false,
+      metadata: { seleImport: { role: 'assistant', content: answer } }
+    })
+
+    state.messages = state.messages.slice(0, index + 1)
+    state.messagesDirty = true
+    state.historyPagination = undefined
+    state.historyInvalidationRevision = (state.historyInvalidationRevision ?? 0) + 1
+    await this.refreshState(state, client)
+    if (!state.messages.some(({ info }) => info.id === replacement.id))
+      throw new Error('OpenCode did not load the preferred answer.')
+    await this.emitUpdateNow(state, false, false)
+    return this.createChatDetail(state, true)
+  }
+
+  rewindBenchmarkHistory: NonNullable<ProviderAdapter['rewindBenchmarkHistory']> = async (
+    chatId,
+    throughMessageId,
+    options
+  ) => {
+    const state = await this.ensureState(chatId, options?.container)
+    const { client } = await this.getClientEntry(state.container)
+    await this.refreshState(state, client)
+    if (
+      state.active ||
+      state.queuedMessages.length ||
+      state.pendingApprovals.length ||
+      state.pendingQuestions.length
+    )
+      throw new Error('Wait for OpenCode to finish before discarding turns.')
+    const index = throughMessageId
+      ? state.messages.findIndex(({ info }) => info.id === throughMessageId)
+      : -1
+    if (throughMessageId && index < 0)
+      throw new Error('The selected round is no longer in the OpenCode transcript.')
+    const boundary = state.messages.findIndex(
+      ({ info }, position) => position > index && info.role === 'user'
+    )
+    if (boundary < 0) return this.createChatDetail(state, true)
+    const native = requireOpenCodeV2Client(client)
+    await native.session.revert.stage({
+      sessionID: chatId,
+      messageID: state.messages[boundary].info.id,
+      files: false
+    })
+    try {
+      await native.session.revert.commit({ sessionID: chatId })
+    } catch (error) {
+      await native.session.revert
+        .clear({ sessionID: chatId })
+        .catch((clearError) =>
+          console.error('Unable to clear the OpenCode transcript revert.', clearError)
+        )
+      throw error
+    }
+    state.messages = state.messages.slice(0, boundary)
+    state.messagesDirty = true
+    state.historyPagination = undefined
+    state.historyInvalidationRevision = (state.historyInvalidationRevision ?? 0) + 1
+    await this.refreshState(state, client)
+    await this.emitUpdateNow(state, false, false)
+    return this.createChatDetail(state, true)
+  }
+
   startChat = async (
     message: string,
     options?: ProviderStartChatOptions,

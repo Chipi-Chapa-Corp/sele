@@ -5,6 +5,7 @@ import type { WorkspaceController } from '../../useWorkspaceController'
 import { X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { RecentReferencesList } from '../../components/RecentReferencesList'
+import { BenchmarkWorktreeTree } from './BenchmarkWorktreeTree'
 import {
   ChangesSidebarGitPerformanceWarning,
   ChangesSidebarGitState,
@@ -57,6 +58,13 @@ const RepositoryFilesTree = memo(function RepositoryFilesTree({
 
 export function ChangesContent(props: ChangesContentProps): ReactElement {
   const {
+    benchmarkActive,
+    benchmarkBranchSwitchDisabled,
+    primaryWorktreeTree,
+    secondaryWorktreeTree,
+    changesContainerKey,
+    handleSwitchBenchmarkBranch,
+    handleSelectFileEditorTarget,
     gitPaneView,
     gitHubPullRequests,
     handleOpenBrowserRequest,
@@ -153,6 +161,27 @@ export function ChangesContent(props: ChangesContentProps): ReactElement {
             ) : (
               <ChangesSidebarRecentsState label="No recent links or files" />
             )
+          ) : benchmarkActive && (changesPaneView === 'git' || changesPaneView === 'files') ? (
+            <div className="changes-sidebar__benchmark">
+              <BenchmarkWorktreeTree
+                key={`main:${changesPaneView}:${changesContainerKey}:${primaryWorktreeTree.cwd ?? ''}`}
+                label="Main"
+                worktree={primaryWorktreeTree}
+                container={changesContainer}
+                branchSwitchDisabled={benchmarkBranchSwitchDisabled}
+                onOpenFile={handleSelectFileEditorTarget}
+                onSwitchBranch={handleSwitchBenchmarkBranch}
+              />
+              <BenchmarkWorktreeTree
+                key={`secondary:${changesPaneView}:${changesContainerKey}:${secondaryWorktreeTree.cwd ?? ''}`}
+                label="Secondary"
+                worktree={secondaryWorktreeTree}
+                container={changesContainer}
+                branchSwitchDisabled={benchmarkBranchSwitchDisabled}
+                onOpenFile={handleSelectFileEditorTarget}
+                onSwitchBranch={handleSwitchBenchmarkBranch}
+              />
+            </div>
           ) : changesPaneView === 'git' ? (
             <>
               {visibleChangesLoadState === 'loading' && (

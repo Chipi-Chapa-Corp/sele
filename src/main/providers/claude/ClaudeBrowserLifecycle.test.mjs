@@ -40,6 +40,10 @@ function setup({
     server: { type: 'sdk', name: 'Claude_Browser' },
     close: () => events.push('browser.close')
   }
+  const visualization = {
+    server: { type: 'sdk', name: 'visualize' },
+    close: () => events.push('visualization.close')
+  }
   const control = { close: () => events.push('query.close') }
   const context = vm.createContext({
     supportsLocalHostTools,
@@ -57,6 +61,11 @@ function setup({
       return integration
     },
     claudeBrowserServerName: 'Claude_Browser',
+    createClaudeVisualizationIntegration: (chatId) => {
+      events.push(`visualization.create:${chatId}`)
+      return visualization
+    },
+    visualizationServerName: 'visualize',
     getContainerTargetKey,
     getClaudeModel: () => 'model',
     isExpectedClaudeQueryShutdownError: () => false,
@@ -100,6 +109,7 @@ function setup({
     state,
     events,
     integration,
+    visualization,
     control,
     permissionHandler,
     options: () => queryOptions
@@ -110,6 +120,9 @@ test('local interactive Claude queries receive only SDK MCP registration and ret
   const harness = setup()
   await harness.instance.startStateQuery(harness.state)
   assert.equal(harness.options().mcpServers.Claude_Browser, harness.integration.server)
+  assert.equal(harness.options().mcpServers.visualize, harness.visualization.server)
+  assert.equal(harness.state.visualization, harness.visualization)
+  assert.ok(harness.events.includes('visualization.create:session'))
   assert.equal(harness.options().canUseTool, harness.permissionHandler)
   assert.equal(harness.options().permissionMode, 'default')
   assert.equal(harness.options().allowedTools, undefined)
@@ -119,8 +132,10 @@ test('local interactive Claude queries receive only SDK MCP registration and ret
   assert.equal(harness.events[0][1].cwd, '/project')
   await harness.instance.closeStateQuery(harness.state)
   assert.equal(harness.state.browser, null)
+  assert.equal(harness.state.visualization, null)
   assert.equal(harness.state.query, null)
   assert.ok(harness.events.indexOf('browser.close') < harness.events.indexOf('query.close'))
+  assert.ok(harness.events.includes('visualization.close'))
 })
 
 test('remote and read-only Claude queries cannot acquire the local browser capability', async () => {
@@ -128,7 +143,8 @@ test('remote and read-only Claude queries cannot acquire the local browser capab
     const harness = setup(options)
     await harness.instance.startStateQuery(harness.state)
     assert.equal(harness.state.browser, null)
-    assert.equal(harness.options().mcpServers, undefined)
+    // Inline widgets write only Sele-owned files, so they remain available everywhere.
+    assert.deepEqual(Object.keys(harness.options().mcpServers), ['visualize'])
     assert.ok(!harness.events.some((event) => Array.isArray(event)))
   }
 })
@@ -216,8 +232,10 @@ test('failed SDK query construction revokes the browser integration', async () =
   const harness = setup({ failQuery: true })
   await assert.rejects(harness.instance.startStateQuery(harness.state), /startup failed/)
   assert.ok(harness.events.includes('browser.close'))
+  assert.ok(harness.events.includes('visualization.close'))
   assert.ok(harness.events.includes('input.close'))
   assert.equal(harness.state.browser, null)
+  assert.notEqual(harness.state.visualization, harness.visualization)
   assert.equal(harness.state.query, null)
 })
 

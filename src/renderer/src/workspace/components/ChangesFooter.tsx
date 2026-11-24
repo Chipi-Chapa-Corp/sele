@@ -20,7 +20,10 @@ export function ChangesFooter(props: ChangesFooterProps): ReactElement | null {
   if (compact)
     return (
       <>
-        <footer className="mobile-git-actions">
+        <footer
+          className="mobile-git-actions"
+          aria-label={props.benchmarkActive ? 'Main worktree actions' : undefined}
+        >
           <Button
             theme="secondary"
             label={

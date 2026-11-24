@@ -58,6 +58,7 @@ const setup = (stored = new Map(), sourceContainer = null, behavior = {}) => {
       'enqueueLimitResetMessage',
       'getChat',
       'getChatWindow',
+      'replaceTurnAnswer',
       'resolveApproval',
       'resolveUserInput',
       'stopChat',
@@ -107,6 +108,13 @@ test('live permissions reach the owning account when the native adapter lacks th
   const options = { sandboxMode: 'danger-full-access', approvalPolicy: 'never' }
   await h.adapter.updateChatPermissions('chat', options)
   assert.deepEqual(h.calls, [['updateChatPermissions', 'a', 'chat', options]])
+})
+
+test('benchmark votes replace the transcript on the chat’s saved account', async () => {
+  const h = setup(new Map([['chat', 'a']]))
+  h.select('b')
+  await h.adapter.replaceTurnAnswer('chat', 'message', 'Preferred answer')
+  assert.deepEqual(h.calls, [['replaceTurnAnswer', 'a', 'chat']])
 })
 
 test('discovery recovers each bound account in the background without opening chats', async () => {

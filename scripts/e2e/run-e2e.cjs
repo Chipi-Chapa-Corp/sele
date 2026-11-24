@@ -21,7 +21,8 @@ const phases = {
   messaging: require('./scenarios/messaging.cjs'),
   persistence: require('./scenarios/persistence.cjs'),
   navigation: require('./scenarios/navigation.cjs'),
-  transcripts: require('./scenarios/transcripts.cjs')
+  transcripts: require('./scenarios/transcripts.cjs'),
+  benchmark: require('./scenarios/benchmark.cjs')
 }
 
 function parseArgs(argv) {
@@ -149,7 +150,7 @@ async function main() {
           context.fail(`${labels[provider]} is not offered`)
     })
     for (const [name, phase] of Object.entries(phases)) {
-      if (args.phase && !args.phase.includes(name)) continue
+      if (args.phase ? !args.phase.includes(name) : name === 'benchmark') continue
       if (!session.page) await session.launch()
       await phase(session)
     }

@@ -4,9 +4,7 @@ import { useComposerAccessOptions } from '../composer/useComposerAccessOptions'
 import { useComposerConfigSections } from '../composer/useComposerConfigSections'
 import { useComposerModelOptions } from '../composer/useComposerModelOptions'
 import { useComposerPresets } from '../composer/useComposerPresets'
-import {
-ChatConfigDropdown
-} from './ChatConfigDropdown'
+import { ChatConfigDropdown } from './ChatConfigDropdown'
 import { ProviderIcon } from './ProviderIcon'
 
 import type { MessageBoxProps } from './MessageBox.types'
@@ -30,6 +28,7 @@ type ComposerSettingsProps = Pick<
   | 'sandboxModes'
   | 'serviceTier'
   | 'presetsEnabled'
+  | 'benchmarkToggle'
   | 'selectionAction'
   | 'showAccessSelector'
   | 'showModelSelector'
@@ -43,7 +42,7 @@ type ComposerSettingsProps = Pick<
   | 'onReasoningEffortChange'
   | 'onSandboxModeChange'
   | 'onServiceTierChange'
->
+> & { benchmarkSecondary?: boolean }
 
 // Draft edits do not change these props; preserve the dropdown tree while typing.
 export const ComposerSettings = memo(function ComposerSettings({
@@ -64,6 +63,8 @@ export const ComposerSettings = memo(function ComposerSettings({
   sandboxModes,
   serviceTier,
   presetsEnabled = true,
+  benchmarkToggle,
+  benchmarkSecondary,
   selectionAction = 'back',
   showAccessSelector = true,
   showModelSelector = true,
@@ -78,16 +79,70 @@ export const ComposerSettings = memo(function ComposerSettings({
   onSandboxModeChange,
   onServiceTierChange
 }: ComposerSettingsProps) {
-const modelConfig = useComposerModelOptions({models,model,modelsUnavailable,modelsLoading,providerId,serviceTier,reasoningEffort})
-const accessConfig = useComposerAccessOptions({sandboxMode,showReviewSelector,approvalMode,approvalModes,sandboxModes})
-const sections = useComposerConfigSections({providerId,agentModesLoading,agentModes,agentMode,showModelSelector,providerUpdating,modelConfig,model,onModelChange,showReasoningSelector,reasoningEffort,onReasoningEffortChange,onAgentModeChange,showAccessSelector,accessConfig,sandboxMode,onSandboxModeChange,onApprovalModeChange,showSpeedSelector,onServiceTierChange})
+  const modelConfig = useComposerModelOptions({
+    models,
+    model,
+    modelsUnavailable,
+    modelsLoading,
+    providerId,
+    serviceTier,
+    reasoningEffort
+  })
+  const accessConfig = useComposerAccessOptions({
+    sandboxMode,
+    showReviewSelector,
+    approvalMode,
+    approvalModes,
+    sandboxModes
+  })
+  const sections = useComposerConfigSections({
+    providerId,
+    agentModesLoading,
+    agentModes,
+    agentMode,
+    showModelSelector,
+    providerUpdating,
+    modelConfig,
+    model,
+    onModelChange,
+    showReasoningSelector,
+    reasoningEffort,
+    onReasoningEffortChange,
+    onAgentModeChange,
+    showAccessSelector,
+    accessConfig,
+    sandboxMode,
+    onSandboxModeChange,
+    onApprovalModeChange,
+    showSpeedSelector,
+    onServiceTierChange
+  })
 
-const presetConfig = useComposerPresets({agentMode,accessConfig,model,reasoningEffort,sandboxMode,serviceTier,showModelSelector,showReasoningSelector,showAccessSelector,showReviewSelector,questionsSelectorVisible: sections.questionsSelectorVisible,agentModesLoading,showSpeedSelector,models,agentModes,providerUpdating,modelConfig})
-
+  const presetConfig = useComposerPresets({
+    agentMode,
+    accessConfig,
+    model,
+    reasoningEffort,
+    sandboxMode,
+    serviceTier,
+    showModelSelector,
+    showReasoningSelector,
+    showAccessSelector,
+    showReviewSelector,
+    questionsSelectorVisible: sections.questionsSelectorVisible,
+    agentModesLoading,
+    showSpeedSelector,
+    models,
+    agentModes,
+    providerUpdating,
+    modelConfig
+  })
 
   return (
     <ChatConfigDropdown
-      id="chat-config-mode"
+      id={benchmarkSecondary ? 'chat-config-benchmark-secondary' : 'chat-config-mode'}
+      benchmarkToggle={benchmarkToggle}
+      ariaLabel={benchmarkSecondary ? 'Secondary agent settings' : undefined}
       key={providerId}
       presetsEnabled={presetsEnabled}
       selectionAction={selectionAction}

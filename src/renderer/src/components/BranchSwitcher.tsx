@@ -20,7 +20,7 @@ type BranchSwitcherProps = {
   id: string
   loading?: boolean
   onClearError?: () => void
-  onDelete: (branchName: string) => Promise<void>
+  onDelete?: (branchName: string) => Promise<void>
   onDeleteWorktree?: () => Promise<void>
   onForceDelete?: () => Promise<void>
   onOpen?: () => void
@@ -78,11 +78,20 @@ const getMenuStyle = (buttonRect: DOMRect): CSSProperties => {
     Math.max(viewportInset, buttonRect.left),
     Math.max(viewportInset, window.innerWidth - width - viewportInset)
   )
+  const spaceAbove = Math.max(0, buttonRect.top - menuOffset - viewportInset)
+  const spaceBelow = Math.max(
+    0,
+    window.innerHeight - buttonRect.bottom - menuOffset - viewportInset
+  )
+  const openUp = spaceBelow < Math.min(336, window.innerHeight * 0.56) && spaceAbove > spaceBelow
 
   return {
     left: toCssRem(left),
-    top: toCssRem(buttonRect.bottom + menuOffset),
-    width: toCssRem(width)
+    ...(openUp
+      ? { bottom: toCssRem(window.innerHeight - buttonRect.top + menuOffset) }
+      : { top: toCssRem(buttonRect.bottom + menuOffset) }),
+    width: toCssRem(width),
+    maxHeight: `min(21rem, 56vh, ${toCssRem(openUp ? spaceAbove : spaceBelow)})`
   }
 }
 
@@ -333,7 +342,7 @@ export const BranchSwitcher: React.FC<BranchSwitcherProps> = ({
               }
               icon={item.kind === 'create' ? <Plus /> : <GitBranch />}
               inlineActions={
-                item.kind === 'branch'
+                item.kind === 'branch' && onDelete
                   ? [
                       {
                         id: `delete-${item.name}`,

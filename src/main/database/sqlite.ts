@@ -108,6 +108,24 @@ export type LocalDatabase = {
     done_at: SqliteNullableNumberColumn
     seen_updated_at: SqliteNullableNumberColumn
     purpose: SqliteNullableChatPurposeColumn
+    benchmark_chat_id: string | null
+    benchmark_ended: SqliteBooleanColumn
+  }
+  benchmark_result: {
+    id: string
+    provider_id: ProviderId
+    chat_id: string
+    turn_id: string
+    outcome: string
+    primary_chat_id: string
+    primary_model: string
+    primary_reasoning_effort: string | null
+    primary_service_tier: string | null
+    secondary_chat_id: string
+    secondary_model: string
+    secondary_reasoning_effort: string | null
+    secondary_service_tier: string | null
+    created_at: number
   }
   cwd_metadata: {
     cwd: string
@@ -286,6 +304,8 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
     .addColumn('done_at', 'integer')
     .addColumn('seen_updated_at', 'integer')
     .addColumn('purpose', 'text')
+    .addColumn('benchmark_chat_id', 'text')
+    .addColumn('benchmark_ended', 'integer', (column) => column.notNull().defaultTo(0))
     .execute()
 
   await db.schema
@@ -434,6 +454,34 @@ const ensureSchema = async (db: Kysely<LocalDatabase>): Promise<void> => {
   await ensureColumn(db, 'chat', 'done_at', 'integer')
   await ensureColumn(db, 'chat', 'seen_updated_at', 'integer')
   await ensureColumn(db, 'chat', 'purpose', 'text')
+  await ensureColumn(db, 'chat', 'benchmark_chat_id', 'text')
+  await ensureColumn(db, 'chat', 'benchmark_ended', 'integer', (column) =>
+    column.notNull().defaultTo(0)
+  )
+  await db.schema
+    .createTable('benchmark_result')
+    .ifNotExists()
+    .addColumn('id', 'text', (column) => column.primaryKey())
+    .addColumn('provider_id', 'text', (column) => column.notNull())
+    .addColumn('chat_id', 'text', (column) => column.notNull())
+    .addColumn('turn_id', 'text', (column) => column.notNull())
+    .addColumn('outcome', 'text', (column) => column.notNull())
+    .addColumn('primary_chat_id', 'text', (column) => column.notNull())
+    .addColumn('primary_model', 'text', (column) => column.notNull())
+    .addColumn('primary_reasoning_effort', 'text')
+    .addColumn('primary_service_tier', 'text')
+    .addColumn('secondary_chat_id', 'text', (column) => column.notNull())
+    .addColumn('secondary_model', 'text', (column) => column.notNull())
+    .addColumn('secondary_reasoning_effort', 'text')
+    .addColumn('secondary_service_tier', 'text')
+    .addColumn('created_at', 'integer', (column) => column.notNull())
+    .execute()
+  await db.schema
+    .createIndex('benchmark_result_chat')
+    .ifNotExists()
+    .on('benchmark_result')
+    .columns(['provider_id', 'chat_id', 'created_at'])
+    .execute()
   await ensureColumn(db, 'chat', 'container_tool', 'text')
   await ensureColumn(db, 'chat', 'container_name', 'text')
   await ensureColumn(db, 'chat', 'container_runtime_tool', 'text')

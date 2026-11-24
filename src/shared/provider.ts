@@ -571,11 +571,13 @@ export type ProviderRateLimitResetOptions = ProviderSourceOptions & {
 export type ProviderChatStatus = 'active' | 'error' | 'waitingOnApproval' | 'waitingOnUserInput'
 export type ProviderChatTurnOutcome = 'failed' | 'stopped'
 /** Hidden chats created by Sele for one internal operation; never listed in the sidebar. */
-export type ProviderChatPurpose = 'commit' | 'linkedChat'
+/** Hidden chats: AI commits, linked-chat summaries, and the secondary agent of a benchmark. */
+export type ProviderChatPurpose = 'commit' | 'linkedChat' | 'benchmark'
 
 export const providerChatPurposes = [
   'commit',
-  'linkedChat'
+  'linkedChat',
+  'benchmark'
 ] as const satisfies readonly ProviderChatPurpose[]
 
 export const isProviderChatPurpose = (value: unknown): value is ProviderChatPurpose =>
@@ -675,6 +677,10 @@ export type ProviderChatMetadata = {
   doneAt?: number | null
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
+  /** The hidden secondary agent chat of a benchmark; set on the visible primary chat only. */
+  benchmarkChatId?: string | null
+  /** The benchmark was turned off; its history stays, and only the primary agent continues. */
+  benchmarkEnded?: boolean
   container: AppContainerTarget | null
 }
 
@@ -711,6 +717,10 @@ export type ProviderChat = {
   doneAt?: number | null
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
+  /** The hidden secondary agent chat of a benchmark; set on the visible primary chat only. */
+  benchmarkChatId?: string | null
+  /** The benchmark was turned off; its history stays, and only the primary agent continues. */
+  benchmarkEnded?: boolean
   container: AppContainerTarget | null
 }
 
@@ -835,6 +845,19 @@ export type ProviderToolIcon =
   | 'subagent'
   | 'time'
   | 'browser'
+  | 'visualization'
+
+/** An HTML document a tool produced for inline display in the sandboxed visualization frame. */
+export type ProviderToolVisualization = {
+  path: string
+  title?: string
+  /** `host` files are written by Sele itself; `workspace` files live in the chat's container. */
+  location: 'host' | 'workspace'
+  /** Published copy of the same document, such as a Claude Artifact URL. */
+  url?: string
+}
+
+export type ProviderStepVisualization = { id: string; visualization: ProviderToolVisualization }
 
 export type ProviderToolImage = {
   path?: string | null
@@ -880,6 +903,7 @@ export type ProviderWorkingTool = {
   rawInput: unknown
   rawOutput: unknown
   mcpApp?: { callId: string; serverName: string; resourceUri?: string }
+  visualization?: ProviderToolVisualization
   images: ProviderToolImage[]
   imageCount?: number
   imagesStartIndex?: number
@@ -912,6 +936,8 @@ export type ProviderWorkingItemSegment = {
 }
 
 export type ProviderWorkingStep = {
+  /** Visualizations stay visible below the step, even while its items are unloaded. */
+  visualizations?: ProviderStepVisualization[]
   tokenUsage?: TokenUsage
   /** Native accounting turn identity, independent of presentation segments. */
   usageTurnId?: string
@@ -1074,6 +1100,10 @@ export type ProviderChatDetail = {
   doneAt?: number | null
   seenUpdatedAt: number | null
   purpose: ProviderChatPurpose | null
+  /** The hidden secondary agent chat of a benchmark; set on the visible primary chat only. */
+  benchmarkChatId?: string | null
+  /** The benchmark was turned off; its history stays, and only the primary agent continues. */
+  benchmarkEnded?: boolean
   container: AppContainerTarget | null
   /** Whether this provider session can currently mutate the chat. Missing means writable. */
   writeAccess?: ProviderChatWriteAccess
@@ -1098,6 +1128,39 @@ export type ProviderChatTurnPagination = {
   kind: 'cursor'
   olderCursor: string | null
   newerCursor: string | null
+}
+
+/** Which side of a benchmark round the user preferred; `tie` when the next message had no vote. */
+export type ProviderBenchmarkOutcome = 'tie' | 'primary' | 'secondary'
+export type ProviderBenchmarkSide = Exclude<ProviderBenchmarkOutcome, 'tie'>
+export type ProviderBenchmarkCheckpoint = Record<ProviderBenchmarkSide, string | null>
+
+export const isProviderBenchmarkOutcome = (value: unknown): value is ProviderBenchmarkOutcome =>
+  value === 'tie' || value === 'primary' || value === 'secondary'
+
+/** The model configuration one benchmark side used for a round. */
+export type ProviderBenchmarkContender = {
+  chatId: string
+  model: ProviderModelId
+  reasoningEffort: ProviderReasoningEffort | null
+  serviceTier: ProviderServiceTier | null
+}
+
+export type ProviderBenchmarkResultInput = {
+  /** The visible primary chat. */
+  chatId: string
+  /** First item ID of the primary turn that was judged. */
+  turnId: string
+  outcome: ProviderBenchmarkOutcome
+  secondaryTurnId?: string
+  discardLater?: boolean
+  primary: ProviderBenchmarkContender
+  secondary: ProviderBenchmarkContender
+}
+
+export type ProviderBenchmarkResult = ProviderBenchmarkResultInput & {
+  providerId: ProviderId
+  createdAt: number
 }
 
 export type ProviderChatActivitySummary = {
@@ -1419,6 +1482,13 @@ export type ProviderApi = {
     options?: ProviderStartChatOptions,
     purpose?: ProviderChatPurpose
   ) => Promise<ProviderChatDetail>
+  startChatBenchmark: (
+    providerId: ProviderId,
+    message: string,
+    primary: ProviderTurnOptions,
+    secondary: ProviderTurnOptions,
+    side?: ProviderBenchmarkSide
+  ) => Promise<ProviderChatDetail>
   continueChat: (
     providerId: ProviderId,
     chatId: string,
@@ -1553,6 +1623,28 @@ export type ProviderApi = {
     pinned: boolean
   ) => Promise<ProviderChatMetadata>
   setChatOrder: (chatIds: string[]) => Promise<ProviderChatMetadata[]>
+  /** Links a visible chat to the hidden secondary chat of its benchmark. */
+  setChatBenchmark: (
+    providerId: ProviderId,
+    chatId: string,
+    benchmarkChatId: string
+  ) => Promise<ProviderChatMetadata>
+  /** Saves a verdict for a benchmark round. An explicit vote can replace an automatic tie. */
+  recordBenchmarkResult: (
+    providerId: ProviderId,
+    result: ProviderBenchmarkResultInput
+  ) => Promise<ProviderBenchmarkResult>
+  rewindChatBenchmark: (
+    providerId: ProviderId,
+    chatId: string,
+    checkpoint: ProviderBenchmarkCheckpoint
+  ) => Promise<{ primary: ProviderChatDetail; secondary: ProviderChatDetail }>
+  getBenchmarkResults: (
+    providerId: ProviderId,
+    chatId: string
+  ) => Promise<ProviderBenchmarkResult[]>
+  /** Turns the benchmark off: the secondary agent stops while its history stays readable. */
+  endChatBenchmark: (providerId: ProviderId, chatId: string) => Promise<ProviderChatMetadata>
   /** Live agent-owned shell tasks; this read must never resume a session. */
   getChatTerminalTasks: (providerId: ProviderId, chatId: string) => Promise<string[]>
   onChatUpdated: (listener: (event: ProviderChatUpdatedEvent) => void) => () => void
@@ -1633,7 +1725,12 @@ export type ProviderRendererApi = Omit<ProviderApi, 'onChatUpdated'> & {
     mode: ProviderActiveSendMode,
     options?: ProviderTurnOptions
   ) => Promise<ProviderChatUpdateSummary>
-  setViewedChat: (providerId: ProviderId | null, chatId: string | null) => void
+  /** A companion chat, such as a benchmark's secondary agent, streams full details too. */
+  setViewedChat: (
+    providerId: ProviderId | null,
+    chatId: string | null,
+    companionChatId?: string | null
+  ) => void
   acknowledgeChatUpdate: (sequence: number, detailApplied: boolean) => void
   onChatMetadataUpdated: (listener: (metadata: ProviderChatMetadata[]) => void) => () => void
   onChatUpdated: (listener: (event: ProviderWindowChatUpdatedEvent) => void) => () => void
@@ -1726,6 +1823,12 @@ export const providerIpcChannels = {
   markChatSeen: 'provider:mark-chat-seen',
   setChatPinned: 'provider:set-chat-pinned',
   setChatOrder: 'provider:set-chat-order',
+  setChatBenchmark: 'provider:set-chat-benchmark',
+  recordBenchmarkResult: 'provider:record-benchmark-result',
+  rewindChatBenchmark: 'provider:rewind-chat-benchmark',
+  getBenchmarkResults: 'provider:get-benchmark-results',
+  endChatBenchmark: 'provider:end-chat-benchmark',
+  startChatBenchmark: 'provider:start-chat-benchmark',
   continueChatSummary: 'provider:continue-chat-summary',
   sendActiveChatMessageSummary: 'provider:send-active-chat-message-summary',
   chatUpdated: 'provider:chat-updated',

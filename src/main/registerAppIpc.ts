@@ -1,3 +1,8 @@
+import {
+  createBenchmarkWorktrees,
+  removeBenchmarkWorktree,
+  syncBenchmarkWorktree
+} from './gitBenchmark'
 import { watchWorkspace, publishWorkspace } from './workspaceEvents'
 import { appGitHubPullRequestStates } from '../shared/app'
 import {
@@ -46,6 +51,7 @@ import type {
   AppGitDeleteBranchScope,
   AppGitCreateWorktreeOptions,
   AppGitCreateWorktreeResult,
+  AppGitSyncWorktreeOptions,
   AppGitFileDiffOptions,
   AppGitChangesResult,
   AppGitChangeKind,
@@ -1439,6 +1445,22 @@ const createGitWorktree = async (
   }
 }
 
+export const removeGitBenchmarkCheckout = async (
+  repositoryCwd: string,
+  worktreePath: string,
+  container?: AppContainerTarget | null
+): Promise<void> =>
+  runWithGitContainer(container, async () => {
+    await removeBenchmarkWorktree(runGit, await getRepositoryRoot(repositoryCwd), worktreePath)
+  })
+
+const getGitSyncWorktreeOptions = (value: unknown): AppGitSyncWorktreeOptions => {
+  const options = getOptionsRecord(value, 'Invalid worktree sync options')
+  const targetCwd = getDefaultPath(options.targetCwd)
+  if (!targetCwd) throw new Error('Choose the worktree to update.')
+  return { ...getGitTarget(options), targetCwd }
+}
+
 const getPorcelainChangeKind = (status: string): AppGitChangeKind => {
   if (status.includes('?')) return 'untracked'
   if (status.includes('R')) return 'rename'
@@ -2607,6 +2629,52 @@ export const registerAppIpc = (): void => {
     )
   })
 
+  handleGitRequest(appIpcChannels.syncGitWorktreeState, getGitSyncWorktreeOptions, (cwd, options) =>
+    syncBenchmarkWorktree(runGit, cwd, options.targetCwd)
+  )
+  handleGitRequest(
+    appIpcChannels.createGitBenchmarkWorktrees,
+    getGitBranchesOptions,
+    async (cwd) => {
+      const pair = await createBenchmarkWorktrees(runGit, await getRepositoryRoot(cwd))
+      try {
+        await Promise.all(
+          [pair.primary, pair.secondary].map(({ worktreePath, branchName }) =>
+            setStoredCwdMetadata(worktreePath, {
+              kind: 'gitWorktree',
+              projectCwd: pair.repositoryRoot,
+              branchName,
+              worktreeBaseBranchName: pair.baseBranchName
+            })
+          )
+        )
+      } catch (error) {
+        for (const { worktreePath } of [pair.primary, pair.secondary]) {
+          await removeBenchmarkWorktree(runGit, pair.repositoryRoot, worktreePath).catch(
+            (cleanupError) =>
+              console.error(
+                'Unable to remove a benchmark worktree after setup failed.',
+                cleanupError
+              )
+          )
+        }
+        throw error
+      }
+      return pair
+    }
+  )
+  handleGitRequest(
+    appIpcChannels.removeGitBenchmarkWorktree,
+    (value) => {
+      const options = getOptionsRecord(value, 'Invalid benchmark worktree options')
+      const worktreePath = getDefaultPath(options.worktreePath)
+      if (!worktreePath) throw new Error('Choose a benchmark worktree to remove.')
+      return { ...getGitTarget(options), worktreePath }
+    },
+    async (cwd, options) => {
+      await removeGitBenchmarkCheckout(cwd, options.worktreePath, options.container)
+    }
+  )
   handleGitRequest(appIpcChannels.createGitWorktree, getGitCreateWorktreeOptions, (cwd, options) =>
     createGitWorktree(cwd, options.name)
   )

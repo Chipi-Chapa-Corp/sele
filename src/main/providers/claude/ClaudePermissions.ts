@@ -1,5 +1,6 @@
 import type { PermissionMode, PermissionResult } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderTurnOptions } from '../../../shared/provider'
+import { visualizationToolNames } from '../VisualizationToolPresentation.ts'
 
 export const claudeReadOnlyAllowedTools = [
   'AskUserQuestion',
@@ -38,6 +39,9 @@ export const getClaudePermissionAction = (
   input: Record<string, unknown>
 ): ClaudePermissionAction => {
   if (toolName === 'AskUserQuestion') return { kind: 'userQuestion' }
+  // Sele's widget tools only write Sele-owned files and render in an isolated frame.
+  if (visualizationToolNames.includes(toolName))
+    return { kind: 'resolve', result: { behavior: 'allow', updatedInput: input } }
   if (
     options?.sandboxMode === 'read-only' &&
     !claudeReadOnlyAllowedTools.includes(toolName as (typeof claudeReadOnlyAllowedTools)[number])

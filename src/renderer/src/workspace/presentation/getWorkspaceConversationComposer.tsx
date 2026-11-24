@@ -6,6 +6,7 @@ import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
 export function getWorkspaceConversationComposer({
   chatPreset,
   chatErrors,
+  benchmark,
   session,
   providerState,
   preferences,
@@ -32,7 +33,40 @@ export function getWorkspaceConversationComposer({
   turnRendering: ReturnType<typeof useWorkspaceTurnRendering>
   newSessionLocationOptions: DropdownOption<NewSessionLocation>[]
 }) {
+  const companionApproval = benchmark.active ? (benchmark.companion?.pendingApproval ?? null) : null
+  const companionUserInput = benchmark.active
+    ? (benchmark.companion?.pendingUserInput ?? null)
+    : null
+  const companionApprovalResolution =
+    chatState.approvalResolution.approvalId === companionApproval?.id
+      ? chatState.approvalResolution
+      : null
+  const companionUserInputResolution =
+    chatState.userInputResolution.requestId === companionUserInput?.id
+      ? chatState.userInputResolution
+      : null
   return {
+    benchmarkToggle: benchmark.canToggle
+      ? {
+          enabled: benchmark.active,
+          disabled: benchmark.toggleDisabled,
+          onToggle: benchmark.toggle
+        }
+      : undefined,
+    benchmarkSecondary: benchmark.active
+      ? {
+          selection: benchmark.secondarySelection,
+          onChange: benchmark.changeSelection
+        }
+      : undefined,
+    benchmarkBlocked: benchmark.blocked,
+    benchmarkMergeSuggestion: benchmark.mergeSuggestion,
+    benchmarkApproval: companionApproval,
+    benchmarkUserInput: companionUserInput,
+    benchmarkApprovalResolution: companionApprovalResolution,
+    benchmarkUserInputResolution: companionUserInputResolution,
+    benchmarkCompanionId: benchmark.companion?.id ?? null,
+    handleResolveBenchmarkApproval: messaging.handleResolveBenchmarkApproval,
     handleChatPresetChange: chatPreset.handleChatPresetChange,
     openCodeConnectionFailure: chatErrors.openCodeConnectionFailure,
     handleManageOpenCodeProviders: chatErrors.handleManageOpenCodeProviders,
@@ -59,8 +93,16 @@ export function getWorkspaceConversationComposer({
     changesContainer: session.changesContainer,
     changesCwd: session.changesCwd,
     changesProjectCwd: session.changesProjectCwd,
-    chatHasActiveTurn: interactions.chatHasActiveTurn,
-    chatHasPendingSteeringMessage: interactions.chatHasPendingSteeringMessage,
+    chatHasActiveTurn: interactions.chatHasActiveTurn || benchmark.companionActive,
+    chatHasPendingSteeringMessage:
+      interactions.chatHasPendingSteeringMessage ||
+      Boolean(
+        benchmark.active &&
+          benchmark.companion?.items.some(
+            ({ type, ...item }) =>
+              type === 'pendingMessage' && 'kind' in item && item.kind === 'steering'
+          )
+      ),
     containerOptions: sourceControls.containerOptions,
     cwdNotesByGroup: projectState.cwdNotesByGroup,
     editingMessage: chatState.editingMessage,
@@ -94,6 +136,7 @@ export function getWorkspaceConversationComposer({
     handleSandboxModeChange: settingsActions.handleSandboxModeChange,
     handleSelectedReviewChange: files.handleSelectedReviewChange,
     handleSendMessage: messaging.handleSendMessage,
+    handleSendBenchmarkSide: benchmark.active ? messaging.handleSendBenchmarkSide : undefined,
     handleQueueLimitReset: messaging.handleQueueLimitReset,
     limitResetTarget: messaging.limitResetTarget,
     handleSkipProviderUpdate: providerUpdates.handleSkipProviderUpdate,
@@ -116,6 +159,7 @@ export function getWorkspaceConversationComposer({
         ? (chatState.chatDetail.goal?.objective ?? null)
         : null,
     onSetGoal:
+      !benchmark.active &&
       !session.activeSubagentChatView &&
       (chatState.selectedChat
         ? chatState.chatDetail?.id === chatState.selectedChat.id &&

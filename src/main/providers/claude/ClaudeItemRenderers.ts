@@ -19,6 +19,7 @@ import {
 } from '../transcriptProjection/turnWindow.ts'
 import type { ProviderChatTurnWindow } from '../ProviderAdapter'
 import { isImageSizingMetadata } from '../imageSizingMetadata.ts'
+import { getToolVisualization } from '../VisualizationToolPresentation.ts'
 import { ProjectionJournal } from '../transcriptProjection/ProjectionJournal.ts'
 import {
   getWorkingItemPayloadCharacterCount,
@@ -262,18 +263,23 @@ const finishTool = (
   plan: ProviderWorkingTool['plan'],
   output: string | null,
   images: ProviderToolImage[],
-  result: unknown
-): ProviderWorkingTool => ({
-  ...tool,
-  ...(plan ? { plan } : {}),
-  status: 'finished',
-  label: tool.icon === 'question' ? 'Asked a question' : tool.label,
-  icon: images.length > 0 ? 'image-generation' : tool.icon,
-  stdout: hide ? null : output,
-  diffs: hide ? [] : getToolDiffs(tool, output),
-  rawOutput: hide ? null : boundSerializedToolValue(result),
-  images
-})
+  result: unknown,
+  failed: boolean
+): ProviderWorkingTool => {
+  const visualization = getToolVisualization(tool, result, failed)
+  return {
+    ...tool,
+    ...(plan ? { plan } : {}),
+    ...(visualization ? { visualization } : {}),
+    status: 'finished',
+    label: tool.icon === 'question' ? 'Asked a question' : tool.label,
+    icon: images.length > 0 ? 'image-generation' : tool.icon,
+    stdout: hide ? null : output,
+    diffs: hide ? [] : getToolDiffs(tool, output),
+    rawOutput: hide ? null : boundSerializedToolValue(result),
+    images
+  }
+}
 
 const createUserMessage = (
   message: ClaudeTranscriptMessage,
@@ -643,7 +649,8 @@ export const renderClaudeChatItems = (
             planResult.plan,
             output,
             images,
-            message.tool_use_result ?? block.content
+            message.tool_use_result ?? block.content,
+            block.is_error === true
           )
         )
       })
@@ -974,7 +981,8 @@ export class ClaudeTranscriptProjection {
           planResult.plan,
           output,
           images,
-          message.tool_use_result ?? block.content
+          message.tool_use_result ?? block.content,
+          block.is_error === true
         )
         const payloadCount = getWorkingItemPayloadCharacterCount(tool)
         this.journal.mapSet(

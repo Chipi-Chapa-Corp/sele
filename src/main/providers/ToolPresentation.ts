@@ -7,6 +7,7 @@ import type {
 import { getAppToolPresentation } from './AppToolPresentation.ts'
 import { getBrowserToolLabel } from './BrowserToolPresentation.ts'
 import { getTimeToolPresentation } from './TimeToolPresentation.ts'
+import { getVisualizationToolPresentation } from './VisualizationToolPresentation.ts'
 import { getToolArgument } from './providerValues.ts'
 
 type NativeProvider = 'claude' | 'opencode' | 'copilot'
@@ -242,6 +243,8 @@ export const getProviderToolPresentation = (
     }
   const time = getTimeToolPresentation(names)
   if (time) return { ...time, hidePayload: time.compact }
+  const visualization = getVisualizationToolPresentation(names, input, provider)
+  if (visualization) return visualization
   // MCP metadata is authoritative even when a connector calls its tool "read" or "bash".
   if (options.serverName || /^mcp__/.test(name)) return null
   const operation = nativeTools[provider].get(name.toLowerCase())

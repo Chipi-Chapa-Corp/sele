@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react'
 import type { ProviderReview } from '../../../shared/provider'
-import { ArrowUp, CornerDownRight, ListPlus, Square } from 'lucide-react'
+import {
+  ArrowBigLeft,
+  ArrowBigRight,
+  ArrowUp,
+  CornerDownRight,
+  ListPlus,
+  Square
+} from 'lucide-react'
 import { memo } from 'react'
 import type { AppSelectedAttachment } from '../../../shared/app'
 import type { ProviderActiveSendMode, ProviderApp, ProviderSkill } from '../../../shared/provider'
@@ -27,6 +34,7 @@ type ComposerSendControlsProps = {
   attachmentSelectionPending: boolean
   linkedChatsBlockSend: boolean
   submitMessage: (activeMode?: ProviderActiveSendMode, content?: string) => void
+  submitBenchmarkSide?: (side: 'primary' | 'secondary') => void
   handleStop: () => void
   activePrimaryMode: 'steer' | 'queue'
   activeSteeringEnabled: boolean
@@ -63,6 +71,7 @@ export const ComposerSendControls = memo(function ComposerSendControls({
   attachmentSelectionPending,
   linkedChatsBlockSend,
   submitMessage,
+  submitBenchmarkSide,
   handleStop,
   activePrimaryMode,
   activeSteeringEnabled,
@@ -108,6 +117,14 @@ export const ComposerSendControls = memo(function ComposerSendControls({
     Boolean(selectedReview && !editing)
 
   const activeWithContent = active && hasContent
+  const sideSendDisabled =
+    sendBlockedDisplay ||
+    active ||
+    pending ||
+    providerUpdating ||
+    attachmentSelectionPending ||
+    linkedChatsBlockSend ||
+    !hasContent
 
   const buttonLabel = activeWithContent
     ? activePrimaryLabel
@@ -166,6 +183,16 @@ export const ComposerSendControls = memo(function ComposerSendControls({
         />
       )}
       {!compact && usageControl}
+      {submitBenchmarkSide && !editing && (
+        <Button
+          aria-label="Send only to the left agent"
+          title="Send only to the left agent"
+          disabled={sideSendDisabled}
+          callback={() => submitBenchmarkSide('primary')}
+          icon={<ArrowBigLeft aria-hidden="true" />}
+          theme="secondary"
+        />
+      )}
       <Button
         aria-label={buttonLabel}
         title={buttonLabel}
@@ -206,6 +233,16 @@ export const ComposerSendControls = memo(function ComposerSendControls({
         }
         theme="primary"
       />
+      {submitBenchmarkSide && !editing && (
+        <Button
+          aria-label="Send only to the right agent"
+          title="Send only to the right agent"
+          disabled={sideSendDisabled}
+          callback={() => submitBenchmarkSide('secondary')}
+          icon={<ArrowBigRight aria-hidden="true" />}
+          theme="secondary"
+        />
+      )}
       {activeWithContent && (
         <Button
           aria-label="Stop response"

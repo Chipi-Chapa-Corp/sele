@@ -504,8 +504,11 @@ export function useWorkspaceSelection({
   useEffect(() => {
     chatDetailResyncRequestIdRef.current += 1
     chatDetailResyncRef.current = null
-    providerApi.setViewedChat(selectedProviderId ?? null, selectedChatId ?? null)
   }, [selectedChatId, selectedProviderId])
+  const companionChatId = selectedChat?.benchmarkChatId ?? null
+  useEffect(() => {
+    providerApi.setViewedChat(selectedProviderId ?? null, selectedChatId ?? null, companionChatId)
+  }, [selectedChatId, selectedProviderId, companionChatId])
   const committingChatActions = useMemo(() => {
     const actions = new Map<string, GitCommitPromptAction>()
 

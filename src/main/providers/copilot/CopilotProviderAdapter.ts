@@ -1648,6 +1648,104 @@ export class CopilotProviderAdapter implements ProviderAdapter {
     return id
   }
 
+  replaceTurnAnswer: NonNullable<ProviderAdapter['replaceTurnAnswer']> = async (
+    chatId,
+    messageId,
+    answer,
+    options
+  ) => this.rewriteBenchmarkHistory(chatId, messageId, answer, options)
+
+  rewindBenchmarkHistory: NonNullable<ProviderAdapter['rewindBenchmarkHistory']> = (
+    chatId,
+    messageId,
+    options
+  ) => this.rewriteBenchmarkHistory(chatId, messageId, undefined, options)
+
+  private rewriteBenchmarkHistory = async (
+    chatId: string,
+    messageId: string | null,
+    answer: string | undefined,
+    options?: ProviderSourceOptions & { discardLater?: boolean }
+  ): Promise<ProviderChatDetail> => {
+    const state = await this.ensureSession(chatId, undefined, options?.container)
+    if (
+      state.active ||
+      state.queueDrainInProgress ||
+      state.pendingMessages.length ||
+      state.pendingPermissions.length ||
+      state.pendingUserInputs.length
+    )
+      throw new Error('Copilot is still working in this conversation.')
+
+    const events = await state.session.getEvents()
+    const prompts = events.filter(
+      (event) =>
+        event.type === 'user.message' && !event.agentId && !isCopilotSystemContextMessage(event)
+    )
+    const index = messageId ? prompts.findIndex((event) => event.id === messageId) : -1
+    if (messageId && index < 0)
+      throw new Error('The selected round is no longer in the Copilot transcript.')
+    const next = prompts[index + 1]
+    if (answer !== undefined && next && !options?.discardLater)
+      throw new Error('Only the latest benchmark round can be replaced.')
+    if (answer === undefined && !next) return this.createChatDetail(state)
+
+    const path = await nativeHistoryFile(
+      'copilot',
+      chatId,
+      this.getCwd(state) ?? process.cwd(),
+      state.container
+    )
+    const connection = state.session
+    await connection.disconnect()
+    state.terminals?.dispose()
+    state.terminals = undefined
+    this.closeBrowserIntegration(state)
+    this.states.delete(chatId)
+    // Remove this connection before reopening the journal with the changed context.
+    const entries = await path.read()
+    const boundary = entries.findIndex(
+      (entry) =>
+        entry.id === (answer === undefined ? next?.id : messageId) && entry.type === 'user.message'
+    )
+    if (boundary < 0) throw new Error('The Copilot transcript changed before it could be rewound.')
+    const turn = Number((entries[boundary]?.data as { turnId?: string } | undefined)?.turnId)
+    const replacement =
+      answer !== undefined && messageId
+        ? encodeCopilotHistory(
+            [{ id: `benchmark-answer:${messageId}`, role: 'assistant', content: answer }],
+            messageId,
+            new Set(),
+            Number.isSafeInteger(turn) ? turn : 0
+          )
+        : []
+    await path.replace([
+      ...entries.slice(0, boundary + (answer === undefined ? 0 : 1)),
+      ...replacement
+    ])
+    try {
+      const updated = await this.ensureSession(chatId, state.options, state.container)
+      if (
+        answer !== undefined &&
+        !updated.events.some(
+          (event) => event.type === 'assistant.message' && event.data.content === answer
+        )
+      )
+        throw new Error('Copilot did not load the preferred answer.')
+      updated.revision = state.revision
+      this.emitUpdate(updated)
+      return this.createChatDetail(updated)
+    } catch (error) {
+      const updated = this.states.get(chatId)
+      await updated?.session?.disconnect()
+      updated?.terminals?.dispose()
+      if (updated) this.closeBrowserIntegration(updated)
+      this.states.delete(chatId)
+      await path.replace(entries)
+      throw error
+    }
+  }
+
   startChat = async (
     message: string,
     options?: ProviderStartChatOptions,

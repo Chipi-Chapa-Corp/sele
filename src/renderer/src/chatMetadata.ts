@@ -39,6 +39,20 @@ export const mergeSeenUpdatedAt = (
   next: number | null | undefined
 ): number | null => (current == null ? (next ?? null) : Math.max(current, next ?? 0))
 
+type BenchmarkMetadata = Pick<ChatMetadataTarget, 'benchmarkChatId' | 'benchmarkEnded'>
+
+export const mergeBenchmarkMetadata = (
+  current: BenchmarkMetadata | null,
+  next: BenchmarkMetadata
+) => {
+  const benchmarkChatId = next.benchmarkChatId ?? current?.benchmarkChatId ?? null
+  // Delayed chat updates can still describe a worktree that has been removed.
+  const benchmarkEnded =
+    next.benchmarkEnded === true ||
+    (current?.benchmarkChatId === benchmarkChatId && current?.benchmarkEnded === true)
+  return { benchmarkChatId, benchmarkEnded }
+}
+
 /**
  * Returns `target` itself when the metadata changes nothing. Every chat switch
  * merges seen metadata several times; new objects would rerender the sidebar
@@ -56,6 +70,7 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
     metadata.container && !areContainersEqual(metadata.container, target.container)
       ? metadata.container
       : target.container
+  const { benchmarkChatId, benchmarkEnded } = mergeBenchmarkMetadata(target, metadata)
   if (
     accountId === target.accountId &&
     noProject === target.noProject &&
@@ -66,6 +81,8 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
     'doneAt' in target &&
     seenUpdatedAt === target.seenUpdatedAt &&
     metadata.purpose === target.purpose &&
+    benchmarkChatId === (target.benchmarkChatId ?? null) &&
+    benchmarkEnded === (target.benchmarkEnded ?? false) &&
     container === target.container
   ) {
     return target
@@ -80,6 +97,8 @@ export const mergeChatMetadata = <Target extends ChatMetadataTarget>(
     doneAt,
     seenUpdatedAt,
     purpose: metadata.purpose,
+    benchmarkChatId,
+    benchmarkEnded,
     container
   }
 }

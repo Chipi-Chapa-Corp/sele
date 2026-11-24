@@ -94,7 +94,9 @@ const harness = () => {
       close() {}
     },
     randomUUID,
-    createClaudeTerminalSessions: () => ({ consume() {}, dispose() {} })
+    createClaudeTerminalSessions: () => ({ consume() {}, dispose() {} }),
+    createClaudeVisualizationIntegration: () => ({ server: {}, close() {} }),
+    visualizationServerName: 'visualize'
   })
   vm.runInContext(code, context)
   const instance = new context.Harness()

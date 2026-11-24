@@ -35,6 +35,8 @@ const environmentalErrors = [
   // Copilot runs bring-your-own-key and offline: GitHub quota and catalog calls are unauthenticated.
   /account\.getQuota failed with message: Not authenticated/,
   /models\.list failed with message: Not authenticated/,
+  // An unrelated, incompatible installed CLI can be discovered even in another provider's scenario.
+  /copilot.*(?:SDK protocol version mismatch)|SDK protocol version mismatch: SDK supports versions/,
   /OpenCode Go API key not found/,
   // The harness hides the toolbox host bridge on purpose.
   /Command failed: distrobox-host-exec/,

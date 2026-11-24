@@ -1,7 +1,7 @@
 import { isRemoteClient } from '../runtimeCapabilities'
 import { visualizationFramePath } from '../../../shared/visualizationShell'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Maximize2, RotateCw } from 'lucide-react'
+import { ExternalLink, Maximize2, RotateCw } from 'lucide-react'
 import { Button } from './Button'
 import { ResizableLightbox } from './ResizableLightbox'
 import type { AppContainerTarget, AppFileContentsOptions } from '../../../shared/app'
@@ -33,10 +33,12 @@ const postFollowUpResult = (target: Window, id: number, error?: string): void =>
 
 function VisualizationContent({
   reference,
-  options
+  options,
+  publishedUrl
 }: {
   reference: VisualizationReference
   options: AppFileContentsOptions
+  publishedUrl?: string
 }): React.JSX.Element {
   const rootRef = useRef<HTMLElement>(null)
   const framesRef = useRef(new Map<number, HTMLIFrameElement>())
@@ -221,6 +223,17 @@ function VisualizationContent({
       >
         <div className="visualization__actions" hidden={expanded}>
           {reference.title && <span className="visualization__title">{reference.title}</span>}
+          {publishedUrl && (
+            <a
+              className="visualization__link"
+              href={publishedUrl}
+              title={publishedUrl}
+              rel="noreferrer"
+            >
+              <ExternalLink aria-hidden="true" />
+              Open published
+            </a>
+          )}
           {reloadButton}
           <Button
             aria-label="Expand visualization"
@@ -288,11 +301,13 @@ function VisualizationContent({
 export function Visualization({
   reference,
   container,
-  cwd
+  cwd,
+  publishedUrl
 }: {
   reference: VisualizationReference
   container?: AppContainerTarget | null
   cwd?: string | null
+  publishedUrl?: string
 }): React.JSX.Element {
   // IPC refreshes can recreate workspace objects without changing the actual file source.
   const sourceKey = JSON.stringify({
@@ -301,5 +316,12 @@ export function Visualization({
     path: reference.path
   })
   const options = useMemo<AppFileContentsOptions>(() => JSON.parse(sourceKey), [sourceKey])
-  return <VisualizationContent key={sourceKey} reference={reference} options={options} />
+  return (
+    <VisualizationContent
+      key={sourceKey}
+      reference={reference}
+      options={options}
+      publishedUrl={publishedUrl}
+    />
+  )
 }

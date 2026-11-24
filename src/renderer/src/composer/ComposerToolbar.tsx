@@ -24,6 +24,7 @@ type ComposerToolbarProps = {
   attachmentSelectionPending: boolean
   linkedChatsBlockSend: boolean
   submitMessage: (activeMode?: ProviderActiveSendMode, content?: string) => void
+  submitBenchmarkSide?: (side: 'primary' | 'secondary') => void
   handleStop: () => void
   controlPressed: boolean
   message: string
@@ -45,6 +46,7 @@ export const ComposerToolbar = memo(function ComposerToolbar({
   attachmentSelectionPending,
   linkedChatsBlockSend,
   submitMessage,
+  submitBenchmarkSide,
   handleStop,
   controlPressed,
   message,
@@ -72,6 +74,8 @@ export const ComposerToolbar = memo(function ComposerToolbar({
     sandboxModes,
     serviceTier,
     presetsEnabled = true,
+    benchmarkToggle,
+    benchmarkSecondary,
     selectionAction = 'back',
     showAccessSelector = true,
     showModelSelector = true,
@@ -105,6 +109,7 @@ export const ComposerToolbar = memo(function ComposerToolbar({
   } = settings
 
   const selectorsVisible =
+    Boolean(benchmarkToggle || benchmarkSecondary) ||
     showAccessSelector ||
     (showReviewSelector && sandboxMode !== 'danger-full-access') ||
     showModelSelector ||
@@ -241,6 +246,7 @@ export const ComposerToolbar = memo(function ComposerToolbar({
                 sandboxModes={sandboxModes}
                 serviceTier={serviceTier}
                 presetsEnabled={presetsEnabled}
+                benchmarkToggle={benchmarkToggle}
                 selectionAction={selectionAction}
                 showAccessSelector={showAccessSelector}
                 showModelSelector={showModelSelector}
@@ -254,6 +260,35 @@ export const ComposerToolbar = memo(function ComposerToolbar({
                 onReasoningEffortChange={onReasoningEffortChange}
                 onSandboxModeChange={onSandboxModeChange}
                 onServiceTierChange={onServiceTierChange}
+              />
+            )}
+            {benchmarkSecondary && (
+              <ComposerSettings
+                {...benchmarkSecondary.selection}
+                benchmarkSecondary
+                agentModes={agentModes}
+                agentModesLoading={agentModesLoading}
+                approvalModes={approvalModes}
+                models={models}
+                modelsError={modelsError}
+                modelsLoading={modelsLoading}
+                modelsUnavailable={modelsUnavailable}
+                providerId={providerId}
+                providerUpdating={providerUpdating}
+                sandboxModes={sandboxModes}
+                presetsEnabled={presetsEnabled}
+                selectionAction={selectionAction}
+                onAgentModeChange={(agentMode) => benchmarkSecondary.onChange({ agentMode })}
+                onApprovalModeChange={(approvalMode) =>
+                  benchmarkSecondary.onChange({ approvalMode })
+                }
+                onModelChange={(model) => benchmarkSecondary.onChange({ model })}
+                onPresetChange={benchmarkSecondary.onChange}
+                onReasoningEffortChange={(reasoningEffort) =>
+                  benchmarkSecondary.onChange({ reasoningEffort })
+                }
+                onSandboxModeChange={(sandboxMode) => benchmarkSecondary.onChange({ sandboxMode })}
+                onServiceTierChange={(serviceTier) => benchmarkSecondary.onChange({ serviceTier })}
               />
             )}
             {!compact && <div className="message-box__workspace-controls">{workspaceControls}</div>}
@@ -274,6 +309,7 @@ export const ComposerToolbar = memo(function ComposerToolbar({
           attachmentSelectionPending={attachmentSelectionPending}
           linkedChatsBlockSend={linkedChatsBlockSend}
           submitMessage={submitMessage}
+          submitBenchmarkSide={submitBenchmarkSide}
           handleStop={handleStop}
           activePrimaryMode={activePrimaryMode}
           activeSteeringEnabled={activeSteeringEnabled}

@@ -55,6 +55,39 @@ export function useWorkspaceChatUpdates({
         if (event.detail?.subagents)
           subagentState.updateSubagentWorkingChat(updatedChatKey, event.detail.subagents)
         chatTerminalActivity.requestProbe(updatedChatKey)
+        const selected = chatState.selectedChatRef.current
+        if (
+          selected?.providerId === event.providerId &&
+          selected.benchmarkChatId === event.chatId
+        ) {
+          if (event.turnCompleted && !selected.benchmarkEnded) {
+            gitState.setGitChangeLoadRequest((request) => request + 1)
+            gitState.setFileTreeLoadRequest((request) => request + 1)
+          }
+          const current = chatState.benchmarkDetailRef.current
+          const update = event.detail
+          if (update && isChatDetailSnapshotStale(update, current)) {
+            providerApi.acknowledgeChatUpdate(event.sequence, false)
+            return
+          }
+          const merged = update ? getChatDetailFromUpdate(update, current) : null
+          if (merged) chatState.applyBenchmarkDetail(merged.detail)
+          providerApi.acknowledgeChatUpdate(event.sequence, merged?.detailApplied === true)
+          if (
+            !merged &&
+            (current?.id !== event.chatId || current.revision < event.summary.revision)
+          ) {
+            void providerApi
+              .getChat(event.providerId, event.chatId)
+              .then((detail) => {
+                if (chatState.selectedChatRef.current?.benchmarkChatId === detail.id) {
+                  chatState.applyBenchmarkDetail(detail)
+                }
+              })
+              .catch((error) => console.error('Unable to refresh the benchmark companion.', error))
+          }
+          return
+        }
         const viewingUpdatedChat = chatState.selectedChatKeyRef.current === updatedChatKey
         const staleSelectedDetail = Boolean(
           viewingUpdatedChat &&

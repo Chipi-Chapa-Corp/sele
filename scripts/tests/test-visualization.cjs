@@ -74,7 +74,7 @@ if (!process.versions.electron) {
       process.stdout.write(result.stdout || '')
       if (result.status === 0 && process.env.SELE_VISUALIZATION_SCREENSHOTS) {
         await fs.mkdir(process.env.SELE_VISUALIZATION_SCREENSHOTS, { recursive: true })
-        for (const name of ['expanded-popup.png', 'inline-controls.png']) {
+        for (const name of ['expanded-popup.png', 'inline-controls.png', 'tool-steps.png']) {
           await fs.copyFile(
             path.join(directory, name),
             path.join(process.env.SELE_VISUALIZATION_SCREENSHOTS, name)
@@ -182,6 +182,23 @@ if (!process.versions.electron) {
           `messages.some(message=>message.type==='visualization:follow-up' && message.prompt==='Explain selected value')`
         ),
         true
+      )
+      // Claude widgets use sendPrompt and its color tokens; both map onto Sele's frame.
+      // The promise settles only after the user answers, so do not await it here.
+      await child.executeJavaScript(`void sendPrompt('Drill into this value'); true`)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      assert.equal(
+        await window.webContents.executeJavaScript(
+          `messages.some(message=>message.type==='visualization:follow-up' && message.prompt==='Drill into this value')`
+        ),
+        true
+      )
+      assert.deepEqual(
+        await child.executeJavaScript(
+          `['--color-text-primary','--color-text-secondary','--color-text-tertiary','--color-background-secondary','--color-background-tertiary','--color-border-primary','--color-border-tertiary','--color-accent'].filter(name=>!getComputedStyle(document.body).getPropertyValue(name).trim())`
+        ),
+        [],
+        'Every documented Claude color token resolves'
       )
       await window.webContents.executeJavaScript(
         `document.querySelector('iframe').contentWindow.postMessage({type:'visualization:theme',dark:true},'*')`
@@ -631,6 +648,76 @@ if (!process.versions.electron) {
       console.log(
         'PASS: stable workspace identity, unchanged reloads, atomic document replacement and reload failure recovery'
       )
+      // Tool-produced visualizations render outside the collapsed working step,
+      // including steps whose items were unloaded for history pagination.
+      await window.webContents.executeJavaScript(`
+        window.toolReads=[];
+        const readFixture=appApi.getFileContents;
+        appApi.getFileContents=async options=>{toolReads.push(options);return readFixture(options)};
+        document.querySelector('#show-tool-steps').click();`)
+      for (let i = 0; i < 100; i++) {
+        if (
+          await window.webContents.executeJavaScript(
+            `document.querySelectorAll('.test-tool-steps .visualization__frame:not(.visualization__frame--pending)').length===4`
+          )
+        )
+          break
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      assert.deepEqual(
+        await window.webContents.executeJavaScript(`(() => {
+          const steps = document.querySelector('.test-tool-steps');
+          const details = steps.querySelector('details.chat-detail__working');
+          return {
+            frames: steps.querySelectorAll('.visualization__frame:not(.visualization__frame--pending)').length,
+            collapsed: details !== null && !details.open,
+            insideDisclosure: steps.querySelectorAll('details .visualization').length,
+            titles: [...steps.querySelectorAll('.visualization__title')].map(node => node.textContent),
+            links: [...steps.querySelectorAll('a.visualization__link')].map(node => node.href)
+          };
+        })()`),
+        {
+          frames: 4,
+          collapsed: true,
+          insideDisclosure: 0,
+          titles: ['Load curve', 'Quarterly report', 'Load curve', 'Quarterly report'],
+          links: ['https://claude.ai/artifact/report', 'https://claude.ai/artifact/report']
+        },
+        'Widgets and artifacts stay visible below collapsed and unloaded steps'
+      )
+      const toolReads = await window.webContents.executeJavaScript(`toolReads`)
+      assert.deepEqual(
+        toolReads.find((read) => read.path.endsWith('load-curve.html')),
+        {
+          container: { kind: 'host' },
+          cwd: null,
+          path: '/data/visualizations/chat/load-curve.html'
+        },
+        'Sele-written widgets are read from the host, never the chat container'
+      )
+      assert.deepEqual(
+        toolReads.find((read) => read.path === 'report.html'),
+        {
+          container: {
+            kind: 'container',
+            tool: 'ssh',
+            name: 'test-workspace',
+            runtime: { kind: 'host' }
+          },
+          cwd: '/work',
+          path: 'report.html'
+        },
+        'Artifact sources resolve in the chat workspace'
+      )
+      await window.webContents.executeJavaScript(
+        `for (const node of document.querySelectorAll('#root > :not(.test-tool-steps)')) node.style.display = 'none'; scrollTo(0, 0)`
+      )
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      await fs.writeFile(
+        process.argv[2] + '/tool-steps.png',
+        (await window.webContents.capturePage()).toPNG()
+      )
+      console.log('PASS: tool visualizations outside collapsed and unloaded working steps')
       app.exit(0)
     } catch (error) {
       console.error(error)

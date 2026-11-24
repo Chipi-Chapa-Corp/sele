@@ -47,3 +47,22 @@
 .visualization__actions[hidden] {
   display: none;
 }
+.visualization__link {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 6px;
+  color: inherit;
+  font-size: 0.9em;
+  text-decoration: none;
+  opacity: 0.8;
+}
+.visualization__link:hover,
+.visualization__link:focus-visible {
+  opacity: 1;
+  text-decoration: underline;
+}
+.visualization__link svg {
+  width: 14px;
+  height: 14px;
+}

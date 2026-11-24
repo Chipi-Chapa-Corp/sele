@@ -327,6 +327,7 @@ export const MessageBox: React.FC<MessageBoxProps> = (props) => {
           attachmentSelectionPending={attachments.attachmentSelectionPending}
           linkedChatsBlockSend={linked.linkedChatsBlockSend}
           submitMessage={sending.submitMessage}
+          submitBenchmarkSide={sending.submitBenchmarkSide}
           handleStop={handleStop}
           controlPressed={keyboard.controlPressed}
           message={draft.message}

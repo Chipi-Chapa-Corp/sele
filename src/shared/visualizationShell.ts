@@ -27,7 +27,8 @@ export function createVisualizationShell(assets: {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="${visualizationCsp}">
-<style>${assets.stylesheet}\n:root{background:transparent!important}html>body{margin:0;padding:0;background:transparent}#visualization-root{display:flow-root}</style>
+<style>${assets.stylesheet}\n:root{background:transparent!important}html>body{margin:0;padding:0;background:transparent}#visualization-root{display:flow-root}
+html>body{--color-text-secondary:var(--muted-foreground);--color-text-tertiary:color-mix(in oklab,var(--muted-foreground) 72%,transparent);--color-background-secondary:var(--card);--color-background-tertiary:color-mix(in oklab,var(--foreground) 9%,var(--background));--color-border-primary:color-mix(in oklab,var(--foreground) 22%,transparent);--color-border-tertiary:color-mix(in oklab,var(--foreground) 5%,transparent);--color-accent:var(--primary)}</style>
 </head><body><div id="visualization-root"></div>
 <script>${assets.floatingCore}</script><script>${assets.floatingDom}</script><script>${assets.lucide}</script><script>${assets.runtime}</script>
 ${assets.utilities.replace('<!--__INLINE_VISUALIZATION_FRAGMENT__-->', '')}

@@ -258,6 +258,17 @@ function decide(messages, tools, body = {}) {
     (_, index) =>
       `Paragraph ${index + 2}: the scripted provider confirms every requested step, keeps formatting stable, and reports results.`
   )
+  if (users.some((text) => /^benchmark-(tie|vote)-/.test(text))) {
+    const side = /sele-worktrees\/benchmark-[\da-f-]+-(primary|secondary)\b/.exec(reviewText)?.[1]
+    if (side) extra.push(`Benchmark side: ${side}`)
+  }
+  if (users.some((text) => /^benchmark-context-/.test(text))) {
+    const previous = messages.filter(
+      (message) => message.role === 'assistant' && /^Reply to: benchmark-vote-/.test(message.text)
+    )
+    if (previous.length === 1 && previous[0].text.endsWith('Benchmark side: secondary'))
+      extra.push('Preferred answer in model context')
+  }
   return { delay, text: ['Reply to: ' + echoed, ...extra].join('\n\n') }
 }
 

@@ -2,6 +2,7 @@ import { Spinner } from './Spinner'
 import { ChevronRight } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import 'react-diff-view/style/index.css'
+import { getWorkingStepVisualizations } from '../../../shared/chatTurns'
 import type { ProviderWorkingStep } from '../../../shared/provider'
 import { getWorkingStepItemSegments } from '../chatDetailWindow'
 import { useWorkingToolMotion } from '../motion/useWorkingToolMotion'
@@ -17,6 +18,7 @@ import { ToolItem, isWorkingItemPayloadLoaded } from './ChatToolActivity'
 import './UnifiedDiff.css'
 import { WorkingElapsedTime } from './WorkingElapsedTime'
 import { WorkingStepActions } from './WorkingStepActions'
+import { Visualization } from './Visualization'
 import { WorkingStepContent } from './WorkingStepContent'
 import {
   getActiveToolIds,
@@ -181,6 +183,19 @@ export const WorkingStep: React.FC<
       projectCwd={projectCwd}
     />
   ))
+  // Tool-produced documents stay visible when the step collapses or its items are unloaded.
+  const renderedVisualizations = getWorkingStepVisualizations(item).map(({ id, visualization }) => {
+    const host = visualization.location === 'host'
+    return (
+      <Visualization
+        key={id}
+        reference={{ path: visualization.path, title: visualization.title }}
+        container={host ? null : container}
+        cwd={host ? null : cwd}
+        publishedUrl={visualization.url}
+      />
+    )
+  })
   const rateLimitResetActions =
     item.status === 'failed' &&
     item.failureReason === 'rateLimit' &&
@@ -236,6 +251,7 @@ export const WorkingStep: React.FC<
         <div className="chat-detail__working-heading">{heading}</div>
       </div>
       {renderedGeneratedImages}
+      {renderedVisualizations}
       {failureLabel}
       {turnActions}
     </>
@@ -282,6 +298,7 @@ export const WorkingStep: React.FC<
             </span>
           )}
         </div>
+        {renderedVisualizations}
         {failureLabel}
         {turnActions}
       </>
@@ -289,10 +306,14 @@ export const WorkingStep: React.FC<
   }
 
   if (!active && blockCount === 0 && !hasHiddenItems) {
-    if (item.status !== 'stopped' && renderedGeneratedImages.length > 0) {
+    if (
+      item.status !== 'stopped' &&
+      renderedGeneratedImages.length + renderedVisualizations.length > 0
+    ) {
       return (
         <>
           {renderedGeneratedImages}
+          {renderedVisualizations}
           {failureLabel}
           {turnActions}
         </>
@@ -352,6 +373,7 @@ export const WorkingStep: React.FC<
         )}
       </details>
       {renderedGeneratedImages}
+      {renderedVisualizations}
       {failureLabel}
       {turnActions}
     </>

@@ -17,6 +17,8 @@
       })
     }
   }
+  // Claude widgets call sendPrompt; it shares the confirmed follow-up path.
+  window.sendPrompt = (text) => window.openai.sendFollowUpMessage({ prompt: text })
   // Optional mockup controls remain local; they never mutate project files.
   window.Tweak = class {
     supported = true

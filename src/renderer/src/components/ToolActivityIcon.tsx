@@ -2,6 +2,7 @@ import {
   BookTextIcon as AnimatedBookTextIcon,
   BotIcon as AnimatedBotIcon,
   BoxIcon as AnimatedBoxIcon,
+  ChartColumnIncreasingIcon as AnimatedChartColumnIncreasingIcon,
   CircleHelpIcon as AnimatedCircleHelpIcon,
   ClockIcon as AnimatedClockIcon,
   DeleteIcon as AnimatedDeleteIcon,
@@ -21,6 +22,7 @@ import {
   Blocks,
   BookOpenText,
   Bot,
+  ChartColumnIncreasing,
   CircleQuestionMark,
   Clock,
   Eye,
@@ -84,7 +86,8 @@ const animatedToolIcons: Record<ProviderToolIcon, AnimatedIconComponent> = {
   question: AnimatedCircleHelpIcon,
   subagent: AnimatedBotIcon,
   time: AnimatedClockIcon,
-  browser: AnimatedEarthIcon
+  browser: AnimatedEarthIcon,
+  visualization: AnimatedChartColumnIncreasingIcon
 }
 
 const ToolTypeIcon: React.FC<{
@@ -101,6 +104,7 @@ const ToolTypeIcon: React.FC<{
   if (icon === 'question') return <CircleQuestionMark aria-hidden="true" />
   if (icon === 'subagent') return <Bot aria-hidden="true" />
   if (icon === 'time') return <Clock aria-hidden="true" />
+  if (icon === 'visualization') return <ChartColumnIncreasing aria-hidden="true" />
 
   if (activity === 'read') return <FileText aria-hidden="true" />
   if (activity === 'search') return <Search aria-hidden="true" />

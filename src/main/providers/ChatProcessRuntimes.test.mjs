@@ -76,6 +76,10 @@ const setup = async (t, { providerId = 'codex', container = null } = {}) => {
         calls.push(['stop', id])
         return [id]
       },
+      replaceTurnAnswer: async (id) => {
+        calls.push(['replace', id, providerProcessContext.getStore()?.record.id])
+        return { id, revision: 2, items: [] }
+      },
       getChat: async (id) => {
         calls.push(['get', id, providerProcessContext.getStore()?.record.id])
         return { id }
@@ -132,6 +136,8 @@ test('concurrent chats get separate boundaries; subsequent calls and updates ret
   assert.equal(updates.length, 3)
   await adapter.getChat('a')
   assert.equal(h.calls.at(-1)[2], executions.find((call) => call[1] === 'a')[2])
+  await adapter.replaceTurnAnswer('a', 'round', 'Preferred answer')
+  assert.deepEqual(h.calls.at(-1), ['replace', 'a', executions.find((call) => call[1] === 'a')[2]])
   assert.equal(providerProcessContext.getStore(), undefined)
 })
 

@@ -10,7 +10,16 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence } from 'motion/react'
-import { Check, ChevronDown, ChevronRight, Pencil, Save, Settings2, Trash2 } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  Save,
+  Scale,
+  Settings2,
+  Trash2
+} from 'lucide-react'
 import { MenuPageTransition } from '../motion/MenuPageTransition'
 import { useFeedbackMotion } from '../motion/useFeedbackMotion'
 import { toCssRem } from '../cssUnits'
@@ -21,7 +30,9 @@ import { ChatConfigSectionHeader } from './ChatConfigSectionHeader'
 import { Input } from './Input'
 import { Button } from './Button'
 import { MenuSurface } from './MenuSurface'
+import { Switch } from './Switch'
 import type { ProviderId } from '../../../shared/provider'
+import type { BenchmarkToggle } from './MessageBox.types'
 import type { MessageBoxSelection } from '../messageBoxPreferences'
 import { selectionsEqual } from '../chatModelPreferences'
 import { deleteChatPreset, readChatPresets, saveChatPreset, updateChatPreset } from '../chatPresets'
@@ -32,6 +43,9 @@ export type SelectorIconItem = {
   key: string
   title?: string
 }
+
+const benchmarkSwitchSelector = '.message-box__chat-config-benchmark input:not(:disabled)'
+
 type ChatConfigSectionId = 'model' | 'reasoning' | 'questions' | 'access' | 'speed'
 
 export type ChatConfigOptionGroup = {
@@ -52,6 +66,8 @@ export type ChatConfigSection = {
 
 type ChatConfigDropdownProps = {
   id: string
+  ariaLabel?: string
+  benchmarkToggle?: BenchmarkToggle
   modelsError: string | null
   modelLabel: string
   providerIcon: ReactNode
@@ -113,6 +129,8 @@ const getChatConfigMenuStyle = (buttonRect: DOMRect, menuWidth: number): ChatCon
 
 export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   id,
+  ariaLabel,
+  benchmarkToggle,
   modelsError,
   modelLabel,
   providerIcon,
@@ -150,7 +168,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   const labelRef = useRef<HTMLSpanElement>(null)
   useFeedbackMotion(labelRef, `${modelLabel}:${reasoningLabel}`)
   const menuId = `${id}-${reactId}-menu`
-  const menuOpen = open && sections.length > 0
+  const menuOpen = open && (sections.length > 0 || Boolean(benchmarkToggle))
   const showingPresets = presetsEnabled && presets.length > 0 && !configuring
   const showingColumns = presetsEnabled && !showingPresets && !compact
   const questionsSection = sections.find((section) => section.id === 'questions')
@@ -198,6 +216,10 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       : section.groups
 
   const closeMenu = useCallback((): void => {
+    if (menuRef.current) {
+      menuRef.current.inert = true
+      menuRef.current.style.pointerEvents = 'none'
+    }
     setOpen(false)
     setMenuStyle(null)
     setActiveSectionId(null)
@@ -210,7 +232,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   const focusFirstMenuButton = useCallback((): void => {
     window.requestAnimationFrame(() => {
       menuRef.current
-        ?.querySelector<HTMLButtonElement>('button:not(:disabled)')
+        ?.querySelector<HTMLElement>(`button:not(:disabled), ${benchmarkSwitchSelector}`)
         ?.focus({ preventScroll: true })
     })
   }, [])
@@ -235,7 +257,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
 
   const openMenu = useCallback(
     (keyboard = false): void => {
-      if (sections.length === 0) return
+      if (sections.length === 0 && !benchmarkToggle) return
 
       updateMenuPosition()
       if (presetsEnabled) setPresets(readChatPresets(providerId))
@@ -244,14 +266,18 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       setOpen(true)
       window.requestAnimationFrame(() => {
         const menu = menuRef.current
+        if (menu) {
+          menu.inert = false
+          menu.style.pointerEvents = ''
+        }
         const target = keyboard
           ? (menu?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]:not(:disabled)') ??
-            menu?.querySelector<HTMLButtonElement>('button:not(:disabled)'))
+            menu?.querySelector<HTMLElement>(`button:not(:disabled), ${benchmarkSwitchSelector}`))
           : menu
         target?.focus({ preventScroll: true })
       })
     },
-    [sections.length, updateMenuPosition, presetsEnabled, providerId]
+    [sections.length, benchmarkToggle, updateMenuPosition, presetsEnabled, providerId]
   )
 
   useEffect(() => {
@@ -282,11 +308,11 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
   }, [closeMenu, menuOpen, updateMenuPosition])
 
   useEffect(() => {
-    if (!open || sections.length > 0) return
+    if (!open || sections.length > 0 || benchmarkToggle) return
 
     const frame = window.requestAnimationFrame(closeMenu)
     return () => window.cancelAnimationFrame(frame)
-  }, [closeMenu, open, sections.length])
+  }, [closeMenu, open, sections.length, benchmarkToggle])
 
   const handleTriggerClick = (): void => {
     if (menuOpen) closeMenu()
@@ -330,28 +356,28 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
       ((event.key === 'Home' || event.key === 'End') &&
         event.target !== modelSearchInputRef.current)
     ) {
-      const buttons = Array.from(
-        menuRef.current?.querySelectorAll<HTMLButtonElement>(
+      const controls = Array.from(
+        menuRef.current?.querySelectorAll<HTMLElement>(
           '.message-box__chat-config-option:not(:disabled), ' +
             '.message-box__chat-config-section-button:not(:disabled), ' +
-            '.message-box__chat-config-back:not(:disabled)'
+            `.message-box__chat-config-back:not(:disabled), ${benchmarkSwitchSelector}`
         ) ?? []
       )
-      if (buttons.length === 0) return
+      if (controls.length === 0) return
 
       event.preventDefault()
-      const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+      const index = controls.indexOf(document.activeElement as HTMLElement)
       const nextIndex =
         event.key === 'Home'
           ? 0
           : event.key === 'End'
-            ? buttons.length - 1
+            ? controls.length - 1
             : index < 0
               ? event.key === 'ArrowDown'
                 ? 0
-                : buttons.length - 1
-              : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
-      buttons[nextIndex]?.focus()
+                : controls.length - 1
+              : (index + (event.key === 'ArrowDown' ? 1 : -1) + controls.length) % controls.length
+      controls[nextIndex]?.focus()
       return
     }
 
@@ -467,6 +493,26 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
     </div>
   )
 
+  const renderBenchmarkToggle = () =>
+    benchmarkToggle && (
+      <Switch
+        className="message-box__chat-config-benchmark"
+        label={
+          <>
+            <Scale className="message-box__chat-config-section-icon" aria-hidden="true" />
+            <span className="message-box__chat-config-section-label">Benchmark</span>
+          </>
+        }
+        checked={benchmarkToggle.enabled}
+        disabled={benchmarkToggle.disabled}
+        onChange={() => {
+          closeMenu()
+          buttonRef.current?.focus({ preventScroll: true })
+          benchmarkToggle.onToggle()
+        }}
+      />
+    )
+
   const renderPresets = (): ReactNode => (
     <div className="message-box__chat-config-section">
       <div className="message-box__chat-config-option-groups">
@@ -580,6 +626,7 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
           <span className="message-box__chat-config-section-label">Configure</span>
           <ChevronRight className="message-box__chat-config-section-chevron" aria-hidden="true" />
         </button>
+        {renderBenchmarkToggle()}
       </div>
     </div>
   )
@@ -734,14 +781,21 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
         className="message-box__chat-config-menu"
         id={menuId}
         role="dialog"
-        aria-label="Chat settings"
+        aria-label={ariaLabel ?? 'Chat settings'}
       >
         <MenuPageTransition page={activeSection?.id ?? (showingPresets ? 'presets' : 'root')}>
-          {activeSection
-            ? renderSectionOptions(activeSection)
-            : showingPresets
-              ? renderPresets()
-              : renderSectionRoot()}
+          {activeSection ? (
+            renderSectionOptions(activeSection)
+          ) : showingPresets ? (
+            renderPresets()
+          ) : (
+            <>
+              {renderSectionRoot()}
+              {benchmarkToggle && (
+                <div className="message-box__chat-config-footer">{renderBenchmarkToggle()}</div>
+              )}
+            </>
+          )}
         </MenuPageTransition>
       </MenuSurface>
     </div>
@@ -754,10 +808,11 @@ export const ChatConfigDropdown: React.FC<ChatConfigDropdownProps> = ({
         className="message-box__chat-config-trigger"
         id={id}
         type="button"
+        aria-label={ariaLabel}
         aria-controls={menuOpen ? menuId : undefined}
         aria-expanded={menuOpen}
         aria-haspopup="dialog"
-        disabled={sections.length === 0}
+        disabled={sections.length === 0 && !benchmarkToggle}
         title={title}
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}

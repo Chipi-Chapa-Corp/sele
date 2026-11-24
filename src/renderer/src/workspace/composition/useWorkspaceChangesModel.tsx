@@ -9,6 +9,8 @@ import { useGitViewModel } from '../useGitViewModel'
 import { useGitSyncController } from '../useGitSyncController'
 import { useWorkspaceSelection } from '../useWorkspaceSelection'
 import { useSubagentController } from '../useSubagentController'
+import { useBenchmarkWorktreeChanges } from '../features/useBenchmarkWorktreeChanges'
+import { useBenchmarkWorktreeFiles } from '../features/useBenchmarkWorktreeFiles'
 import { useWorkspaceChatModel, type WorkspaceChat } from './useWorkspaceChatModel'
 import { useWorkspaceRuntime } from './useWorkspaceRuntime'
 import { useWorkspaceState } from './useWorkspaceState'
@@ -31,6 +33,50 @@ export function useWorkspaceChangesModel({
   const workspace = { ...state, ...runtime, ...chatModel, session }
 
   const changes = useChangesData(workspace)
+  const worktrees = chatModel.benchmark.worktrees
+  // Ending a benchmark can remove a worktree before the chat update reaches the sidebar.
+  const canReadWorktrees = !chatModel.benchmark.busy
+  const primaryUsesWorkspace = Boolean(
+    worktrees?.primary.cwd && worktrees.primary.cwd === session.changesCwd
+  )
+  const worktreeChangesOptions = {
+    container: session.changesContainer,
+    refresh: state.gitState.gitChangeLoadRequest,
+    visible:
+      canReadWorktrees &&
+      runtime.panes.changesPaneView === 'git' &&
+      runtime.panes.gitPaneView === 'changes'
+  }
+  const primaryWorktreeChanges = useBenchmarkWorktreeChanges({
+    ...worktreeChangesOptions,
+    source: worktrees?.primary ?? null,
+    workspaceChanges: primaryUsesWorkspace ? changes : undefined
+  })
+  const secondaryWorktreeChanges = useBenchmarkWorktreeChanges({
+    ...worktreeChangesOptions,
+    source: worktrees?.secondary ?? null
+  })
+  const worktreeFilesOptions = {
+    container: session.changesContainer,
+    refresh: state.gitState.fileTreeLoadRequest,
+    visible: canReadWorktrees && runtime.panes.changesPaneView === 'files'
+  }
+  const primaryWorktreeFiles = useBenchmarkWorktreeFiles({
+    ...worktreeFilesOptions,
+    source: worktrees?.primary ?? null,
+    workspaceFiles: primaryUsesWorkspace
+      ? {
+          result: changes.repositoryFileIndex,
+          branchName: changes.currentBranchName,
+          loading: changes.visibleFilesLoadState === 'loading',
+          error: changes.filesLoadState === 'error' ? state.gitState.fileTreeLoadError : null
+        }
+      : undefined
+  })
+  const secondaryWorktreeFiles = useBenchmarkWorktreeFiles({
+    ...worktreeFilesOptions,
+    source: worktrees?.secondary ?? null
+  })
 
   const newSessionLocationOptions = useMemo<DropdownOption<NewSessionLocation>[]>(
     () => [
@@ -64,5 +110,17 @@ export function useWorkspaceChangesModel({
   const commits = useCommitController({ ...workspace, gitPresentation, gitSync })
 
   const subagents = useSubagentController({ ...workspace, commits })
-  return { changes, newSessionLocationOptions, gitPresentation, files, gitSync, commits, subagents }
+  return {
+    changes,
+    primaryWorktreeChanges,
+    secondaryWorktreeChanges,
+    primaryWorktreeFiles,
+    secondaryWorktreeFiles,
+    newSessionLocationOptions,
+    gitPresentation,
+    files,
+    gitSync,
+    commits,
+    subagents
+  }
 }

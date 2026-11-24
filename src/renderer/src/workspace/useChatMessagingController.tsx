@@ -11,6 +11,7 @@ import type {
   ProviderMessage,
   ProviderPendingMessage,
   ProviderActiveSendMode,
+  ProviderBenchmarkSide,
   ProviderApprovalDecision,
   ProviderReview,
   ProviderAppInput,
@@ -22,6 +23,7 @@ import type {
 import { unloadWorkingStepItems } from '../../../shared/chatTurns'
 import { providerOneShotGenerationCanceledMessage } from '../../../shared/provider'
 import { appApi } from '../appApi'
+import { findBenchmarkPendingMessage } from '../benchmark'
 import { providerApi } from '../providerApi'
 import { clearUserInputDraft } from '../userInputDrafts'
 import { getComposerDraftScopeKey } from '../composerDraft'
@@ -67,6 +69,7 @@ import {
   serializeComposerMessage,
   serializeReviewMessage
 } from './chatControllerUtils'
+import type { WorkspaceBenchmark } from './features/useWorkspaceBenchmark'
 import type { useWorkspaceChatErrors } from './features/useWorkspaceChatErrors'
 import type { useWorkspaceEffectiveSelection } from './features/useWorkspaceEffectiveSelection'
 import type { SubagentChatView } from './controllerTypes'
@@ -88,9 +91,11 @@ export function useChatMessagingController({
   viewportState,
   chatRead,
   chatProjection,
-  gitState
+  gitState,
+  benchmark
 }: WorkspaceSession & {
   chatErrors: ReturnType<typeof useWorkspaceChatErrors>
+  benchmark?: WorkspaceBenchmark
   effectiveSelection: ReturnType<typeof useWorkspaceEffectiveSelection>
 }) {
   const { authenticationRequired, handleSendFailure } = chatErrors
@@ -568,12 +573,16 @@ export function useChatMessagingController({
     apps: ProviderAppInput[] = [],
     turnOptionsOverride?: ProviderTurnOptions,
     sendTarget?: 'current' | 'new',
-    initialGoal?: string
+    initialGoal?: string,
+    benchmarkSide?: ProviderBenchmarkSide
   ): Promise<boolean> => {
     if (
       (configProviderId === 'opencode-v2' && !selectedEffectiveModel) ||
       providerUpdateInProgress ||
       sendInFlightRef.current ||
+      benchmark?.busyRef?.current ||
+      (benchmarkSide && (!benchmark?.active || benchmark.working)) ||
+      (benchmark?.blocked && sendTarget !== 'new') ||
       authenticationRequired ||
       (chatDetailRef.current?.historyPreview && sendTarget !== 'new') ||
       (chatDetailRef.current?.authenticationRequired && sendTarget !== 'new') ||
@@ -698,6 +707,8 @@ export function useChatMessagingController({
         })
       }
 
+      const benchmarkDraft = !selectedChat ? benchmark?.takeDraft?.() : null
+      let benchmarkStarted = false
       try {
         const startingSelectedChat = sendTarget === 'new' ? selectedChat : null
         const startingProviderId = startingSelectedChat?.providerId ?? newSessionProvider
@@ -708,7 +719,12 @@ export function useChatMessagingController({
           (!startingSelectedChat && newSessionNoProject)
         let sessionCwd = startingCwd ?? undefined
 
-        if (!startingSelectedChat && !newSessionNoProject && newSessionLocation === 'worktree') {
+        if (
+          !benchmarkDraft &&
+          !startingSelectedChat &&
+          !newSessionNoProject &&
+          newSessionLocation === 'worktree'
+        ) {
           if (!newSessionCwd) throw new Error('Choose a folder before creating a worktree.')
 
           const generationId = crypto.randomUUID()
@@ -751,15 +767,41 @@ export function useChatMessagingController({
           sessionCwd = worktree.worktreePath
         }
 
-        const detail = await providerApi.startChat(startingProviderId, serializedMessage, {
-          ...turnOptions,
-          ...(initialGoal ? { initialGoal } : {}),
-          noProject,
-          cwd: noProject ? undefined : sessionCwd,
-          additionalDirectories: noProject ? undefined : turnOptions.additionalDirectories
-        })
+        const detail =
+          benchmarkDraft && benchmark
+            ? await providerApi.startChatBenchmark(
+                startingProviderId,
+                serializedMessage,
+                {
+                  ...turnOptions,
+                  promptSuggestions: false,
+                  additionalDirectories: undefined,
+                  cwd: benchmarkDraft.worktrees.primary.worktreePath
+                },
+                benchmark.getSecondaryOptions(
+                  turnOptions,
+                  benchmarkDraft.worktrees.secondary.worktreePath
+                ),
+                benchmarkSide
+              )
+            : await providerApi.startChat(startingProviderId, serializedMessage, {
+                ...turnOptions,
+                ...(initialGoal ? { initialGoal } : {}),
+                noProject,
+                cwd: noProject ? undefined : sessionCwd,
+                additionalDirectories: noProject ? undefined : turnOptions.additionalDirectories
+              })
+        benchmarkStarted = Boolean(benchmarkDraft)
+        if (detail.benchmarkChatId)
+          benchmark?.rememberSelection?.(startingProviderId, detail.benchmarkChatId)
         rememberStartedChatSelection(startingProviderId, detail.id, messageBoxSelection)
         const startedChatKey = getChatKey({ providerId: startingProviderId, id: detail.id })
+        if (benchmarkDraft && benchmarkSide) {
+          benchmark?.appendSideTurn(startedChatKey, benchmarkSide, {
+            primary: null,
+            secondary: null
+          })
+        }
         // A navigation request takes precedence even while its history is still loading,
         // or if the user has left and returned to the original empty composer.
         if (
@@ -788,7 +830,7 @@ export function useChatMessagingController({
         }
         applyViewedChatDetail(
           startingProviderId,
-          !initialGoal && !hasProviderUserMessage(detail.items)
+          !initialGoal && benchmarkSide !== 'secondary' && !hasProviderUserMessage(detail.items)
             ? {
                 ...detail,
                 items: getOptimisticItems([], messageWithComposerMentions, attachments, review)
@@ -801,7 +843,7 @@ export function useChatMessagingController({
         // summaries, so a quick response can finish without ever sending its transcript to the
         // renderer. Select it immediately (rather than waiting for the React selection effect),
         // then read the current snapshot once to recover any events from that startup window.
-        providerApi.setViewedChat(startingProviderId, detail.id)
+        providerApi.setViewedChat(startingProviderId, detail.id, detail.benchmarkChatId)
         void providerApi
           .getChat(startingProviderId, detail.id)
           .then((latestDetail) => {
@@ -817,6 +859,14 @@ export function useChatMessagingController({
         return true
       } catch (error) {
         console.error('[caught:useChatMessagingController:handleSendMessage]', error)
+        if (benchmarkDraft && !benchmarkStarted) {
+          await benchmark?.discardDraft(benchmarkDraft).catch((cleanupError) => {
+            console.error(
+              'Unable to remove worktrees after benchmark startup failed.',
+              cleanupError
+            )
+          })
+        }
         // Keep the goal dialog open with the native error so its draft can be retried.
         if (initialGoal) {
           setSendState('idle')
@@ -844,6 +894,101 @@ export function useChatMessagingController({
     const providerId = selectedChat.providerId
     const chatId = selectedChat.id
     setSendState('sending')
+
+    if (benchmark?.active && benchmark.companion) {
+      let companion = benchmark.companion
+      let main = chatDetail
+      const benchmarkKey = getChatKey(selectedChat)
+      const send = (
+        chat: ProviderChatDetail | null,
+        targetId: string,
+        options: ProviderTurnOptions
+      ) =>
+        chat?.capabilities.activeMessages && isActiveChatStatus(chat.status)
+          ? providerApi.sendActiveChatMessageSummary(
+              providerId,
+              targetId,
+              serializedMessage,
+              activeMode ?? effectiveAppSettings.chat.defaultActiveAction,
+              options
+            )
+          : providerApi.continueChatSummary(providerId, targetId, serializedMessage, options)
+      try {
+        if (benchmark.sideHistory && !benchmarkSide) {
+          await Promise.all(
+            [main, companion].map(async (detail) => {
+              if (detail && isActiveChatStatus(detail.status))
+                await providerApi.stopChat(providerId, detail.id)
+            })
+          )
+          const rewound = await providerApi.rewindChatBenchmark(
+            providerId,
+            chatId,
+            benchmark.sideHistory.checkpoint
+          )
+          main = rewound.primary
+          companion = rewound.secondary
+          applyViewedChatDetail(providerId, main, { allowEqualRevision: true })
+          if (selectedChatKeyRef.current === benchmarkKey) chatState.applyBenchmarkDetail(companion)
+          benchmark.clearSideHistory(benchmarkKey)
+        }
+        if (!companion.cwd || !main?.cwd)
+          throw new Error('The benchmark worktrees are unavailable.')
+        const mainOptions = {
+          ...turnOptions,
+          cwd: main.cwd,
+          promptSuggestions: false,
+          additionalDirectories: undefined
+        }
+        const companionOptions = benchmark.getSecondaryOptions(turnOptions, companion.cwd)
+        if (benchmarkSide) {
+          const undo = benchmark.appendSideTurn(benchmarkKey, benchmarkSide, await benchmark.checkpoint())
+          try {
+            if (benchmarkSide === 'primary') {
+              applyChatSummary(providerId, await send(main, chatId, mainOptions), false)
+              markChatSeenAt(providerId, chatId, Date.now())
+            } else {
+              await send(companion, companion.id, companionOptions)
+            }
+          } catch (error) {
+            undo()
+            throw error
+          }
+          setSendState('idle')
+          return true
+        }
+        const [primary, secondary] = await Promise.allSettled([
+          send(main, chatId, mainOptions),
+          send(companion, companion.id, companionOptions)
+        ])
+        if (primary.status === 'fulfilled') {
+          applyChatSummary(providerId, primary.value, false)
+          markChatSeenAt(providerId, chatId, Date.now())
+        }
+        if (primary.status === 'rejected' || secondary.status === 'rejected') {
+          const failed = primary.status === 'rejected' ? primary : secondary
+          handleSendFailure(
+            failed.status === 'rejected' ? failed.reason : null,
+            'Unable to send to both benchmark agents.'
+          )
+          // A delivered prompt must not be offered for a second send to the same agent.
+          return primary.status === 'fulfilled' || secondary.status === 'fulfilled'
+        }
+        try {
+          await benchmark.record('tie')
+        } catch (error) {
+          handleSendFailure(error, 'Unable to save the benchmark tie.')
+          return true
+        }
+        setSendState('idle')
+        return true
+      } catch (error) {
+        handleSendFailure(error, 'Unable to send benchmark message.')
+        return false
+      } finally {
+        finishSendInFlight()
+      }
+    }
 
     if (chatHasActiveTurn && chatDetail?.capabilities.activeMessages) {
       try {
@@ -913,6 +1058,28 @@ export function useChatMessagingController({
       finishSendInFlight()
     }
   }
+
+  const handleSendBenchmarkSide = (
+    side: ProviderBenchmarkSide,
+    message: string,
+    activeMode?: ProviderActiveSendMode,
+    attachments?: AppSelectedAttachment[],
+    review?: Omit<ProviderReview, 'prompt'> | null,
+    skills?: ProviderSkillInput[],
+    apps?: ProviderAppInput[]
+  ): Promise<boolean> =>
+    handleSendMessage(
+      message,
+      activeMode,
+      attachments,
+      review,
+      skills,
+      apps,
+      undefined,
+      'current',
+      undefined,
+      side
+    )
 
   const handleStartGoalChat = async (objective: string): Promise<void> => {
     const goal = objective.trim()
@@ -1224,7 +1391,7 @@ export function useChatMessagingController({
     chat: ProviderChat,
     approval: NonNullable<ProviderChat['pendingApproval']>,
     decision: ProviderApprovalDecision,
-    options: { markViewed: boolean }
+    options: { markViewed: boolean; benchmarkCompanion?: boolean }
   ): Promise<void> => {
     if (approvalResolution.decision) return
 
@@ -1233,7 +1400,8 @@ export function useChatMessagingController({
 
     try {
       const detail = await providerApi.resolveApproval(chat.providerId, chat.id, decision)
-      if (options.markViewed) applyViewedChatDetail(chat.providerId, detail)
+      if (options.benchmarkCompanion) chatState.applyBenchmarkDetail(detail)
+      else if (options.markViewed) applyViewedChatDetail(chat.providerId, detail)
       else applyChatDetail(chat.providerId, detail)
     } catch (error) {
       console.error('[caught:useChatMessagingController:resolveChatApproval]', error)
@@ -1255,6 +1423,18 @@ export function useChatMessagingController({
 
     await resolveChatApproval(selectedChat, pendingApproval, decision, { markViewed: true })
   }
+  const handleResolveBenchmarkApproval = async (
+    decision: ProviderApprovalDecision
+  ): Promise<void> => {
+    const detail = benchmark?.companion
+    if (!selectedChat || !detail?.pendingApproval) return
+    await resolveChatApproval(
+      { ...selectedChat, id: detail.id },
+      detail.pendingApproval,
+      decision,
+      { markViewed: false, benchmarkCompanion: true }
+    )
+  }
   const handleResolveChatApproval = async (
     chat: ProviderChat,
     decision: ProviderApprovalDecision
@@ -1268,30 +1448,43 @@ export function useChatMessagingController({
 
     await resolveChatApproval(chat, approval, decision, { markViewed: false })
   }
-  const resolveSelectedUserInput = async (response: ProviderUserInputResponse): Promise<void> => {
+  const resolveSelectedUserInput = async (
+    response: ProviderUserInputResponse,
+    side: 'primary' | 'secondary' = 'primary'
+  ): Promise<void> => {
+    const companion = side === 'secondary' ? benchmark?.companion : null
+    const request = side === 'secondary' ? companion?.pendingUserInput : pendingUserInput
+    const resolving =
+      side === 'secondary'
+        ? chatState.userInputResolution.requestId === request?.id &&
+          chatState.userInputResolution.resolving
+        : userInputResolving
     if (
       !selectedChat ||
-      !pendingUserInput ||
-      (userInputResolving &&
-        !(response.kind === 'cancel' && pendingUserInput.elicitation?.mode === 'verification'))
+      !request ||
+      (resolving && !(response.kind === 'cancel' && request.elicitation?.mode === 'verification'))
     )
       return
 
-    const requestId = pendingUserInput.id
+    const requestId = request.id
+    const chatId = companion?.id ?? selectedChat.id
     setUserInputResolution({ requestId, resolving: true, error: null })
 
     try {
       const detail = await providerApi.resolveUserInput(
         selectedChat.providerId,
-        selectedChat.id,
+        chatId,
         requestId,
         response,
-        response.kind === 'answer' && !pendingUserInput.isBlocking
-          ? getCurrentTurnOptions()
+        response.kind === 'answer' && !request.isBlocking
+          ? companion?.cwd && benchmark
+            ? benchmark.getSecondaryOptions(getCurrentTurnOptions(), companion.cwd)
+            : getCurrentTurnOptions()
           : undefined
       )
-      clearUserInputDraft(getChatKey(selectedChat), pendingUserInput)
-      applyViewedChatDetail(selectedChat.providerId, detail)
+      clearUserInputDraft(getChatKey({ providerId: selectedChat.providerId, id: chatId }), request)
+      if (companion) chatState.applyBenchmarkDetail(detail)
+      else applyViewedChatDetail(selectedChat.providerId, detail)
     } catch (error) {
       console.error('[caught:useChatMessagingController:resolveSelectedUserInput]', error)
       setUserInputResolution({
@@ -1336,7 +1529,7 @@ export function useChatMessagingController({
     }
   }
   const handleStopChat = async (): Promise<void> => {
-    if (!selectedChat || sendInFlightRef.current) return
+    if (!selectedChat || sendInFlightRef.current || benchmark?.busyRef?.current) return
     const stopProjectKey = getChatGroupKey(selectedChat)
     sendInFlightRef.current = true
     sendInFlightProjectKeyRef.current = stopProjectKey
@@ -1344,8 +1537,22 @@ export function useChatMessagingController({
     setSendState('sending')
 
     try {
-      const detail = await providerApi.stopChat(selectedChat.providerId, selectedChat.id)
-      applyViewedChatDetail(selectedChat.providerId, detail)
+      const companion = benchmark?.active ? benchmark.companion : null
+      const targets = [
+        ...(!companion || isActiveChatStatus(chatDetail?.status) ? [selectedChat.id] : []),
+        ...(companion ? [companion.id] : [])
+      ]
+      const results = await Promise.allSettled(
+        targets.map((id) =>
+          providerApi.stopChat(selectedChat.providerId, id).then((detail) => {
+            if (id === selectedChat.id) applyViewedChatDetail(selectedChat.providerId, detail)
+            else if (selectedChatRef.current?.id === selectedChat.id)
+              chatState.applyBenchmarkDetail(detail)
+          })
+        )
+      )
+      const failed = results.find((result) => result.status === 'rejected')
+      if (failed) throw failed.reason
       markChatSeenAt(selectedChat.providerId, selectedChat.id, Date.now())
       setSendState('idle')
     } catch (error) {
@@ -1359,24 +1566,47 @@ export function useChatMessagingController({
       setSendInFlightProjectKey((currentKey) => (currentKey === stopProjectKey ? null : currentKey))
     }
   }
+  const updatePendingMessage = async (
+    operation: 'deletePendingMessage' | 'interruptPendingMessage' | 'steerPendingMessage',
+    providerId: ProviderId,
+    chatId: string,
+    message: ProviderPendingMessage
+  ): Promise<void> => {
+    const companion = benchmark?.active ? benchmark.companion : null
+    const counterpart = companion ? findBenchmarkPendingMessage(companion.items, message) : null
+    const updates = await Promise.allSettled([
+      providerApi[operation](providerId, chatId, message.id).then((detail) => {
+        applyViewedChatDetail(providerId, detail)
+      }),
+      ...(companion && counterpart
+        ? [
+            providerApi[operation](providerId, companion.id, counterpart.id).then((detail) => {
+              if (selectedChatRef.current?.id === chatId) chatState.applyBenchmarkDetail(detail)
+            })
+          ]
+        : [])
+    ])
+    const failed = updates.find((update) => update.status === 'rejected')
+    if (failed) throw failed.reason
+  }
   const handleDeletePendingMessage = useCallback(
     async (message: ProviderPendingMessage): Promise<void> => {
-      if (!selectedProviderId || !selectedChatId) return
+      if (!selectedProviderId || !selectedChatId || benchmark?.busyRef?.current) return
 
       try {
-        const detail = await providerApi.deletePendingMessage(
+        await updatePendingMessage(
+          'deletePendingMessage',
           selectedProviderId,
           selectedChatId,
-          message.id
+          message
         )
-        applyViewedChatDetail(selectedProviderId, detail)
         if (sendState === 'error') setSendState('idle')
       } catch (error) {
         console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
         handleSendFailure(error, 'Unable to delete queued message.')
       }
     },
-    [applyViewedChatDetail, handleSendFailure, selectedChatId, selectedProviderId, sendState]
+    [updatePendingMessage, handleSendFailure, selectedChatId, selectedProviderId, sendState]
   )
   const handleInterruptPendingMessage = useCallback(
     async (message: ProviderPendingMessage): Promise<void> => {
@@ -1384,7 +1614,8 @@ export function useChatMessagingController({
         providerUpdateInProgress ||
         !selectedProviderId ||
         !selectedChatId ||
-        sendInFlightRef.current
+        sendInFlightRef.current ||
+        benchmark?.busyRef?.current
       ) {
         return
       }
@@ -1397,12 +1628,12 @@ export function useChatMessagingController({
       setSendState('sending')
 
       try {
-        const detail = await providerApi.interruptPendingMessage(
+        await updatePendingMessage(
+          'interruptPendingMessage',
           selectedProviderId,
           selectedChatId,
-          message.id
+          message
         )
-        applyViewedChatDetail(selectedProviderId, detail)
         setSendState('idle')
       } catch (error) {
         console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
@@ -1418,7 +1649,8 @@ export function useChatMessagingController({
       }
     },
     [
-      applyViewedChatDetail,
+      updatePendingMessage,
+      benchmark?.busyRef,
       handleSendFailure,
       providerUpdateInProgress,
       selectedChatId,
@@ -1431,7 +1663,8 @@ export function useChatMessagingController({
         providerUpdateInProgress ||
         !selectedProviderId ||
         !selectedChatId ||
-        sendInFlightRef.current
+        sendInFlightRef.current ||
+        benchmark?.busyRef?.current
       ) {
         return
       }
@@ -1444,12 +1677,12 @@ export function useChatMessagingController({
       setSendState('sending')
 
       try {
-        const detail = await providerApi.steerPendingMessage(
+        await updatePendingMessage(
+          'steerPendingMessage',
           selectedProviderId,
           selectedChatId,
-          message.id
+          message
         )
-        applyViewedChatDetail(selectedProviderId, detail)
         setSendState('idle')
       } catch (error) {
         console.error('[caught:useChatMessagingController:useChatMessagingController]', error)
@@ -1465,7 +1698,8 @@ export function useChatMessagingController({
       }
     },
     [
-      applyViewedChatDetail,
+      updatePendingMessage,
+      benchmark?.busyRef,
       handleSendFailure,
       providerUpdateInProgress,
       selectedChatId,
@@ -1489,9 +1723,11 @@ export function useChatMessagingController({
     handleLoadWorkingStep,
     handleLoadWorkingToolPage,
     handleResolveApproval,
+    handleResolveBenchmarkApproval,
     handleResolveChatApproval,
     handleRetryStoppedTurn,
     handleSendMessage,
+    handleSendBenchmarkSide,
     handleStartGoalChat,
     handleSteerPendingMessage,
     handleCompactChat,

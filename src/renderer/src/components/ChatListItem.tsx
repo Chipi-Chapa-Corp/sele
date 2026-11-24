@@ -20,6 +20,7 @@ import {
   Download,
   PinOff,
   Save,
+  Scale,
   ShieldQuestionMark,
   Terminal,
   Undo2,
@@ -498,7 +499,10 @@ export const ChatListItem = memo(function ChatListItem({
               />
             </>
           ) : (
-            <span className="chat-list-item__title">{chatTitle}</span>
+            <>
+              {chat.benchmarkChatId && <Scale size={14} aria-label="Benchmark" />}
+              <span className="chat-list-item__title">{chatTitle}</span>
+            </>
           )}
         </span>
       </MainContainer>

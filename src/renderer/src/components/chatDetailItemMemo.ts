@@ -77,6 +77,7 @@ export const areChatDetailItemPropsEqual = (
   first.followingWorkingStepHasNext === second.followingWorkingStepHasNext &&
   first.followingWorkingStepStatus === second.followingWorkingStepStatus &&
   first.hasNextWorkingStep === second.hasNextWorkingStep &&
+  first.messageActions === second.messageActions &&
   first.messagePinned === second.messagePinned &&
   first.pendingMessageLabel === second.pendingMessageLabel &&
   first.pendingMessageDeleteDisabled === second.pendingMessageDeleteDisabled &&

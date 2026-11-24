@@ -95,6 +95,7 @@ const fixture = (globals = {}) => {
     ]),
     pendingTurnIds: new Map([['chat', 'client']]),
     pendingTurnStarts: new Map(),
+    emptyThreads: new Set(),
     activeTurnIds: new Map(),
     steeringMessagesByThread: new Map(),
     rememberThreadContainer() {},

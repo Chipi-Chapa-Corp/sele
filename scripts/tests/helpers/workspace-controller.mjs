@@ -55,6 +55,7 @@ const namespaces = [
   'sidebarActions',
   'navigation',
   'chatPreset',
+  'benchmark',
   'settingsActions',
   'chatErrors',
   'listActions',
@@ -77,6 +78,7 @@ export const workspaceTestGlobals = (globals) => {
   globals.startTransition ??= (update) => update()
   globals.selectionRequest ??= { current: 0 }
   globals.chatNavigationRequestRef ??= globals.selectionRequest
+  globals.selectedChatRef ??= { current: globals.selectedChat ?? null }
   globals.prefetchChatOpening ??= () => {}
   globals.readChatOpening ??= (chat) =>
     globals.providerApi?.getCachedChat?.(chat.providerId, chat.id, {

@@ -7,10 +7,16 @@ export function getWorkspaceChangesFooter({
   session,
   commits,
   gitSync,
-  changes
+  changes,
+  benchmark,
+  chatState
 }: WorkspaceChanges) {
   return {
-    visible: panes.changesPaneView === 'git' && panes.gitPaneView === 'changes',
+    visible:
+      panes.changesPaneView === 'git' &&
+      panes.gitPaneView === 'changes' &&
+      (!benchmark.active || Boolean(chatState.selectedChat)),
+    benchmarkActive: benchmark.active,
     commitDisabled: gitPresentation.commitDisabled,
     commitInput: gitPresentation.commitInput,
     commitInputLabel: gitPresentation.commitInputLabel,

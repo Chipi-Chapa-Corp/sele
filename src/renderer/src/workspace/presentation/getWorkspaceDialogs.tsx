@@ -1,5 +1,6 @@
 import { getWorkspaceSettingsPanel } from './getWorkspaceSettingsPanel'
 import type { WorkspaceChanges } from '../composition/useWorkspaceChangesModel'
+import { getContainerTargetKey } from '../../containerSelection'
 
 export function getWorkspaceDialogs({
   preferences,
@@ -13,10 +14,24 @@ export function getWorkspaceDialogs({
   sourceControls,
   dialogState,
   changes,
+  session,
+  benchmark,
+  primaryWorktreeChanges,
+  secondaryWorktreeChanges,
   files
 }: WorkspaceChanges & {
   settingsPanel: ReturnType<typeof getWorkspaceSettingsPanel>
 }) {
+  const editorTarget = dialogState.fileEditorTarget
+  const editorWorktree =
+    benchmark.active &&
+    editorTarget &&
+    getContainerTargetKey(editorTarget.container) === session.changesContainerKey
+      ? [primaryWorktreeChanges, secondaryWorktreeChanges].find(
+          ({ cwd }) => cwd === editorTarget.cwd
+        )
+      : undefined
+
   return {
     settingsCloseButtonRef: preferences.settingsCloseButtonRef,
     settingsOpen: preferences.settingsOpen,
@@ -53,7 +68,7 @@ export function getWorkspaceDialogs({
     setEditingSshEnvironment: sourceState.setEditingSshEnvironment,
     handleSaveSshEnvironment: sourceControls.handleSaveSshEnvironment,
     fileEditorTarget: dialogState.fileEditorTarget,
-    fileEditorDiffTargets: changes.fileEditorDiffTargets,
+    fileEditorDiffTargets: editorWorktree?.diffTargets ?? changes.fileEditorDiffTargets,
     reviewCommentsDraft: dialogState.reviewCommentsDraft,
     handleCloseFileEditor: files.handleCloseFileEditor,
     handleContinueReview: files.handleContinueReview,

@@ -10,10 +10,12 @@ export function getWorkspaceChangesHeader({
   gitState,
   files,
   gitSync,
-  chrome
+  chrome,
+  benchmark
 }: WorkspaceChanges) {
   return {
     gitHubPullRequests,
+    benchmarkActive: benchmark.active,
     gitPaneView: panes.gitPaneView,
     setGitPaneView: panes.setGitPaneView,
     noProject: settings.noProject,

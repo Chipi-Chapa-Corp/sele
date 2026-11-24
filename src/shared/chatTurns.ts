@@ -1,4 +1,4 @@
-import type { ProviderChatItem, ProviderWorkingStep } from './provider'
+import type { ProviderChatItem, ProviderStepVisualization, ProviderWorkingStep } from './provider'
 
 export type ProviderChatTurn = {
   id: string
@@ -70,11 +70,32 @@ export const getProviderChatTurns = (items: ProviderChatItem[]): ProviderChatTur
   return turns
 }
 
+/** Loaded visualizations, falling back to the summary retained when the items were unloaded. */
+export const getWorkingStepVisualizations = (
+  step: ProviderWorkingStep
+): ProviderStepVisualization[] => {
+  if (step.itemsLoaded === false) return step.visualizations ?? []
+  const visualizations = step.items.flatMap((item) =>
+    item.type === 'message'
+      ? []
+      : (item.type === 'toolGroup' ? item.tools : [item]).flatMap((tool) =>
+          tool.visualization ? [{ id: tool.id, visualization: tool.visualization }] : []
+        )
+  )
+  // A partially loaded page must not drop documents from pages that are not in memory.
+  const loadedIds = new Set(visualizations.map(({ id }) => id))
+  return [...(step.visualizations ?? []).filter(({ id }) => !loadedIds.has(id)), ...visualizations]
+}
+
 export const unloadWorkingStepItems = (step: ProviderWorkingStep): ProviderWorkingStep => {
   const stepWithoutSegments = { ...step }
   delete stepWithoutSegments.itemSegments
+  // Use the spread copy: archived steps expose items through a lazily hydrated getter.
+  const visualizations = getWorkingStepVisualizations(stepWithoutSegments)
+  delete stepWithoutSegments.visualizations
   return {
     ...stepWithoutSegments,
+    ...(visualizations.length ? { visualizations } : {}),
     items: [],
     itemsLoaded: false,
     itemCount:

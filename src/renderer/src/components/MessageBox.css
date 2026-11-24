@@ -272,6 +272,34 @@
   padding-top: 0.35rem;
 }
 
+.message-box__chat-config-benchmark {
+  margin-top: 0.2rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--control-radius-small);
+  color: var(--lead);
+  background: var(--glass-subtle);
+}
+
+.message-box__chat-config-benchmark .ui-switch__label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.message-box__chat-config-benchmark:has(input:not(:disabled)):hover,
+.message-box__chat-config-benchmark:has(input:focus-visible),
+.message-box__chat-config-benchmark:has(input:checked) {
+  background: var(--menu-option-active-bg);
+}
+
+.message-box__chat-config-benchmark:has(input:checked:not(:disabled)) {
+  color: var(--menu-option-selected-color);
+}
+
+.message-box__chat-config-benchmark:has(input:checked) .message-box__chat-config-section-icon {
+  color: currentColor;
+}
+
 .message-box__chat-config-option-groups {
   display: flex;
   min-width: 0;

@@ -1,3 +1,4 @@
+import { isUnsupportedTurnPaginationError } from './CodexPaginatedHistory.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -47,6 +48,7 @@ const thread = (id, parentThreadId = null) => ({
 const setup = () => {
   const adapter = vm.runInNewContext(code, {
     ...subagents,
+    isUnsupportedTurnPaginationError,
     console,
     getThreadId: (params) => (typeof params.threadId === 'string' ? params.threadId : null)
   })

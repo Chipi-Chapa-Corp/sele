@@ -1,3 +1,4 @@
+import { useWorkspaceBenchmark } from '../features/useWorkspaceBenchmark'
 import { useWorkspaceChatErrors } from '../features/useWorkspaceChatErrors'
 import { useWorkspaceChatPreset } from '../features/useWorkspaceChatPreset'
 import { useWorkspaceEffectiveSelection } from '../features/useWorkspaceEffectiveSelection'
@@ -84,7 +85,14 @@ export function useWorkspaceChatModel({
 
   const listActions = useChatListController({ ...workspace, sidebarModel })
 
-  const messaging = useChatMessagingController({ ...workspace, chatErrors, effectiveSelection })
+  const benchmark = useWorkspaceBenchmark({ ...workspace, chatErrors, effectiveSelection })
+
+  const messaging = useChatMessagingController({
+    ...workspace,
+    chatErrors,
+    effectiveSelection,
+    benchmark
+  })
 
   const interactions = useChatInteractionController({
     ...workspace,
@@ -121,6 +129,7 @@ export function useWorkspaceChatModel({
     chatErrors,
     listActions,
     messaging,
+    benchmark,
     interactions,
     conversation
   }

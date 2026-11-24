@@ -114,6 +114,22 @@ export const renderConversationTurn = (
   inputs: ChatTurnInputs,
   turnIndex: number,
   turn: ProviderChatTurn
+): ReactElement => (
+  <div
+    className="chat-detail__turn"
+    data-chat-turn-id={turn.id}
+    data-chat-turn-index={turnIndex}
+    key={getChatItemRenderKey(turn.items[0])}
+  >
+    {renderConversationTurnContents(inputs, turnIndex, turn)}
+  </div>
+)
+
+export const renderConversationTurnContents = (
+  inputs: ChatTurnInputs,
+  turnIndex: number,
+  turn: ProviderChatTurn,
+  actions?: { itemId: string; content: ItemProps['messageActions'] }
 ): ReactElement => {
   const {
     itemIndexesById,
@@ -135,12 +151,7 @@ export const renderConversationTurn = (
       : undefined
 
   return (
-    <div
-      className="chat-detail__turn"
-      data-chat-turn-id={turn.id}
-      data-chat-turn-index={turnIndex}
-      key={getChatItemRenderKey(turn.items[0])}
-    >
+    <>
       {turn.items.map((item) => {
         const itemIndex = itemIndexesById.get(item.id) ?? -1
         const followingWorkingStep = followingWorkingStepsById.get(item.id)
@@ -184,6 +195,7 @@ export const renderConversationTurn = (
               followingWorkingStepStatus={followingWorkingStep?.status}
               hasNextWorkingStep={inputs.workingStepIdsWithNextWorkingStep.has(item.id)}
               item={item}
+              messageActions={actions?.itemId === item.id ? actions.content : undefined}
               messagePinned={item.type === 'message' && inputs.pinnedChatMessageIds?.has(item.id)}
               cwd={inputs.cwd}
               modelLabelsById={inputs.modelLabelsById}
@@ -245,6 +257,6 @@ export const renderConversationTurn = (
         inputs.windowIncludesLatest &&
         !firstPendingChatItemId &&
         trailingChatCommitMarkers?.map(renderChatCommitMarker)}
-    </div>
+    </>
   )
 }

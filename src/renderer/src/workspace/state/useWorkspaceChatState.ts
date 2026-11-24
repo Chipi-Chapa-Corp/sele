@@ -44,6 +44,15 @@ export function useWorkspaceChatState() {
   const { selectedChat, setSelectedChat, chatDetail, setChatDetail, selectChatView } =
     useChatViewState()
 
+  const [benchmarkDetail, setBenchmarkDetail] = useState<ProviderChatDetail | null>(null)
+  const benchmarkDetailRef = useRef<ProviderChatDetail | null>(null)
+  const applyBenchmarkDetail = useCallback((detail: ProviderChatDetail) => {
+    const previous = benchmarkDetailRef.current
+    if (previous?.id === detail.id && previous.revision > detail.revision) return
+    benchmarkDetailRef.current = detail
+    setBenchmarkDetail(detail)
+  }, [])
+
   const [recentChatReferencesCache, setRecentChatReferencesCache] = useState<{
     chatKey: string
     references: RecentChatReference[]
@@ -185,6 +194,9 @@ export function useWorkspaceChatState() {
     chatDetail,
     setChatDetail,
     selectChatView,
+    benchmarkDetail,
+    benchmarkDetailRef,
+    applyBenchmarkDetail,
     recentChatReferencesCache,
     setRecentChatReferencesCache,
     recentChatReferencePage,

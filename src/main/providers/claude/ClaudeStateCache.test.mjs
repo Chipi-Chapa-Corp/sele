@@ -104,6 +104,8 @@ const makeHarness = ({ records = () => [], metadata = () => null } = {}) => {
     getBrowserAutomationService: () => null,
     getClaudeModel: () => undefined,
     createClaudeTerminalSessions: () => ({ consume() {}, dispose() {} }),
+    createClaudeVisualizationIntegration: () => ({ server: {}, close() {} }),
+    visualizationServerName: 'visualize',
     query: () => {
       queryCreations += 1
       return { close() {} }

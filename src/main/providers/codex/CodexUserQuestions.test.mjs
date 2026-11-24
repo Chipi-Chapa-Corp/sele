@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { mergeBenchmarkMetadata } from '../../../renderer/src/chatMetadata.ts'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
@@ -309,7 +310,8 @@ test('async questions show the sidebar input indicator without changing conversa
     'getChatFromDetail',
     {
       getChatPreview: () => '',
-      mergeSeenUpdatedAt: () => null
+      mergeSeenUpdatedAt: () => null,
+      mergeBenchmarkMetadata
     }
   )
   const summarize = loadFunction('../providerService.ts', 'getChatUpdateSummary', {

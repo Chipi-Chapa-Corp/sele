@@ -23,7 +23,9 @@ const chatMetadataColumns = [
   'done',
   'done_at',
   'seen_updated_at',
-  'purpose'
+  'purpose',
+  'benchmark_chat_id',
+  'benchmark_ended'
 ] as const
 
 type ChatRow = Selectable<LocalDatabase['chat']>
@@ -49,6 +51,8 @@ const getDefaultChatMetadata = (id: string): ProviderChatMetadata => ({
   doneAt: null,
   seenUpdatedAt: null,
   purpose: null,
+  benchmarkChatId: null,
+  benchmarkEnded: false,
   container: null
 })
 
@@ -82,6 +86,8 @@ const mapChatMetadataRow = (row: ChatRow): ProviderChatMetadata => ({
   doneAt: toNumberOrNull(row.done_at),
   seenUpdatedAt: toNumberOrNull(row.seen_updated_at),
   purpose: isProviderChatPurpose(row.purpose) ? row.purpose : null,
+  benchmarkChatId: row.benchmark_chat_id || null,
+  benchmarkEnded: toBoolean(row.benchmark_ended),
   container: mapContainerTarget(row)
 })
 
@@ -273,6 +279,15 @@ export const setChatPurpose = (
   chatId: string,
   purpose: ProviderChatPurpose
 ): Promise<ProviderChatMetadata> => saveChatColumns(chatId, { purpose })
+
+export const setChatBenchmark = (
+  chatId: string,
+  benchmarkChatId: string
+): Promise<ProviderChatMetadata> =>
+  saveChatColumns(chatId, { benchmark_chat_id: benchmarkChatId, benchmark_ended: 0 })
+
+export const setChatBenchmarkEnded = (chatId: string): Promise<ProviderChatMetadata> =>
+  saveChatColumns(chatId, { benchmark_ended: 1 })
 
 export const setChatContainer = (
   chatId: string,

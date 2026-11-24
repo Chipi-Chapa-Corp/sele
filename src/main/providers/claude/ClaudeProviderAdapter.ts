@@ -22,6 +22,10 @@ import { markTranscriptRecordsChanged } from '../transcriptProjection/recordChan
 import { getProviderChatTurns, sliceProviderChatTurns } from '../../../shared/chatTurns.ts'
 import { getBrowserAutomationService } from '../../browser/BrowserAutomation'
 import { claudeBrowserServerName, createClaudeBrowserIntegration } from './ClaudeBrowserTools'
+import {
+  createClaudeVisualizationIntegration,
+  visualizationServerName
+} from './ClaudeVisualizationTools'
 import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
@@ -220,6 +224,7 @@ type ClaudeSessionState = {
   partialMessages: Map<string, ClaudeTranscriptMessage>
   query: Query | null
   browser: ReturnType<typeof createClaudeBrowserIntegration> | null
+  visualization: ReturnType<typeof createClaudeVisualizationIntegration> | null
   input: AsyncMessageQueue<SDKUserMessage> | null
   options: ProviderTurnOptions | undefined
   active: boolean
@@ -1507,6 +1512,128 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     return id
   }
 
+  replaceTurnAnswer: NonNullable<ProviderAdapter['replaceTurnAnswer']> = async (
+    chatId,
+    messageId,
+    answer,
+    options
+  ) => {
+    const state = await this.ensureCompleteState(chatId, undefined, options?.container)
+    if (
+      state.active ||
+      state.waitingForSessionIdle ||
+      state.queueDrainInProgress ||
+      state.queuedMessages.length ||
+      state.pendingApprovals.length ||
+      state.pendingUserInputs.length ||
+      state.backgroundTaskIds.size
+    )
+      throw new Error('Claude is still working in this conversation.')
+    const promptIndex = state.messages.findIndex(
+      (entry) => entry.type === 'user' && entry.uuid === messageId
+    )
+    if (promptIndex < 0) throw new Error('The judged message is no longer in this chat.')
+    const isPrompt = (entry: (typeof state.messages)[number]): boolean =>
+      entry.type === 'user' && !entry.parent_tool_use_id && !isClaudeInternalUserMessage(entry)
+    if (!options?.discardLater && state.messages.slice(promptIndex + 1).some(isPrompt))
+      throw new Error('Only the latest benchmark round can be replaced.')
+
+    const control = state.query
+    await this.closeStateQuery(state)
+    if (control) await control.return(undefined)
+    const cwd = state.cwd ?? process.cwd()
+    const file = await nativeHistoryFile('claude', chatId, cwd, options?.container)
+    const entries = await file.read()
+    if (!entries.some((entry) => entry.uuid === messageId))
+      throw new Error('The judged message is no longer in this chat.')
+    // Attach the preferred reply to the judged prompt and explicitly set the resume leaf.
+    // Claude Code can otherwise resume from the original last-prompt marker.
+    const replacement = {
+      id: `benchmark-answer:${messageId}:${randomUUID()}`,
+      role: 'assistant' as const,
+      content: answer
+    }
+    const records = encodeClaudeHistory(chatId, cwd, [replacement], messageId)
+    const replacementId = historyMessageId(chatId, replacement, 0)
+    await file.append([
+      ...records,
+      {
+        type: 'last-prompt',
+        lastPrompt: getTextFromContent(getMessageContent(state.messages[promptIndex].message)),
+        leafUuid: replacementId,
+        sessionId: chatId
+      }
+    ])
+    if (!(await file.read()).some((entry) => entry.uuid === replacementId))
+      throw new Error('Claude did not persist the replaced answer.')
+    state.historyDirty = false
+    await this.refreshIdleHistory(state)
+    if (!state.messageIds.has(replacementId))
+      throw new Error('Claude did not load the preferred answer.')
+    this.emitUpdate(state)
+    return this.createChatDetail(state)
+  }
+
+  rewindBenchmarkHistory: NonNullable<ProviderAdapter['rewindBenchmarkHistory']> = async (
+    chatId,
+    throughMessageId,
+    options
+  ) => {
+    const state = await this.ensureCompleteState(chatId, undefined, options?.container)
+    if (
+      state.active ||
+      state.waitingForSessionIdle ||
+      state.queueDrainInProgress ||
+      state.queuedMessages.length ||
+      state.pendingApprovals.length ||
+      state.pendingUserInputs.length ||
+      state.backgroundTaskIds.size
+    )
+      throw new Error('Wait for Claude to finish before discarding turns.')
+    const prompts = state.messages.filter(
+      (entry) =>
+        entry.type === 'user' && !entry.parent_tool_use_id && !isClaudeInternalUserMessage(entry)
+    )
+    const index = throughMessageId
+      ? prompts.findIndex((entry) => entry.uuid === throughMessageId)
+      : -1
+    if (throughMessageId && index < 0)
+      throw new Error('The selected round is no longer in the Claude transcript.')
+    const next = prompts[index + 1]
+    if (next) {
+      const control = state.query
+      await this.closeStateQuery(state)
+      if (control) await control.return(undefined)
+      const path = await nativeHistoryFile(
+        'claude',
+        chatId,
+        state.cwd ?? process.cwd(),
+        options?.container
+      )
+      const entries = await path.read()
+      const boundary = entries.findIndex((entry) => entry.uuid === next.uuid)
+      if (boundary < 0) throw new Error('The Claude transcript changed before it could be rewound.')
+      state.historyDirty = false
+      if (throughMessageId === null) {
+        // Claude cannot resume a session with no conversation records. Reopen the same
+        // session identity fresh when it receives the first shared prompt.
+        await path.remove()
+        state.messages = []
+        state.messageIds.clear()
+        state.historyPagination = undefined
+        state.metadata = null
+        state.failed = false
+        this.transcriptProjections.delete(state)
+        this.rememberStateTranscriptSize(state)
+      } else {
+        await path.replace(entries.slice(0, boundary))
+        await this.refreshIdleHistory(state)
+      }
+      this.emitUpdate(state)
+    }
+    return this.createChatDetail(state)
+  }
+
   startChat = async (
     message: string,
     options?: ProviderStartChatOptions,
@@ -2237,6 +2364,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       partialMessages: new Map(),
       query: null,
       browser: null,
+      visualization: null,
       input: null,
       options,
       active: false,
@@ -2542,6 +2670,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     )
 
   private refreshIdleHistory = async (state: ClaudeSessionState): Promise<void> => {
+    if (!state.historyPagination && state.metadata === null && state.messages.length === 0) return
     const busy = (): boolean =>
       state.query !== null ||
       state.active ||
@@ -2714,6 +2843,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
               nativeChrome
             )
           : null
+      // Widgets only write Sele-owned files, so every interactive chat can render them.
+      const visualization = createClaudeVisualizationIntegration(state.id)
       let control: Query
       try {
         control = query({
@@ -2724,7 +2855,10 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
             // Writable sessions retain their own configuration, including remote/container setups.
             extraArgs: nativeChrome ? { chrome: null } : queryReadOnly ? { 'no-chrome': null } : {},
             promptSuggestions: state.options?.promptSuggestions === true,
-            ...(browser ? { mcpServers: { [claudeBrowserServerName]: browser.server } } : {}),
+            mcpServers: {
+              [visualizationServerName]: visualization.server,
+              ...(browser ? { [claudeBrowserServerName]: browser.server } : {})
+            },
             canUseTool: this.createPermissionHandler(state),
             onElicitation: this.createElicitationHandler(state),
             ...(isNew ? { sessionId: state.id } : { resume: startOptions.forkFrom ?? state.id }),
@@ -2738,9 +2872,11 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
       } catch (error) {
         input.close()
         browser?.close()
+        visualization.close()
         throw error
       }
       state.browser = browser
+      state.visualization = visualization
       state.input = input
       state.query = control
       state.terminals = createClaudeTerminalSessions({
@@ -2788,6 +2924,8 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     state.terminals = undefined
     state.browser?.close()
     state.browser = null
+    state.visualization?.close()
+    state.visualization = null
     if (!control) return
     if (state.goalRequest?.control === control)
       state.goalRequest.reject(

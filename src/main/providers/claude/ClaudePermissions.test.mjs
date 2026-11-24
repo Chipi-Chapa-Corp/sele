@@ -39,3 +39,20 @@ test('read-only restrictions take precedence over the no-approval policy', () =>
     }
   )
 })
+
+test('allows Sele widget tools without prompts, including read-only and auto-review chats', () => {
+  const input = { modules: ['chart'] }
+  for (const options of [
+    undefined,
+    { sandboxMode: 'read-only' },
+    { approvalsReviewer: 'auto_review' }
+  ])
+    for (const tool of ['mcp__visualize__read_me', 'mcp__visualize__show_widget'])
+      assert.deepEqual(getClaudePermissionAction(options, tool, input), {
+        kind: 'resolve',
+        result: { behavior: 'allow', updatedInput: input }
+      })
+  assert.deepEqual(getClaudePermissionAction(undefined, 'mcp__other__show_widget', input), {
+    kind: 'requestApproval'
+  })
+})

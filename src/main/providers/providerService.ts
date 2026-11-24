@@ -1,3 +1,6 @@
+import { removeGitBenchmarkCheckout } from '../registerAppIpc'
+import type { ProviderBenchmarkResult } from '../../shared/provider'
+import { getProviderChatTurns } from '../../shared/chatTurns'
 import { withChatProcessRuntimes } from './ChatProcessRuntimes'
 import { getProviderProcessStore } from '../providerProcesses'
 import { createLimitResetDelivery } from './LimitResetDelivery'
@@ -70,6 +73,8 @@ import {
   setChatContainer,
   setChatAccount,
   bindChatAccounts,
+  setChatBenchmark,
+  setChatBenchmarkEnded,
   setChatDone,
   setChatNoProject,
   setChatOrder,
@@ -79,6 +84,7 @@ import {
   setChatsDone
 } from '../database/chat'
 import { getCwdNotes, setCwdNotes } from '../database/cwdNotes'
+import { getBenchmarkResults, recordBenchmarkResult } from '../database/benchmarkResults'
 import {
   deleteMessageReview,
   getMessageReviews,
@@ -486,6 +492,8 @@ const applyMetadataToChat = (
   doneAt: metadata?.doneAt ?? null,
   seenUpdatedAt: metadata?.seenUpdatedAt ?? null,
   purpose: metadata?.purpose ?? null,
+  benchmarkChatId: metadata?.benchmarkChatId ?? null,
+  benchmarkEnded: metadata?.benchmarkEnded ?? false,
   container: metadata?.container ?? chat.container ?? null
 })
 
@@ -583,6 +591,8 @@ const applyMetadataToDetail = async (
     doneAt: metadata.doneAt ?? null,
     seenUpdatedAt: metadata.seenUpdatedAt,
     purpose: metadata.purpose,
+    benchmarkChatId: metadata.benchmarkChatId ?? null,
+    benchmarkEnded: metadata.benchmarkEnded ?? false,
     container: metadata.container ?? detail.container ?? null,
     tokenUsage: usage ? usage.total : detail.tokenUsage,
     items: (usage ? applyTurnTokenUsage(detail.items, usage.byTurn) : detail.items).map((item) => {
@@ -848,6 +858,8 @@ export const getChatUpdateSummary = (
     doneAt: detail.doneAt ?? null,
     seenUpdatedAt: detail.seenUpdatedAt,
     purpose: detail.purpose,
+    benchmarkChatId: detail.benchmarkChatId ?? null,
+    benchmarkEnded: detail.benchmarkEnded ?? false,
     container: detail.container,
     currentActivity: getChatUpdateActivity(detail)
   }
@@ -994,6 +1006,29 @@ export const startLimitResetQueue = (): void => {
   deferredChatProcessCleanup.start()
   limitResetQueue.start()
   expiringResetCredits.start()
+}
+
+const benchmarkJudgments = new Map<string, Promise<ProviderBenchmarkResult>>()
+
+const getBenchmarkAnswer = (detail: ProviderChatDetail, turnId: string, discardLater = false) => {
+  if (detail.status && detail.status !== 'error') throw new Error('Wait for both agents to finish.')
+  const turns = getProviderChatTurns(detail.items)
+  const index = turns.findIndex((turn) => turn.id === turnId)
+  const next = turns.findIndex(
+    ({ items: [item] }, position) =>
+      position > index &&
+      (item?.type === 'pendingMessage' || (item?.type === 'message' && item.role === 'user'))
+  )
+  if (index < 0 || (!discardLater && next >= 0))
+    throw new Error('Only the latest benchmark round can be judged.')
+  const messages = turns
+    .slice(index, next < 0 ? undefined : next)
+    .flatMap(({ items }) =>
+      items.flatMap((item) =>
+        item.type === 'message' && item.role === 'assistant' ? [item.content] : []
+      )
+    )
+  return messages.join('\n\n')
 }
 
 export const providerApi: ProviderApi = {
@@ -1464,6 +1499,46 @@ export const providerApi: ProviderApi = {
       throw error
     }
   },
+  startChatBenchmark: async (providerId, message, primary, secondary, side) => {
+    if (
+      !adapters[providerId].replaceTurnAnswer ||
+      (side && !adapters[providerId].rewindBenchmarkHistory)
+    ) {
+      throw new Error('Benchmark is unavailable for this provider.')
+    }
+    const starts = await Promise.allSettled([
+      providerApi.startChat(providerId, side === 'secondary' ? '' : message, {
+        ...primary,
+        deferInitialMessage: side === 'secondary'
+      }),
+      providerApi.startChat(
+        providerId,
+        side === 'primary' ? '' : message,
+        { ...secondary, deferInitialMessage: side === 'primary' },
+        'benchmark'
+      )
+    ])
+    try {
+      const [main, companion] = starts
+      if (main.status === 'rejected') throw main.reason
+      if (companion.status === 'rejected') throw companion.reason
+      await providerApi.setChatBenchmark(providerId, main.value.id, companion.value.id)
+      return { ...main.value, benchmarkChatId: companion.value.id, benchmarkEnded: false }
+    } catch (error) {
+      await Promise.allSettled(
+        starts.flatMap((start) => {
+          if (start.status === 'rejected') return []
+          const id = start.value.id
+          return [
+            providerApi
+              .stopChat(providerId, id)
+              .finally(() => providerApi.markChatDone(providerId, id, true))
+          ]
+        })
+      )
+      throw error
+    }
+  },
   continueChat: (providerId, chatId, message, options) =>
     runWithStoredReview(chatId, message, options?.review, () =>
       adapters[providerId].continueChat(chatId, message, options)
@@ -1595,12 +1670,26 @@ export const providerApi: ProviderApi = {
   stopChat: (providerId, chatId) =>
     adapters[providerId].stopChat(chatId).then(withMetadata(providerId)),
   markChatDone: async (providerId, chatId, done = true) => {
-    if (done) await deferredChatProcessCleanup.schedule([chatId], providerId)
-    else await deferredChatProcessCleanup.cancel(chatId)
+    // A benchmark's hidden secondary agent shares the visible chat's lifecycle.
+    const metadata = await getChatMetadata(chatId)
+    // An ended benchmark already retired its secondary agent; undoing Done must not revive it.
+    const benchmarkChatId =
+      metadata.benchmarkChatId && (done || !metadata.benchmarkEnded)
+        ? metadata.benchmarkChatId
+        : null
+    const chatIds = benchmarkChatId ? [chatId, benchmarkChatId] : [chatId]
+    if (done) await deferredChatProcessCleanup.schedule(chatIds, providerId)
+    else for (const id of chatIds) await deferredChatProcessCleanup.cancel(id)
+    if (benchmarkChatId) await setChatDone(benchmarkChatId, done)
     return setChatDone(chatId, done)
   },
   markChatsDone: async (chatIds) => {
-    await deferredChatProcessCleanup.schedule(chatIds)
+    const metadata = await getChatMetadataByIds(chatIds)
+    const benchmarkChatIds = [...metadata.values()].flatMap((chat) =>
+      chat.benchmarkChatId ? [chat.benchmarkChatId] : []
+    )
+    await deferredChatProcessCleanup.schedule([...chatIds, ...benchmarkChatIds])
+    if (benchmarkChatIds.length) await setChatsDone(benchmarkChatIds, true)
     return setChatsDone(chatIds, true)
   },
   getCwdNotes,
@@ -1608,6 +1697,121 @@ export const providerApi: ProviderApi = {
   markChatSeen: (_providerId, chatId, seenUpdatedAt) => setChatSeen(chatId, seenUpdatedAt),
   setChatPinned: (_providerId, chatId, pinned) => setChatPinned(chatId, pinned),
   setChatOrder,
+  setChatBenchmark: async (_providerId, chatId, benchmarkChatId) => {
+    if (chatId === benchmarkChatId) throw new Error('A chat cannot benchmark against itself.')
+    const benchmark = await getChatMetadata(benchmarkChatId)
+    if (benchmark.purpose !== 'benchmark') throw new Error('Benchmark chat is not hidden.')
+    return setChatBenchmark(chatId, benchmarkChatId)
+  },
+  recordBenchmarkResult: async (providerId, result) => {
+    const key = JSON.stringify([providerId, result.chatId])
+    const inFlight = benchmarkJudgments.get(key)
+    if (inFlight) {
+      const saved = await inFlight
+      if (saved.turnId === result.turnId && (saved.outcome !== 'tie' || result.outcome === 'tie'))
+        return saved
+      return providerApi.recordBenchmarkResult(providerId, result)
+    }
+    const judgment = (async () => {
+      const metadata = await getChatMetadata(result.chatId)
+      if (
+        metadata.benchmarkEnded ||
+        !metadata.benchmarkChatId ||
+        metadata.benchmarkChatId !== result.secondary.chatId ||
+        result.primary.chatId !== result.chatId
+      ) {
+        throw new Error('This chat is not part of an active benchmark.')
+      }
+      const existing = (await getBenchmarkResults(providerId, result.chatId)).find(
+        (entry) => entry.turnId === result.turnId
+      )
+      if (existing && (existing.outcome !== 'tie' || result.outcome === 'tie')) return existing
+      if (result.outcome !== 'tie') {
+        const adapter = adapters[providerId]
+        const { discardLater, secondaryTurnId } = result
+        if (
+          !adapter.replaceTurnAnswer ||
+          !secondaryTurnId ||
+          (discardLater && !adapter.rewindBenchmarkHistory)
+        )
+          throw new Error('This provider cannot apply the benchmark verdict.')
+        const [primary, secondary] = await Promise.all([
+          discardLater
+            ? getProviderChatItemWindow(providerId, result.chatId, result.turnId, 12)
+            : providerApi.getChat(providerId, result.chatId),
+          discardLater
+            ? getProviderChatItemWindow(providerId, result.secondary.chatId, secondaryTurnId, 12)
+            : providerApi.getChat(providerId, result.secondary.chatId)
+        ])
+        const primaryAnswer = getBenchmarkAnswer(primary, result.turnId, discardLater)
+        const secondaryAnswer = getBenchmarkAnswer(secondary, secondaryTurnId, discardLater)
+        const answer = result.outcome === 'primary' ? primaryAnswer : secondaryAnswer
+        const target = result.outcome === 'primary' ? secondary : primary
+        const winner = result.outcome === 'primary' ? primary : secondary
+        const turnId = result.outcome === 'primary' ? secondaryTurnId : result.turnId
+        const winnerTurnId = result.outcome === 'primary' ? result.turnId : secondaryTurnId
+        if (!answer.trim()) throw new Error('The liked answer is empty.')
+        await adapter.replaceTurnAnswer(target.id, turnId, answer, {
+          container: target.container,
+          discardLater
+        })
+        if (discardLater)
+          await adapter.rewindBenchmarkHistory?.(winner.id, winnerTurnId, {
+            container: winner.container
+          })
+      }
+      return recordBenchmarkResult(providerId, result)
+    })()
+    benchmarkJudgments.set(key, judgment)
+    try {
+      return await judgment
+    } finally {
+      benchmarkJudgments.delete(key)
+    }
+  },
+  rewindChatBenchmark: async (providerId, chatId, checkpoint) => {
+    const metadata = await getChatMetadata(chatId)
+    const adapter = adapters[providerId]
+    if (!metadata.benchmarkChatId || metadata.benchmarkEnded || !adapter.rewindBenchmarkHistory)
+      throw new Error('This chat does not have an active benchmark to rewind.')
+    const [primary, secondary] = await Promise.all([
+      providerApi.getChat(providerId, chatId),
+      providerApi.getChat(providerId, metadata.benchmarkChatId)
+    ])
+    if ([primary, secondary].some(({ status }) => status && status !== 'error'))
+      throw new Error('Wait for both agents to finish before continuing the benchmark.')
+    const [rewoundPrimary, rewoundSecondary] = await Promise.all([
+      adapter.rewindBenchmarkHistory(primary.id, checkpoint.primary, {
+        container: primary.container
+      }),
+      adapter.rewindBenchmarkHistory(secondary.id, checkpoint.secondary, {
+        container: secondary.container
+      })
+    ])
+    return {
+      primary: await applyMetadataToDetail(rewoundPrimary, providerId),
+      secondary: await applyMetadataToDetail(rewoundSecondary, providerId)
+    }
+  },
+  getBenchmarkResults,
+  endChatBenchmark: async (providerId, chatId) => {
+    const metadata = await getChatMetadata(chatId)
+    if (!metadata.benchmarkChatId) throw new Error('This chat is not a benchmark.')
+    if (metadata.benchmarkEnded) return metadata
+    const companionId = metadata.benchmarkChatId
+    const [primary, companion] = await Promise.all([
+      providerApi.getChat(providerId, chatId),
+      providerApi.getChat(providerId, companionId)
+    ])
+    if (!primary.projectCwd || !companion.cwd)
+      throw new Error('The benchmark worktree is unavailable.')
+    if ([primary, companion].some(({ status }) => status && status !== 'error'))
+      throw new Error('Stop both agents before ending the benchmark.')
+    await cleanupChatProcesses([companionId], providerId)
+    await removeGitBenchmarkCheckout(primary.projectCwd, companion.cwd, companion.container)
+    await setChatDone(companionId, true)
+    return setChatBenchmarkEnded(chatId)
+  },
   onChatUpdated: (listener) => {
     chatUpdatedListeners.add(listener)
     return () => chatUpdatedListeners.delete(listener)

@@ -976,3 +976,77 @@ test('Claude subagent metadata names and nests subagents read without transcript
   assert.deepEqual([root.title, root.parentId], ['Audit rendering', null])
   assert.deepEqual([nested.title, nested.parentId], ['Review daemon', 'root'])
 })
+
+test('Artifact publishes and Sele widgets carry their document to the working step', () => {
+  const widgetResult = [
+    {
+      type: 'text',
+      text: JSON.stringify({
+        sele_visualization: true,
+        status: 'rendered',
+        title: 'load_curve',
+        path: '/data/visualizations/chat/load-curve-1234abcd.html'
+      })
+    }
+  ]
+  const records = [
+    userPrompt,
+    planCall('artifact', 'Artifact', { file_path: '/work/report.html', favicon: '📊' }),
+    planResult('artifact', {
+      url: 'https://claude.ai/artifact/report',
+      path: '/work/report.html',
+      title: 'Quarterly report'
+    }),
+    planCall('read-me', 'mcp__visualize__read_me', { modules: ['chart'] }),
+    planResult('read-me', [{ type: 'text', text: '# Sele inline visualizations' }]),
+    planCall('widget', 'mcp__visualize__show_widget', {
+      i_have_seen_read_me: true,
+      title: 'load_curve',
+      widget_code: '<p>large fragment</p>'
+    }),
+    planResult('widget', widgetResult)
+  ]
+  const options = { active: false, stopped: false }
+  const projection = new ClaudeTranscriptProjection()
+  for (const items of [
+    renderClaudeChatItems(records, options),
+    projection.read(records, [], options).items
+  ]) {
+    const tools = items
+      .filter((item) => item.type === 'working')
+      .flatMap((item) =>
+        item.items.flatMap((child) =>
+          child.type === 'toolGroup' ? child.tools : child.type === 'tool' ? [child] : []
+        )
+      )
+    const [artifact, readMe, widget] = tools
+    assert.equal(artifact.label, 'Published artifact')
+    assert.deepEqual(artifact.visualization, {
+      path: '/work/report.html',
+      location: 'workspace',
+      title: 'Quarterly report',
+      url: 'https://claude.ai/artifact/report'
+    })
+    assert.equal(readMe.visualization, undefined)
+    assert.equal(readMe.compact, true)
+    assert.equal(widget.label, 'Showed visualization')
+    assert.deepEqual(widget.visualization, {
+      path: '/data/visualizations/chat/load-curve-1234abcd.html',
+      location: 'host',
+      title: 'Load curve'
+    })
+    // The fragment itself lives in the saved file, not in the transcript payload.
+    assert.equal(widget.rawInput, null)
+    assert.equal(widget.rawOutput, null)
+  }
+
+  const failed = renderClaudeChatItems(
+    [
+      userPrompt,
+      planCall('widget', 'mcp__visualize__show_widget', {}),
+      planResult('widget', widgetResult, 'x', true)
+    ],
+    options
+  )
+  assert.equal(firstTool(failed).visualization, undefined)
+})

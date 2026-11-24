@@ -97,6 +97,10 @@ export const isExpectedOptionalGitProbeFailure = (
     )
   }
 
+  if (command === 'rev-list' && args.includes('HEAD...@{upstream}')) {
+    return isExitCode(error, [128]) && /no upstream configured/i.test(stderr)
+  }
+
   if (command === 'rev-parse') {
     if (args.includes('--verify') && args.includes('--quiet')) {
       return !stderr.trim() && isExpectedCommandAbsenceError(error, [1])

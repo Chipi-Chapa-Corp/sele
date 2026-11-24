@@ -229,3 +229,29 @@ button.chat-detail__commit-marker-open:disabled {
   margin-left: -0.3rem;
   padding-right: 0.45rem;
 }
+
+.chat-detail__messages-inner:has(.benchmark-round) {
+  max-width: calc(2 * var(--chat-content-max-width) + 2 * var(--chat-content-padding));
+}
+
+.benchmark-round__answers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.benchmark-round__answers--single {
+  display: block;
+}
+
+.benchmark-round__answer {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.benchmark-round__answers:not(.benchmark-round__answers--single) > :nth-child(2) {
+  border-inline-start: 1px solid var(--field-border);
+  padding-inline-start: 0.8rem;
+}

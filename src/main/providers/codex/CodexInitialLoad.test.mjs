@@ -76,6 +76,7 @@ const fixture = () => {
     assertSupportedCodexHistory: () => {},
     assertReadableCodexHistory: () => {},
     rendererChatUpdateTurnLimit: 10,
+    setTimeout,
     getContainerTargetKey: () => 'host'
   })
   Object.assign(adapter, {
@@ -83,6 +84,7 @@ const fixture = () => {
     activeTurnIds: new Map(),
     manuallyStoppedTurnIds: new Map(),
     threadRevisions: new Map(),
+    emptyThreads: new Set(),
     runWithContainer: (_container, run) => run(),
     getThreadContainer: () => null,
     rememberThreadContainer: () => {},
@@ -99,11 +101,13 @@ const fixture = () => {
       }
     },
     client: {
+      ownsThread: () => false,
       request: async (method, params) => {
         requests.push({ method, ...params })
         return { data: [...turns].reverse(), nextCursor: 'older', backwardsCursor: null }
       }
     },
+    hasActiveOrSubmittingTurn: () => false,
     getProviderPendingMessages: () => [],
     attachSubmittedUserMessages: async (_id, items) => items,
     filterRolledBackTurns: (_id, items) => items,
@@ -167,6 +171,57 @@ test('pagination rejection falls back for the first open, another chat, and retr
     reads.filter((read) => read.includeTurns).map((read) => read.id),
     ['chat', 'other-chat', 'other-chat']
   )
+})
+
+test('a new thread can reject both history reads while indexing without disabling pagination', async () => {
+  const { adapter, requests } = fixture()
+  const request = adapter.client.request
+  const read = adapter.readThread
+  adapter.client.request = async (method, params) => {
+    if (requests.length === 0) {
+      requests.push({ method })
+      throw new Error('list_turns is not supported yet')
+    }
+    return request(method, params)
+  }
+  let fallbackReads = 0
+  adapter.readThread = (id, includeTurns) => {
+    if (includeTurns) {
+      fallbackReads += 1
+      throw new Error('list_turns is not supported yet')
+    }
+    return read(id, includeTurns)
+  }
+
+  const detail = await adapter.getChat('new')
+  assert.equal(detail.items.length, 10)
+  assert.equal(fallbackReads, 1)
+  assert.equal(Boolean(adapter.turnPaginationUnsupported), false)
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ['thread/turns/list', 'thread/turns/list']
+  )
+})
+
+test('an empty first history page keeps the owned turn visible while it streams', async () => {
+  const { adapter } = fixture()
+  adapter.client.request = async () => ({ data: [] })
+  adapter.client.ownsThread = () => true
+  adapter.hasActiveOrSubmittingTurn = () => true
+  const live = {
+    id: 'first',
+    status: 'inProgress',
+    items: [{ type: 'userMessage', text: 'Hello' }]
+  }
+  adapter.threads.set('chat', {
+    id: 'chat',
+    historyMode: 'paginated',
+    preview: '',
+    turns: [live]
+  })
+
+  const detail = await adapter.getChat('chat')
+  assert.equal(detail.items[0], live)
 })
 
 test('pagination fallback preserves a submitted turn absent from the history projector', async () => {

@@ -72,6 +72,22 @@ export type ProviderAdapter = {
     options: ProviderTurnOptions,
     onChatCreated?: (chatId: string) => Promise<void>
   ) => Promise<string>
+  /**
+   * Replace the answer of an idle chat's round, started by the user message `messageId`,
+   * with `answer` in the native transcript, so the agent continues from that answer.
+   */
+  replaceTurnAnswer?: (
+    chatId: string,
+    messageId: string,
+    answer: string,
+    options?: ProviderSourceOptions & { discardLater?: boolean }
+  ) => Promise<ProviderChatDetail>
+  /** Keep a completed benchmark round and discard the later turns without changing files. */
+  rewindBenchmarkHistory?: (
+    chatId: string,
+    throughMessageId: string | null,
+    options?: ProviderSourceOptions
+  ) => Promise<ProviderChatDetail>
   getMcpApp?: (chatId: string, callId: string) => Promise<McpAppConnection | null>
   /** Read retained, dated native consumption without hydrating chat transcripts. */
   getHistoricalTokenUsage?: (

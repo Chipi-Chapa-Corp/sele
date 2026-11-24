@@ -497,6 +497,22 @@ export type AppGitDeleteBranchResult = {
   worktreePath: string | null
 }
 
+export type AppGitBenchmarkWorktrees = {
+  repositoryRoot: string
+  baseBranchName: string
+  primary: { worktreePath: string; branchName: string }
+  secondary: { worktreePath: string; branchName: string }
+}
+
+export type AppGitRemoveBenchmarkWorktreeOptions = AppGitBranchesOptions & {
+  worktreePath: string
+}
+
+/** `cwd` is the worktree whose state is copied into `targetCwd`. */
+export type AppGitSyncWorktreeOptions = AppGitBranchesOptions & {
+  targetCwd: string
+}
+
 export type AppGitCreateWorktreeResult = {
   repositoryRoot: string
   worktreePath: string
@@ -706,6 +722,9 @@ export type AppApi = {
   switchGitBranch: (options: AppGitSwitchBranchOptions) => Promise<AppGitBranchesResult>
   deleteGitBranch: (options: AppGitDeleteBranchOptions) => Promise<AppGitDeleteBranchResult>
   createGitWorktree: (options: AppGitCreateWorktreeOptions) => Promise<AppGitCreateWorktreeResult>
+  createGitBenchmarkWorktrees: (options: AppGitBranchesOptions) => Promise<AppGitBenchmarkWorktrees>
+  removeGitBenchmarkWorktree: (options: AppGitRemoveBenchmarkWorktreeOptions) => Promise<void>
+  syncGitWorktreeState: (options: AppGitSyncWorktreeOptions) => Promise<void>
   getFileTree: (options?: AppFileTreeOptions) => Promise<AppFileTreeResult>
   getFileTreeListing: (options?: AppFileTreeOptions) => Promise<AppFileTreeListing>
   getFileContents: (options: AppFileContentsOptions) => Promise<AppFileContentsResult>
@@ -795,6 +814,9 @@ export const appIpcChannels = {
   switchGitBranch: 'app:switch-git-branch',
   deleteGitBranch: 'app:delete-git-branch',
   createGitWorktree: 'app:create-git-worktree',
+  createGitBenchmarkWorktrees: 'app:create-git-benchmark-worktrees',
+  removeGitBenchmarkWorktree: 'app:remove-git-benchmark-worktree',
+  syncGitWorktreeState: 'app:sync-git-worktree-state',
   getFileTree: 'app:get-file-tree',
   getFileTreeListing: 'app:get-file-tree-listing',
   getFileContents: 'app:get-file-contents',

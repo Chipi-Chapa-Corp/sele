@@ -14,10 +14,28 @@ export function getWorkspaceChangesContent({
   settings,
   gitState,
   gitSync,
+  benchmark,
+  primaryWorktreeChanges,
+  secondaryWorktreeChanges,
+  primaryWorktreeFiles,
+  secondaryWorktreeFiles,
   files
 }: WorkspaceChanges) {
   return {
     gitHubPullRequests,
+    benchmarkActive: benchmark.active,
+    benchmarkBranchSwitchDisabled:
+      gitPresentation.branchSwitchDisabled ||
+      benchmark.working ||
+      benchmark.busy ||
+      chatState.sendState === 'sending',
+    primaryWorktreeTree:
+      panes.changesPaneView === 'files' ? primaryWorktreeFiles : primaryWorktreeChanges,
+    secondaryWorktreeTree:
+      panes.changesPaneView === 'files' ? secondaryWorktreeFiles : secondaryWorktreeChanges,
+    changesContainerKey: session.changesContainerKey,
+    handleSwitchBenchmarkBranch: files.handleSwitchBenchmarkBranch,
+    handleSelectFileEditorTarget: files.handleSelectFileEditorTarget,
     gitPaneView: panes.gitPaneView,
     handleOpenBrowserRequest: browser.handleOpenBrowserRequest,
     terminalChatKey: chatState.selectedChat ? getChatKey(chatState.selectedChat) : null,

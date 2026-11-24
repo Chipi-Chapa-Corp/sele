@@ -100,6 +100,7 @@ export const ChatMessage = ({
   messageBubble = false,
   container,
   item,
+  messageActions: additionalMessageActions,
   messagePinned = false,
   pendingMessageLabel,
   pendingMessageDeleteDisabled = false,
@@ -282,6 +283,7 @@ export const ChatMessage = ({
         callback={handleCopyMessage}
         icon={copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       />
+      {additionalMessageActions}
     </span>
   )
 

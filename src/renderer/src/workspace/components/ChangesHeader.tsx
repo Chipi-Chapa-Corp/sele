@@ -26,6 +26,7 @@ export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
   const {
     gitPaneView,
     gitHubPullRequests,
+    benchmarkActive,
     setGitPaneView,
     noProject,
     activeSidebarLoadState,
@@ -61,6 +62,8 @@ export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
     setGitChangeLoadRequest,
     treeToggleLabel
   } = props
+  const showingBenchmarkTrees =
+    benchmarkActive && (changesPaneView === 'git' || changesPaneView === 'files')
 
   return (
     <header className="changes-sidebar__header">
@@ -170,55 +173,61 @@ export function ChangesHeader(props: ChangesHeaderProps): ReactElement {
       )}
       {((changesPaneView === 'git' && gitPaneView === 'changes') ||
         changesPaneView === 'files') && (
-        <div className="changes-sidebar__controls changes-sidebar__controls--files">
-          <label className="sr-only" htmlFor="changes-branch">
-            Branch
-          </label>
-          <BranchSwitcher
-            branches={branchNames}
-            busy={gitBranchActionState === 'sending'}
-            canForceDelete={Boolean(gitBranchDeleteRetry)}
-            currentBranch={currentBranchName}
-            deleteWorktreePath={gitBranchWorktreeDeleteRetry?.worktreePath}
-            disabled={branchSwitchDisabled}
-            error={gitBranchError}
-            errorActions={
-              gitBranchError ? (
-                <>
-                  {renderGitAiResolutionButton(handleGitBranchErrorAiResolution, 'bottom')}
-                  <Button
-                    callback={handleDismissGitBranchError}
-                    icon={<X aria-hidden="true" />}
-                    label={<span>Dismiss</span>}
-                    theme="secondary"
-                  />
-                </>
-              ) : null
-            }
-            id="changes-branch"
-            loading={gitBranchLoadState === 'loading'}
-            onClearError={handleDismissGitBranchError}
-            onDelete={handleDeleteBranch}
-            onDeleteWorktree={handleDeleteBranchWorktree}
-            onForceDelete={handleForceDeleteBranch}
-            onOpen={() => setGitBranchLoadRequest((currentRequest) => currentRequest + 1)}
-            onSwitch={handleSwitchBranch}
-          />
-          <Button
-            theme="transparent"
-            size="small"
-            aria-label={treeToggleLabel}
-            title={treeToggleLabel}
-            disabled={activeTreeFolderPaths.length === 0}
-            callback={handleToggleActiveTreeFolders}
-            icon={
-              hasCollapsedActiveTreeFolders ? (
-                <ListChevronsUpDown aria-hidden="true" />
-              ) : (
-                <ListChevronsDownUp aria-hidden="true" />
-              )
-            }
-          />
+        <div
+          className={`changes-sidebar__controls changes-sidebar__controls--${showingBenchmarkTrees ? 'benchmark' : 'files'}`}
+        >
+          {!showingBenchmarkTrees && (
+            <>
+              <label className="sr-only" htmlFor="changes-branch">
+                Branch
+              </label>
+              <BranchSwitcher
+                branches={branchNames}
+                busy={gitBranchActionState === 'sending'}
+                canForceDelete={Boolean(gitBranchDeleteRetry)}
+                currentBranch={currentBranchName}
+                deleteWorktreePath={gitBranchWorktreeDeleteRetry?.worktreePath}
+                disabled={branchSwitchDisabled}
+                error={gitBranchError}
+                errorActions={
+                  gitBranchError ? (
+                    <>
+                      {renderGitAiResolutionButton(handleGitBranchErrorAiResolution, 'bottom')}
+                      <Button
+                        callback={handleDismissGitBranchError}
+                        icon={<X aria-hidden="true" />}
+                        label={<span>Dismiss</span>}
+                        theme="secondary"
+                      />
+                    </>
+                  ) : null
+                }
+                id="changes-branch"
+                loading={gitBranchLoadState === 'loading'}
+                onClearError={handleDismissGitBranchError}
+                onDelete={handleDeleteBranch}
+                onDeleteWorktree={handleDeleteBranchWorktree}
+                onForceDelete={handleForceDeleteBranch}
+                onOpen={() => setGitBranchLoadRequest((currentRequest) => currentRequest + 1)}
+                onSwitch={handleSwitchBranch}
+              />
+              <Button
+                theme="transparent"
+                size="small"
+                aria-label={treeToggleLabel}
+                title={treeToggleLabel}
+                disabled={activeTreeFolderPaths.length === 0}
+                callback={handleToggleActiveTreeFolders}
+                icon={
+                  hasCollapsedActiveTreeFolders ? (
+                    <ListChevronsUpDown aria-hidden="true" />
+                  ) : (
+                    <ListChevronsDownUp aria-hidden="true" />
+                  )
+                }
+              />
+            </>
+          )}
           <Button
             theme="transparent"
             size="small"

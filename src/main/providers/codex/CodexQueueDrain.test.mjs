@@ -51,6 +51,7 @@ const fixture = (status = 'idle', turnStatus = 'completed') => {
       ['chat', { id: 'chat', status: { type: status, activeFlags: [] }, turns: authoritativeTurns }]
     ]),
     threadRevisions: new Map(),
+    emptyThreads: new Set(),
     queuedTurnsByThread: new Map([['chat', [{ id: 'queued', text: 'Next message' }]]]),
     queuedTurnStartThreads: new Set(),
     pausedQueuedTurnThreads: new Set(),

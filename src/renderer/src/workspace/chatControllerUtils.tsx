@@ -28,7 +28,7 @@ import type {
 import { getProviderChatTurns } from '../../../shared/chatTurns'
 import { markChatItemsChanged } from '../chatConversationModel'
 import { reuseChatSnapshotItems } from '../chatSnapshotItems'
-import { mergeSeenUpdatedAt } from '../chatMetadata'
+import { mergeBenchmarkMetadata, mergeSeenUpdatedAt } from '../chatMetadata'
 
 import { type ChatListGroupData } from '../components/ChatListGroup'
 
@@ -364,6 +364,7 @@ export const getChatFromDetail = (
   done: detail.done ?? existingChat?.done ?? false,
   doneAt: detail.doneAt === undefined ? (existingChat?.doneAt ?? null) : detail.doneAt,
   purpose: detail.purpose ?? existingChat?.purpose ?? null,
+  ...mergeBenchmarkMetadata(existingChat, detail),
   container: detail.container ?? existingChat?.container ?? null
 })
 
@@ -645,6 +646,8 @@ export const areChatsEqual = (first: ProviderChat, second: ProviderChat): boolea
   first.doneAt === second.doneAt &&
   first.seenUpdatedAt === second.seenUpdatedAt &&
   first.purpose === second.purpose &&
+  (first.benchmarkChatId ?? null) === (second.benchmarkChatId ?? null) &&
+  (first.benchmarkEnded ?? false) === (second.benchmarkEnded ?? false) &&
   areContainerTargetsEqual(first.container, second.container)
 
 export const getChatFromUpdateSummary = (
@@ -687,6 +690,7 @@ export const getChatFromUpdateSummary = (
           ? existingChat.seenUpdatedAt
           : Math.max(existingChat.seenUpdatedAt, summary.seenUpdatedAt),
     purpose: summary.purpose,
+    ...mergeBenchmarkMetadata(existingChat, summary),
     container
   }
   // Compare the metadata we actually publish. A delayed seen timestamp (or an

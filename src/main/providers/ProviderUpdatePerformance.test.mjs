@@ -153,8 +153,8 @@ test('selecting a chat during metadata loading upgrades its update before delive
 })
 
 test('view subscriptions survive another window closing and clear explicitly', () => {
-  setChatUpdateInterest(101, 'codex:chat')
-  setChatUpdateInterest(102, 'codex:chat')
+  setChatUpdateInterest(101, ['codex:chat'])
+  setChatUpdateInterest(102, ['codex:other', 'codex:chat'])
   setChatUpdateInterest(101, null)
   assert.equal(hasChatUpdateInterest('codex:chat'), true)
   setChatUpdateInterest(102, null)

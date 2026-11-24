@@ -198,6 +198,7 @@ test('Codex deferred startup creates an idle thread without admitting a model tu
   })
   let cached
   Object.assign(adapter, {
+    emptyThreads: new Set(),
     runWithContainer: (_container, run) => run(),
     client: {
       request: async (method) => {
@@ -218,6 +219,7 @@ test('Codex deferred startup creates an idle thread without admitting a model tu
   const result = await adapter.startChat('', { deferInitialMessage: true })
   assert.deepEqual(calls, ['thread/start'])
   assert.equal(cached.status.type, 'idle')
+  assert.ok(adapter.emptyThreads.has('scheduled'))
   assert.equal(result.id, 'scheduled')
 })
 
