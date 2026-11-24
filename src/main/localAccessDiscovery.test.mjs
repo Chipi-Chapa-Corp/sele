@@ -96,7 +96,7 @@ test('nearby discovery reports failed multicast and recovers after access is gra
   const deadline = setTimeout(() => resolved(), 10_000)
   try {
     await verified
-    assert.match(reports[0], /Pair by address/)
+    assert.match(reports[0], /Multicast discovery could not be verified/)
     assert.deepEqual(reports.slice(1), [null])
     assert.deepEqual(interfaces, [['Wi-Fi'], ['Wi-Fi']])
     assert.equal(stopped, 1)

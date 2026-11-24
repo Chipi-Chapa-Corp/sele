@@ -91,7 +91,7 @@ export function startLocalAccessDiscovery(
   let verifiedAt = 0
   let timer: ReturnType<typeof setTimeout> | undefined
   let current: Promise<void>
-  const unavailable = 'Nearby discovery could not be verified. You can still try Pair by address.'
+  const unavailable = 'Multicast discovery could not be verified.'
 
   const stopResponder = async (): Promise<void> => {
     const previous = responder

@@ -26,7 +26,6 @@ import java.net.Inet4Address;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 
 @CapacitorPlugin(name = "LocalNetwork")
@@ -185,6 +184,7 @@ public class LocalNetworkPlugin extends Plugin {
     private ConnectivityManager.NetworkCallback networkCallback;
     private Network discoveryNetwork;
     private WifiManager.MulticastLock multicast;
+    private LanBroadcastDiscovery broadcast;
     private boolean discoveryWanted;
     private final android.os.Handler discoveryHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable restartDiscovery = () -> {
@@ -196,7 +196,7 @@ public class LocalNetworkPlugin extends Plugin {
     private NsdManager.DiscoveryListener discovery;
     private final Map<String, JSObject> services = new HashMap<>();
     private final ArrayDeque<NsdServiceInfo> resolveQueue = new ArrayDeque<>();
-    private final HashSet<String> present = new HashSet<>();
+    private final Map<String, NsdServiceInfo> present = new HashMap<>();
     private boolean resolving;
     private int generation;
     private int resolveAttempt;
@@ -243,6 +243,12 @@ public class LocalNetworkPlugin extends Plugin {
                     multicast.acquire();
                 }
             }
+            if (broadcast == null) {
+                try { broadcast = new LanBroadcastDiscovery(connectivity); }
+                catch (java.io.IOException | SecurityException error) {
+                    android.util.Log.w("SeleDiscovery", "Unable to start broadcast discovery", error);
+                }
+            }
             if (discovery != null) { if (call != null) call.resolve(); return; }
             manager = (NsdManager) getContext().getSystemService(Context.NSD_SERVICE);
             discoveryError = null;
@@ -254,7 +260,7 @@ public class LocalNetworkPlugin extends Plugin {
                     getActivity().runOnUiThread(() -> {
                         if (run == generation) {
                             discoveryError = "Nearby discovery could not start. Check Wi-Fi and try again.";
-                            stop();
+                            stopMulticast();
                         }
                     });
                 }
@@ -264,7 +270,7 @@ public class LocalNetworkPlugin extends Plugin {
                 @Override public void onServiceFound(NsdServiceInfo service) {
                     getActivity().runOnUiThread(() -> {
                         if (run != generation || !service.getServiceType().startsWith("_sele._tcp")) return;
-                        if (!present.add(service.getServiceName())) return;
+                        if (present.putIfAbsent(service.getServiceName(), service) != null) return;
                         resolveQueue.add(service);
                         resolveNext(run);
                     });
@@ -288,16 +294,33 @@ public class LocalNetworkPlugin extends Plugin {
         });
     }
 
+    private boolean isPresent(NsdServiceInfo service, int run) {
+        return run == generation && present.get(service.getServiceName()) == service;
+    }
+
+    private void retryResolution(NsdServiceInfo service, int run) {
+        // NSD only announces a service once per browse, so a failed lookup can
+        // otherwise hide it until the next scan even after Wi-Fi has settled.
+        discoveryHandler.postDelayed(() -> {
+            if (!isPresent(service, run)) return;
+            resolveQueue.add(service);
+            resolveNext(run);
+        }, 3000);
+    }
+
     @SuppressWarnings("deprecation")
     private void resolveNext(int run) {
-        if (resolving || run != generation || resolveQueue.isEmpty()) return;
-        NsdServiceInfo service = resolveQueue.remove();
+        if (resolving || run != generation) return;
+        while (!resolveQueue.isEmpty() && !isPresent(resolveQueue.peek(), run)) resolveQueue.remove();
+        NsdServiceInfo service = resolveQueue.poll();
+        if (service == null) return;
         resolving = true;
         final int attempt = ++resolveAttempt;
         Runnable expired = () -> {
             if (run != generation || attempt != resolveAttempt) return;
             resolveAttempt++;
             resolving = false;
+            retryResolution(service, run);
             resolveNext(run);
         };
         discoveryHandler.postDelayed(expired, 5000);
@@ -309,6 +332,7 @@ public class LocalNetworkPlugin extends Plugin {
                         discoveryHandler.removeCallbacks(expired);
                         android.util.Log.w("SeleDiscovery", "Resolve failed: " + code);
                         resolving = false;
+                        retryResolution(service, run);
                         resolveNext(run);
                     });
                 }
@@ -322,7 +346,8 @@ public class LocalNetworkPlugin extends Plugin {
                                 if (candidate instanceof Inet4Address) { address = candidate; break; }
                             }
                         }
-                        if (address != null && present.contains(value.getServiceName())) {
+                        if (address == null) retryResolution(service, run);
+                        if (address != null && isPresent(service, run)) {
                             String host = address.getHostAddress();
                             if (host.contains(":")) host = "[" + host + "]";
                             JSObject result = new JSObject();
@@ -359,6 +384,7 @@ public class LocalNetworkPlugin extends Plugin {
             discoveryHandler.removeCallbacks(expired);
             android.util.Log.w("SeleDiscovery", "Resolve failed", error);
             resolving = false;
+            retryResolution(service, run);
             resolveNext(run);
         }
     }
@@ -369,6 +395,7 @@ public class LocalNetworkPlugin extends Plugin {
             JSObject result = new JSObject();
             JSArray list = new JSArray();
             for (JSObject service : services.values()) list.put(service);
+            if (broadcast != null) broadcast.appendServices(list);
             result.put("services", list);
             result.put("error", discoveryError);
             call.resolve(result);
@@ -376,6 +403,14 @@ public class LocalNetworkPlugin extends Plugin {
     }
 
     private void stop() {
+        stopMulticast();
+        if (broadcast != null) {
+            broadcast.close();
+            broadcast = null;
+        }
+    }
+
+    private void stopMulticast() {
         generation++;
         if (discovery != null && manager != null) {
             try { manager.stopServiceDiscovery(discovery); }

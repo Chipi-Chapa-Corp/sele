@@ -41,7 +41,7 @@ class Socket {
     this.onclose?.({ code })
   }
 }
-const setup = (t) => {
+const setup = (t, canRediscover = false) => {
   const previous = globalThis.WebSocket
   globalThis.WebSocket = Socket
   Socket.sockets = []
@@ -51,7 +51,11 @@ const setup = (t) => {
     'ws://192.168.1.2:4589/sele/ws',
     'a'.repeat(64),
     () => {},
-    () => reconnects.push(true)
+    () => reconnects.push(true),
+    undefined,
+    undefined,
+    undefined,
+    canRediscover
   )
   t.after(() => {
     transport.close()
@@ -98,11 +102,27 @@ test('discovery replaces an unreachable endpoint and stale socket callbacks cann
   stale({ code: 1006 })
   assert.equal(transport.isReady, true)
   transport.updateEndpoints(['ws://192.168.1.21:4589/sele/ws'])
+  assert.equal(transport.endpoint, 'ws://192.168.1.20:4589/sele/ws')
   assert.equal(
     transport.isReady,
     true,
     'a discovery change never interrupts an established connection'
   )
+})
+
+test('an old address with a different certificate cannot stop rediscovery of a paired computer', async (t) => {
+  const { transport } = setup(t, true)
+  const ready = transport.waitUntilReady()
+  const previousSocket = Socket.sockets[0]
+  previousSocket.disconnect(4003)
+  assert.deepEqual(previousSocket.sent, [])
+  const home = 'ws://192.168.2.40:4589/sele/ws'
+  transport.updateEndpoints([home, previousSocket.url])
+  const newSocket = Socket.sockets.at(-1)
+  assert.equal(newSocket.url, home)
+  newSocket.ready()
+  await ready
+  assert.equal(transport.endpoint, home)
 })
 
 test('a saved address can fall back to a discovered endpoint and report its connection error', async (t) => {

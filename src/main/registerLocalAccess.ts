@@ -5,6 +5,7 @@ import { basename, join } from 'node:path'
 import { hostname } from 'node:os'
 import { LocalAccessPairing } from './localAccessPairing'
 import { startLocalAccessDiscovery } from './localAccessDiscovery'
+import { startLocalAccessBroadcast } from './localAccessBroadcast'
 import { allowWindowsLocalAccess } from './windowsLocalAccess'
 import { remoteBrowserRequest } from './remoteBrowser'
 import { browseHostDirectory } from './hostDirectory'
@@ -51,12 +52,20 @@ const stopDiscovery = async (): Promise<void> => {
 
 const startDiscovery = (): void => {
   if (!server || shuttingDown) return
-  stopAdvertisement = startLocalAccessDiscovery(
+  const stopBroadcast = startLocalAccessBroadcast({
+    id: configuration.computerId,
+    name: hostname(),
+    port: server.port
+  })
+  const stopMulticast = startLocalAccessDiscovery(
     { computerId: configuration.computerId, computerName: hostname(), port: server.port },
     (error) => {
       discoveryError = error
     }
   )
+  stopAdvertisement = async () => {
+    await Promise.all([stopBroadcast(), stopMulticast()])
+  }
 }
 
 const queueConfiguration = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -199,7 +208,7 @@ export const registerLocalAccess = async (
       type: 'question',
       title: 'Allow Sele through Windows Firewall',
       message: 'Allow connections to Sele from your private network?',
-      detail: `Windows will ask for administrator approval to allow nearby discovery (UDP 5353) and pairing (TCP ${listener.port}) for Sele on the local subnet.`,
+      detail: `Windows will ask for administrator approval to allow nearby discovery (UDP 5353 and ${localAccessDefaultPort}) and pairing (TCP ${listener.port}) for Sele on the local subnet.`,
       buttons: ['Allow', 'Cancel'],
       defaultId: 0,
       cancelId: 1

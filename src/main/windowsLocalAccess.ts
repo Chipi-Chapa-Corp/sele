@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
+import { localAccessDefaultPort } from '../shared/localAccess.ts'
 
 const exec = promisify(execFile)
 
@@ -19,6 +20,7 @@ $program = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${progra
 $rulePrefix = 'SeleLocalAccess-${identity}-'
 function Set-SeleRule([string]$Protocol, [int]$Port, [string]$Purpose) {
   $name = $rulePrefix + $Protocol
+  if ($Purpose -eq 'broadcast discovery') { $name += 'Broadcast' }
   $scope = @{
     Program = $program; Profile = 'Private'; RemoteAddress = 'LocalSubnet';
     Direction = 'Inbound'; Action = 'Allow'; Enabled = 'True';
@@ -31,9 +33,10 @@ function Set-SeleRule([string]$Protocol, [int]$Port, [string]$Purpose) {
   }
 }
 Set-SeleRule 'UDP' 5353 'discovery'
+Set-SeleRule 'UDP' ${localAccessDefaultPort} 'broadcast discovery'
 Set-SeleRule 'TCP' ${port} 'pairing'
-$active = @(Get-NetFirewallRule -Name ($rulePrefix + 'UDP'), ($rulePrefix + 'TCP') -PolicyStore ActiveStore -ErrorAction SilentlyContinue)
-if ($active.Count -ne 2) { exit 3 }
+$active = @(Get-NetFirewallRule -Name ($rulePrefix + 'UDP'), ($rulePrefix + 'UDPBroadcast'), ($rulePrefix + 'TCP') -PolicyStore ActiveStore -ErrorAction SilentlyContinue)
+if ($active.Count -ne 3) { exit 3 }
 $blocks = Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Block |
   Where-Object { $_.Profile -match 'Any|Private' } | Get-NetFirewallApplicationFilter |
   Where-Object { $_.Program -and [Environment]::ExpandEnvironmentVariables($_.Program) -eq $program }

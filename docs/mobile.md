@@ -11,7 +11,7 @@ without entering a code or copying a link. The computer must remain awake with S
 On Windows, use a **Private** network and allow Sele on private networks if Windows Firewall
 prompts you. If the phone still can't connect, choose **Allow through Windows Firewall** in
 Sele's Local network settings and approve the Windows administrator prompt. This adds rules for
-Sele on the local subnet for UDP 5353 and the configured TCP pairing port. Apply the firewall
+Sele on the local subnet for UDP 5353, UDP 4589, and the configured TCP pairing port. Apply the firewall
 rules again after changing the pairing port. If Windows reports an existing block or a managed
 policy, open Windows Firewall from the same settings panel.
 
@@ -21,7 +21,12 @@ retries automatically after permission or network changes. If macOS Firewall ask
 whether Sele can accept incoming connections, allow it there too.
 
 If discovery comes up empty, select **Pair by address** on the phone. Enter the IPv4 address
-and port shown in **Local network** on the computer, then compare the same approval code.
+and port shown in **Local network** on the computer while it is connected to the current
+network. If the security code appears, the phone can reach the computer and the issue is with
+nearby discovery (multicast DNS). Approve only if the codes match on both devices.
+If the address times out, try the main home Wi-Fi on both devices. Check whether guest
+networking, client isolation, or a VPN blocks communication between them. On macOS, also check
+Sele’s Local Network permission and incoming firewall setting.
 
 ## Connection and pairing
 
@@ -32,10 +37,14 @@ to discover computers. The device picker merges nearby computers with saved pair
 computer ID. The last connected computer is tried
 immediately while discovery runs in the background. Switching computers preserves previous pairings.
 Android holds a multicast lock during discovery, restarts discovery when its default network changes,
-and passes all resolved addresses to pairing and reconnection. First-time pairing tries another
+retries failed address lookups while the computer is still advertised, and passes all resolved
+addresses to pairing and reconnection. First-time pairing tries another
 address if it cannot reach the first before requesting approval. The desktop advertises on available
 IPv4 adapters, checks that its announcement can be resolved, and retries discovery independently
-of the HTTPS listener. Wi-Fi bands do not define device
+of the HTTPS listener. Android also sends a LAN broadcast query on UDP 4589 so Sele can answer
+from its current address when multicast discovery is unavailable. Both discovery methods supply
+address hints. The approved TLS certificate verifies the computer before Android sends credentials.
+Wi-Fi bands do not define device
 identity; the router still needs to permit communication between the devices.
 
 The phone generates an independent device credential. `LocalAccessPairing` exposes a bounded,
@@ -242,8 +251,9 @@ drawer swipes versus nested scrolling, native sidebar search and limits, and Git
 The touch follow-up selects skill/file/project mentions and submits a form with the native IME open, checks square and centered controls (including a saved Actions split button), and verifies Back after ten workspace tab switches. The provider sync pass samples native status-bar pixels in both themes and with the drawer open. Native taps and holds wait for stable viewport geometry before issuing one gesture; they never retry the action.
 
 `LocalDiscoveryTest` is an Android instrumentation test that publishes a real service within the
-emulator network and checks native discovery/resolution, including stable TXT identity. Build
-`:app:assembleDebugAndroidTest` and install/run that app's test APK on the same private emulator.
+emulator network and checks native discovery, stable TXT identity, and recovery after a delayed
+address lookup. Build `:app:assembleDebugAndroidTest` and install/run that app's test APK on the
+same private emulator.
 The same instrumentation suite checks native storage responses over twelve WebView reloads.
 The emulator's NAT does not relay the host's multicast discovery, so LAN connection fixtures use
 an injected discovery result; the native NSD test independently exercises discovery.

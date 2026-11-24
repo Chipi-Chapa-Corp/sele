@@ -187,7 +187,8 @@ export const initializeLanBridge = async (): Promise<void> => {
       () => resynchronize(),
       undefined,
       deviceId,
-      (url) => createLanSocket(url, candidate?.fingerprint)
+      (url) => createLanSocket(url, candidate?.fingerprint),
+      Boolean(candidate?.hostId)
     )
     transport = current
     const abortConnection = (): void => current.close()

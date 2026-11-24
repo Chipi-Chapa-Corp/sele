@@ -16,7 +16,7 @@ import {
   readMobileDevices,
   type MobileConnection
 } from '../mobileConnection'
-import { LanAccessRevokedError } from '../lanTransport'
+import { LanAccessRevokedError, LanCertificateError } from '../lanTransport'
 
 export function MobileConnectionScreen({
   error: initialError,
@@ -42,6 +42,8 @@ export function MobileConnectionScreen({
   const [saved] = useState(readMobileDevices)
   const pairAgain = useRef(new Set<string>())
   const pairing = useRef<AbortController | null>(null)
+  const autoReconnect = useRef(true)
+  const lastAutoAddresses = useRef<string | null>(null)
   useEffect(() => {
     const query = window.matchMedia('(prefers-color-scheme: dark)')
     const update = (): void => {
@@ -67,8 +69,10 @@ export function MobileConnectionScreen({
   }, [searchAttempt])
   const connect = async (
     computer: NearbyComputer,
-    savedConnection?: MobileConnection
+    savedConnection?: MobileConnection,
+    automatic = false
   ): Promise<void> => {
+    if (!automatic) autoReconnect.current = false
     pairing.current?.abort()
     const abort = new AbortController()
     pairing.current = abort
@@ -76,7 +80,8 @@ export function MobileConnectionScreen({
     setSecurityCode(null)
     setConnecting(computer)
     const savedId = savedConnection?.hostId ?? savedConnection?.origin
-    const useSavedConnection = savedConnection && savedId && !pairAgain.current.has(savedId)
+    const useSavedConnection =
+      savedConnection && savedId && (automatic || !pairAgain.current.has(savedId))
     setWaiting(useSavedConnection ? null : computer)
     try {
       const connection = useSavedConnection
@@ -90,7 +95,11 @@ export function MobileConnectionScreen({
       if (!abort.signal.aborted) onConnect(connection)
     } catch (error) {
       if (!abort.signal.aborted) {
-        if (savedId && error instanceof LanAccessRevokedError) pairAgain.current.add(savedId)
+        if (savedId && error instanceof LanAccessRevokedError) {
+          pairAgain.current.add(savedId)
+          if (!(error instanceof LanCertificateError) || !savedConnection?.hostId)
+            autoReconnect.current = false
+        }
         setError(error instanceof Error ? error.message : String(error))
       }
     } finally {
@@ -101,19 +110,26 @@ export function MobileConnectionScreen({
       }
     }
   }
-  const resumePrevious = useEffectEvent((connection: MobileConnection) => {
+  const previousComputer = computers.find((computer) => computer.id === previous?.hostId)
+  const previousAddresses = JSON.stringify(
+    [...(previousComputer?.origins ?? (previousComputer ? [previousComputer.origin] : []))].sort()
+  )
+  const resumePrevious = useEffectEvent((connection: MobileConnection, addresses: string) => {
+    if (!autoReconnect.current || pairing.current || lastAutoAddresses.current === addresses) return
+    lastAutoAddresses.current = addresses
     void connect(
       {
         id: connection.hostId ?? connection.origin,
         name: connection.name ?? 'Saved computer',
         origin: connection.origin
       },
-      connection
+      connection,
+      true
     )
   })
   useEffect(() => {
-    if (previous) resumePrevious(previous)
-  }, [previous])
+    if (previous && !connecting) resumePrevious(previous, previousAddresses)
+  }, [previous, previousAddresses, connecting])
 
   const devices: { computer: NearbyComputer; connection?: MobileConnection }[] = saved.map(
     (connection) => {
@@ -290,6 +306,7 @@ export function MobileConnectionScreen({
                 label="Pair by address"
                 theme="transparent"
                 callback={() => {
+                  autoReconnect.current = false
                   pairing.current?.abort()
                   setError(null)
                   setPairByAddress(true)

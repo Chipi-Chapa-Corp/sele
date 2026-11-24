@@ -14,6 +14,7 @@ test('Windows Firewall updates Sele rules scoped to its executable, ports and pr
   assert.match(rules, /Profile = 'Private'; RemoteAddress = 'LocalSubnet'/)
   assert.match(rules, /Program = \$program/)
   assert.match(rules, /Set-SeleRule 'UDP' 5353/)
+  assert.match(rules, /Set-SeleRule 'UDP' 4589 'broadcast discovery'/)
   assert.match(rules, /Set-SeleRule 'TCP' 4590/)
   assert.match(rules, /Set-NetFirewallRule -Name \$name @scope/)
   assert.throws(

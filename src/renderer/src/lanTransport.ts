@@ -14,6 +14,7 @@ export class LanCertificateError extends LanAccessRevokedError {}
 export class LanTransport implements RendererTransport {
   private socket: LanSocket | null = null
   private ready = false
+  private connectedEndpoint?: string
   private connectedBefore = false
   private stopped = false
   private revoked = false
@@ -47,7 +48,8 @@ export class LanTransport implements RendererTransport {
     private onReconnect: () => void,
     private onAccessRevoked?: () => void,
     private deviceId?: string,
-    private socketFactory: (url: string) => LanSocket = (url) => new WebSocket(url)
+    private socketFactory: (url: string) => LanSocket = (url) => new WebSocket(url),
+    private canRediscover = false
   ) {}
 
   get isReady(): boolean {
@@ -55,7 +57,7 @@ export class LanTransport implements RendererTransport {
   }
 
   get endpoint(): string {
-    return this.url
+    return this.connectedEndpoint ?? this.url
   }
 
   private clearHeartbeat(): void {
@@ -91,7 +93,7 @@ export class LanTransport implements RendererTransport {
     const endpoints = [...new Set(urls)]
     if (!endpoints.length || JSON.stringify(endpoints) === JSON.stringify(this.endpoints)) return
     this.endpoints = endpoints
-    if (!this.isReady) this.updateUrl(endpoints[0])
+    this.updateUrl(endpoints[0])
   }
 
   private probe(timeout = 10_000): void {
@@ -129,9 +131,10 @@ export class LanTransport implements RendererTransport {
       rejectConnection = reject
     })
     this.connection = connection
+    const connectingUrl = this.url
     let socket: LanSocket
     try {
-      socket = this.socketFactory(this.url)
+      socket = this.socketFactory(connectingUrl)
     } catch (error) {
       this.connection = null
       this.connectionFailure = error instanceof Error ? error : new Error(String(error))
@@ -147,6 +150,7 @@ export class LanTransport implements RendererTransport {
       clearTimeout(timeout)
       this.clearHeartbeat()
       this.ready = false
+      this.connectedEndpoint = undefined
       this.socket = null
       this.connection = null
       this.cancelConnection = null
@@ -170,7 +174,9 @@ export class LanTransport implements RendererTransport {
       this.pending.clear()
       rejectConnection(error)
       if (this.stopped) return
-      if (code === 1008 || code === 4003) {
+      // A reassigned IP may now lead to a different TLS peer. The pin rejects
+      // that address before hello, and discovery can still find the same Mac.
+      if (code === 1008 || (code === 4003 && !this.canRediscover)) {
         this.revoked = true
         this.readyWaiters.forEach((waiter) => waiter.reject(error))
         this.readyWaiters.clear()
@@ -179,8 +185,9 @@ export class LanTransport implements RendererTransport {
         return
       }
       this.onStatus('Reconnecting to Sele…')
-      if (this.endpoints.length > 1) {
-        this.url = this.endpoints[(this.endpoints.indexOf(this.url) + 1) % this.endpoints.length]
+      if (this.endpoints.length > 1 && this.url === connectingUrl) {
+        this.url =
+          this.endpoints[(this.endpoints.indexOf(connectingUrl) + 1) % this.endpoints.length]
       }
       // Retry initial connections too: a sleeping device can return later.
       this.reconnectTimer = setTimeout(() => {
@@ -210,6 +217,7 @@ export class LanTransport implements RendererTransport {
           if (this.ready) return
           clearTimeout(timeout)
           this.ready = true
+          this.connectedEndpoint = connectingUrl
           this.connection = null
           this.connectionFailure = null
           this.heartbeatSupported = message.heartbeat === true
