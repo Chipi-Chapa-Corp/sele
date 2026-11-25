@@ -309,6 +309,17 @@ describe("CommandPalette open intents", () => {
     );
   });
 
+  it("always shows Add project in New thread in... without numbering it", async () => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    setup({ projects: [makeProject("server"), makeProject("lima")] });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({ open: "new-thread-in" });
+    const addProjectOption = page.getByRole("option", { name: /^Add project$/ });
+    await expect.element(addProjectOption).toBeVisible();
+    await expect.element(addProjectOption).not.toMatchTextContent(/Ctrl\+\d/);
+  });
+
   it("leaves a submenu only on a fresh, unmodified Backspace", async () => {
     setup({ projects: [makeProject("Acme"), makeProject("Beta")] });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);

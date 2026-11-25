@@ -1,9 +1,6 @@
-import { T } from "gt-react";
-import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 import { type ComponentProps, type ReactNode, type RefObject } from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
-import { Kbd, KbdGroup } from "./ui/kbd";
 
 /**
  * A view replacing another inside an open dialog mounts with focus on the body,
@@ -41,27 +38,21 @@ function restorePendingSelection(
 
 type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children"> & {
   readonly children: ReactNode;
-  readonly escapeLabel?: ReactNode;
-  readonly footerActionLabel?: ReactNode;
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
   readonly inputProps: ComponentProps<typeof CommandInput>;
   readonly pendingSelectionRef?: RefObject<PendingInputSelection | null>;
   readonly panelSize?: "list" | "tall-list" | "fill";
-  readonly showBackHint?: boolean;
   readonly testId?: string;
 };
 
 export function CommandPaletteContent({
   children,
-  escapeLabel,
-  footerActionLabel,
   footerTrailing,
   inputAccessory,
   inputProps,
   pendingSelectionRef,
   panelSize = "list",
-  showBackHint,
   testId,
   ...commandProps
 }: CommandPaletteContentProps) {
@@ -91,40 +82,11 @@ export function CommandPaletteContent({
         >
           {children}
         </CommandPanel>
-        <CommandFooter className="max-sm:flex-col max-sm:items-start">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-            <KbdGroup>
-              <Kbd>
-                <ArrowUpIcon />
-              </Kbd>
-              <Kbd>
-                <ArrowDownIcon />
-              </Kbd>
-              <span>
-                <T>Navigate</T>
-              </span>
-            </KbdGroup>
-            {footerActionLabel !== undefined ? (
-              <KbdGroup>
-                <Kbd>Enter</Kbd>
-                <span>{footerActionLabel}</span>
-              </KbdGroup>
-            ) : null}
-            {showBackHint ? (
-              <KbdGroup>
-                <Kbd>Backspace</Kbd>
-                <span>
-                  <T>Back</T>
-                </span>
-              </KbdGroup>
-            ) : null}
-            <KbdGroup>
-              <Kbd>Esc</Kbd>
-              <span>{escapeLabel ?? <T>Close</T>}</span>
-            </KbdGroup>
-          </div>
-          {footerTrailing}
-        </CommandFooter>
+        {footerTrailing ? (
+          <CommandFooter className="justify-end max-sm:flex-col max-sm:items-start">
+            {footerTrailing}
+          </CommandFooter>
+        ) : null}
       </Command>
     </div>
   );

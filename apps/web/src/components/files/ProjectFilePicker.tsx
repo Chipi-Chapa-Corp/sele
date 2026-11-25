@@ -66,8 +66,6 @@ function EmptyProjectFilePicker() {
   return (
     <CommandPaletteContent
       aria-label={gt("File picker")}
-      escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
-      footerActionLabel={gt("Open file")}
       inputProps={{ disabled: true, placeholder: gt("Search files…") }}
       mode="none"
       testId="project-file-picker"
@@ -128,8 +126,6 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     <CommandPaletteContent
       aria-label={gt("File picker")}
       autoHighlight="always"
-      escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
-      footerActionLabel={gt("Open file")}
       inputProps={{ placeholder: gt("Search files…") }}
       mode="none"
       onItemHighlighted={(value) => {

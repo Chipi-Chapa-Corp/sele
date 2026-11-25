@@ -52,7 +52,7 @@ function threadUndoNoticeSummary(notice: Pick<UndoNotice, "action" | "count">): 
 }
 
 /** Components pass `useMessages()` so the label follows a language switch. */
-export function threadUndoLabel(
+function threadUndoLabel(
   keybindings: Parameters<typeof shortcutLabelForCommand>[0],
   resolve: MessageResolver = m,
 ) {

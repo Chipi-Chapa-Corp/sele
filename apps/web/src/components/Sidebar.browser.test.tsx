@@ -64,10 +64,6 @@ vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
   isCommandPaletteOpen: () => false,
 }));
-vi.mock("./sidebar/SidebarChrome", () => ({
-  SidebarChromeHeader: () => null,
-  SidebarChromeFooter: () => null,
-}));
 
 function project(id: string): Project {
   return {
@@ -131,6 +127,34 @@ describe("sidebar header new thread", () => {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
     }
+  });
+
+  it("renders search, new thread, usage, and settings in the header and toggles the search input", async () => {
+    vi.mocked(useProjects).mockReturnValue([project("active")]);
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const searchButton = screen.getByRole("button", { name: "Search threads" });
+    expect(searchButton).toBeVisible();
+    expect(screen.getByRole("button", { name: "New thread", exact: true })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Usage", exact: true })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Projects", exact: true })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "T3 Code home" })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-sidebar="footer"]')).toBeNull();
+
+    const searchPanel = document.querySelector("[data-sidebar-search-panel]");
+    expect(searchPanel).toHaveAttribute("data-open", "false");
+
+    await userEvent.click(searchButton);
+    expect(searchPanel).toHaveAttribute("data-open", "true");
+    await expect.element(screen.getByRole("combobox", { name: "Search threads" })).toHaveFocus();
+
+    await userEvent.keyboard("{Escape}");
+    expect(searchPanel).toHaveAttribute("data-open", "false");
   });
 });
 

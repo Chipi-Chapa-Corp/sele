@@ -1917,8 +1917,7 @@ function OpenCommandPaletteDialog(props: {
               {
                 value: NEW_THREAD_IN_GROUP,
                 label: gt("Projects"),
-                // Every project archived and no "No project" home leaves only adding one.
-                items: projectThreadItems.length > 0 ? projectThreadItems : [addProjectAction],
+                items: [...projectThreadItems, addProjectAction],
               },
             ]
           : currentView?.groups[0]?.value.startsWith(PORT_FORWARD_GROUP_PREFIX) && portForwardItem
@@ -3075,19 +3074,6 @@ function OpenCommandPaletteDialog(props: {
       />
     ) : null;
 
-  const footerActionLabel =
-    newProjectFlow !== null
-      ? highlightedItemValue === null
-        ? gt("Create")
-        : highlightedItemValue === newProjectPublishToggleValue
-          ? gt("Toggle")
-          : gt("Select")
-      : addProjectCloneFlow?.step === "repository"
-        ? (remoteProjectButtonLabel ?? gt("Continue"))
-        : !canSubmitBrowsePath || hasHighlightedBrowseItem
-          ? gt("Select")
-          : undefined;
-
   const footerTrailing = canOpenProjectFromFileManager ? (
     <CommandFooterAction
       disabled={isPickingProjectFolder}
@@ -3110,7 +3096,6 @@ function OpenCommandPaletteDialog(props: {
       key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${newProjectFlow ? "new-project" : (addProjectCloneFlow?.step ?? "none")}`}
       aria-label={gt("Command palette")}
       autoHighlight={autoHighlightsFirstRow ? "always" : false}
-      footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}
       inputAccessory={inputAccessory}
       inputProps={{
@@ -3162,7 +3147,6 @@ function OpenCommandPaletteDialog(props: {
       }}
       onValueChange={(nextQuery, { event }) => handleQueryChange(nextQuery, event.target)}
       pendingSelectionRef={remountSelectionRef}
-      showBackHint={isSubmenu}
       value={query}
     >
       {newProjectPathPreview !== null ? (

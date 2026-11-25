@@ -43,5 +43,6 @@ describe("CommandPaletteContent", () => {
     await userEvent.click(page.getByRole("button", { name: "Open" }));
 
     await expect.element(page.getByPlaceholder("Search projects")).toHaveFocus();
+    await expect.element(page.getByText("Navigate")).not.toBeInTheDocument();
   });
 });
