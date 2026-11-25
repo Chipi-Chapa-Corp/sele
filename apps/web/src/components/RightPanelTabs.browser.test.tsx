@@ -350,3 +350,78 @@ describe("add surface launcher", () => {
     expect(onAddPullRequest).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("tab sizing", () => {
+  it("stretches group tabs and nested tabs across the full available width even with long titles", async () => {
+    const container = document.createElement("div");
+    container.style.cssText = "width: 480px; height: 300px; display: flex;";
+    const term1: RightPanelSurface = {
+      id: "terminal:1",
+      kind: "terminal",
+      resourceId: "1",
+      terminalIds: ["1"],
+      activeTerminalId: "1",
+    };
+    const term2: RightPanelSurface = {
+      id: "terminal:2",
+      kind: "terminal",
+      resourceId: "2",
+      terminalIds: ["2"],
+      activeTerminalId: "2",
+    };
+    const baseProps = panel(term1).props as RightPanelTabsProps;
+    const renderTabs = (list: readonly RightPanelSurface[]) => (
+      <RightPanelTabs
+        {...baseProps}
+        mode="inline"
+        surfaces={list}
+        terminalLabelsById={
+          new Map([
+            ["1", "Short"],
+            [
+              "2",
+              "A very long terminal title that definitely exceeds four hundred pixels wide on screen",
+            ],
+          ])
+        }
+      >
+        {null}
+      </RightPanelTabs>
+    );
+    await using screen = await render(renderTabs([term1, term2, DIFF_SURFACE]), { container });
+    const tabbar = screen.container.querySelector<HTMLElement>("[data-right-panel-tabbar]")!;
+    const toggleGroup = tabbar.querySelector<HTMLElement>('[data-slot="toggle-group"]')!;
+    const groupButtons = [...tabbar.querySelectorAll<HTMLElement>("[data-right-panel-group]")];
+    const tabList = screen.container.querySelector<HTMLElement>("[data-right-panel-tab-list]")!;
+    const viewport = tabList.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    const tabs = [...viewport.querySelectorAll<HTMLElement>("[data-active-tab]")];
+
+    // Group row leaves only the space for Maximize + Toggle panel (80px) and fills the rest equally.
+    expect(getComputedStyle(tabbar).paddingRight).toBe("80px");
+    expect(Math.round(toggleGroup.getBoundingClientRect().width)).toBe(
+      Math.round(tabbar.getBoundingClientRect().width - 88),
+    );
+    const groupWidths = groupButtons.map((button) =>
+      Math.round(button.getBoundingClientRect().width),
+    );
+    expect(Math.max(...groupWidths) - Math.min(...groupWidths)).toBeLessThanOrEqual(1);
+
+    // Two tabs share the full nested tab strip equally and truncate without triggering overflow.
+    expect(viewport.scrollWidth).toBe(viewport.clientWidth);
+    expect(tabs).toHaveLength(2);
+    expect(
+      Math.abs(tabs[0]!.getBoundingClientRect().width - tabs[1]!.getBoundingClientRect().width),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.round(
+        tabs[0]!.getBoundingClientRect().width + tabs[1]!.getBoundingClientRect().width + 4,
+      ),
+    ).toBe(viewport.clientWidth);
+    expect(screen.container.querySelector('[aria-label="Scroll panel tabs"]')).toBeNull();
+
+    // Adding enough tabs to hit the per-tab minimum overflows and enables scroll controls.
+    await screen.rerender(renderTabs(surfaces));
+    await expect.element(screen.getByRole("button", { name: "Scroll tabs right" })).toBeVisible();
+    expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+  });
+});

@@ -1118,7 +1118,7 @@ function RightPanelTab(
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 min-w-20 flex-1 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+        "cursor-pointer group/tab flex h-6 min-w-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
           ? "bg-accent text-foreground"
@@ -1569,6 +1569,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
     const content = viewport.firstElementChild;
     const stopObserving = observeResize(content ? [viewport, content] : viewport, update);
+    const mutationObserver = content ? new MutationObserver(update) : null;
+    if (content) mutationObserver?.observe(content, { childList: true });
     viewport.addEventListener("scroll", update, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: false });
     update();
@@ -1576,6 +1578,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     return () => {
       tabListRef.current = null;
       stopObserving();
+      mutationObserver?.disconnect();
       viewport.removeEventListener("scroll", update);
       viewport.removeEventListener("wheel", handleWheel);
     };
@@ -1614,7 +1617,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div
         className={cn(
           "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          props.mode === "inline" && !props.layoutControls ? "pr-20" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
@@ -1648,12 +1651,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         </div>
         {props.layoutControls}
         {ownsDesktopTitleBar && !props.layoutControls ? (
-          <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
+          <span aria-hidden className="hidden w-16 shrink-0 wco:block" />
         ) : null}
         {ownsDesktopTitleBar ? (
           <span
             aria-hidden
-            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-20 [-webkit-app-region:no-drag]"
           />
         ) : null}
       </div>
@@ -1667,7 +1670,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             className="min-w-0 flex-1"
             data-right-panel-tab-list
           >
-            <div className="flex h-full w-max min-w-full items-center gap-1">
+            <div className="grid h-full w-full auto-cols-[minmax(5rem,1fr)] grid-flow-col items-center gap-1">
               <SortableTabList surfaces={groupSurfaces} onMove={moveGroupSurface}>
                 {groupSurfaces.map((surface) => {
                   const previewTabId = previewTabIdOf(surface, props.previewSessions);
