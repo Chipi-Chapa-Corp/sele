@@ -28,6 +28,7 @@ export function useReviewFilePatches({
   theme,
   previewInput,
   preview,
+  activePath,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -38,6 +39,8 @@ export function useReviewFilePatches({
   /** The preview the file list came from; a newer revision of it refreshes loaded patches. */
   previewInput: ReviewDiffPreviewInput | undefined;
   preview: RenderablePatch | null;
+  /** Path currently open in the diff popup; always queried across scope/option changes. */
+  activePath?: string | null | undefined;
 }) {
   const registry = useContext(RegistryContext);
   const scope = JSON.stringify([
@@ -50,7 +53,10 @@ export function useReviewFilePatches({
     ignoreWhitespace,
   ]);
   const files = sortedReviewFiles(source);
-  const automaticPaths = files.slice(0, INITIAL_FILE_COUNT).map((file) => file.path);
+  const automaticPaths = [
+    ...files.slice(0, INITIAL_FILE_COUNT).map((file) => file.path),
+    ...(activePath && files.some((file) => file.path === activePath) ? [activePath] : []),
+  ];
   const [requested, setRequested] = useState(() => ({ scope, paths: automaticPaths }));
   const previousPaths = requested.scope === scope ? requested.paths : [];
   const paths = [...new Set([...previousPaths, ...automaticPaths])];
@@ -66,6 +72,7 @@ export function useReviewFilePatches({
     previewInput,
     scope,
     requested,
+    activePath,
   });
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
@@ -136,16 +143,20 @@ export function useReviewFilePatches({
   const fileStates = new Map(
     files.map((file, index) => {
       const patch = patches.get(index);
+      const isEmptySuccess =
+        patch?._tag === "Success" && patch.value.source.diff.trim().length === 0;
       return [
         file.path,
         {
           error:
             patch?._tag === "Failure" ||
             (patch?._tag === "Success" &&
+              !isEmptySuccess &&
               (patch.value.patch?.kind !== "files" ||
                 !patch.value.patch.files.some(
                   (candidate) => resolveFileDiffPath(candidate) === file.path,
                 ))),
+          empty: isEmptySuccess,
           truncated: patch?._tag === "Success" && patch.value.source.truncated,
         },
       ] as const;
@@ -171,6 +182,7 @@ function reviewFileQueries({
   previewInput,
   scope,
   requested,
+  activePath,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -180,10 +192,12 @@ function reviewFileQueries({
   previewInput: ReviewDiffPreviewInput | undefined;
   scope: string;
   requested: { scope: string; paths: string[] };
+  activePath?: string | null | undefined;
 }) {
   const files = sortedReviewFiles(source);
   const paths = new Set([
     ...files.slice(0, INITIAL_FILE_COUNT).map((file) => file.path),
+    ...(activePath && files.some((file) => file.path === activePath) ? [activePath] : []),
     ...(requested.scope === scope ? requested.paths : []),
   ]);
   const queries =

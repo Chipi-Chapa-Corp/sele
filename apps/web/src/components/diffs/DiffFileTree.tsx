@@ -2,7 +2,15 @@ import type { GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { T, useGT } from "gt-react";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
@@ -31,12 +39,19 @@ import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
+export interface DiffFileTreeHandle {
+  readonly setAllDirectoriesExpanded: (expanded: boolean) => void;
+}
+
 interface DiffFileTreeProps {
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
   readonly onSelectFile: (path: string) => void;
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
   readonly ariaLabel: string;
+  readonly showHeader?: boolean;
+  readonly treeRef?: Ref<DiffFileTreeHandle>;
+  readonly onAllDirectoriesExpandedChange?: (allExpanded: boolean) => void;
   readonly headerAccessory?: ReactNode;
   readonly footer?: ReactNode;
   readonly className?: string;
@@ -48,6 +63,9 @@ export function DiffFileTree({
   selectedPath = null,
   revealRequestId = 0,
   ariaLabel,
+  showHeader = true,
+  treeRef,
+  onAllDirectoriesExpandedChange,
   headerAccessory,
   footer,
   className,
@@ -104,6 +122,24 @@ export function DiffFileTree({
     (listener) => subscribeOncePerTask(model, listener),
     () => areAllDirectoriesExpanded(model, directoryPaths),
   );
+  const onAllDirectoriesExpandedChangeStable = useStableCallback((expanded: boolean) => {
+    onAllDirectoriesExpandedChange?.(expanded);
+  });
+
+  useImperativeHandle(
+    treeRef,
+    () => ({
+      setAllDirectoriesExpanded: (expanded: boolean) => {
+        setAllDirectoriesExpanded(model, directoryPaths, expanded);
+      },
+    }),
+    [directoryPaths, model],
+  );
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- notifies external toolbar controls when the imperative Pierre tree's folder expansion state changes
+  useEffect(() => {
+    onAllDirectoriesExpandedChangeStable(allDirectoriesExpanded);
+  }, [allDirectoriesExpanded, onAllDirectoriesExpandedChangeStable]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the icon set into the imperative Pierre file tree model
   useEffect(() => {
@@ -192,44 +228,46 @@ export function DiffFileTree({
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
-      <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
-        data-surface-subheader
-      >
-        <span className="px-1 font-medium text-foreground">
-          <T>Files</T>
-        </span>
-        <span className="ml-auto tabular-nums">{entries.length}</span>
-        {headerAccessory}
-        {directoryPaths.length > 0 ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={
-                    allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")
-                  }
-                  onClick={() =>
-                    setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
-                  }
-                />
-              }
-            >
-              {allDirectoriesExpanded ? (
-                <ChevronsDownUpIcon className="size-3.5" />
-              ) : (
-                <ChevronsUpDownIcon className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
-      </div>
+      {showHeader ? (
+        <div
+          className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+          data-surface-subheader
+        >
+          <span className="px-1 font-medium text-foreground">
+            <T>Files</T>
+          </span>
+          <span className="ml-auto tabular-nums">{entries.length}</span>
+          {headerAccessory}
+          {directoryPaths.length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={
+                      allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")
+                    }
+                    onClick={() =>
+                      setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
+                    }
+                  />
+                }
+              >
+                {allDirectoriesExpanded ? (
+                  <ChevronsDownUpIcon className="size-3.5" />
+                ) : (
+                  <ChevronsUpDownIcon className="size-3.5" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+        </div>
+      ) : null}
       <FileTree
         model={model}
         aria-label={ariaLabel}

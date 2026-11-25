@@ -33,6 +33,7 @@ const state = vi.hoisted(() => ({
   thread: null as ReturnType<typeof makeThreadFixture> | null,
   threadRef: null as ScopedThreadRef | null,
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
+  patchesByKey: new Map<string, ResultAtom<ReviewDiffPreviewSource>>(),
   patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
   diffFilesCollapsed: false,
   project: {
@@ -54,10 +55,19 @@ vi.mock("~/state/server", () => ({
 }));
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
-    diffPreview: ({ input }: { input: { baseRef?: string } }) =>
-      state.previews.get(input.baseRef ?? null)!,
+    diffPreview: ({ input }: { input: { baseRef?: string; ignoreWhitespace?: boolean } }) =>
+      state.previews.get(
+        input.ignoreWhitespace ? `${input.baseRef ?? ""}:ws` : (input.baseRef ?? null),
+      ) ?? state.previews.get(input.baseRef ?? null)!,
     branchCommits: () => state.commits,
-    diffFilePatch: () => state.patch,
+    diffFilePatch: ({
+      input,
+    }: {
+      input: { request: { ignoreWhitespace?: boolean; file: { path: string } } };
+    }) =>
+      state.patchesByKey.get(
+        `${input.request.file.path}:${input.request.ignoreWhitespace ? "ws" : "raw"}`,
+      ) ?? state.patch,
     diffFileContents: {},
   },
 }));
@@ -104,7 +114,33 @@ vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async ()
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
 vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
-vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
+vi.mock("./diffs/DiffFileTree", () => ({
+  DiffFileTree: ({
+    entries,
+    onSelectFile,
+    selectedPath,
+    ariaLabel,
+  }: {
+    entries: ReadonlyArray<{ path: string; status: string }>;
+    onSelectFile: (path: string) => void;
+    selectedPath?: string | null;
+    ariaLabel: string;
+  }) => (
+    <div role="tree" aria-label={ariaLabel}>
+      {entries.map((entry) => (
+        <button
+          key={entry.path}
+          type="button"
+          role="treeitem"
+          aria-selected={selectedPath === entry.path}
+          onClick={() => onSelectFile(entry.path)}
+        >
+          {entry.path}
+        </button>
+      ))}
+    </div>
+  ),
+}));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
 import DiffPanel from "./DiffPanel";
@@ -141,7 +177,10 @@ function setup(failedBaseRef: string | null) {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
     });
-    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useDiffPanelSessionStore.setState({
+      collapsedFileKeysByScopeKey: {},
+      ignoreWhitespace: null,
+    });
     useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   };
   reset();
@@ -150,6 +189,7 @@ function setup(failedBaseRef: string | null) {
   state.toolCallItem = null;
   state.checkpoints = [];
   state.checkpointDiff = null;
+  state.patchesByKey.clear();
   const patch = Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
     AsyncResult.initial(),
   );
@@ -252,7 +292,7 @@ it.each([
   },
 );
 
-it("opens a repository-relative file from a nested project without a remote", async () => {
+it("opens a changed file in a resizable diff popup instead of a new tab", async () => {
   using context = setup("origin/orphan");
   state.thread = { ...state.thread!, worktreePath: null };
   const path = "project/back\\slash.txt";
@@ -276,51 +316,121 @@ it("opens a repository-relative file from a nested project without a remote", as
       <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
     </RegistryContext.Provider>,
   );
-  await userEvent.click(screen.getByText(path, { exact: true }));
+  await userEvent.click(screen.getByRole("treeitem", { name: path, exact: true }));
+  await expect.element(page.getByRole("dialog", { name: "back\\slash.txt" })).toBeVisible();
+  await expect.element(page.getByRole("separator", { name: "Resize diff popup" })).toBeVisible();
   expect(
     selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
-  ).toMatchObject({ activeSurfaceId: "file:back\\slash.txt" });
+  ).toMatchObject({ activeSurfaceId: null });
 });
 
-it.each([false, true])(
-  "expands an unloaded file on the first click with default collapse %s",
-  async (collapsed) => {
-    using context = setup("origin/orphan");
-    state.diffFilesCollapsed = collapsed;
-    const path = `pending-${collapsed}.txt`;
-    const metadata = preview();
-    const source = {
-      ...metadata.sources[0]!,
-      files: [{ path, previousPath: null, additions: 1, deletions: 1 }],
-    };
-    state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
-    useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
-    await using screen = await render(
-      <RegistryContext.Provider value={context.registry}>
-        <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
-        </div>
-      </RegistryContext.Provider>,
-    );
-    const toggle = screen.getByRole("button", { name: `Expand ${path}`, exact: true });
-    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
-    await userEvent.click(toggle);
-    await act(() =>
-      context.registry.set(
-        context.patch,
-        AsyncResult.success({
-          ...source,
-          diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
-        }),
-      ),
-    );
-    const loadedToggle = screen.getByRole("button", { name: `Collapse ${path}`, exact: true });
-    await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
-    await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
-    await userEvent.click(loadedToggle);
-    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
-  },
-);
+it("loads a pending file diff in the resizable popup on click and supports maximize and close", async () => {
+  using context = setup("origin/orphan");
+  const path = "src/pending.txt";
+  const metadata = preview();
+  const source = {
+    ...metadata.sources[0]!,
+    files: [{ path, previousPath: null, additions: 1, deletions: 1 }],
+  };
+  state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByRole("treeitem", { name: path, exact: true }));
+  const popup = page.getByRole("dialog", { name: "pending.txt" });
+  await expect.element(popup).toBeVisible();
+  await expect.element(popup.getByText("Loading diff...")).toBeVisible();
+  await act(() =>
+    context.registry.set(
+      context.patch,
+      AsyncResult.success({
+        ...source,
+        diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
+      }),
+    ),
+  );
+  await expect.element(popup.getByText("after", { exact: true })).toBeVisible();
+
+  await userEvent.click(popup.getByRole("button", { name: "Maximize diff popup" }));
+  await expect
+    .element(popup.getByRole("separator", { name: "Resize diff popup" }))
+    .not.toBeInTheDocument();
+  await userEvent.click(popup.getByRole("button", { name: "Restore diff popup size" }));
+  await expect.element(popup.getByRole("separator", { name: "Resize diff popup" })).toBeVisible();
+
+  await userEvent.click(popup.getByRole("button", { name: "Close diff popup" }));
+  await expect.element(popup).not.toBeInTheDocument();
+});
+
+it("reloads an open file beyond the initial batch when toggling whitespace in the popup", async () => {
+  using context = setup("origin/orphan");
+  const files = [
+    "src/file-1.txt",
+    "src/file-2.txt",
+    "src/file-3.txt",
+    "src/file-4.txt",
+    "src/file-5.txt",
+    "src/file-6.txt",
+  ];
+  const target = "src/file-6.txt";
+  const metadata = preview();
+  const baseSource = {
+    ...metadata.sources[0]!,
+    files: files.map((path) => ({ path, previousPath: null, additions: 1, deletions: 1 })),
+  };
+  state.previews.set(
+    "main",
+    Atom.make(AsyncResult.success({ ...metadata, sources: [baseSource] })),
+  );
+  state.previews.set(
+    "main:ws",
+    Atom.make(
+      AsyncResult.success({
+        ...metadata,
+        sources: [{ ...baseSource, diffHash: "ws-hash" }],
+      }),
+    ),
+  );
+  state.patchesByKey.set(
+    `${target}:raw`,
+    Atom.make(
+      AsyncResult.success({
+        ...baseSource,
+        diff: `diff --git a/${target} b/${target}\n--- a/${target}\n+++ b/${target}\n@@ -1 +1 @@\n-  before\n+with-whitespace-change\n`,
+      }),
+    ),
+  );
+  state.patchesByKey.set(
+    `${target}:ws`,
+    Atom.make(
+      AsyncResult.success({
+        ...baseSource,
+        diffHash: "ws-hash",
+        diff: `diff --git a/${target} b/${target}\n--- a/${target}\n+++ b/${target}\n@@ -1 +1 @@\n-old\n+no-whitespace-change\n`,
+      }),
+    ),
+  );
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByRole("treeitem", { name: target, exact: true }));
+  const popup = page.getByRole("dialog", { name: "file-6.txt" });
+  await expect.element(popup).toBeVisible();
+  await expect.element(popup.getByText("no-whitespace-change", { exact: true })).toBeVisible();
+
+  await userEvent.click(popup.getByRole("button", { name: "Show whitespace changes" }));
+  await expect.element(popup.getByText("with-whitespace-change", { exact: true })).toBeVisible();
+});
 
 it("says a turn diff cut off at the server's size limit is incomplete", async () => {
   using context = setup("origin/orphan");
@@ -346,7 +456,9 @@ it("says a turn diff cut off at the server's size limit is incomplete", async ()
       </div>
     </RegistryContext.Provider>,
   );
-  await expect.element(screen.getByText("first.txt", { exact: true }).first()).toBeVisible();
+  await expect
+    .element(screen.getByRole("treeitem", { name: "first.txt", exact: true }))
+    .toBeVisible();
   await expect
     .element(screen.getByText("This preview exceeds the size limit. Changes shown are incomplete."))
     .toBeVisible();
@@ -415,8 +527,8 @@ it("shows a turn's repositories in a folder that is not a Git repository", async
       </div>
     </RegistryContext.Provider>,
   );
-  const api = screen.getByRole("button", { name: "Collapse api/README.md", exact: true });
-  const web = screen.getByRole("button", { name: "Collapse web/README.md", exact: true });
+  const api = screen.getByRole("treeitem", { name: "api/README.md", exact: true });
+  const web = screen.getByRole("treeitem", { name: "web/README.md", exact: true });
   await expect.element(api).toBeVisible();
   await expect.element(web).toBeVisible();
   // Both pickers keep their labels in a phone-width panel.
@@ -431,39 +543,41 @@ it("shows a turn's repositories in a folder that is not a Git repository", async
 
 // Paths as git's numstat reports them; the parsed patch keeps their edge whitespace.
 it.each([
-  { path: " leading.ts", name: " leading.ts" },
-  { path: "src/trailing.ts ", name: "src/trailing.ts " },
-])("reveals the turn file $path picked from the changed files", async ({ path, name }) => {
-  using context = setup("origin/orphan");
-  state.diffFilesCollapsed = true;
-  state.checkpoints = [
-    {
-      runId: "run",
-      checkpointTurnCount: 1,
-      checkpointRef: "ref",
-      status: "ready",
-      files: [],
-      assistantMessageId: null,
-      completedAt: "2026-01-01T00:00:00Z",
-    },
-  ];
-  state.checkpointDiff = {
-    diff: `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\t\n@@ -0,0 +1 @@\n+revealed\n`,
-  };
-  useDiffPanelStore.getState().selectTurn(context.threadRef, RunId.make("run"), path);
-  await using screen = await render(
-    <RegistryContext.Provider value={context.registry}>
-      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
-      </div>
-    </RegistryContext.Provider>,
-  );
-  await expect
-    .element(screen.getByRole("button", { name: `Collapse ${name}`, exact: true }))
-    .toHaveAttribute("aria-expanded", "true");
-});
+  { path: " leading.ts", title: "leading.ts" },
+  { path: "src/trailing.ts ", title: "trailing.ts" },
+])(
+  "opens the diff popup for the turn file $path picked from changed files",
+  async ({ path, title }) => {
+    using context = setup("origin/orphan");
+    state.checkpoints = [
+      {
+        runId: "run",
+        checkpointTurnCount: 1,
+        checkpointRef: "ref",
+        status: "ready",
+        files: [],
+        assistantMessageId: null,
+        completedAt: "2026-01-01T00:00:00Z",
+      },
+    ];
+    state.checkpointDiff = {
+      diff: `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\t\n@@ -0,0 +1 @@\n+revealed\n`,
+    };
+    useDiffPanelStore.getState().selectTurn(context.threadRef, RunId.make("run"), path);
+    await using _screen = await render(
+      <RegistryContext.Provider value={context.registry}>
+        <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        </div>
+      </RegistryContext.Provider>,
+    );
+    const popup = page.getByRole("dialog", { name: title });
+    await expect.element(popup).toBeVisible();
+    await expect.element(popup.getByText("revealed", { exact: true })).toBeVisible();
+  },
+);
 
-it("opens a file from a tool call's diff by the path its agent recorded", async () => {
+it("opens a tool call's changed file in the diff popup instead of a new tab", async () => {
   using context = setup("origin/orphan");
   // A local thread in a project that is the repository's apps/web folder.
   state.thread = { ...state.thread!, worktreePath: null };
@@ -490,10 +604,11 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
       </div>
     </RegistryContext.Provider>,
   );
-  await userEvent.click(screen.getByText("src/a.ts", { exact: true }));
-  await vi.waitFor(() =>
-    expect(
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
-    ).toMatchObject({ activeSurfaceId: "file:src/a.ts" }),
-  );
+  await userEvent.click(screen.getByRole("treeitem", { name: "src/a.ts", exact: true }));
+  const popup = page.getByRole("dialog", { name: "a.ts" });
+  await expect.element(popup).toBeVisible();
+  await expect.element(popup.getByText("after", { exact: true })).toBeVisible();
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
+  ).toMatchObject({ activeSurfaceId: null });
 });
