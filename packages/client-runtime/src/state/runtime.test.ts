@@ -53,6 +53,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
+import { invalidateVcsWorkingTree } from "./vcsWorkingTreeInvalidation.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
 import { createIssueEnvironmentAtoms, createMergedIssueListAtoms } from "./issues.ts";
@@ -349,6 +350,116 @@ it.effect("does not re-read a file patch read while its preview was revalidating
     yield* readEnvironmentQuery(registry, patch);
     expect(patchReads).toBe(2);
   }),
+);
+
+it.effect(
+  "reloads working-tree diff previews and branch commits when the checkout working tree is invalidated",
+  () =>
+    Effect.gen(function* () {
+      let workingTreeReads = 0;
+      let commitPreviewReads = 0;
+      let otherCwdReads = 0;
+      let branchCommitsReads = 0;
+      const rpcSession = {
+        client: {
+          [WS_METHODS.reviewGetDiffPreview]: (input: ReviewDiffPreviewInput) =>
+            Effect.sync(() => {
+              if (input.cwd !== "/project") {
+                otherCwdReads += 1;
+              } else if (input.commitSha !== undefined) {
+                commitPreviewReads += 1;
+              } else {
+                workingTreeReads += 1;
+              }
+              return {
+                cwd: input.cwd,
+                generatedAt: DateTime.makeUnsafe(
+                  workingTreeReads + commitPreviewReads + otherCwdReads,
+                ),
+                sources: [
+                  {
+                    id: input.commitSha ?? input.sourceKind ?? "working-tree",
+                    kind: input.commitSha
+                      ? ("commit" as const)
+                      : (input.sourceKind ?? ("working-tree" as const)),
+                    title: "Uncommitted",
+                    baseRef: "HEAD",
+                    headRef: input.commitSha ?? null,
+                    diff: "",
+                    diffHash: `${workingTreeReads}`,
+                    truncated: false,
+                    patchesDeferred: true,
+                    files:
+                      workingTreeReads === 1 && input.cwd === "/project"
+                        ? [{ path: "a.ts", previousPath: null, additions: 1, deletions: 0 }]
+                        : [],
+                  },
+                ],
+              };
+            }),
+          [WS_METHODS.reviewGetBranchCommits]: () =>
+            Effect.sync(() => {
+              branchCommitsReads += 1;
+              return {
+                commits:
+                  branchCommitsReads > 1
+                    ? [
+                        {
+                          sha: "abc1234",
+                          subject: "New commit",
+                          authoredAt: DateTime.makeUnsafe(branchCommitsReads),
+                        },
+                      ]
+                    : [],
+                truncated: false,
+              };
+            }),
+        },
+      } as unknown as RpcSession.RpcSession;
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession });
+      const review = createReviewEnvironmentAtoms(harness.runtime);
+      const workingTreePreview = review.diffPreview({
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        input: { cwd: "/project", sourceKind: "working-tree", metadataOnly: true },
+      });
+      const commitPreview = review.diffPreview({
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        input: { cwd: "/project", commitSha: "deadbeef", metadataOnly: true },
+      });
+      const otherCwdPreview = review.diffPreview({
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        input: { cwd: "/other", sourceKind: "working-tree", metadataOnly: true },
+      });
+      const commits = review.branchCommits({
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        input: { cwd: "/project" },
+      });
+      const registry = yield* mountEnvironmentQuery(workingTreePreview);
+      registry.mount(commitPreview);
+      registry.mount(otherCwdPreview);
+      registry.mount(commits);
+
+      expect(
+        (yield* readEnvironmentQuery(registry, workingTreePreview)).sources[0]!.files,
+      ).toHaveLength(1);
+      yield* readEnvironmentQuery(registry, commitPreview);
+      yield* readEnvironmentQuery(registry, otherCwdPreview);
+      expect((yield* readEnvironmentQuery(registry, commits)).commits).toHaveLength(0);
+
+      invalidateVcsWorkingTree(registry, {
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        cwd: "/project",
+      });
+
+      expect(
+        (yield* readEnvironmentQuery(registry, workingTreePreview)).sources[0]!.files,
+      ).toHaveLength(0);
+      expect((yield* readEnvironmentQuery(registry, commits)).commits).toHaveLength(1);
+      expect(workingTreeReads).toBe(2);
+      expect(branchCommitsReads).toBe(2);
+      expect(commitPreviewReads).toBe(1);
+      expect(otherCwdReads).toBe(1);
+    }),
 );
 
 it.effect("keeps manual Issues refresh intent through an overlapping write", () =>

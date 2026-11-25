@@ -19,6 +19,7 @@ import {
   type QueryAnswerHandler,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { vcsWorkingTreeRevisionAtom } from "./vcsWorkingTreeInvalidation.ts";
 
 interface PreviewRevisionState {
   readonly key: string | null;
@@ -43,6 +44,10 @@ export function createReviewEnvironmentAtoms<R, E>(
     label: "environment-data:review:diff-preview",
     tag: WS_METHODS.reviewGetDiffPreview,
     staleTimeMs: 5_000,
+    refreshTrigger: ({ environmentId, input }) =>
+      input.commitSha === undefined
+        ? vcsWorkingTreeRevisionAtom({ environmentId, cwd: input.cwd })
+        : undefined,
     execute: Effect.fn("review.diffPreview")(function* (
       input: ReviewDiffPreviewInput,
       emit: (value: ReviewDiffPreviewResult) => Effect.Effect<void>,
@@ -115,6 +120,8 @@ export function createReviewEnvironmentAtoms<R, E>(
       label: "environment-data:review:branch-commits",
       tag: WS_METHODS.reviewGetBranchCommits,
       staleTimeMs: 5_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        vcsWorkingTreeRevisionAtom({ environmentId, cwd: input.cwd }),
     }),
     diffPreview,
     diffFilePatch: createEnvironmentQueryAtomFamily(runtime, {

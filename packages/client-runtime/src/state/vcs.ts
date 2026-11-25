@@ -42,6 +42,7 @@ import {
   vcsRefsCacheStateAtom,
   withVcsRefsPersistenceLock,
 } from "./vcsRefInvalidation.ts";
+import { invalidateVcsWorkingTree } from "./vcsWorkingTreeInvalidation.ts";
 
 // Share freshness across search and pagination keys, but keep it local to this registry.
 const serverRefsRevisionAtom = Atom.family((_key: string) => Atom.make(0).pipe(Atom.keepAlive));
@@ -295,6 +296,16 @@ export function createVcsEnvironmentAtoms<R, E>(
       environmentId: target.environmentId,
       cwd: target.input.cwd,
     });
+  const invalidateRefsAndWorkingTree = (
+    target: { readonly environmentId: EnvironmentId; readonly input: { readonly cwd: string } },
+    registry: AtomRegistry.AtomRegistry,
+  ) =>
+    Effect.sync(() =>
+      invalidateVcsWorkingTree(registry, {
+        environmentId: target.environmentId,
+        cwd: target.input.cwd,
+      }),
+    ).pipe(Effect.andThen(invalidateRefs(target, registry)));
 
   const invalidateRefsIfChanged = (
     target: { readonly environmentId: EnvironmentId; readonly input: { readonly cwd: string } },
@@ -347,7 +358,7 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsPull,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
-      onSettled: invalidateRefs,
+      onSettled: invalidateRefsAndWorkingTree,
     }),
     refreshStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:refresh-status",
@@ -393,21 +404,21 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsCreateRef,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
-      onSettled: invalidateRefs,
+      onSettled: invalidateRefsAndWorkingTree,
     }),
     switchRef: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:switch-ref",
       tag: WS_METHODS.vcsSwitchRef,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
-      onSettled: invalidateRefs,
+      onSettled: invalidateRefsAndWorkingTree,
     }),
     init: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:init",
       tag: WS_METHODS.vcsInit,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
-      onSettled: invalidateRefs,
+      onSettled: invalidateRefsAndWorkingTree,
     }),
   };
 }

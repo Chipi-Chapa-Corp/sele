@@ -45,6 +45,7 @@ import {
   VcsActionTargetKeyParseError,
 } from "./vcsAction.ts";
 import { vcsRefsCacheStateAtom } from "./vcsRefInvalidation.ts";
+import { vcsWorkingTreeRevisionAtom } from "./vcsWorkingTreeInvalidation.ts";
 
 const actionId = "action-123";
 const action = "commit_push" as const;
@@ -516,8 +517,15 @@ describe("vcsActionState", () => {
         Effect.sync(() => registry.dispose()),
       );
       const state = vcsRefsCacheStateAtom({ environmentId });
+      const workingTreeRevision = vcsWorkingTreeRevisionAtom({ environmentId, cwd });
+      const otherWorkingTreeRevision = vcsWorkingTreeRevisionAtom({
+        environmentId,
+        cwd: "/other-repo",
+      });
 
       expect(registry.get(state).revision).toBe(0);
+      expect(registry.get(workingTreeRevision)).toBe(0);
+      expect(registry.get(otherWorkingTreeRevision)).toBe(0);
       const threadId = ThreadId.make("thread-stacked-action");
       const projectId = ProjectId.make("project-stacked-action");
       const successfulResult = yield* Effect.promise(() =>
@@ -537,6 +545,8 @@ describe("vcsActionState", () => {
       expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
       expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
       expect(registry.get(state).revision).toBe(1);
+      expect(registry.get(workingTreeRevision)).toBe(1);
+      expect(registry.get(otherWorkingTreeRevision)).toBe(0);
       expect(removed).toEqual([`${environmentId}:*`]);
       expect(rpcInputs).toEqual([
         { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
@@ -562,6 +572,8 @@ describe("vcsActionState", () => {
         error: "Source control action 'commit_push' failed during push.",
       });
       expect(registry.get(state).revision).toBe(2);
+      expect(registry.get(workingTreeRevision)).toBe(2);
+      expect(registry.get(otherWorkingTreeRevision)).toBe(0);
       expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
 
       const interruptedResult = yield* Effect.promise(() =>
@@ -582,6 +594,8 @@ describe("vcsActionState", () => {
       }
       expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
       expect(registry.get(state).revision).toBe(3);
+      expect(registry.get(workingTreeRevision)).toBe(3);
+      expect(registry.get(otherWorkingTreeRevision)).toBe(0);
       expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`, `${environmentId}:*`]);
     }),
   );

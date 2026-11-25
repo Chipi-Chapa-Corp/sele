@@ -32,6 +32,7 @@ import {
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
+import { invalidateVcsWorkingTree } from "./vcsWorkingTreeInvalidation.ts";
 
 export const VcsActionOperation = Schema.Literals([
   "refresh_status",
@@ -573,7 +574,11 @@ export function createVcsActionManager<R, E>(
             authorize: (id, method, payload) =>
               createCommandPermissions(runtime, method).authorize(registry, id, payload),
           }),
-          Effect.ensuring(invalidateCachedVcsRefs(registry, target)),
+          Effect.ensuring(
+            Effect.sync(() => invalidateVcsWorkingTree(registry, target)).pipe(
+              Effect.andThen(invalidateCachedVcsRefs(registry, target)),
+            ),
+          ),
           Effect.tap(() => clearOwnedState),
           Effect.tapError((error) =>
             Effect.sync(() => {
