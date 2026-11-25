@@ -327,11 +327,10 @@ import {
   PanelLayoutControls,
   type PanelLayoutControlsProps,
   RightPanelMaximizeControl,
-  ThreadPanelHeaderControl,
   WorkspaceTitlebarControls,
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
-import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { publishActiveThreadUsage } from "../activeThreadUsageStore";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   offersWorkspaceModes,
@@ -397,7 +396,6 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
-import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
@@ -1177,6 +1175,9 @@ export default function ChatView(props: ChatViewProps) {
       surface.kind === "terminal" ? surface.terminalIds : [],
     ),
   );
+  const reusablePanelTerminalIds = rightPanelState.surfaces.flatMap((surface) =>
+    surface.kind === "terminal" && surface.terminalIds.length === 1 ? surface.terminalIds : [],
+  );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const rightPanelOpen = rightPanelState.isOpen;
@@ -1447,12 +1448,24 @@ export default function ChatView(props: ChatViewProps) {
   });
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
+  const usageLimitSources = serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const activeUsageModel =
     [
       composerModelSelectionApplies ? composerSelectedModelSelection : null,
       activeThread?.modelSelection,
     ].find((selection) => selection?.instanceId === activeProviderInstanceId)?.model ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this thread's usage to the sidebar, which renders outside this view
+  useEffect(() => {
+    if (embedded) return;
+    publishActiveThreadUsage({
+      providerInstanceId: activeProviderInstanceId,
+      model: activeUsageModel,
+      providers: providerStatuses,
+      sources: usageLimitSources,
+    });
+    return () => publishActiveThreadUsage(null);
+  }, [embedded, activeProviderInstanceId, activeUsageModel, providerStatuses, usageLimitSources]);
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
@@ -2069,6 +2082,7 @@ export default function ChatView(props: ChatViewProps) {
     activeServerOrderedTerminalIds,
     activeTerminalLabelsById,
     panelTerminalIds,
+    reusablePanelTerminalIds,
     canReuseTerminal,
     gitCwd,
     setTerminalUiLaunchContext,
@@ -2545,7 +2559,6 @@ export default function ChatView(props: ChatViewProps) {
     duplicateBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
     onOpenToolDiffStable,
-    openChangesFromThreadPanelStable,
     openFileSurfaceStable,
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
@@ -3444,6 +3457,8 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelContent = activeThreadRef ? (
     <RightPanelSurfaceContent
       surface={renderedRightPanelSurface}
+      gitActionsCwd={isGitRepo && activeProject ? gitCwd : null}
+      gitActionsName={activeProject?.title ?? ""}
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}
       environmentId={activeThread.environmentId}
@@ -3513,10 +3528,10 @@ export default function ChatView(props: ChatViewProps) {
   const panelToggleControls = (
     <PanelLayoutControls
       {...panelToggleControlProps}
-      showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
+      showThreadPanelControl={false}
+      showTerminalControl={false}
     />
   );
-  const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
   const panelLayoutControls = (
     <WorkspaceTitlebarControls
       showMaximizeControl={!shouldUsePlanSidebarSheet}
@@ -3586,7 +3601,6 @@ export default function ChatView(props: ChatViewProps) {
               />
             ) : null}
             {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
-            {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
             <ChatHeader
               activeThreadEnvironmentId={activeThread.environmentId}
               activeThreadId={activeThread.id}
@@ -3954,6 +3968,16 @@ export default function ChatView(props: ChatViewProps) {
                                 getShortcutContext={getShortcutContextStable}
                                 terminalOpen={Boolean(terminalUiState.terminalOpen)}
                                 gitCwd={gitCwd}
+                                projectScripts={activeProject ? activeProjectScripts : undefined}
+                                preferredScriptId={
+                                  activeProject
+                                    ? (lastInvokedScriptByProjectId[activeProject.id] ?? null)
+                                    : null
+                                }
+                                onRunProjectScript={runProjectScriptStable}
+                                onAddProjectScript={saveProjectScriptStable}
+                                onUpdateProjectScript={updateProjectScriptStable}
+                                onDeleteProjectScript={deleteProjectScriptStable}
                                 pullRequestProjectId={
                                   supportsPullRequests ? (activeProject?.id ?? null) : null
                                 }
@@ -4122,80 +4146,6 @@ export default function ChatView(props: ChatViewProps) {
                   onConfirm={handleSwitchCheckoutToThreadStable}
                 />
 
-                <ThreadDetailsPanel
-                  anchor={threadPanelPopoverAnchorRef}
-                  handle={threadPanelPopoverHandle}
-                  forceNewWorktree={multipleModelSelections !== null}
-                  environmentId={activeThread.environmentId}
-                  threadId={activeThread.id}
-                  projectId={activeThread.projectId}
-                  worktreePath={activeThread.worktreePath}
-                  isServerThread={isServerThread}
-                  {...(draftId ? { draftId } : {})}
-                  composerDraftTarget={composerDraftTarget}
-                  activeProjectName={activeProject?.title}
-                  activeProjectScripts={activeProject ? activeProjectScripts : undefined}
-                  preferredScriptId={
-                    activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-                  }
-                  keybindings={keybindings}
-                  availableEditors={availableEditors}
-                  showOpenInPicker={showOpenInPicker}
-                  openInShortcutEnabled={
-                    !(
-                      rightPanelOpen &&
-                      renderedRightPanelSurface?.kind === "file" &&
-                      renderedRightPanelSurface.attachment === undefined
-                    )
-                  }
-                  gitCwd={gitCwd}
-                  workspaceMutationId={workspaceRevision.revision}
-                  isGitRepo={isGitRepo}
-                  offersWorkspaceModes={workspaceModesOffered}
-                  envLocked={envLocked}
-                  availableEnvironments={logicalProjectEnvironments}
-                  autoEnvironmentLabel={autoEnvironmentLabel}
-                  onAutoEnvironment={
-                    draftId &&
-                    !envLocked &&
-                    canAutoBalanceEnvironments &&
-                    loadBalancingSettings.loadBalancingEnabled
-                      ? onAutoEnvironmentStable
-                      : undefined
-                  }
-                  {...(canChangeEnvironment
-                    ? { onEnvironmentChange: onEnvironmentChangeStable }
-                    : {})}
-                  onEnvModeChange={onEnvModeChangeStable}
-                  envMode={envMode}
-                  {...(canOverrideServerThreadEnvMode
-                    ? {
-                        activeThreadBranchOverride: activeThreadBranch,
-                        onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
-                      }
-                    : {})}
-                  startFromOrigin={startFromOrigin}
-                  onStartFromOriginChange={onStartFromOriginChange}
-                  {...(canCheckoutPullRequestIntoThread
-                    ? { onCheckoutPullRequestRequest: openPullRequestDialogStable }
-                    : {})}
-                  onComposerFocusRequest={scheduleComposerFocusStable}
-                  {...(isServerThread && isGitRepo
-                    ? { onOpenChanges: openChangesFromThreadPanelStable }
-                    : {})}
-                  onRunProjectScript={runProjectScriptStable}
-                  onAddProjectScript={saveProjectScriptStable}
-                  onUpdateProjectScript={updateProjectScriptStable}
-                  onDeleteProjectScript={deleteProjectScriptStable}
-                  usage={{
-                    providerInstanceId: activeProviderInstanceId,
-                    model: activeUsageModel,
-                    providers: providerStatuses,
-                    sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
-                    contextWindow: activeContextWindow,
-                  }}
-                />
-
                 <PullRequestThreadDialogHost
                   threadKey={activeThreadKey}
                   environmentId={activeThread.environmentId}
@@ -4207,21 +4157,6 @@ export default function ChatView(props: ChatViewProps) {
             )}
           </ThreadFindCanvas>
         </div>
-
-        {embedded ? null : (
-          <ChatTerminalDrawers
-            activeThreadKey={activeThreadKey}
-            activeTerminalOpen={Boolean(terminalUiState.terminalOpen)}
-            composerHeight={composerReservedHeight}
-            launchContext={activeTerminalLaunchContext ?? null}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraftStable}
-          />
-        )}
       </div>
 
       {rightPanelPresent && activeThreadRef && !embedded ? (

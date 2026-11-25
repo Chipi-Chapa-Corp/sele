@@ -224,6 +224,7 @@ import {
   ComposerQueuedAttachmentRow,
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
+import { ComposerProjectActions, type ComposerProjectActionsProps } from "./ComposerProjectActions";
 import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -374,6 +375,13 @@ export interface ChatComposerHandle {
 
 export interface ChatComposerProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
+  /** The project's actions, shown beside Attach; absent without a project. */
+  projectScripts?: ComposerProjectActionsProps["scripts"] | undefined;
+  preferredScriptId?: string | null;
+  onRunProjectScript?: ComposerProjectActionsProps["onRunScript"];
+  onAddProjectScript?: ComposerProjectActionsProps["onAddScript"];
+  onUpdateProjectScript?: ComposerProjectActionsProps["onUpdateScript"];
+  onDeleteProjectScript?: ComposerProjectActionsProps["onDeleteScript"];
   environmentId: EnvironmentId;
   canOperateThread: boolean;
   attachmentUploadsCapabilityKnown: boolean;
@@ -4059,6 +4067,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 {composerAttachButton && !dictationTakesFooter ? (
                   <div className="me-2">{composerAttachButton}</div>
+                ) : null}
+                {props.projectScripts &&
+                props.onRunProjectScript &&
+                props.onAddProjectScript &&
+                props.onUpdateProjectScript &&
+                props.onDeleteProjectScript &&
+                !dictationTakesFooter ? (
+                  <div className="me-2">
+                    <ComposerProjectActions
+                      environmentId={environmentId}
+                      cwd={gitCwd}
+                      scripts={props.projectScripts}
+                      preferredScriptId={props.preferredScriptId ?? null}
+                      onRunScript={props.onRunProjectScript}
+                      onAddScript={props.onAddProjectScript}
+                      onUpdateScript={props.onUpdateProjectScript}
+                      onDeleteScript={props.onDeleteProjectScript}
+                    />
+                  </div>
                 ) : null}
                 <div
                   data-chat-composer-actions="right"

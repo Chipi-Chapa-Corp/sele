@@ -16,7 +16,7 @@ import { useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-/** Matches the right inset of `ThreadPanelHeaderControl`. */
+/** The right inset of the thread panel header controls. */
 const THREAD_PANEL_HEADER_INSET_PX = 12;
 
 export interface PanelLayoutControlsProps {
@@ -182,21 +182,6 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
 });
 
 /** The thread panel toggle on a header whose right side the inline right panel covers. */
-export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
-  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
-  return (
-    <div
-      className={cn(
-        "absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]",
-        mobileSidebarSheetMounted && "hidden",
-      )}
-      data-workspace-titlebar-controls
-    >
-      <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
-    </div>
-  );
-}
-
 /** The window's top-right panel controls, with the maximize toggle while the panel is open. */
 export function WorkspaceTitlebarControls(props: {
   readonly showMaximizeControl: boolean;

@@ -28,6 +28,7 @@ import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
+import ThreadGitActionsControl from "../GitActionsControl";
 
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
@@ -65,6 +66,9 @@ interface RightPanelFileProps {
 
 export function RightPanelSurfaceContent(props: {
   readonly surface: RightPanelSurface | null;
+  /** The repository the diff's commit, push, and pull request actions run in. */
+  readonly gitActionsCwd: string | null;
+  readonly gitActionsName: string;
   readonly activeSurfaceId: string | null;
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
@@ -115,15 +119,29 @@ export function RightPanelSurfaceContent(props: {
       );
     case "diff":
       return (
-        <Suspense fallback={null}>
-          <DiffPanel
-            key={scopedThreadKey(threadRef)}
-            mode="embedded"
-            composerDraftTarget={props.composerDraftTarget}
-            workspaceMutationId={props.workspaceRevision}
-            visible={visible}
-          />
-        </Suspense>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <Suspense fallback={null}>
+            <DiffPanel
+              key={scopedThreadKey(threadRef)}
+              mode="embedded"
+              composerDraftTarget={props.composerDraftTarget}
+              workspaceMutationId={props.workspaceRevision}
+              visible={visible}
+            />
+          </Suspense>
+          {props.gitActionsCwd ? (
+            <div className="shrink-0 border-t border-border/60 p-2">
+              <ThreadGitActionsControl
+                showActions
+                showChanges={false}
+                gitCwd={props.gitActionsCwd}
+                name={props.gitActionsName}
+                workspaceMutationId={props.workspaceMutationId}
+                activeThreadRef={threadRef}
+              />
+            </div>
+          ) : null}
+        </div>
       );
     case "pull-request": {
       const pullRequest = props.pullRequest;

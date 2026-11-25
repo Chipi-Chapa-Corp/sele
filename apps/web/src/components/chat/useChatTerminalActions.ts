@@ -59,6 +59,8 @@ import type { ChatShortcutCommands } from "./useChatShortcuts";
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
+const NO_TERMINAL_IDS: ReadonlySet<string> = new Set();
+
 export interface TerminalLaunchContext {
   threadId: ThreadId;
   cwd: string;
@@ -78,6 +80,8 @@ interface ChatTerminalActionsInput {
   readonly activeServerOrderedTerminalIds: ReadonlyArray<string>;
   readonly activeTerminalLabelsById: ReadonlyMap<string, string>;
   readonly panelTerminalIds: ReadonlySet<string>;
+  /** Right-panel terminals that are a tab of their own, which a script run can take over. */
+  readonly reusablePanelTerminalIds: ReadonlyArray<string>;
   readonly canReuseTerminal: boolean;
   readonly gitCwd: string | null;
   readonly setTerminalUiLaunchContext: Dispatch<SetStateAction<TerminalLaunchContext | null>>;
@@ -102,6 +106,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     activeServerOrderedTerminalIds,
     activeTerminalLabelsById,
     panelTerminalIds,
+    reusablePanelTerminalIds,
     canReuseTerminal,
     gitCwd,
     setTerminalUiLaunchContext,
@@ -231,13 +236,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       !readEnvironmentScope(environmentId, AuthTerminalReadScope)
         ? null
         : findReusableProjectScriptTerminal({
-            // Server sessions cover drawer terminals this client has not opened yet, such as a
-            // worktree setup shell; the helper drops the panel-owned ones.
-            drawerTerminalIds: [
-              ...new Set([...terminalUiState.terminalIds, ...activeServerOrderedTerminalIds]),
-            ],
-            activeTerminalId: terminalUiState.activeTerminalId,
-            panelTerminalIds,
+            drawerTerminalIds: reusablePanelTerminalIds,
+            activeTerminalId:
+              activeRightPanelSurface?.kind === "terminal"
+                ? activeRightPanelSurface.activeTerminalId
+                : "",
+            panelTerminalIds: NO_TERMINAL_IDS,
             runningTerminalIds,
             closingTerminalIds: activeThreadRef ? closingTerminalIds(activeThreadRef) : [],
           });
@@ -253,12 +257,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     }
 
     const launched = terminalActions.launchTerminal({
-      // The drawer opens with the target already placed: opening it empty would claim
-      // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
       place: (terminalId) =>
-        reusableTerminalId === null
-          ? storeNewTerminal(activeThreadRef, terminalId)
-          : storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
+        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId),
       ...(reusableTerminalId === null
         ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
         : { terminalId: reusableTerminalId }),
@@ -413,19 +413,15 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     });
   };
   const requestClosePanelTerminalStable = useStableCallback(requestClosePanelTerminal);
-  const openTerminalIfClosed = () => {
-    if (!terminalUiState.terminalOpen) setTerminalOpen(true);
-  };
-  // A focused right-panel terminal takes the split/new/close chords; otherwise they act on the drawer.
   const shortcuts = {
     "terminal.toggle": () => {
-      if (
-        !terminalUiState.terminalOpen &&
-        !readEnvironmentScope(environmentId, AuthTerminalReadScope) &&
-        !hasTerminalWriteAccess()
-      )
+      if (!activeThreadRef || !readEnvironmentScope(environmentId, AuthTerminalReadScope)) {
         return false;
-      toggleTerminalVisibility();
+      }
+      const existing = reusablePanelTerminalIds[0];
+      if (existing) useRightPanelStore.getState().openTerminal(activeThreadRef, existing);
+      else if (hasTerminalWriteAccess()) addTerminalSurface();
+      else return false;
     },
     "terminal.previous": ({ terminalFocusOwner }) => {
       if (!activeThreadRef || !terminalFocusOwner) return false;
@@ -435,31 +431,24 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       if (!activeThreadRef || !terminalFocusOwner) return false;
       return cycleThreadTerminal(activeThreadRef, terminalFocusOwner, "next");
     },
-    "terminal.split": ({ terminalFocusOwner }) => {
+    "terminal.split": () => {
       if (!hasTerminalWriteAccess()) return false;
-      if (terminalFocusOwner === "right-panel") return void splitPanelTerminal();
-      openTerminalIfClosed();
-      splitTerminal();
+      splitPanelTerminal();
     },
-    "terminal.splitVertical": ({ terminalFocusOwner }) => {
+    "terminal.splitVertical": () => {
       if (!hasTerminalWriteAccess()) return false;
-      if (terminalFocusOwner === "right-panel") return void splitPanelTerminal("vertical");
-      openTerminalIfClosed();
-      splitTerminal("vertical");
+      splitPanelTerminal("vertical");
     },
     "terminal.close": ({ terminalFocusOwner }) => {
       if (!hasTerminalWriteAccess()) return false;
-      if (terminalFocusOwner === "right-panel" && activeRightPanelSurface?.kind === "terminal") {
-        requestClosePanelTerminal(activeRightPanelSurface.activeTerminalId);
-        return;
+      if (terminalFocusOwner !== "right-panel" || activeRightPanelSurface?.kind !== "terminal") {
+        return false;
       }
-      if (terminalUiState.terminalOpen) requestCloseTerminal(terminalUiState.activeTerminalId);
+      requestClosePanelTerminal(activeRightPanelSurface.activeTerminalId);
     },
-    "terminal.new": ({ terminalFocusOwner }) => {
+    "terminal.new": () => {
       if (!hasTerminalWriteAccess()) return false;
-      if (terminalFocusOwner === "right-panel") return void addTerminalSurface();
-      openTerminalIfClosed();
-      createNewTerminal();
+      addTerminalSurface();
     },
   } satisfies ChatShortcutCommands;
   return {
