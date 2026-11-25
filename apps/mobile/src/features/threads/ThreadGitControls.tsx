@@ -11,11 +11,7 @@ import {
   ThreadId,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import {
-  type GitActionRequestInput,
-  requiresDefaultBranchConfirmation,
-  resolveQuickAction,
-} from "@t3tools/client-runtime/state/vcs";
+import { type GitActionRequestInput, resolveQuickAction } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
@@ -199,35 +195,6 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 
   const runActionWithPrompt = async (input: GitActionRequestInput) => {
     if (!canWriteSourceControl) return;
-    const confirmableAction =
-      input.action === "push" ||
-      input.action === "create_pr" ||
-      input.action === "commit_push" ||
-      input.action === "commit_push_pr"
-        ? input.action
-        : null;
-    const branchName = gitStatus?.refName;
-    if (
-      branchName &&
-      confirmableAction &&
-      !input.featureBranch &&
-      requiresDefaultBranchConfirmation(input.action, isDefaultRef)
-    ) {
-      if (props.hasThread === false) {
-        Dialog.alert(
-          gt("Choose a feature branch"),
-          gt("Switch branches before publishing changes from this draft."),
-        );
-        return;
-      }
-      navigation.navigate("GitConfirm", {
-        environmentId: String(environmentId),
-        threadId: String(threadId),
-        confirmAction: confirmableAction,
-      });
-      return;
-    }
-
     await onRunAction(input);
   };
 

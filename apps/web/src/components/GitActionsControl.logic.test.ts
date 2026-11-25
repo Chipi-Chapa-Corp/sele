@@ -1,15 +1,10 @@
 import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
-  type DefaultBranchConfirmableAction,
   hasUsableGitMenuContent,
-  requiresDefaultBranchConfirmation,
   resolveChangesTotals,
-  resolveDefaultBranchActionDialogCopy,
-  resolveFeatureBranchUnavailableReason,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   getMenuActionDisabledReason,
@@ -143,16 +138,6 @@ describe("when: on default ref without open PR", () => {
     );
     assert.deepInclude(withoutUpstream, { kind: "run_action", action: "push", label: "Push" });
   });
-
-  it("offers a feature branch only to actions that commit the changes", () => {
-    const reason = (action: DefaultBranchConfirmableAction, hasWorkingTreeChanges: boolean) =>
-      resolveFeatureBranchUnavailableReason({ action, branchName: "main", hasWorkingTreeChanges });
-    assert.isNull(reason("commit_push", true));
-    assert.isNull(reason("commit_push_pr", true));
-    assert.isNotNull(reason("commit_push", false));
-    assert.isNotNull(reason("push", true));
-    assert.isNotNull(reason("create_pr", true));
-  });
 });
 
 describe("when: local changes are behind upstream", () => {
@@ -235,7 +220,7 @@ describe("when: the ref is on GitLab", () => {
     },
   };
 
-  it("names merge requests in actions and the default-ref dialog", () => {
+  it("names merge requests in actions", () => {
     const ahead = status({ ...gitLab, hasUpstream: false, aheadCount: 2 });
     assert.equal(resolveQuickAction(ahead, false).label, "Push & create MR");
     assert.equal(
@@ -243,27 +228,6 @@ describe("when: the ref is on GitLab", () => {
       "Commit, push & MR",
     );
     assert.equal(buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label, "Create MR");
-
-    const copy = resolveDefaultBranchActionDialogCopy({
-      action: "create_pr",
-      branchName: "main",
-      includesCommit: false,
-      terminology: sourceControlClients.get("gitlab").changeRequest,
-    });
-    assert.equal(copy.title, "Push & create MR from default ref?");
-    assert.include(copy.description, "create a merge request on");
-  });
-});
-
-describe("requiresDefaultBranchConfirmation", () => {
-  it("requires confirmation for push actions on default ref", () => {
-    assert.isFalse(requiresDefaultBranchConfirmation("commit", true));
-    assert.isTrue(requiresDefaultBranchConfirmation("push", true));
-    assert.isTrue(requiresDefaultBranchConfirmation("create_pr", true));
-    assert.isTrue(requiresDefaultBranchConfirmation("commit_push", true));
-    assert.isTrue(requiresDefaultBranchConfirmation("commit_push_pr", true));
-    assert.isFalse(requiresDefaultBranchConfirmation("commit_push", false));
-    assert.isFalse(requiresDefaultBranchConfirmation("push", false));
   });
 });
 

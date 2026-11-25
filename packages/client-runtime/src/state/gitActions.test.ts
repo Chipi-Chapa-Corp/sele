@@ -1,13 +1,7 @@
 import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { sourceControlClients } from "../sourceControlClients.ts";
-import {
-  buildMenuItems,
-  getGitActionDisabledReason,
-  resolveDefaultBranchActionDialogCopy,
-  resolveQuickAction,
-} from "./gitActions.ts";
+import { buildMenuItems, getGitActionDisabledReason, resolveQuickAction } from "./gitActions.ts";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -103,21 +97,5 @@ describe("git action copy", () => {
       kind: "run_action",
       action: "push",
     });
-  });
-
-  it("names the host's change request in the default-branch dialog", () => {
-    const input = { action: "commit_push_pr", branchName: "main", includesCommit: true } as const;
-    expect(
-      resolveDefaultBranchActionDialogCopy({
-        ...input,
-        terminology: sourceControlClients.get("github").changeRequest,
-      }).title,
-    ).toBe("Commit, push & create PR from default branch?");
-    expect(
-      resolveDefaultBranchActionDialogCopy({
-        ...input,
-        terminology: sourceControlClients.get("gitlab").changeRequest,
-      }).continueLabel,
-    ).toBe("Commit, push & create MR");
   });
 });

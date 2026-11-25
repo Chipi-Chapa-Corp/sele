@@ -4,7 +4,6 @@ import {
   type GitActionRequestInput,
   buildMenuItems,
   getGitActionDisabledReason,
-  requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
 import type { ThreadRepositorySection } from "@t3tools/client-runtime/state/thread-repositories";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -170,7 +169,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
-  const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
   const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote, m) : [];
 
@@ -227,31 +225,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const runActionWithPrompt = async (input: GitActionRequestInput) => {
     if (!canWriteSourceControl) return;
-    const confirmableAction =
-      input.action === "push" ||
-      input.action === "create_pr" ||
-      input.action === "commit_push" ||
-      input.action === "commit_push_pr"
-        ? input.action
-        : null;
-    const branchName = gitStatus.data?.refName;
-    if (
-      branchName &&
-      confirmableAction &&
-      !input.featureBranch &&
-      requiresDefaultBranchConfirmation(input.action, isDefaultRef)
-    ) {
-      presentRoute(() =>
-        navigation.navigate("GitConfirm", {
-          environmentId: String(environmentId),
-          threadId: String(threadId),
-          ...repositoryParams,
-          confirmAction: confirmableAction,
-        }),
-      );
-      return;
-    }
-
     // Close a sheet so the thread shows the action's progress.
     if (!isInspector) navigation.goBack();
     else closeInspectorSheet?.();

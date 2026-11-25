@@ -52,7 +52,7 @@ function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = tru
       "ThreadInspectorFullscreen",
       "LinkedThread",
       "ThreadReview",
-      "GitConfirm",
+      "GitCommit",
     ],
     routeParamList: {},
     routeGetIdList: {},
@@ -209,14 +209,14 @@ it.each([
   // A side thread's review, opened from the parent's inspector, sits above the parent's route.
   { confirmFrom: "child", routes: ["Home", "Thread", "ThreadReview", "Thread"] },
 ])(
-  "returns from a Git confirmation to the $confirmFrom thread without replacing another",
+  "returns from a Git sheet to the $confirmFrom thread without replacing another",
   ({ confirmFrom, routes }) => {
     using screen = setup(false);
     const inspector = { type: "device", ...screen.source } as const;
     screen.open(inspector);
     const thread = { ...screen.source, threadId: confirmFrom };
     if (confirmFrom !== "parent") screen.dispatch(StackActions.push("ThreadReview", thread));
-    screen.dispatch(StackActions.push("GitConfirm", thread));
+    screen.dispatch(StackActions.push("GitCommit", thread));
     screen.returnTo(thread);
     expect(screen.state.routes.map((route) => route.name)).toEqual(routes);
     expect(screen.state.routes[1]).toMatchObject({

@@ -28,18 +28,6 @@ export interface GitQuickAction {
   hint?: string;
 }
 
-export interface DefaultBranchActionDialogCopy {
-  title: string;
-  description: string;
-  continueLabel: string;
-}
-
-export type DefaultBranchConfirmableAction =
-  | "push"
-  | "create_pr"
-  | "commit_push"
-  | "commit_push_pr";
-
 export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
   "action" | "commitMessage" | "featureBranch" | "filePaths"
@@ -411,88 +399,4 @@ function changeRequestKind(
     default:
       return "other";
   }
-}
-
-export function requiresDefaultBranchConfirmation(
-  action: GitStackedAction,
-  isDefaultBranch: boolean,
-): boolean {
-  if (!isDefaultBranch) return false;
-  return (
-    action === "push" ||
-    action === "create_pr" ||
-    action === "commit_push" ||
-    action === "commit_push_pr"
-  );
-}
-
-export function resolveDefaultBranchActionDialogCopy(
-  input: {
-    action: DefaultBranchConfirmableAction;
-    branchName: string;
-    includesCommit: boolean;
-    terminology: ChangeRequestTerminology;
-  },
-  resolve: MFunctionType = mFallback,
-): DefaultBranchActionDialogCopy {
-  const branchLabel = input.branchName;
-  const { shortLabel, shortLabelWithArticle } = input.terminology;
-
-  if (input.action === "push" || input.action === "commit_push") {
-    if (input.includesCommit) {
-      return {
-        title: resolve(msg("Commit & push to default branch?")),
-        description: resolve(
-          msg(
-            'This action will commit and push changes on "{branch}". You can continue on this branch or create a feature branch and run the same action there.',
-            { branch: branchLabel },
-          ),
-        ),
-        continueLabel: resolve(msg("Commit & push to {branch}", { branch: branchLabel })),
-      };
-    }
-    return {
-      title: resolve(msg("Push to default branch?")),
-      description: resolve(
-        msg(
-          'This action will push local commits on "{branch}". You can continue on this branch or create a feature branch and run the same action there.',
-          { branch: branchLabel },
-        ),
-      ),
-      continueLabel: resolve(msg("Push to {branch}", { branch: branchLabel })),
-    };
-  }
-
-  if (input.includesCommit) {
-    return {
-      title: resolve(
-        msg("Commit, push & create {shortLabel} from default branch?", { shortLabel }),
-      ),
-      description: resolve(
-        msg(
-          '{kind, select, pr {This action will commit, push, and create a PR on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} mr {This action will commit, push, and create an MR on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} generic {This action will commit, push, and create a change request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} other {This action will commit, push, and create {changeRequest} on "{branch}". You can continue on this branch or create a feature branch and run the same action there.}}',
-          {
-            kind: changeRequestKind(input.terminology),
-            changeRequest: shortLabelWithArticle,
-            branch: branchLabel,
-          },
-        ),
-      ),
-      continueLabel: resolve(msg("Commit, push & create {shortLabel}", { shortLabel })),
-    };
-  }
-  return {
-    title: resolve(msg("Push & create {shortLabel} from default branch?", { shortLabel })),
-    description: resolve(
-      msg(
-        '{kind, select, pr {This action will push local commits and create a PR on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} mr {This action will push local commits and create an MR on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} generic {This action will push local commits and create a change request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} other {This action will push local commits and create {changeRequest} on "{branch}". You can continue on this branch or create a feature branch and run the same action there.}}',
-        {
-          kind: changeRequestKind(input.terminology),
-          changeRequest: shortLabelWithArticle,
-          branch: branchLabel,
-        },
-      ),
-    ),
-    continueLabel: resolve(msg("Push & create {shortLabel}", { shortLabel })),
-  };
 }

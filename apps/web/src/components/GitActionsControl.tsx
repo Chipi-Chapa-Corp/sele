@@ -23,7 +23,6 @@ import type {
   SourceControlProviderDiscoveryItem,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryVisibility,
-  VcsStatusResult,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -57,11 +56,7 @@ import {
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
-  type DefaultBranchConfirmableAction,
-  requiresDefaultBranchConfirmation,
   resolveChangesTotals,
-  resolveDefaultBranchActionDialogCopy,
-  resolveFeatureBranchUnavailableReason,
   resolveGitActionProgressPresentation,
   resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
@@ -181,21 +176,10 @@ interface ThreadGitActionsControlProps extends GitActionsViewProps {
   draftId?: DraftId;
 }
 
-interface PendingDefaultBranchAction {
-  action: DefaultBranchConfirmableAction;
-  branchName: string;
-  includesCommit: boolean;
-  commitMessage?: string;
-  onConfirmed?: () => void;
-  filePaths?: string[];
-}
-
 interface RunGitActionWithToastInput {
   action: GitStackedAction;
   commitMessage?: string;
   onConfirmed?: () => void;
-  skipDefaultBranchPrompt?: boolean;
-  statusOverride?: VcsStatusResult | null;
   featureBranch?: boolean;
   filePaths?: string[];
 }
@@ -1037,8 +1021,6 @@ function CheckoutGitActionsControl({
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
-  const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
-    useState<PendingDefaultBranchAction | null>(null);
   const sourceControlScope = { environmentId: activeEnvironmentId, cwd: gitCwd };
   const vcsActionState = useAtomValue(vcsActionManager.stateAtom(sourceControlScope));
   const inlineSuccessExpired = useDeadlinePassed(inlineSuccess?.expiresAtMs ?? null);
@@ -1158,28 +1140,6 @@ function CheckoutGitActionsControl({
     quickAction.disabled &&
     !changesTotals.insertions &&
     !changesTotals.deletions;
-  const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
-    ? resolveDefaultBranchActionDialogCopy(
-        {
-          action: pendingDefaultBranchAction.action,
-          branchName: pendingDefaultBranchAction.branchName,
-          includesCommit: pendingDefaultBranchAction.includesCommit,
-          terminology: changeRequestTerminology,
-        },
-        messages,
-      )
-    : null;
-  // Keep enabled until live status loads; the server rejects stale requests.
-  const featureBranchUnavailableReason = pendingDefaultBranchAction
-    ? resolveFeatureBranchUnavailableReason(
-        {
-          action: pendingDefaultBranchAction.action,
-          branchName: pendingDefaultBranchAction.branchName,
-          hasWorkingTreeChanges: gitStatus?.hasWorkingTreeChanges ?? true,
-        },
-        messages,
-      )
-    : null;
 
   useAtomMount(
     vcsStatusRevalidation(
@@ -1193,8 +1153,6 @@ function CheckoutGitActionsControl({
     action,
     commitMessage,
     onConfirmed,
-    skipDefaultBranchPrompt = false,
-    statusOverride,
     featureBranch = false,
     filePaths,
   }: RunGitActionWithToastInput) {
@@ -1204,37 +1162,6 @@ function CheckoutGitActionsControl({
       (featureBranch && branchFollower !== undefined && !branchFollower.canFollow())
     )
       return false;
-    const actionStatus = statusOverride ?? gitStatusForActions;
-    const actionBranch = actionStatus?.refName ?? null;
-    const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
-    const actionCanCommit =
-      action === "commit" || action === "commit_push" || action === "commit_push_pr";
-    const includesCommit =
-      actionCanCommit &&
-      (action === "commit" || !!actionStatus?.hasWorkingTreeChanges || featureBranch);
-    if (
-      !skipDefaultBranchPrompt &&
-      requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
-      actionBranch
-    ) {
-      if (
-        action !== "push" &&
-        action !== "create_pr" &&
-        action !== "commit_push" &&
-        action !== "commit_push_pr"
-      ) {
-        return false;
-      }
-      setPendingDefaultBranchAction({
-        action,
-        branchName: actionBranch,
-        includesCommit,
-        ...(commitMessage ? { commitMessage } : {}),
-        ...(onConfirmed ? { onConfirmed } : {}),
-        ...(filePaths ? { filePaths } : {}),
-      });
-      return false;
-    }
     onConfirmed?.();
     setInlineSuccess(null);
 
@@ -1286,22 +1213,6 @@ function CheckoutGitActionsControl({
     return true;
   }
 
-  const continuePendingDefaultBranchAction = (featureBranch: boolean) => {
-    if (!pendingDefaultBranchAction || !canWriteSourceControl) return;
-    if (featureBranch && (!canCreateFeatureBranch || featureBranchUnavailableReason !== null))
-      return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
-    setPendingDefaultBranchAction(null);
-    void runGitActionWithToast({
-      action,
-      ...(commitMessage ? { commitMessage } : {}),
-      ...(onConfirmed ? { onConfirmed } : {}),
-      ...(filePaths ? { filePaths } : {}),
-      featureBranch,
-      skipDefaultBranchPrompt: true,
-    });
-  };
-
   // Keep a typed message for the retry unless the user already started a new one.
   const restoreDialogCommitMessageOnFailure = (commitMessage: string) => (committed: boolean) => {
     if (committed || !commitMessage) return;
@@ -1322,7 +1233,6 @@ function CheckoutGitActionsControl({
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
       featureBranch: true,
-      skipDefaultBranchPrompt: true,
     }).then(restoreDialogCommitMessageOnFailure(commitMessage));
   };
 
@@ -1994,52 +1904,6 @@ function CheckoutGitActionsControl({
           offeredProviders={serverConfig?.settings.offeredSourceControlProviders}
         />
       ) : null}
-
-      <Dialog
-        open={pendingDefaultBranchAction !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDefaultBranchAction(null);
-        }}
-      >
-        <DialogPopup className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>
-              {pendingDefaultBranchActionCopy?.title ?? gt("Run action on default branch?")}
-            </DialogTitle>
-            <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
-            {featureBranchUnavailableReason && (
-              <p className="text-xs text-muted-foreground">{featureBranchUnavailableReason}</p>
-            )}
-          </DialogHeader>
-          <DialogFooter variant="bare" className="sm:flex-wrap sm:items-center">
-            <Button
-              className="w-full sm:mr-auto sm:w-auto"
-              variant="outline"
-              size="sm"
-              onClick={() => setPendingDefaultBranchAction(null)}
-            >
-              <T>Abort</T>
-            </Button>
-            <Button
-              className="w-full max-w-full sm:w-auto"
-              variant="outline"
-              size="sm-multiline"
-              onClick={() => continuePendingDefaultBranchAction(false)}
-              disabled={!canWriteSourceControl}
-            >
-              {pendingDefaultBranchActionCopy?.continueLabel ?? gt("Continue")}
-            </Button>
-            <Button
-              className="w-full max-w-full sm:w-auto"
-              size="sm-multiline"
-              onClick={() => continuePendingDefaultBranchAction(true)}
-              disabled={!canCreateFeatureBranch || featureBranchUnavailableReason !== null}
-            >
-              <T>Check out feature branch & continue</T>
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
     </>
   );
 }

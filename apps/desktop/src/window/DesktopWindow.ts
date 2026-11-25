@@ -346,6 +346,9 @@ function getWindowTitleBarOptions(
     };
   }
 
+  // Linux draws no window buttons; the window closes from the menu, shortcut, or window manager.
+  if (platform === "linux") return { titleBarStyle: "hidden" };
+
   return {
     titleBarStyle: "hidden",
     titleBarOverlay: {

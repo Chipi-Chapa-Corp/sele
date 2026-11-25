@@ -10,21 +10,14 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
-import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import {
   changeRequestTerminologyFor,
-  type DefaultBranchActionDialogCopy,
-  type DefaultBranchConfirmableAction,
   type GitActionIconName,
   type GitDialogAction,
   vcsActionLabelText,
 } from "@t3tools/client-runtime/state/vcs";
 
-export {
-  requiresDefaultBranchConfirmation,
-  type DefaultBranchConfirmableAction,
-  type GitActionIconName,
-} from "@t3tools/client-runtime/state/vcs";
+export { type GitActionIconName } from "@t3tools/client-runtime/state/vcs";
 
 export interface GitActionMenuItem {
   id: "commit" | "push" | "pr";
@@ -482,111 +475,6 @@ export function resolveQuickAction(
     kind: "show_hint",
     hint: resolve(msg("Branch is up to date. No action needed.")),
   };
-}
-
-export function resolveDefaultBranchActionDialogCopy(
-  input: {
-    action: DefaultBranchConfirmableAction;
-    branchName: string;
-    includesCommit: boolean;
-    terminology: ChangeRequestTerminology;
-  },
-  resolve: MessageResolver = m,
-): DefaultBranchActionDialogCopy {
-  const branch = input.branchName;
-  const term = changeRequestTermKind(input.terminology);
-
-  if (input.action === "push" || input.action === "commit_push") {
-    if (input.includesCommit) {
-      return {
-        title: resolve(msg("Commit & push to default ref?")),
-        description: resolve(
-          msg(
-            'This action will commit and push changes on "{branch}". You can continue on this ref or create a feature ref and run the same action there.',
-            { branch },
-          ),
-        ),
-        continueLabel: resolve(msg("Commit & push to {branch}", { branch })),
-      };
-    }
-    return {
-      title: resolve(msg("Push to default ref?")),
-      description: resolve(
-        msg(
-          'This action will push local commits on "{branch}". You can continue on this ref or create a feature ref and run the same action there.',
-          { branch },
-        ),
-      ),
-      continueLabel: resolve(msg("Push to {branch}", { branch })),
-    };
-  }
-
-  if (input.includesCommit) {
-    return {
-      title: resolve(
-        msg(
-          "Commit, push & create {term, select, mr {MR} cr {change request} other {PR}} from default ref?",
-          { term },
-        ),
-      ),
-      description: resolve(
-        msg(
-          'This action will commit, push, and create a {term, select, mr {merge request} cr {change request} other {pull request}} on "{branch}". You can continue on this ref or create a feature ref and run the same action there.',
-          { term, branch },
-        ),
-      ),
-      continueLabel: resolve(
-        msg("Commit, push & create {term, select, mr {MR} cr {change request} other {PR}}", {
-          term,
-        }),
-      ),
-    };
-  }
-  return {
-    title: resolve(
-      msg(
-        "Push & create {term, select, mr {MR} cr {change request} other {PR}} from default ref?",
-        { term },
-      ),
-    ),
-    description: resolve(
-      msg(
-        'This action will push local commits and create a {term, select, mr {merge request} cr {change request} other {pull request}} on "{branch}". You can continue on this ref or create a feature ref and run the same action there.',
-        { term, branch },
-      ),
-    ),
-    continueLabel: resolve(
-      msg("Push & create {term, select, mr {MR} cr {change request} other {PR}}", { term }),
-    ),
-  };
-}
-
-/** The server names a feature branch from the commit it makes, so the action must commit changes. */
-export function resolveFeatureBranchUnavailableReason(
-  input: {
-    action: DefaultBranchConfirmableAction;
-    branchName: string;
-    hasWorkingTreeChanges: boolean;
-  },
-  resolve: MessageResolver = m,
-): string | null {
-  if (!input.hasWorkingTreeChanges) {
-    return resolve(
-      msg(
-        "There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on {branch}.",
-        { branch: input.branchName },
-      ),
-    );
-  }
-  if (input.action === "push" || input.action === "create_pr") {
-    return resolve(
-      msg(
-        "This action doesn't commit your changes, so a feature branch can't be named. Create a branch yourself or continue on {branch}.",
-        { branch: input.branchName },
-      ),
-    );
-  }
-  return null;
 }
 
 export function resolveThreadBranchUpdate(
