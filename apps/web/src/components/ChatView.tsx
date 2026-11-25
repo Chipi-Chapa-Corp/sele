@@ -306,7 +306,6 @@ import {
   DeviceSetupDialogHost,
   openBranchRestoreConfirm,
   PullRequestThreadDialogHost,
-  RevertConfirmHost,
 } from "./chat/ChatOverlayHosts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { useCitedHistory } from "./chat/citationProcedure";
@@ -3068,26 +3067,25 @@ export default function ChatView(props: ChatViewProps) {
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const openSurfaceInMainView = useOpenSurfaceInMainView(activeThreadRef);
   const sendSideChatStable = useStableCallback(sideChat.open);
-  const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
-    useTimelineRewind({
-      environmentId,
-      routeThreadRef,
-      routeThreadKey,
-      currentRouteThreadKeyRef,
-      serverProjection,
-      activeThread,
-      timelineMessages,
-      phase,
-      isSendBusy,
-      isRevertingCheckpoint,
-      supportsConversationRollback,
-      activeEnvironmentUnavailable,
-      activeEnvironmentUnavailableLabel,
-      promptRef,
-      composerRef,
-      composerDraftTarget,
-      setThreadError,
-    });
+  const { onForkFromRunStable, onRevertTimelineTurnStable } = useTimelineRewind({
+    environmentId,
+    routeThreadRef,
+    routeThreadKey,
+    currentRouteThreadKeyRef,
+    serverProjection,
+    activeThread,
+    timelineMessages,
+    phase,
+    isSendBusy,
+    isRevertingCheckpoint,
+    supportsConversationRollback,
+    activeEnvironmentUnavailable,
+    activeEnvironmentUnavailableLabel,
+    promptRef,
+    composerRef,
+    composerDraftTarget,
+    setThreadError,
+  });
   const onCompactContext = () => {
     if (compactDisabled) return;
     void sendStandaloneCommand("/compact", gt("Failed to compact context."));
@@ -4225,14 +4223,6 @@ export default function ChatView(props: ChatViewProps) {
         </ChatRightPanel>
       ) : null}
 
-      <RevertConfirmHost
-        threadKey={routeThreadKey}
-        environmentId={environmentId}
-        taskFolderPath={activeThreadWorktreePath}
-        projection={serverProjection}
-        worktreePath={activeThread?.worktreePath ?? null}
-        onConfirm={onConfirmRevertStable}
-      />
       {embedded ? null : <LinkPullRequestDialogHost />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />

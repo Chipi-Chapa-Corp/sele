@@ -3404,12 +3404,6 @@
   ],
   "2ce5b965862599cc": "Du har ändringar som inte är committade. De följer med till den andra grenen eller blockerar bytet om de är i konflikt.",
   "c4280e2f9ff0e319": "Byt gren",
-  "2369e92930d2d529": "Redigera härifrån?",
-  "987f9aa263ef7cfd": "Spola tillbaka chatten till före det här meddelandet. Din prompt och dina bilagor kommer tillbaka till inmatningsfältet. ”Återställ även repon” ångrar också dina egna ändringar i trådens repo-worktrees. Filer i själva projektmappen lämnas som de är.",
-  "2028c02df18f2ccd": "Spola tillbaka chatten till före det här meddelandet. Din prompt och dina bilagor kommer tillbaka till inmatningsfältet. ”Återställ även filer” ångrar också dina egna ändringar.",
-  "cf29d70fe35f9529": "Återställ även repon",
-  "95021203628e2378": "Återställ även filer",
-  "c1c9ebabaa960f8c": "Återställ och behåll ändringar",
   "359e36da660f2c59": "Godkännande från {title}",
   "8d9617edf6eee5b9": "Det gick inte att skicka godkännandebeslutet.",
   "160ead9e70889628": [

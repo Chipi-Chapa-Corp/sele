@@ -21,7 +21,6 @@ import {
   repositoryFilePath,
   repositorySectionForPath,
   resolveWorktreeRepositorySelection,
-  rewindFileRestore,
   THREAD_REPOSITORY_SECTIONS_VISIBLE,
   isRelativePathInsideFolder,
   threadChangedRepositories,
@@ -338,74 +337,6 @@ describe("threadRepositorySections", () => {
         ],
       }),
     ).toEqual([{ repositoryPath: "/work/shared", name: "shared" }]);
-  });
-});
-
-describe("rewindFileRestore", () => {
-  const projection = { checkpointScopes: scopes, checkpoints };
-  const missingRoot = (appRunOrdinal: number | null) =>
-    ({ status: "missing", appRunOrdinal }) as const;
-  const linkedProjectFolder = { projectIsWorktree: false };
-
-  it.each([
-    {
-      why: "a ready snapshot restores every file",
-      checkpoint: { status: "ready", appRunOrdinal: 1 } as const,
-      taskFolder: null,
-      restores: "files",
-    },
-    {
-      why: "a linked project folder restores a repository's own checkpoint",
-      checkpoint: missingRoot(1),
-      taskFolder: linkedProjectFolder,
-      restores: "repositories",
-    },
-    {
-      why: "the thread start restores a repository's baseline",
-      checkpoint: missingRoot(null),
-      taskFolder: linkedProjectFolder,
-      restores: "repositories",
-    },
-    {
-      why: "no repository changed after the target",
-      checkpoint: missingRoot(3),
-      taskFolder: linkedProjectFolder,
-      restores: null,
-    },
-    {
-      why: "a worktree project folder needs its own snapshot",
-      checkpoint: missingRoot(1),
-      taskFolder: { projectIsWorktree: true },
-      restores: null,
-    },
-    {
-      why: "a thread outside a task folder has only its own snapshot",
-      checkpoint: missingRoot(1),
-      taskFolder: null,
-      restores: null,
-    },
-    {
-      why: "a stale snapshot restores nothing",
-      checkpoint: { status: "stale", appRunOrdinal: 1 } as const,
-      taskFolder: linkedProjectFolder,
-      restores: null,
-    },
-    { why: "no target", checkpoint: undefined, taskFolder: linkedProjectFolder, restores: null },
-  ])("$why", ({ checkpoint: target, taskFolder, restores }) => {
-    expect(rewindFileRestore({ projection, checkpoint: target, taskFolder })).toBe(restores);
-  });
-
-  it("ignores the thread's own scope when looking for repository snapshots", () => {
-    expect(
-      rewindFileRestore({
-        projection: {
-          checkpointScopes: [scope("scope-root", "/work/wrapper")],
-          checkpoints: [checkpoint("root-1", "scope-root", 1, { appRunOrdinal: 1 })],
-        },
-        checkpoint: missingRoot(1),
-        taskFolder: linkedProjectFolder,
-      }),
-    ).toBe(null);
   });
 });
 

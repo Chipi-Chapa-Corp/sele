@@ -3404,12 +3404,6 @@
   ],
   "2ce5b965862599cc": "Você tem alterações sem commit. Elas vão junto para o outro branch ou bloqueiam a troca se houver conflito.",
   "c4280e2f9ff0e319": "Trocar de branch",
-  "2369e92930d2d529": "Editar a partir daqui?",
-  "987f9aa263ef7cfd": "Volta o chat para antes desta mensagem. Seu prompt e seus anexos voltam para o editor de mensagens. “Reverter repositórios também” desfaz também suas próprias edições nos worktrees de repositório desta thread. Os arquivos na própria pasta do projeto permanecem como estão.",
-  "2028c02df18f2ccd": "Volta o chat para antes desta mensagem. Seu prompt e seus anexos voltam para o editor de mensagens. “Reverter arquivos também” desfaz também suas próprias edições.",
-  "cf29d70fe35f9529": "Reverter repositórios também",
-  "95021203628e2378": "Reverter arquivos também",
-  "c1c9ebabaa960f8c": "Reverter e manter as alterações",
   "359e36da660f2c59": "Aprovação de {title}",
   "8d9617edf6eee5b9": "Falha ao enviar a decisão de aprovação.",
   "160ead9e70889628": [

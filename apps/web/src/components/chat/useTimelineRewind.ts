@@ -28,7 +28,6 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { threadEnvironment } from "../../state/threads";
 import { waitForThreadShell } from "../../state/entities";
-import { openRevertConfirm } from "./ChatOverlayHosts";
 import { assetEnvironment } from "../../state/assets";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -93,11 +92,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     reportFailure: false,
   });
 
-  const onRevertToTurnCount = async (
-    turnCount: number,
-    messageId: MessageId,
-    restoreFiles?: boolean,
-  ) => {
+  const onRevertToTurnCount = async (turnCount: number, messageId: MessageId) => {
     const localApi = readLocalApi();
     if (
       !localApi ||
@@ -138,10 +133,6 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       );
       return;
     }
-    if (restoreFiles === undefined) {
-      openRevertConfirm(routeThreadKey, { turnCount, messageId });
-      return;
-    }
 
     useComposerDraftStore.setState((store) => ({
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
@@ -153,7 +144,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       routeThreadRef,
       threadId: activeThread.id,
       turnCount,
-      restoreFiles,
+      restoreFiles: false,
       // Keep the live checkpoint identity when command context refetches a bounded window.
       checkpoint: findRevertCheckpoint(serverProjection, turnCount),
       draftTarget: composerDraftTarget,
@@ -180,10 +171,6 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     }
   };
   const onRevertToTurnCountStable = useStableCallback(onRevertToTurnCount);
-  const onConfirmRevert = (turnCount: number, messageId: MessageId, restoreFiles: boolean) => {
-    void onRevertToTurnCount(turnCount, messageId, restoreFiles);
-  };
-  const onConfirmRevertStable = useStableCallback(onConfirmRevert);
 
   const onForkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
@@ -234,7 +221,6 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   };
   const onRevertTimelineTurnStable = useStableCallback(onRevertTimelineTurn);
   return {
-    onConfirmRevertStable,
     onForkFromRunStable,
     onRevertTimelineTurnStable,
   };

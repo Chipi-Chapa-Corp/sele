@@ -1,10 +1,6 @@
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
-import {
-  repositoryRewindCheckpoint,
-  TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
-  type TaskFolder,
-} from "@t3tools/contracts";
+import { TASK_FOLDER_DEFAULT_REPOSITORIES_MAX, type TaskFolder } from "@t3tools/contracts";
 import type {
   CheckpointScopeId,
   OrchestrationV2Checkpoint,
@@ -92,33 +88,6 @@ export function repositoryCheckpointScopeIds(
   scopes: ReadonlyArray<Pick<OrchestrationV2CheckpointScope, "id" | "repositoryPath">>,
 ): ReadonlySet<CheckpointScopeId> {
   return new Set(scopes.flatMap((scope) => (isRepositoryCheckpointScope(scope) ? [scope.id] : [])));
-}
-
-/**
- * What a rewind to `checkpoint`, the thread's own rewind target, can restore on disk: every file,
- * only the repositories of a task folder whose project folder has no snapshot, or nothing.
- * The server refuses a file rewind this does not offer.
- */
-export function rewindFileRestore(input: {
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">;
-  readonly checkpoint: Pick<OrchestrationV2Checkpoint, "status" | "appRunOrdinal"> | undefined;
-  readonly taskFolder: Pick<TaskFolder, "projectIsWorktree"> | null | undefined;
-}): "files" | "repositories" | null {
-  const { checkpoint, projection } = input;
-  if (checkpoint === undefined) return null;
-  if (checkpoint.status === "ready") return "files";
-  if (checkpoint.status !== "missing" || input.taskFolder?.projectIsWorktree !== false) return null;
-  const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
-  return projection.checkpointScopes.some(
-    (scope) =>
-      isRepositoryCheckpointScope(scope) &&
-      repositoryRewindCheckpoint(
-        projection.checkpoints.filter((candidate) => candidate.scopeId === scope.id),
-        targetOrdinal,
-      ) !== null,
-  )
-    ? "repositories"
-    : null;
 }
 
 function pathSegments(path: string): { root: string; segments: string[] } | undefined {

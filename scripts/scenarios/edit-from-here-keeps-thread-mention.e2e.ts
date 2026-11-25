@@ -23,7 +23,6 @@ test(
     await expect(editFromHere).toHaveCount(1, { timeout: 60_000 });
     await expect(editFromHere).toBeEnabled({ timeout: 60_000 });
     await editFromHere.tap();
-    await screen.getByRole("button", "Revert and keep changes").tap();
 
     await expect(composer).toContainText("Review");
     await app.screenshot("restored-draft");
