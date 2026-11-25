@@ -110,8 +110,19 @@ export function SidebarDragBoundary(props: {
   );
 }
 
+/** Working has no header row; this keeps its section boundary in the sortable list. */
+export function SidebarWorkingAnchor() {
+  return (
+    <SortableSidebarMarker
+      marker="working-header"
+      data-testid="sidebar-working-header"
+      className="pointer-events-none mt-auto h-2"
+    />
+  );
+}
+
 export function SidebarSectionHeader(props: {
-  marker: "working-header" | "snoozed-header" | "settled-header";
+  marker: "snoozed-header" | "settled-header";
   label: string;
   /** A muted trailing count. */
   count: number;
@@ -120,12 +131,7 @@ export function SidebarSectionHeader(props: {
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
-  const shelf =
-    props.marker === "working-header"
-      ? "working"
-      : props.marker === "snoozed-header"
-        ? "snoozed"
-        : "settled";
+  const shelf = props.marker === "snoozed-header" ? "snoozed" : "settled";
   return (
     <SortableSidebarMarker
       marker={props.marker}

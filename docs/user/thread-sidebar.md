@@ -146,8 +146,10 @@ open.
 
 ### Fold working threads (beta)
 
-Threads that are working or waiting on work they will resume from move into a collapsed
-**Working** section below the active list.
+On web and desktop, threads that are working or waiting on work they will resume from move into a
+Working section below the active list, above Snoozed and Settled. It has no header and always
+stays open. When chats are grouped by project, it has its own project folders. On mobile, it is a
+collapsed section below the active list.
 That includes subagents, watched pull requests with checks still running, Claude monitors and
 `sleep` timers, and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
 there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
@@ -163,15 +165,20 @@ cannot drag or move threads within it. Your saved order returns when you turn it
 
 ### Group threads by project (beta)
 
-Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
+Turn on **Settings → General → Group chats by project** on web and desktop to put active
 threads in a folder for each project. Pinned projects come first. A project with no active
 threads has no folder unless it is pinned or you pick it in the project filter. An archived
-project's folder comes last and shows only while it has active threads. Click a folder to open or
-close it. A closed folder shows how many threads it holds, and a dot when one of them
-needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
-Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
-can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
-section is off. Each device keeps its own choice.
+project's folder comes last and shows only while it has active threads. Click a folder to open
+or close it. A closed folder shows how many threads it holds, and a dot when one of them needs
+you. Use the pen button on a folder, or right-click it, to start a thread in that project.
+Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode
+you can drag a thread onto the composer to mention it, but not within the sidebar. Each device
+keeps its own choice.
+
+### Compact chat rows
+
+Turn on **Settings → General → Compact chat rows** on web and desktop to show each chat on one
+line with its status indicator and title. Snooze and Settle appear when you hover over a row.
 
 ## Settle finished work
 

@@ -1,17 +1,19 @@
-import { DEFAULT_CLIENT_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import * as commandPalette from "../commandPaletteBus";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import * as previewActions from "../components/preview/previewActionBus";
+import * as newThreadHooks from "../hooks/useHandleNewThread";
+import * as scratchHooks from "../hooks/useScratchProject";
 import * as settings from "../hooks/useSettings";
 import * as storage from "../hooks/useLocalStorage";
-import * as threadActions from "../lib/chatThreadActions";
 import * as entities from "../state/entities";
 import * as projectsState from "../state/projects";
 import * as session from "../state/session";
 import { Atom } from "effect/reactivity";
+import { makeThreadFixture } from "../test-fixtures";
 import type { Project } from "../types";
 import { installChatRouteCommands } from "./chatRouteCommands";
 import * as dispatcher from "./dispatcher";
@@ -31,25 +33,29 @@ function project(id: string): Project {
 }
 
 describe("new thread commands", () => {
-  it.each([
-    { mode: "normal", count: 2, command: "chat.new", picker: true },
-    { mode: "boring", count: 2, command: "chat.new", picker: true },
-    { mode: "boring", count: 1, command: "chat.new", picker: false },
-    { mode: "boring", count: 2, command: "chat.newLocal", picker: false },
-  ] as const)("$mode sidebar, $count projects, $command: picker=$picker", (scenario) => {
-    using _settings = vi.spyOn(settings, "getClientSettings").mockReturnValue({
-      ...DEFAULT_CLIENT_SETTINGS,
-      boringSidebarEnabled: scenario.mode === "boring",
-    });
+  it("starts a no-project chat when no thread is open and never opens the picker popup", () => {
+    using _settings = vi
+      .spyOn(settings, "getClientSettings")
+      .mockReturnValue(DEFAULT_CLIENT_SETTINGS);
     using _projects = vi
       .spyOn(entities, "readProjects")
-      .mockReturnValue([project("active"), project("idle")].slice(0, scenario.count));
+      .mockReturnValue([project("active"), project("idle")]);
     using _ready = vi
       .spyOn(projectsState, "defaultProjectFallbackReadyAtom")
       .mockReturnValue(Atom.make(true));
-    using storedProject = vi.spyOn(storage, "getLocalStorageItem").mockReturnValue("local:active");
+    using _storedProject = vi.spyOn(storage, "getLocalStorageItem").mockReturnValue("local:idle");
     using openPicker = vi.spyOn(commandPalette, "openCommandPalette").mockImplementation(() => {});
-    using startLocal = vi.spyOn(threadActions, "startNewThreadFromContext").mockResolvedValue(true);
+    const startThread = vi.fn().mockResolvedValue(null);
+    using _newThread = vi
+      .spyOn(newThreadHooks, "createNewThreadHandler")
+      .mockReturnValue(startThread);
+    const startScratchThread = vi.fn().mockResolvedValue(undefined);
+    using _scratch = vi.spyOn(scratchHooks, "createScratchProjectActions").mockReturnValue({
+      scratchWorkspaceRootFor: () => "/scratch",
+      scratchEnvironmentId: () => EnvironmentId.make("local"),
+      openScratchProject: vi.fn().mockResolvedValue(null),
+      startScratchThread,
+    });
     using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
     const router = { state: { matches: [] } } as unknown as AnyRouter;
     using stack = new DisposableStack();
@@ -60,20 +66,71 @@ describe("new thread commands", () => {
       stopPropagation: vi.fn(),
     } as unknown as KeyboardEvent;
 
-    storedProject.mockReturnValue("local:idle");
-    commands[scenario.command]!(event);
+    commands["chat.new"]!(event);
 
-    if (scenario.picker) {
-      expect(openPicker).toHaveBeenCalledWith({ open: "new-thread-in" });
-      expect(startLocal).not.toHaveBeenCalled();
-    } else {
-      expect(openPicker).not.toHaveBeenCalled();
-      expect(startLocal).toHaveBeenCalledOnce();
-      expect(startLocal.mock.calls[0]![0].defaultProjectRef).toEqual({
-        environmentId: "local",
-        projectId: scenario.count === 1 ? "active" : "idle",
-      });
-    }
+    expect(openPicker).not.toHaveBeenCalled();
+    expect(startThread).not.toHaveBeenCalled();
+    expect(startScratchThread).toHaveBeenCalledExactlyOnceWith(EnvironmentId.make("local"));
+  });
+
+  it("starts in the opened thread's project when a thread is open", () => {
+    using _settings = vi
+      .spyOn(settings, "getClientSettings")
+      .mockReturnValue(DEFAULT_CLIENT_SETTINGS);
+    const activeProject = project("active");
+    const idleProject = project("idle");
+    const openThread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("open-thread"),
+    });
+    using _projects = vi
+      .spyOn(entities, "readProjects")
+      .mockReturnValue([activeProject, idleProject]);
+    using _shell = vi.spyOn(entities, "readThreadShell").mockReturnValue(openThread);
+    using _ready = vi
+      .spyOn(projectsState, "defaultProjectFallbackReadyAtom")
+      .mockReturnValue(Atom.make(true));
+    using _storedProject = vi.spyOn(storage, "getLocalStorageItem").mockReturnValue("local:idle");
+    using openPicker = vi.spyOn(commandPalette, "openCommandPalette").mockImplementation(() => {});
+    const startThread = vi.fn().mockResolvedValue(null);
+    using _newThread = vi
+      .spyOn(newThreadHooks, "createNewThreadHandler")
+      .mockReturnValue(startThread);
+    const startScratchThread = vi.fn().mockResolvedValue(undefined);
+    using _scratch = vi.spyOn(scratchHooks, "createScratchProjectActions").mockReturnValue({
+      scratchWorkspaceRootFor: () => "/scratch",
+      scratchEnvironmentId: () => EnvironmentId.make("local"),
+      openScratchProject: vi.fn().mockResolvedValue(null),
+      startScratchThread,
+    });
+    using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
+    const router = {
+      state: {
+        matches: [
+          {
+            routeId: "/_chat/$environmentId/$threadId",
+            params: { environmentId: openThread.environmentId, threadId: openThread.id },
+          },
+        ],
+      },
+    } as unknown as AnyRouter;
+    using stack = new DisposableStack();
+    stack.defer(installChatRouteCommands(router));
+    const commands = register.mock.calls[0]![0];
+    const event = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as KeyboardEvent;
+
+    commands["chat.new"]!(event);
+
+    expect(openPicker).not.toHaveBeenCalled();
+    expect(startScratchThread).not.toHaveBeenCalled();
+    expect(startThread).toHaveBeenCalledExactlyOnceWith({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+    });
   });
 });
 

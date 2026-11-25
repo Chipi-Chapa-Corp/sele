@@ -9,6 +9,7 @@ import {
   EnvironmentId,
   type LocalApi,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useScratchProject } from "../hooks/useScratchProject";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
@@ -43,6 +45,7 @@ vi.mock(import("../state/olderSettledShelf"), async (original) => {
 vi.mock("../state/entities", { spy: true });
 vi.mock("../state/environments", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock("../hooks/useScratchProject", { spy: true });
 vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
@@ -80,34 +83,25 @@ function project(id: string): Project {
 }
 
 describe("sidebar header new thread", () => {
-  it.each([
-    { mode: "normal", count: 2, shift: false, picker: true },
-    { mode: "boring", count: 2, shift: false, picker: true },
-    { mode: "boring", count: 2, shift: true, picker: false },
-    { mode: "boring", count: 1, shift: false, picker: false },
-  ] as const)("$mode sidebar, $count projects, shift=$shift: picker=$picker", async (scenario) => {
-    using stack = new DisposableStack();
-    const previousSettings = getClientSettings();
-    stack.defer(() => __setClientSettingsForTests(previousSettings));
-    __setClientSettingsForTests({
-      ...DEFAULT_CLIENT_SETTINGS,
-      boringSidebarEnabled: scenario.mode === "boring",
-    });
-    const projects = [project("active"), project("idle")].slice(0, scenario.count);
-    const currentProjectRef = {
-      environmentId: projects[0]!.environmentId,
-      projectId: projects[0]!.id,
-    };
+  it("starts a no-project chat when pressing New thread with no opened chat and never opens the picker", async () => {
+    const projects = [project("active"), project("idle")];
     const startThread = vi.fn().mockResolvedValue(null);
+    const startScratchThread = vi.fn().mockResolvedValue(undefined);
     vi.mocked(useProjects).mockReturnValue(projects);
     vi.mocked(useHandleNewThread).mockReturnValue({
       activeDraftThread: null,
       activeThread: null,
-      defaultProjectRef: currentProjectRef,
+      defaultProjectRef: scopeProjectRef(projects[0]!.environmentId, projects[0]!.id),
       defaultProjectFallbackReady: true,
       handleNewThread: startThread,
       routeDraftId: null,
       routeThreadRef: null,
+    });
+    vi.mocked(useScratchProject).mockReturnValue({
+      scratchWorkspaceRootFor: () => "/scratch",
+      scratchEnvironmentId: () => EnvironmentId.make("local"),
+      openScratchProject: vi.fn().mockResolvedValue(null),
+      startScratchThread,
     });
     vi.mocked(openCommandPalette).mockClear();
     await using screen = await render(
@@ -116,32 +110,103 @@ describe("sidebar header new thread", () => {
       </SidebarProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "New thread", exact: true }), {
-      modifiers: scenario.shift ? ["Shift"] : [],
-    });
+    await userEvent.click(screen.getByRole("button", { name: "New thread", exact: true }));
 
-    if (scenario.picker) {
-      expect(openCommandPalette).toHaveBeenCalledExactlyOnceWith({ open: "new-thread-in" });
-      expect(startThread).not.toHaveBeenCalled();
-    } else {
-      expect(openCommandPalette).not.toHaveBeenCalled();
-      expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
-    }
+    expect(openCommandPalette).not.toHaveBeenCalled();
+    expect(startThread).not.toHaveBeenCalled();
+    expect(startScratchThread).toHaveBeenCalledExactlyOnceWith(EnvironmentId.make("local"));
   });
 
-  it("renders search, new thread, usage, and settings in the header and toggles the search input", async () => {
-    vi.mocked(useProjects).mockReturnValue([project("active")]);
+  it("starts in the opened chat's project on New thread, while No project chat skips the project", async () => {
+    const activeProject = project("active");
+    const idleProject = project("idle");
+    const openThread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("open-thread"),
+    });
+    const startThread = vi.fn().mockResolvedValue(null);
+    const startScratchThread = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(useProjects).mockReturnValue([activeProject, idleProject]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: openThread,
+      defaultProjectRef: scopeProjectRef(idleProject.environmentId, idleProject.id),
+      defaultProjectFallbackReady: true,
+      handleNewThread: startThread,
+      routeDraftId: null,
+      routeThreadRef: scopeThreadRef(openThread.environmentId, openThread.id),
+    });
+    vi.mocked(useScratchProject).mockReturnValue({
+      scratchWorkspaceRootFor: () => "/scratch",
+      scratchEnvironmentId: () => EnvironmentId.make("local"),
+      openScratchProject: vi.fn().mockResolvedValue(null),
+      startScratchThread,
+    });
+    vi.mocked(openCommandPalette).mockClear();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
       </SidebarProvider>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "New thread", exact: true }));
+    expect(openCommandPalette).not.toHaveBeenCalled();
+    expect(startThread).toHaveBeenCalledExactlyOnceWith(
+      scopeProjectRef(activeProject.environmentId, activeProject.id),
+    );
+    expect(startScratchThread).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "New chat without project", exact: true }),
+    );
+    expect(startScratchThread).toHaveBeenCalledExactlyOnceWith(EnvironmentId.make("local"));
+  });
+
+  it("renders settings and usage on the left and search, no-project chat, and new thread on the right", async () => {
+    vi.mocked(useProjects).mockReturnValue([project("active")]);
+    vi.mocked(useScratchProject).mockReturnValue({
+      scratchWorkspaceRootFor: () => "/scratch",
+      scratchEnvironmentId: () => EnvironmentId.make("local"),
+      openScratchProject: vi.fn().mockResolvedValue(null),
+      startScratchThread: vi.fn().mockResolvedValue(undefined),
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const settingsButton = screen.getByRole("button", { name: "Settings", exact: true });
+    const usageButton = screen.getByRole("button", { name: "Usage", exact: true });
     const searchButton = screen.getByRole("button", { name: "Search threads" });
+    const noProjectButton = screen.getByRole("button", {
+      name: "New chat without project",
+      exact: true,
+    });
+    const newThreadButton = screen.getByRole("button", { name: "New thread", exact: true });
+    expect(settingsButton).toBeVisible();
+    expect(usageButton).toBeVisible();
     expect(searchButton).toBeVisible();
-    expect(screen.getByRole("button", { name: "New thread", exact: true })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Usage", exact: true })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    expect(noProjectButton).toBeVisible();
+    expect(newThreadButton).toBeVisible();
+
+    const orderedLabels = Array.from(
+      screen.container.querySelectorAll("button[aria-label]"),
+      (button) => button.getAttribute("aria-label"),
+    ).filter((label) =>
+      ["Settings", "Usage", "Search threads", "New chat without project", "New thread"].includes(
+        label ?? "",
+      ),
+    );
+    expect(orderedLabels).toEqual([
+      "Settings",
+      "Usage",
+      "Search threads",
+      "New chat without project",
+      "New thread",
+    ]);
+
     expect(screen.getByRole("button", { name: "Projects", exact: true })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "T3 Code home" })).not.toBeInTheDocument();
     expect(document.querySelector('[data-sidebar="footer"]')).toBeNull();
@@ -596,5 +661,293 @@ describe("sidebar settled pagination", () => {
     const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
     await act(() => moreButton.click());
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+  });
+});
+
+describe("sidebar compact rows and project grouping", () => {
+  it("renders single-line compact rows with status indicator and hover snooze/settle actions", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarCompactRows: true,
+      sidebarWorkingShelfEnabled: false,
+    });
+    const activeProject = project("alpha");
+    const workingThread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("compact-working"),
+      title: "Working thread with a very long title that trims on hover",
+      runtime: {
+        status: "running",
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "codex",
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const idleThread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("compact-idle"),
+      title: "Idle thread",
+      lastVisitedAt: "2026-01-02T00:00:00.000Z",
+    });
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([workingThread, idleThread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: scopeProjectRef(activeProject.environmentId, activeProject.id),
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([
+        [
+          activeProject.environmentId,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const compactRows = screen.container.querySelectorAll('[data-testid="sidebar-row-compact"]');
+    expect(compactRows).toHaveLength(2);
+    expect(screen.container.querySelector('[data-testid="sidebar-row-card"]')).toBeNull();
+
+    const workingRow = Array.from(compactRows).find((row) =>
+      row.textContent?.includes("Working thread"),
+    )!;
+    const idleRow = Array.from(compactRows).find((row) =>
+      row.textContent?.includes("Idle thread"),
+    )!;
+    expect(workingRow.querySelector('[data-testid="sidebar-row-compact-status"]')).not.toBeNull();
+    expect(idleRow.querySelector('[data-testid="sidebar-row-compact-status"]')).toBeNull();
+    expect(idleRow.querySelector('button[aria-label="Snooze thread"]')).not.toBeNull();
+    expect(idleRow.querySelector('button[aria-label="Settle thread"]')).not.toBeNull();
+  });
+
+  it("groups compact chat rows inside collapsible project dropdowns", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarCompactRows: true,
+      boringSidebarEnabled: true,
+    });
+    const alpha = project("alpha");
+    const beta = project("beta");
+    const alphaThread = makeThreadFixture({
+      environmentId: alpha.environmentId,
+      projectId: alpha.id,
+      id: ThreadId.make("alpha-thread"),
+      title: "Alpha compact chat",
+    });
+    const betaThread = makeThreadFixture({
+      environmentId: beta.environmentId,
+      projectId: beta.id,
+      id: ThreadId.make("beta-thread"),
+      title: "Beta compact chat",
+    });
+    vi.mocked(useProjects).mockReturnValue([alpha, beta]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([alphaThread, betaThread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: scopeProjectRef(alpha.environmentId, alpha.id),
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const folders = screen.container.querySelectorAll('[data-testid="sidebar-project-folder"]');
+    expect(folders).toHaveLength(2);
+    expect(screen.container.querySelectorAll('[data-testid="sidebar-row-compact"]')).toHaveLength(
+      2,
+    );
+
+    const alphaToggle = screen.container.querySelector<HTMLButtonElement>(
+      '[data-sidebar-row="folder:local:/projects/alpha"]',
+    )!;
+    // The sidebar shift guard drops pointer clicks on freshly rendered rows (<500ms); keys pass.
+    alphaToggle.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText("Alpha compact chat")).not.toBeInTheDocument();
+    await expect.element(screen.getByText("Beta compact chat")).toBeVisible();
+
+    alphaToggle.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText("Alpha compact chat")).toBeVisible();
+  });
+
+  it("keeps a pinned empty project folder but drops an empty No project folder", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
+    const alpha = { ...project("alpha"), pinnedAt: "2026-01-01T00:00:00.000Z" };
+    const scratch = {
+      ...project("scratch"),
+      isScratch: true as const,
+      pinnedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const beta = project("beta");
+    vi.mocked(useProjects).mockReturnValue([alpha, scratch, beta]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      makeThreadFixture({
+        environmentId: beta.environmentId,
+        projectId: beta.id,
+        id: ThreadId.make("beta-chat"),
+        title: "Beta chat",
+      }),
+    ]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: scopeProjectRef(beta.environmentId, beta.id),
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    await expect.element(screen.getByText("Beta chat")).toBeVisible();
+    const folderTitles = Array.from(
+      screen.container.querySelectorAll<HTMLElement>('[data-sidebar-row^="folder:"]'),
+      (folder) => folder.textContent ?? "",
+    );
+    expect(folderTitles.some((title) => title.includes("alpha"))).toBe(true);
+    expect(folderTitles.some((title) => title.includes("beta"))).toBe(true);
+    expect(folderTitles.some((title) => title.includes("No project"))).toBe(false);
+  });
+
+  it("renders working threads grouped by project above Snoozed and Settled", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarCompactRows: true,
+      boringSidebarEnabled: true,
+      sidebarWorkingShelfEnabled: true,
+    });
+    const alpha = project("alpha");
+    const beta = project("beta");
+    const alphaIdle = makeThreadFixture({
+      environmentId: alpha.environmentId,
+      projectId: alpha.id,
+      id: ThreadId.make("alpha-idle"),
+      title: "Alpha idle chat",
+    });
+    const alphaWorking = makeThreadFixture({
+      environmentId: alpha.environmentId,
+      projectId: alpha.id,
+      id: ThreadId.make("alpha-working"),
+      title: "Alpha working chat",
+      runtime: {
+        status: "running",
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "codex",
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const betaWorking = makeThreadFixture({
+      environmentId: beta.environmentId,
+      projectId: beta.id,
+      id: ThreadId.make("beta-working"),
+      title: "Beta working chat",
+      runtime: {
+        status: "running",
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "codex",
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    vi.mocked(useProjects).mockReturnValue([alpha, beta]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([alphaIdle, alphaWorking, betaWorking]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: scopeProjectRef(alpha.environmentId, alpha.id),
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const workingHeader = screen.container.querySelector<HTMLElement>(
+      '[data-testid="sidebar-working-header"]',
+    )!;
+    expect(workingHeader).not.toBeNull();
+    const settledHeader = screen.container.querySelector<HTMLElement>(
+      '[data-sidebar-row="shelf:settled"]',
+    )!;
+    expect(settledHeader).not.toBeNull();
+    expect(
+      workingHeader.compareDocumentPosition(settledHeader) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const followsWorkingHeader = (text: string) => {
+      const row = screen.getByText(text).element();
+      return Boolean(workingHeader.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING);
+    };
+    expect(followsWorkingHeader("Alpha working chat")).toBe(true);
+    expect(followsWorkingHeader("Beta working chat")).toBe(true);
+    expect(followsWorkingHeader("Alpha idle chat")).toBe(false);
+
+    const workingAlphaToggle = screen.container.querySelector<HTMLButtonElement>(
+      '[data-sidebar-row="working-folder:local:/projects/alpha"]',
+    )!;
+    expect(workingAlphaToggle).not.toBeNull();
+    workingAlphaToggle.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText("Alpha working chat")).not.toBeInTheDocument();
+    await expect.element(screen.getByText("Beta working chat")).toBeVisible();
+    await expect.element(screen.getByText("Alpha idle chat")).toBeVisible();
+
+    workingAlphaToggle.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText("Alpha working chat")).toBeVisible();
   });
 });

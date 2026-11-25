@@ -1,9 +1,8 @@
 import { useGT } from "gt-react";
-import { SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { MessageSquareDashedIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -16,23 +15,28 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export interface SidebarHeaderActionsProps {
   searchOpen: boolean;
   onToggleSearch: () => void;
-  onNewThread: (event: ReactMouseEvent) => void;
+  onNewWithoutProject: () => void;
+  newWithoutProjectDisabled: boolean;
+  newWithoutProjectShortcutLabel: string | null | undefined;
+  onNewThread: () => void;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
-  newThreadInProjectShortcutLabel: string | null | undefined;
-  showNewThreadInProjectHint: boolean;
 }
 
 export function SidebarHeaderActions({
   searchOpen,
   onToggleSearch,
+  onNewWithoutProject,
+  newWithoutProjectDisabled,
+  newWithoutProjectShortcutLabel,
   onNewThread,
   newThreadDisabled,
   newThreadShortcutLabel,
-  newThreadInProjectShortcutLabel,
-  showNewThreadInProjectHint,
 }: SidebarHeaderActionsProps) {
   const gt = useGT();
+  const newWithoutProjectLabel = newWithoutProjectShortcutLabel
+    ? gt("New chat without project ({shortcut})", { shortcut: newWithoutProjectShortcutLabel })
+    : gt("New chat without project");
   const newThreadLabel = newThreadShortcutLabel
     ? gt("New thread ({shortcut})", { shortcut: newThreadShortcutLabel })
     : gt("New thread");
@@ -50,23 +54,17 @@ export function SidebarHeaderActions({
         <SearchIcon />
       </SidebarHeaderIconButton>
       <SidebarHeaderIconButton
+        label={gt("New chat without project")}
+        tooltip={newWithoutProjectLabel}
+        className="[-webkit-app-region:no-drag]"
+        disabled={newWithoutProjectDisabled}
+        onClick={onNewWithoutProject}
+      >
+        <MessageSquareDashedIcon />
+      </SidebarHeaderIconButton>
+      <SidebarHeaderIconButton
         label={gt("New thread")}
-        tooltip={
-          showNewThreadInProjectHint ? (
-            <span className="flex flex-col gap-0.5">
-              <span>{newThreadLabel}</span>
-              <span className="text-muted-foreground">
-                {newThreadInProjectShortcutLabel
-                  ? gt("New thread in current project: Shift+click ({shortcut})", {
-                      shortcut: newThreadInProjectShortcutLabel,
-                    })
-                  : gt("New thread in current project: Shift+click")}
-              </span>
-            </span>
-          ) : (
-            newThreadLabel
-          )
-        }
+        tooltip={newThreadLabel}
         className="[-webkit-app-region:no-drag]"
         disabled={newThreadDisabled}
         onClick={onNewThread}

@@ -38,7 +38,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return (
     <div
       className={cn(
-        "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3",
+        "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-0.5 pr-3",
         isElectron && "drag-region",
       )}
     >
@@ -49,22 +49,24 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           aria-label={gt("Toggle main sidebar")}
         />
       </div>
-      <div className="relative z-10 flex h-8 min-w-0 flex-1 items-center justify-end gap-0.5 md:ml-[var(--workspace-titlebar-content-left)]">
-        {actions}
-        <SidebarHeaderIconButton
-          label={gt("Usage")}
-          className="[-webkit-app-region:no-drag]"
-          onClick={handleUsageClick}
-        >
-          <ChartNoAxesColumnIcon />
-        </SidebarHeaderIconButton>
-        <SidebarHeaderIconButton
-          label={gt("Settings")}
-          className="[-webkit-app-region:no-drag]"
-          onClick={handleSettingsClick}
-        >
-          <SettingsIcon />
-        </SidebarHeaderIconButton>
+      <div className="relative z-10 flex h-8 min-w-0 flex-1 items-center justify-between gap-2 md:ml-[calc(var(--workspace-controls-left)+1px+var(--workspace-titlebar-control-size)+0.125rem)]">
+        <div className="flex shrink-0 items-center gap-0.5">
+          <SidebarHeaderIconButton
+            label={gt("Settings")}
+            className="[-webkit-app-region:no-drag]"
+            onClick={handleSettingsClick}
+          >
+            <SettingsIcon />
+          </SidebarHeaderIconButton>
+          <SidebarHeaderIconButton
+            label={gt("Usage")}
+            className="[-webkit-app-region:no-drag]"
+            onClick={handleUsageClick}
+          >
+            <ChartNoAxesColumnIcon />
+          </SidebarHeaderIconButton>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">{actions}</div>
       </div>
     </div>
   );

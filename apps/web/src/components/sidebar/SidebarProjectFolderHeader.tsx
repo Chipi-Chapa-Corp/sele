@@ -33,6 +33,10 @@ export function sidebarFolderRowId(projectKey: string) {
   return `folder:${projectKey}`;
 }
 
+export function sidebarWorkingFolderRowId(projectKey: string) {
+  return `working-folder:${projectKey}`;
+}
+
 /**
  * A project folder in the boring sidebar. It reads like a shelf header: a trailing
  * count and chevron, with the count and a status dot only while it is closed, so a
@@ -40,6 +44,7 @@ export function sidebarFolderRowId(projectKey: string) {
  */
 export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHeader(props: {
   group: SidebarProjectSnapshot;
+  rowId?: string;
   collapsed: boolean;
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: (group: SidebarProjectSnapshot) => void;
@@ -53,7 +58,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const gt = useGT();
   const m = useMessages();
   const { group, collapsed, hiddenThreads } = props;
-  const rowId = sidebarFolderRowId(group.projectKey);
+  const rowId = props.rowId ?? sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const dot = collapsed
     ? resolveSidebarFolderDot(

@@ -544,6 +544,12 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
       ? [gt("Project order")]
       : []),
+    ...(settings.sidebarCompactRows !== DEFAULT_UNIFIED_SETTINGS.sidebarCompactRows
+      ? [gt("Compact chat rows")]
+      : []),
+    ...(settings.boringSidebarEnabled !== DEFAULT_UNIFIED_SETTINGS.boringSidebarEnabled
+      ? [gt("Group chats by project")]
+      : []),
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? [gt("Working section")]
       : []),
@@ -738,6 +744,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarCompactRows: DEFAULT_UNIFIED_SETTINGS.sidebarCompactRows,
+      boringSidebarEnabled: DEFAULT_UNIFIED_SETTINGS.boringSidebarEnabled,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
@@ -880,6 +888,66 @@ export function GeneralSettingsPanel() {
 
       <SettingsSection id="sidebar" title={gt("Sidebar")}>
         <SettingsRow
+          {...setting("compact-rows")}
+          description={
+            <T>
+              Show each chat on a single line with its status indicator and title. Snooze and settle
+              appear on hover.
+            </T>
+          }
+          resetAction={
+            settings.sidebarCompactRows !== DEFAULT_UNIFIED_SETTINGS.sidebarCompactRows ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset compact chat rows to default")}
+                onClick={() =>
+                  updateSettings({
+                    sidebarCompactRows: DEFAULT_UNIFIED_SETTINGS.sidebarCompactRows,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarCompactRows}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarCompactRows: Boolean(checked) })
+              }
+              aria-label={gt("Compact chat rows")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("boring-sidebar")}
+          description={
+            <T>
+              Group sidebar chats into collapsible project dropdowns. Pinned chats stay on top, and
+              Snoozed and Settled stay below.
+            </T>
+          }
+          resetAction={
+            settings.boringSidebarEnabled !== DEFAULT_UNIFIED_SETTINGS.boringSidebarEnabled ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset group chats by project to default")}
+                onClick={() =>
+                  updateSettings({
+                    boringSidebarEnabled: DEFAULT_UNIFIED_SETTINGS.boringSidebarEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.boringSidebarEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ boringSidebarEnabled: Boolean(checked) })
+              }
+              aria-label={gt("Group chats by project")}
+            />
+          }
+        />
+        <SettingsRow
           {...setting("project-grouping")}
           description={<T>Combine matching repositories across environments.</T>}
           resetAction={
@@ -958,8 +1026,9 @@ export function GeneralSettingsPanel() {
           {...setting("working-shelf")}
           description={
             <T>
-              Fold working and monitoring threads into a Working section. They return to the top of
-              the inbox when they need you. The boring sidebar in Labs has no Working section.
+              Move working and monitoring threads below the active list, above Snoozed and Settled,
+              grouped by project when chats are grouped by project. They return to the top when they
+              need you.
             </T>
           }
           resetAction={

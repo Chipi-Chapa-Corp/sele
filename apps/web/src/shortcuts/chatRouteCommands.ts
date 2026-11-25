@@ -1,3 +1,4 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { AuthPreviewOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import { msg } from "gt-react";
@@ -5,12 +6,11 @@ import { msg } from "gt-react";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { m } from "~/i18n/messages";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
-import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
+import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { dispatchPreviewAction, type PreviewAction } from "../components/preview/previewActionBus";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { isBrowserSurfaceFocused } from "../lib/previewFocus";
-import { shouldCreateNewThreadInCurrentProject } from "../components/Sidebar.logic";
 import {
   createNewThreadHandler,
   readLastUsedProjectKey,
@@ -18,11 +18,9 @@ import {
 } from "../hooks/useHandleNewThread";
 import { createScratchProjectActions } from "../hooks/useScratchProject";
 import { getClientSettings } from "../hooks/useSettings";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
 import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { environmentPresentations } from "../state/presentation";
@@ -96,15 +94,6 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       handleNewThread,
     };
   };
-  // Grouped like the sidebar, so the shortcut and the New thread button agree.
-  const readProjectGroups = () =>
-    buildSidebarProjectSnapshots({
-      projects: readProjects(),
-      groupScratchProjects: true,
-      settings: selectProjectGroupingSettings(getClientSettings()),
-      primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
-      resolveEnvironmentLabel: () => null,
-    });
   const canOperatePreview = (environmentId: EnvironmentId) =>
     readEnvironmentScope(environmentId, AuthPreviewOperateScope);
 
@@ -113,12 +102,22 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
     event.stopPropagation();
   };
 
-  const startNewLocal: CommandHandler = (event) => {
+  const startNewFromOpenedOrScratch: CommandHandler = (event) => {
     claim(event);
-    // With no current or open project, such as when every project is archived, pick one.
-    void startNewThreadFromContext(readThreadContext()).then((started) => {
-      if (!started) openCommandPalette({ open: "new-thread-in" });
-    });
+    const { activeThread, activeDraftThread, defaultProjectRef } = readThreadContext();
+    const opened = activeThread ?? activeDraftThread;
+    if (opened) {
+      void handleNewThread(scopeProjectRef(opened.environmentId, opened.projectId));
+      return;
+    }
+    const environmentId = scratch.scratchEnvironmentId(null);
+    if (environmentId !== null) {
+      void scratch.startScratchThread(environmentId);
+      return;
+    }
+    if (defaultProjectRef) {
+      void handleNewThread(defaultProjectRef);
+    }
   };
 
   const previewCommand =
@@ -138,7 +137,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
 
   return registerCommands(
     {
-      "chat.newLocal": startNewLocal,
+      "chat.newLocal": startNewFromOpenedOrScratch,
       "chat.newWithoutProject": (event) => {
         const { activeThread, activeDraftThread } = readThreadContext();
         const environmentId = scratch.scratchEnvironmentId(
@@ -148,21 +147,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         claim(event);
         void scratch.startScratchThread(environmentId);
       },
-      "chat.new": (event) => {
-        const groups = readProjectGroups();
-        if (
-          !shouldCreateNewThreadInCurrentProject(
-            false,
-            groups.filter((group) => !group.archived).length,
-            groups.length,
-          )
-        ) {
-          claim(event);
-          openCommandPalette({ open: "new-thread-in" });
-          return;
-        }
-        startNewLocal(event);
-      },
+      "chat.new": startNewFromOpenedOrScratch,
       "preview.toggle": (event) => {
         claim(event);
         const threadRef = readRouteThreadRef();
