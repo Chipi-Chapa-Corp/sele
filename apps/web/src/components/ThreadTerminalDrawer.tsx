@@ -92,6 +92,7 @@ import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
+import { RightPanelTabActions, useRightPanelTabActionsSlot } from "./RightPanelTabActions";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { terminalInputWriter } from "./terminal/terminalInputWriter";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -1680,6 +1681,8 @@ export default function ThreadTerminalDrawer({
   const showGroupHeaders =
     resolvedTerminalGroups.length > 1 ||
     resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
+  const rightPanelTabActionsSlot = useRightPanelTabActionsSlot();
+  const tabActionsSlot = isPanel ? rightPanelTabActionsSlot : null;
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
   const resolveTerminalLaunchLocation = (terminalId: string): TerminalLaunchLocation =>
     terminalLaunchLocationsById?.get(terminalId) ?? {
@@ -1873,55 +1876,106 @@ export default function ThreadTerminalDrawer({
     >
       {resizeHandle}
 
-      {!hasTerminalSidebar && (
-        <div className="pointer-events-none absolute right-2 top-2 z-20">
-          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
-            <TerminalActionButton
-              disabled={!canOperateTerminal}
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-64 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
-              onClick={onSplitTerminalAction}
-              label={splitTerminalActionLabel}
-            >
-              <SquareSplitHorizontal className="size-3.25" />
-            </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
-            <TerminalActionButton
-              disabled={!canOperateTerminal}
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-64 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
-              onClick={onSplitTerminalVerticalAction}
-              label={splitTerminalVerticalActionLabel}
-            >
-              <SquareSplitVertical className="size-3.25" />
-            </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
-            <TerminalActionButton
-              disabled={!canOperateTerminal}
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
-              onClick={onNewTerminalAction}
-              label={newTerminalActionLabel}
-            >
-              <Plus className="size-3.25" />
-            </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
-            <TerminalActionButton
-              disabled={!canOperateTerminal}
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
-              onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
-              label={closeTerminalActionLabel}
-            >
-              <Trash2 className="size-3.25" />
-            </TerminalActionButton>
+      {!hasTerminalSidebar &&
+        (tabActionsSlot ? (
+          visible ? (
+            <RightPanelTabActions slot={tabActionsSlot}>
+              <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
+                <TerminalActionButton
+                  disabled={!canOperateTerminal}
+                  className={`p-1 text-foreground/90 transition-colors ${
+                    hasReachedSplitLimit
+                      ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                      : "hover:bg-accent"
+                  }`}
+                  onClick={onSplitTerminalAction}
+                  label={splitTerminalActionLabel}
+                >
+                  <SquareSplitHorizontal className="size-3.25" />
+                </TerminalActionButton>
+                <div className="h-4 w-px bg-border/80" />
+                <TerminalActionButton
+                  disabled={!canOperateTerminal}
+                  className={`p-1 text-foreground/90 transition-colors ${
+                    hasReachedSplitLimit
+                      ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                      : "hover:bg-accent"
+                  }`}
+                  onClick={onSplitTerminalVerticalAction}
+                  label={splitTerminalVerticalActionLabel}
+                >
+                  <SquareSplitVertical className="size-3.25" />
+                </TerminalActionButton>
+                <div className="h-4 w-px bg-border/80" />
+                <TerminalActionButton
+                  disabled={!canOperateTerminal}
+                  className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+                  onClick={onNewTerminalAction}
+                  label={newTerminalActionLabel}
+                >
+                  <Plus className="size-3.25" />
+                </TerminalActionButton>
+                <div className="h-4 w-px bg-border/80" />
+                <TerminalActionButton
+                  disabled={!canOperateTerminal}
+                  className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+                  onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
+                  label={closeTerminalActionLabel}
+                >
+                  <Trash2 className="size-3.25" />
+                </TerminalActionButton>
+              </div>
+            </RightPanelTabActions>
+          ) : null
+        ) : (
+          <div className="pointer-events-none absolute right-2 top-2 z-20">
+            <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
+              <TerminalActionButton
+                disabled={!canOperateTerminal}
+                className={`p-1 text-foreground/90 transition-colors ${
+                  hasReachedSplitLimit
+                    ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                    : "hover:bg-accent"
+                }`}
+                onClick={onSplitTerminalAction}
+                label={splitTerminalActionLabel}
+              >
+                <SquareSplitHorizontal className="size-3.25" />
+              </TerminalActionButton>
+              <div className="h-4 w-px bg-border/80" />
+              <TerminalActionButton
+                disabled={!canOperateTerminal}
+                className={`p-1 text-foreground/90 transition-colors ${
+                  hasReachedSplitLimit
+                    ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                    : "hover:bg-accent"
+                }`}
+                onClick={onSplitTerminalVerticalAction}
+                label={splitTerminalVerticalActionLabel}
+              >
+                <SquareSplitVertical className="size-3.25" />
+              </TerminalActionButton>
+              <div className="h-4 w-px bg-border/80" />
+              <TerminalActionButton
+                disabled={!canOperateTerminal}
+                className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+                onClick={onNewTerminalAction}
+                label={newTerminalActionLabel}
+              >
+                <Plus className="size-3.25" />
+              </TerminalActionButton>
+              <div className="h-4 w-px bg-border/80" />
+              <TerminalActionButton
+                disabled={!canOperateTerminal}
+                className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+                onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
+                label={closeTerminalActionLabel}
+              >
+                <Trash2 className="size-3.25" />
+              </TerminalActionButton>
+            </div>
           </div>
-        </div>
-      )}
+        ))}
 
       <div className="min-h-0 w-full flex-1">
         <div

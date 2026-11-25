@@ -3,7 +3,7 @@ import "~/index.css";
 import { EnvironmentId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { userEvent } from "vite-plus/test/browser";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import type { RightPanelSurface } from "~/rightPanelStore";
@@ -295,7 +295,7 @@ describe("device tab rename", () => {
 });
 
 describe("add surface launcher", () => {
-  it("hides the button, closes the open menu and stops taking Mod+T and the desktop menu action once no surface can be added", async () => {
+  it("hides the kind's add button and stops taking Mod+T and the desktop menu action once that kind cannot add a tab", async () => {
     const menuListeners = new Set<(action: string) => void>();
     using _bridge = stubGlobal("desktopBridge", {
       onMenuAction: (listener: (action: string) => void) => {
@@ -304,20 +304,20 @@ describe("add surface launcher", () => {
       },
     });
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    const tabs = (sideChatAvailable: boolean) => (
+    const onAddPullRequest = vi.fn();
+    const tabs = (pullRequestAvailable: boolean) => (
       <RightPanelTabs
         {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
         open
         keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-        browserAvailable={false}
+        browserAvailable
         terminalAvailable={false}
         diffAvailable={false}
         filesAvailable={false}
-        pullRequestAvailable={false}
+        pullRequestAvailable={pullRequestAvailable}
+        onAddPullRequest={onAddPullRequest}
         pullRequestsAvailable={false}
         deviceAvailable={false}
-        onAddSideChat={() => {}}
-        sideChatAvailable={sideChatAvailable}
       >
         {null}
       </RightPanelTabs>
@@ -335,18 +335,18 @@ describe("add surface launcher", () => {
       return event.defaultPrevented;
     };
     await using screen = await render(tabs(true));
-    const addButton = screen.getByRole("button", { name: "Add panel surface" });
+    const addButton = screen.getByRole("button", { name: "Pull request" });
 
     await expect.element(addButton).toBeInTheDocument();
     expect(menuListeners.size).toBe(1);
     expect(await pressModT()).toBe(true);
-    await expect.element(page.getByRole("menu")).toBeVisible();
+    expect(onAddPullRequest).toHaveBeenCalledTimes(1);
 
+    // The browser can still add tabs, but not to the Git kind that is shown.
     await screen.rerender(tabs(false));
     expect(addButton.query()).toBeNull();
-    expect(page.getByRole("menu").query()).toBeNull();
     expect(menuListeners.size).toBe(0);
     expect(await pressModT()).toBe(false);
-    expect(page.getByRole("menu").query()).toBeNull();
+    expect(onAddPullRequest).toHaveBeenCalledTimes(1);
   });
 });
