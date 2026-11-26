@@ -596,6 +596,18 @@ function joinWindowsPath(...parts: ReadonlyArray<string>): string {
 const POWERSHELL_UTF8_SETUP =
   "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()";
 
+const POSIX_LOGIN_SHELL_NAMES = new Set([
+  "bash",
+  "fish",
+  "sh",
+  "dash",
+  "ksh",
+  "mksh",
+  "tcsh",
+  "csh",
+  "nu",
+]);
+
 function shellCandidateFromCommand(
   command: string | null,
   platform: NodeJS.Platform,
@@ -609,10 +621,10 @@ function shellCandidateFromCommand(
     return { shell: command, args: ["--login", "-i"] };
   }
   if (platform !== "win32" && shellName === "zsh") {
-    return { shell: command, args: ["-o", "nopromptsp"] };
+    return { shell: command, args: ["-l", "-o", "nopromptsp"] };
   }
-  // Login shells load ~/.bash_profile, matching macOS terminal startup.
-  if (platform === "darwin" && shellName === "bash") {
+  // Start interactive POSIX shells as login shells so profile PATH and tooling load reliably.
+  if (platform !== "win32" && POSIX_LOGIN_SHELL_NAMES.has(shellName)) {
     return { shell: command, args: ["-l"] };
   }
   return { shell: command };

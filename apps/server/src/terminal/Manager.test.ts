@@ -3054,16 +3054,19 @@ it.layer(
     }),
   );
 
-  it.effect("starts bash as a login shell on macOS and Windows", () =>
+  it.effect("starts interactive shells as login shells across platforms", () =>
     Effect.gen(function* () {
       for (const [platform, shell, args] of [
         ["darwin", "/bin/bash", ["-l"]],
         ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
-        ["linux", "/bin/bash", undefined],
+        ["linux", "/bin/bash", ["-l"]],
+        ["linux", "/usr/bin/fish", ["-l"]],
+        ["darwin", "/opt/homebrew/bin/fish", ["-l"]],
+        ["linux", "/bin/sh", ["-l"]],
         ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", ["--login", "-i"]],
         ["win32", "C:/Program Files/Git/bin/bash.exe", ["--login", "-i"]],
-        ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
-        ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["darwin", "/bin/zsh", ["-l", "-o", "nopromptsp"]],
+        ["linux", "/bin/zsh", ["-l", "-o", "nopromptsp"]],
         ["linux", "/opt/team\\zsh", undefined],
         ["win32", "pwsh.exe", POWERSHELL_ARGS],
       ] as const) {
