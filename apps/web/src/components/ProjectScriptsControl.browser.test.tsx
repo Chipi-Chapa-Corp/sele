@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
@@ -70,3 +70,47 @@ it.each(["edit", "dismiss", "newer import fails first"] as const)(
     }
   },
 );
+
+it("renders a split button in toolbar mode that runs the first action on left click and opens the menu on right click", async () => {
+  const ran: string[] = [];
+  const onRunScript = vi.fn((script: { id: string }) => {
+    ran.push(script.id);
+  });
+  await using screen = await render(
+    <ProjectScriptsControl
+      environmentId={EnvironmentId.make("test")}
+      scripts={[
+        {
+          id: "dev",
+          name: "Dev",
+          command: "vp run dev",
+          icon: "play",
+          runOnWorktreeCreate: false,
+        },
+        {
+          id: "test",
+          name: "Test",
+          command: "vp test",
+          icon: "test",
+          runOnWorktreeCreate: false,
+        },
+      ]}
+      onRunScript={onRunScript}
+      onAddScript={async () => AsyncResult.success(undefined)}
+      onUpdateScript={async () => AsyncResult.success(undefined)}
+      onDeleteScript={async () => AsyncResult.success(undefined)}
+    />,
+  );
+
+  const primary = screen.getByRole("button", { name: "Run Dev" });
+  const dropdown = screen.getByRole("button", { name: "Script actions" });
+
+  await primary.click();
+  expect(ran).toEqual(["dev"]);
+  expect(page.getByRole("menu").query()).toBeNull();
+
+  await dropdown.click();
+  await expect.element(page.getByRole("menu")).toBeVisible();
+  await page.getByRole("menuitem", { name: /^Test\b/ }).click();
+  expect(ran).toEqual(["dev", "test"]);
+});

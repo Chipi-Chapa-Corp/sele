@@ -235,9 +235,10 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
+    const preferNewTerminal = options?.preferNewTerminal ?? true;
     const reusableTerminalId =
       script.stopOnSettle ||
-      options?.preferNewTerminal ||
+      preferNewTerminal ||
       !canReuseTerminal ||
       !readEnvironmentScope(environmentId, AuthTerminalReadScope)
         ? null
@@ -339,7 +340,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         icon: "play",
         runOnWorktreeCreate: false,
       },
-      { rememberAsLastInvoked: false, shellHistory: "preserve" },
+      { preferNewTerminal: false, rememberAsLastInvoked: false, shellHistory: "preserve" },
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);
