@@ -228,7 +228,8 @@ jobs:
           install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
 
       - name: Test unsigned macOS updater
-        run: vp test run apps/desktop/src/updates/macAppUpdate.test.ts apps/desktop/src/updates/platformRelease.test.ts
+        working-directory: apps/desktop
+        run: vp test run src/updates/macAppUpdate.test.ts src/updates/platformRelease.test.ts
 
       - name: Cache resource monitor
         id: resource_monitor_cache
