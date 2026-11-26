@@ -229,7 +229,7 @@ import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { useActiveThreadUsageStore } from "../activeThreadUsageStore";
-import { ThreadDetailsUsage } from "./chat/ThreadDetailsUsage";
+import { SidebarUsageLimits } from "./sidebar/SidebarUsageLimits";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderActions, SidebarThreadSearchPanel } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
@@ -890,11 +890,13 @@ function readRouteThreadKey(router: AnyRouter): string | null {
 
 function SidebarUsage() {
   const usage = useActiveThreadUsageStore((state) => state.usage);
+  const { isMobile, setOpenMobile } = useSidebar();
   if (!usage) return null;
   return (
-    <div className="shrink-0 border-t border-sidebar-border" data-sidebar-usage>
-      <ThreadDetailsUsage {...usage} />
-    </div>
+    <SidebarUsageLimits
+      {...usage}
+      onOpenUsage={isMobile ? () => setOpenMobile(false) : undefined}
+    />
   );
 }
 

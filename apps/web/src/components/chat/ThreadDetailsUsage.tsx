@@ -47,9 +47,9 @@ export interface ThreadDetailsUsageInput {
   readonly contextWindow: ContextWindowSnapshot | null;
 }
 
-type UsageTone = "error" | "warning" | null;
+export type UsageTone = "error" | "warning" | null;
 
-function limitTone(left: number): UsageTone {
+export function limitTone(left: number): UsageTone {
   if (left <= 10) return "error";
   if (left <= 20) return "warning";
   return null;
@@ -182,6 +182,45 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
   );
 }
 
+export function LimitWindowTooltip({
+  window,
+  now,
+  accountLabel,
+}: {
+  readonly window: ServerProviderUsageWindow;
+  readonly now: number;
+  readonly accountLabel?: string | undefined;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const left = remainingPercent(window);
+  const pace = paceOf(window, now);
+  const timeLeft = paceRemainingPercent(window, now);
+  const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+  return (
+    <>
+      <span className="text-foreground">
+        {gt("{label}: {left}% left", { label: window.label, left })}
+      </span>
+      {accountLabel ? <span className="text-muted-foreground">{accountLabel}</span> : null}
+      {pace && timeLeft !== null ? (
+        <span className="text-muted-foreground">
+          {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
+        </span>
+      ) : null}
+      {window.resetsAt && resetsAt > now ? (
+        <span className="text-muted-foreground">
+          {gt("Resets in {duration} · {time}", {
+            duration: formatDuration(resetsAt - now, m),
+            time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
+          })}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function LimitRow({
   window,
   now,
@@ -192,12 +231,8 @@ function LimitRow({
   readonly accountLabel?: string;
 }) {
   const gt = useGT();
-  const m = useMessages();
-  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
-  const pace = paceOf(window, now);
   const timeLeft = paceRemainingPercent(window, now);
-  const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   return (
     <UsageRow
       label={window.label}
@@ -207,32 +242,18 @@ function LimitRow({
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
       opensUsage
-      tooltip={
-        <>
-          <span className="text-foreground">
-            {gt("{label}: {left}% left", { label: window.label, left })}
-          </span>
-          {accountLabel ? <span className="text-muted-foreground">{accountLabel}</span> : null}
-          {pace && timeLeft !== null ? (
-            <span className="text-muted-foreground">
-              {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
-            </span>
-          ) : null}
-          {window.resetsAt && resetsAt > now ? (
-            <span className="text-muted-foreground">
-              {gt("Resets in {duration} · {time}", {
-                duration: formatDuration(resetsAt - now, m),
-                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
-              })}
-            </span>
-          ) : null}
-        </>
-      }
+      tooltip={<LimitWindowTooltip window={window} now={now} accountLabel={accountLabel} />}
     />
   );
 }
 
-function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly now: number }) {
+export function PoolWindowTooltip({
+  window,
+  now,
+}: {
+  readonly window: LimitPoolWindow;
+  readonly now: number;
+}) {
   const gt = useGT();
   const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
@@ -250,6 +271,42 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
         }
       : null;
   return (
+    <>
+      <span className="text-foreground">
+        {accounts > 1
+          ? gt("{label}: {left}% left across {accounts} accounts", {
+              label: window.label,
+              left,
+              accounts,
+            })
+          : gt("{label}: {left}% left", { label: window.label, left })}
+      </span>
+      {window.pace ? (
+        <span className="text-muted-foreground">{m(PACE_LABEL[window.pace])}</span>
+      ) : null}
+      {next && reset ? (
+        <span className="text-muted-foreground">
+          {accounts > 1
+            ? gt("+{percent}% in {duration} · {time}", {
+                percent: next.restoresPercent,
+                ...reset,
+              })
+            : gt("Resets in {duration} · {time}", reset)}
+        </span>
+      ) : null}
+      {sourceLabels.length > 0 ? (
+        <span className="text-muted-foreground">
+          {gt("From {sources}", { sources: sourceLabels.join(", ") })}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly now: number }) {
+  const gt = useGT();
+  const left = window.remainingPercent;
+  return (
     <UsageRow
       label={window.label}
       fill={left}
@@ -257,37 +314,7 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
       opensUsage
-      tooltip={
-        <>
-          <span className="text-foreground">
-            {accounts > 1
-              ? gt("{label}: {left}% left across {accounts} accounts", {
-                  label: window.label,
-                  left,
-                  accounts,
-                })
-              : gt("{label}: {left}% left", { label: window.label, left })}
-          </span>
-          {window.pace ? (
-            <span className="text-muted-foreground">{m(PACE_LABEL[window.pace])}</span>
-          ) : null}
-          {next && reset ? (
-            <span className="text-muted-foreground">
-              {accounts > 1
-                ? gt("+{percent}% in {duration} · {time}", {
-                    percent: next.restoresPercent,
-                    ...reset,
-                  })
-                : gt("Resets in {duration} · {time}", reset)}
-            </span>
-          ) : null}
-          {sourceLabels.length > 0 ? (
-            <span className="text-muted-foreground">
-              {gt("From {sources}", { sources: sourceLabels.join(", ") })}
-            </span>
-          ) : null}
-        </>
-      }
+      tooltip={<PoolWindowTooltip window={window} now={now} />}
     />
   );
 }
