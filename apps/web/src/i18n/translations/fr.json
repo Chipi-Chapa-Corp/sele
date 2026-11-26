@@ -3360,27 +3360,6 @@
   ],
   "3dbc42464b2bfb20": "Fast et Ultrafast ne sont pas disponibles avec cette connexion ChatGPT. Utilisez une connexion Codex CLI existante pour les options de vitesse prises en charge par votre compte.",
   "5c0eb4217bb673bd": "Forfait ChatGPT utilisé",
-  "3e545d70d0c3535c": "Fil d’Ariane du fil",
-  "890c34762a621a66": "Ouvrir le fil parent : {title}",
-  "7514746d2bd43a1c": "Titre du fil",
-  "ab42a6d2ab6073d9": "Actions du fil {title}",
-  "cd8fd5a47060164b": [
-    "Nouveau fil dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "1c983a010570cdbb": [
-    "Démarré par un agent sur ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " via un environnement associé."
-  ],
   "601807baf4e25b94": "Aperçu de {name}",
   "922a18febd2c86d7": "Aperçu de l’image",
   "932e6e0577492ff3": "Audio indisponible",
@@ -3702,6 +3681,7 @@
   ],
   "000b0df227182d39": "Autre adresse…",
   "fd07b24350a7643f": "un environnement associé",
+  "3e545d70d0c3535c": "Fil d’Ariane du fil",
   "6bb5b1b35b2796ae": "Sur {label} via {via} · En cours",
   "a73b7ab25d6e9bdf": "Sur {label} via {via}",
   "009e2ca841fdc1ef": "cet environnement",
@@ -4250,10 +4230,10 @@
   "7c1d4c58aeb9e1b3": "Contexte : {used} % utilisé",
   "4214d97447ddd9e9": "Contexte : {usedTokens} tokens utilisés",
   "66be4fb43249bbd2": "{used} tokens sur {max}",
-  "ee3ae58c8b38a425": "{left} % restant",
   "ebb26f93fb83a71b": "{label} : {left} % restant",
   "1b16346722b65812": "{timeLeft} % de la fenêtre restant",
   "728c6cc1431e76c8": "Réinitialisation dans {duration} · {time}",
+  "ee3ae58c8b38a425": "{left} % restant",
   "23622878aeee86d9": "Comptes connectés",
   "d28c53157c8c0f5f": "{label} : {left} % restants sur {accounts} comptes",
   "ba03873d5356238b": "+{percent} % dans {duration} · {time}",
@@ -12110,6 +12090,14 @@
   "18fc8976ddb6783d": ", en échec",
   "10ae251c9435642b": ", terminé",
   "ef436cc0f1cee213": ", en cours",
+  "cd8fd5a47060164b": [
+    "Nouveau fil dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "2c3bb8ccf6c38078": "Ignorer l’avis de mise à jour du fournisseur",
   "3cef7762c22f5fb1": "Ignorer jusqu’au prochain changement de statut du fournisseur",
   "4824365e1c691aec": "Nouvelle discussion sans projet ({shortcut})",
@@ -12119,6 +12107,7 @@
   "9d9d32b401d2931a": "{count, plural, one {{count} processus de terminal en cours} other {{count} processus de terminal en cours}}",
   "ade06f6723949b39": "Une erreur s’est produite",
   "021fe65858278fe9": "Reporter le fil",
+  "7514746d2bd43a1c": "Titre du fil",
   "e7c18f33bc1326f7": "Configuration",
   "26375cafb52d0503": "Objectif",
   "ad78fae7d373cf21": "En cours",

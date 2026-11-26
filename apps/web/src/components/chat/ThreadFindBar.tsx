@@ -28,6 +28,7 @@ interface ThreadFindBarProps {
   readonly onNext: () => void;
   readonly onPrevious: () => void;
   readonly onClose: () => void;
+  readonly clearTitlebarControls?: boolean;
 }
 
 export const THREAD_FIND_BAR_RESERVED_HEIGHT = 36 + THREAD_DETAILS_CARD_GAP;
@@ -81,7 +82,10 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   return (
     <div
       data-thread-find-bar
-      className="absolute top-3 right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
+      className={cn(
+        "absolute right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none",
+        props.clearTitlebarControls ? "top-[var(--workspace-topbar-height)]" : "top-3",
+      )}
     >
       <InputGroup
         variant="popover"

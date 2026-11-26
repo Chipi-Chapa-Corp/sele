@@ -3360,27 +3360,6 @@
   ],
   "3dbc42464b2bfb20": "Fast y Ultrafast no están disponibles con esta conexión de ChatGPT. Usa un inicio de sesión existente de Codex CLI para las opciones de velocidad que admita tu cuenta.",
   "5c0eb4217bb673bd": "Usando el plan de ChatGPT",
-  "3e545d70d0c3535c": "Ruta de navegación del hilo",
-  "890c34762a621a66": "Abrir el hilo principal: {title}",
-  "7514746d2bd43a1c": "Título del hilo",
-  "ab42a6d2ab6073d9": "Acciones del hilo {title}",
-  "cd8fd5a47060164b": [
-    "Nuevo hilo en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "1c983a010570cdbb": [
-    "Iniciado por un agente en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " a través de un entorno vinculado."
-  ],
   "601807baf4e25b94": "Vista previa de {name}",
   "922a18febd2c86d7": "Vista previa de la imagen",
   "932e6e0577492ff3": "Audio no disponible",
@@ -3702,6 +3681,7 @@
   ],
   "000b0df227182d39": "Otra dirección…",
   "fd07b24350a7643f": "un entorno vinculado",
+  "3e545d70d0c3535c": "Ruta de navegación del hilo",
   "6bb5b1b35b2796ae": "En {label} a través de {via} · Trabajando",
   "a73b7ab25d6e9bdf": "En {label} a través de {via}",
   "009e2ca841fdc1ef": "este entorno",
@@ -4249,10 +4229,10 @@
   "7c1d4c58aeb9e1b3": "Contexto: {used} % usado",
   "4214d97447ddd9e9": "Contexto: {usedTokens} tokens usados",
   "66be4fb43249bbd2": "{used} de {max} tokens",
-  "ee3ae58c8b38a425": "{left} % restante",
   "ebb26f93fb83a71b": "{label}: {left} % restante",
   "1b16346722b65812": "Queda un {timeLeft}% de la ventana",
   "728c6cc1431e76c8": "Se restablece en {duration} · {time}",
+  "ee3ae58c8b38a425": "{left} % restante",
   "23622878aeee86d9": "Cuentas con sesión iniciada",
   "d28c53157c8c0f5f": "{label}: queda un {left} % entre {accounts} cuentas",
   "ba03873d5356238b": "+{percent} % en {duration} · {time}",
@@ -12105,6 +12085,14 @@
   "18fc8976ddb6783d": ", con errores",
   "10ae251c9435642b": ", terminado",
   "ef436cc0f1cee213": ", en curso",
+  "cd8fd5a47060164b": [
+    "Nuevo hilo en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "2c3bb8ccf6c38078": "Descartar aviso de actualización del proveedor",
   "3cef7762c22f5fb1": "Descartar hasta que cambie el estado del proveedor",
   "4824365e1c691aec": "Nuevo chat sin proyecto ({shortcut})",
@@ -12114,6 +12102,7 @@
   "9d9d32b401d2931a": "{count, plural, one {{count} proceso de terminal en ejecución} other {{count} procesos de terminal en ejecución}}",
   "ade06f6723949b39": "Se produjo un error",
   "021fe65858278fe9": "Posponer hilo",
+  "7514746d2bd43a1c": "Título del hilo",
   "e7c18f33bc1326f7": "Preparando",
   "26375cafb52d0503": "Objetivo",
   "ad78fae7d373cf21": "Trabajando",

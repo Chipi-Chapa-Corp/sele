@@ -65,7 +65,7 @@ with a `data:` address or an `#id`. This keeps an imported theme from sending wh
 to another site. For a full-size image, use a [background image](#background-image).
 
 Class names in the app change between releases. For rules that keep working, target `data-slot`
-and other `data-` attributes, such as `[data-chat-header]` or `[data-slot="button"]`.
+and other `data-` attributes, such as `[data-slot="sidebar"]` or `[data-slot="button"]`.
 
 If a rule hides something you need, run `t3 theme set t3-chat` on the server to switch to a
 built-in theme, or press **Cmd+Option+A** on macOS or **Ctrl+Alt+A** on Windows/Linux to pick
@@ -74,7 +74,7 @@ another theme.
 ### Ask an agent
 
 An agent on the same machine as the server can restyle T3 Code for you. Ask it to change the look,
-for example "make T3 Code's chat header taller" or "give T3 Code a solarized theme". It publishes
+for example "give T3 Code a solarized theme" or "round the user message bubbles". It publishes
 an [environment theme](#environment-themes) with colors and CSS, and web and desktop clients of that
 server switch to it. It can also switch them to light, dark, or system mode. The thread must run
 in Full access. Ask the agent to set a built-in theme to undo it.

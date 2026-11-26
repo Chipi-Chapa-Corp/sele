@@ -33,12 +33,19 @@ function ThreadFindProvider({
   );
 }
 
-export function ThreadFind({ onClose }: { onClose: () => void }) {
+export function ThreadFind({
+  onClose,
+  clearTitlebarControls = false,
+}: {
+  onClose: () => void;
+  clearTitlebarControls?: boolean;
+}) {
   const bar = use(ThreadFindBarContext);
   if (!bar) return null;
   return (
     <ThreadFindBar
       {...bar}
+      clearTitlebarControls={clearTitlebarControls}
       onClose={() => {
         bar.onClose();
         onClose();

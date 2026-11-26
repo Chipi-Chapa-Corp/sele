@@ -3360,27 +3360,6 @@
   ],
   "3dbc42464b2bfb20": "Snabb och Ultrasnabb är inte tillgängliga med den här ChatGPT-anslutningen. Använd en befintlig Codex CLI-inloggning för de hastighetsalternativ ditt konto stöder.",
   "5c0eb4217bb673bd": "Använder ChatGPT-abonnemang",
-  "3e545d70d0c3535c": "Trådens sökväg",
-  "890c34762a621a66": "Öppna överordnad tråd: {title}",
-  "7514746d2bd43a1c": "Trådtitel",
-  "ab42a6d2ab6073d9": "Trådåtgärder för {title}",
-  "cd8fd5a47060164b": [
-    "Ny tråd i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "1c983a010570cdbb": [
-    "Startad av en agent på ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " via en länkad miljö."
-  ],
   "601807baf4e25b94": "Förhandsvisa {name}",
   "922a18febd2c86d7": "Förhandsvisa bild",
   "932e6e0577492ff3": "Ljudet är inte tillgängligt",
@@ -3702,6 +3681,7 @@
   ],
   "000b0df227182d39": "En annan adress…",
   "fd07b24350a7643f": "en länkad miljö",
+  "3e545d70d0c3535c": "Trådens sökväg",
   "6bb5b1b35b2796ae": "På {label} via {via} · Arbetar",
   "a73b7ab25d6e9bdf": "På {label} via {via}",
   "009e2ca841fdc1ef": "den här miljön",
@@ -4250,10 +4230,10 @@
   "7c1d4c58aeb9e1b3": "Kontext: {used} % använt",
   "4214d97447ddd9e9": "Kontext: {usedTokens} token använda",
   "66be4fb43249bbd2": "{used} av {max} token",
-  "ee3ae58c8b38a425": "{left} % kvar",
   "ebb26f93fb83a71b": "{label}: {left} % kvar",
   "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "728c6cc1431e76c8": "Återställs om {duration} · {time}",
+  "ee3ae58c8b38a425": "{left} % kvar",
   "23622878aeee86d9": "Inloggade konton",
   "d28c53157c8c0f5f": "{label}: {left} % kvar över {accounts} konton",
   "ba03873d5356238b": "+{percent} % om {duration} · {time}",
@@ -12118,6 +12098,14 @@
   "18fc8976ddb6783d": ", misslyckades",
   "10ae251c9435642b": ", klar",
   "ef436cc0f1cee213": ", arbetar",
+  "cd8fd5a47060164b": [
+    "Ny tråd i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "2c3bb8ccf6c38078": "Stäng meddelandet om leverantörsuppdatering",
   "3cef7762c22f5fb1": "Stäng tills leverantörsstatusen ändras",
   "4824365e1c691aec": "Ny chatt utan projekt ({shortcut})",
@@ -12127,6 +12115,7 @@
   "9d9d32b401d2931a": "{count, plural, one {{count} terminalprocess körs} other {{count} terminalprocesser körs}}",
   "ade06f6723949b39": "Ett fel uppstod",
   "021fe65858278fe9": "Snooza tråd",
+  "7514746d2bd43a1c": "Trådtitel",
   "e7c18f33bc1326f7": "Konfigurerar",
   "26375cafb52d0503": "Mål",
   "ad78fae7d373cf21": "Arbetar",

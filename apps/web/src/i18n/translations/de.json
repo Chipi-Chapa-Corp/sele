@@ -3361,27 +3361,6 @@
   ],
   "3dbc42464b2bfb20": "Fast und Ultrafast sind mit dieser ChatGPT-Verbindung nicht verfügbar. Verwende ein vorhandenes Codex-CLI-Login für die Geschwindigkeitsoptionen, die dein Konto unterstützt.",
   "5c0eb4217bb673bd": "ChatGPT-Abo wird verwendet",
-  "3e545d70d0c3535c": "Thread-Pfad",
-  "890c34762a621a66": "Übergeordneten Thread öffnen: {title}",
-  "7514746d2bd43a1c": "Thread-Titel",
-  "ab42a6d2ab6073d9": "Thread-Aktionen für {title}",
-  "cd8fd5a47060164b": [
-    "Neuer Thread in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "1c983a010570cdbb": [
-    "Von einem Agenten auf ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " über eine verknüpfte Umgebung gestartet."
-  ],
   "601807baf4e25b94": "Vorschau von {name}",
   "922a18febd2c86d7": "Bildvorschau",
   "932e6e0577492ff3": "Audio nicht verfügbar",
@@ -3703,6 +3682,7 @@
   ],
   "000b0df227182d39": "Andere Adresse…",
   "fd07b24350a7643f": "einer verknüpften Umgebung",
+  "3e545d70d0c3535c": "Thread-Pfad",
   "6bb5b1b35b2796ae": "Auf {label} über {via} · Arbeitet",
   "a73b7ab25d6e9bdf": "Auf {label} über {via}",
   "009e2ca841fdc1ef": "diese Umgebung",
@@ -4252,10 +4232,10 @@
   "7c1d4c58aeb9e1b3": "Kontext: {used} % genutzt",
   "4214d97447ddd9e9": "Kontext: {usedTokens} Tokens genutzt",
   "66be4fb43249bbd2": "{used} von {max} Tokens",
-  "ee3ae58c8b38a425": "{left} % übrig",
   "ebb26f93fb83a71b": "{label}: {left} % übrig",
   "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "728c6cc1431e76c8": "Wird in {duration} zurückgesetzt · {time}",
+  "ee3ae58c8b38a425": "{left} % übrig",
   "23622878aeee86d9": "Angemeldete Konten",
   "d28c53157c8c0f5f": "{label}: {left} % übrig über {accounts} Konten",
   "ba03873d5356238b": "+{percent} % in {duration} · {time}",
@@ -12112,6 +12092,14 @@
   "18fc8976ddb6783d": ", fehlgeschlagen",
   "10ae251c9435642b": ", fertig",
   "ef436cc0f1cee213": ", arbeitet",
+  "cd8fd5a47060164b": [
+    "Neuer Thread in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "2c3bb8ccf6c38078": "Hinweis zum Anbieter-Update schließen",
   "3cef7762c22f5fb1": "Ausblenden, bis sich der Anbieterstatus ändert",
   "4824365e1c691aec": "Neuer Chat ohne Projekt ({shortcut})",
@@ -12121,6 +12109,7 @@
   "9d9d32b401d2931a": "{count, plural, one {{count} Terminal-Prozess läuft} other {{count} Terminal-Prozesse laufen}}",
   "ade06f6723949b39": "Fehler aufgetreten",
   "021fe65858278fe9": "Thread zurückstellen",
+  "7514746d2bd43a1c": "Thread-Titel",
   "e7c18f33bc1326f7": "Wird eingerichtet",
   "26375cafb52d0503": "Ziel",
   "ad78fae7d373cf21": "Arbeitet",

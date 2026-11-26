@@ -3360,27 +3360,6 @@
   ],
   "3dbc42464b2bfb20": "Fast e Ultrafast não estão disponíveis com esta conexão do ChatGPT. Use um login existente do Codex CLI para as opções de velocidade que sua conta permite.",
   "5c0eb4217bb673bd": "Usando o plano do ChatGPT",
-  "3e545d70d0c3535c": "Trilha da thread",
-  "890c34762a621a66": "Abrir a thread principal: {title}",
-  "7514746d2bd43a1c": "Título da thread",
-  "ab42a6d2ab6073d9": "Ações da thread {title}",
-  "cd8fd5a47060164b": [
-    "Nova thread em ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "1c983a010570cdbb": [
-    "Iniciada por um agente em ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " por meio de um ambiente vinculado."
-  ],
   "601807baf4e25b94": "Pré-visualizar {name}",
   "922a18febd2c86d7": "Pré-visualizar imagem",
   "932e6e0577492ff3": "Áudio indisponível",
@@ -3702,6 +3681,7 @@
   ],
   "000b0df227182d39": "Outro endereço…",
   "fd07b24350a7643f": "um ambiente vinculado",
+  "3e545d70d0c3535c": "Trilha da thread",
   "6bb5b1b35b2796ae": "Em {label} via {via} · Trabalhando",
   "a73b7ab25d6e9bdf": "Em {label} via {via}",
   "009e2ca841fdc1ef": "este ambiente",
@@ -4249,10 +4229,10 @@
   "7c1d4c58aeb9e1b3": "Contexto: {used}% usado",
   "4214d97447ddd9e9": "Contexto: {usedTokens} tokens usados",
   "66be4fb43249bbd2": "{used} de {max} tokens",
-  "ee3ae58c8b38a425": "{left}% restante",
   "ebb26f93fb83a71b": "{label}: {left}% restante",
   "1b16346722b65812": "{timeLeft}% da janela restante",
   "728c6cc1431e76c8": "Renova em {duration} · {time}",
+  "ee3ae58c8b38a425": "{left}% restante",
   "23622878aeee86d9": "Contas conectadas",
   "d28c53157c8c0f5f": "{label}: {left}% restante em {accounts} contas",
   "ba03873d5356238b": "+{percent}% em {duration} · {time}",
@@ -12110,6 +12090,14 @@
   "18fc8976ddb6783d": ", falhou",
   "10ae251c9435642b": ", pronto",
   "ef436cc0f1cee213": ", trabalhando",
+  "cd8fd5a47060164b": [
+    "Nova thread em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "2c3bb8ccf6c38078": "Dispensar aviso de atualização do provedor",
   "3cef7762c22f5fb1": "Dispensar até o status do provedor mudar",
   "4824365e1c691aec": "Novo chat sem projeto ({shortcut})",
@@ -12119,6 +12107,7 @@
   "9d9d32b401d2931a": "{count, plural, one {{count} processo de terminal em execução} other {{count} processos de terminal em execução}}",
   "ade06f6723949b39": "Ocorreu um erro",
   "021fe65858278fe9": "Adiar thread",
+  "7514746d2bd43a1c": "Título da thread",
   "e7c18f33bc1326f7": "Configurando",
   "26375cafb52d0503": "Meta",
   "ad78fae7d373cf21": "Trabalhando",

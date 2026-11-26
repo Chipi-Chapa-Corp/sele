@@ -185,7 +185,7 @@ function GuestShareDialog({
   );
 }
 
-/** Header status for a shared thread, with the way to end the share. */
+/** Banner status for a shared thread, with the way to end the share. */
 export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const share = useThreadGuestShare(threadRef);
   const closeGuestShare = useOrchestrationCommand(threadEnvironment.closeGuestShare, {
@@ -194,24 +194,26 @@ export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedT
   const [closing, setClosing] = useState(false);
   if (share === null) return null;
   return (
-    <div className="flex shrink-0 items-center gap-1 text-muted-foreground text-xs">
-      <UserIcon aria-hidden className="size-3.5" />
-      <GuestShareStatus share={share} />
-      <Button
-        size="xs"
-        variant="ghost-muted"
-        disabled={closing}
-        onClick={async () => {
-          setClosing(true);
-          await closeGuestShare({
-            environmentId: threadRef.environmentId,
-            input: { threadId: threadRef.threadId },
-          });
-          setClosing(false);
-        }}
-      >
-        <T>Stop sharing</T>
-      </Button>
+    <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
+      <div className="dropdown-glass flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-muted-foreground text-xs">
+        <UserIcon aria-hidden className="size-3.5" />
+        <GuestShareStatus share={share} />
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          disabled={closing}
+          onClick={async () => {
+            setClosing(true);
+            await closeGuestShare({
+              environmentId: threadRef.environmentId,
+              input: { threadId: threadRef.threadId },
+            });
+            setClosing(false);
+          }}
+        >
+          <T>Stop sharing</T>
+        </Button>
+      </div>
     </div>
   );
 }

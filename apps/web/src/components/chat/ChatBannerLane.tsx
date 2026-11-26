@@ -2,10 +2,12 @@ import type {
   EnvironmentId,
   OrchestrationV2ProviderFailureClass,
   ProviderInstanceId,
+  ScopedThreadRef,
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import type { Dispatch, SetStateAction } from "react";
+import { GuestShareIndicator } from "./GuestShareControls";
 import {
   dismissProviderStatusBannerForSession,
   ProviderStatusBanner,
@@ -18,6 +20,7 @@ import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadE
  */
 export function ChatBannerLane(props: {
   environmentId: EnvironmentId;
+  guestShareThreadRef?: ScopedThreadRef | null;
   providerStatus: ServerProvider | null;
   providerStatusDismissalKey: string | null;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
@@ -30,6 +33,7 @@ export function ChatBannerLane(props: {
   setThreadErrorBannerDismissTick: Dispatch<SetStateAction<number>>;
 }) {
   const {
+    guestShareThreadRef = null,
     providerStatus,
     providerStatusDismissalKey,
     onOpenProviderSetup,
@@ -43,6 +47,7 @@ export function ChatBannerLane(props: {
   } = props;
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
+      {guestShareThreadRef ? <GuestShareIndicator threadRef={guestShareThreadRef} /> : null}
       <ProviderStatusBanner
         environmentId={props.environmentId}
         status={providerStatus}

@@ -3360,27 +3360,6 @@
   ],
   "3dbc42464b2bfb20": "Fast and Ultrafast are unavailable with this ChatGPT connection. Use an existing Codex CLI login for speed options your account supports.",
   "5c0eb4217bb673bd": "Using ChatGPT plan",
-  "3e545d70d0c3535c": "Thread breadcrumb",
-  "890c34762a621a66": "Open parent thread: {title}",
-  "7514746d2bd43a1c": "Thread title",
-  "ab42a6d2ab6073d9": "Thread actions for {title}",
-  "cd8fd5a47060164b": [
-    "New thread in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "1c983a010570cdbb": [
-    "Started by an agent on ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " through a linked environment."
-  ],
   "601807baf4e25b94": "Preview {name}",
   "922a18febd2c86d7": "Preview image",
   "932e6e0577492ff3": "Audio unavailable",
@@ -3702,6 +3681,7 @@
   ],
   "000b0df227182d39": "Another address…",
   "fd07b24350a7643f": "a linked environment",
+  "3e545d70d0c3535c": "Thread breadcrumb",
   "6bb5b1b35b2796ae": "On {label} via {via} · Working",
   "a73b7ab25d6e9bdf": "On {label} via {via}",
   "009e2ca841fdc1ef": "this environment",
@@ -4251,10 +4231,10 @@
   "7c1d4c58aeb9e1b3": "Context: {used}% used",
   "4214d97447ddd9e9": "Context: {usedTokens} tokens used",
   "66be4fb43249bbd2": "{used} of {max} tokens",
-  "ee3ae58c8b38a425": "{left}% left",
   "ebb26f93fb83a71b": "{label}: {left}% left",
   "1b16346722b65812": "{timeLeft}% of the window left",
   "728c6cc1431e76c8": "Resets in {duration} · {time}",
+  "ee3ae58c8b38a425": "{left}% left",
   "23622878aeee86d9": "Signed-in accounts",
   "d28c53157c8c0f5f": "{label}: {left}% left across {accounts} accounts",
   "ba03873d5356238b": "+{percent}% in {duration} · {time}",
@@ -12120,6 +12100,14 @@
   "18fc8976ddb6783d": ", failed",
   "10ae251c9435642b": ", done",
   "ef436cc0f1cee213": ", working",
+  "cd8fd5a47060164b": [
+    "New thread in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "2c3bb8ccf6c38078": "Dismiss provider update notice",
   "3cef7762c22f5fb1": "Dismiss until provider status changes",
   "4824365e1c691aec": "New chat without project ({shortcut})",
@@ -12129,6 +12117,7 @@
   "9d9d32b401d2931a": "{count, plural, one {{count} terminal process running} other {{count} terminal processes running}}",
   "ade06f6723949b39": "Error occurred",
   "021fe65858278fe9": "Snooze thread",
+  "7514746d2bd43a1c": "Thread title",
   "e7c18f33bc1326f7": "Setting up",
   "26375cafb52d0503": "Goal",
   "ad78fae7d373cf21": "Working",

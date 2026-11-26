@@ -23,6 +23,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
+import { openCommandPalette } from "~/commandPaletteBus";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
@@ -610,7 +611,7 @@ it("a file picked after the phone composer collapses still attaches", async () =
   await expect.element(page.getByRole("img", { name: "picked.png" })).toBeVisible();
 });
 
-it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+it("renders chat without a project/thread header and keeps thread actions available for an older settled thread", async () => {
   const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -626,12 +627,23 @@ it("opens the thread actions menu for an older settled thread the shell leaves o
     // AppRoot brings its own router.
     router: false,
   });
-  await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
+  await expect
+    .element(page.getByText("older-settled: question 0"), { timeout: 5_000 })
+    .toBeVisible();
+  expect(document.querySelector("[data-chat-header]")).toBeNull();
+  await expect
+    .element(page.getByRole("navigation", { name: "Thread breadcrumb" }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("button", { name: "Toggle right panel", exact: true }), {
+      timeout: 5_000,
+    })
+    .toBeVisible();
 
-  await page.getByRole("button", { name: `Thread actions for ${thread.title}` }).click();
+  openCommandPalette({ query: "Pin thread" });
   // Without a bound the poll runs to the test deadline and reports a bare timeout.
   await expect
-    .element(page.getByRole("menuitem", { name: "Rename thread" }), { timeout: 5_000 })
+    .element(page.getByRole("option", { name: /Pin thread/ }), { timeout: 5_000 })
     .toBeVisible();
 });
 

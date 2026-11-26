@@ -764,7 +764,11 @@ function OpenCommandPaletteDialog(props: {
   );
   const currentProjectCwd = currentProject?.workspaceRoot ?? null;
   const currentThreadActionItems = useCommandPaletteThreadActions({
-    threadRef: activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+    threadRef: activeThread
+      ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+      : paletteRouteTarget?.kind === "server"
+        ? paletteRouteTarget.threadRef
+        : null,
     projectCwd: currentProjectCwd,
   });
   const currentProjectCwdForBrowse =

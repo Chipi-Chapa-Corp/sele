@@ -63,7 +63,6 @@ export const THEME_CSS_HOOKS = [
     selector: '[data-slot="project-monogram"]',
     styles: "project icon with letters; its svg holds the tile",
   },
-  { selector: "[data-chat-header]", styles: "chat header" },
   { selector: '[data-workspace-area="conversation"]', styles: "chat area, behind the messages" },
   { selector: ".messages-timeline-scroll", styles: "chat scroller" },
   { selector: "[data-timeline-row-kind]", styles: 'chat row, such as ="message" or ="work"' },
