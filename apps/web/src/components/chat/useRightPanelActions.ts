@@ -20,6 +20,7 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
+  selectSelectedRightPanelSurface,
   selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
@@ -243,7 +244,14 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       closePreviewPanel();
       return;
     }
-    useRightPanelStore.getState().toggleVisibility(activeThreadRef);
+    const store = useRightPanelStore.getState();
+    const selectedSurface = selectSelectedRightPanelSurface(store.byThreadKey, activeThreadRef);
+    if (selectedSurface === null && isServerThread && diffAvailable) {
+      store.open(activeThreadRef, "diff");
+      onDiffPanelOpen?.();
+      return;
+    }
+    store.toggleVisibility(activeThreadRef);
     focusActivePanelTerminal(activeThreadRef);
   };
   const toggleRightPanelStable = useStableCallback(toggleRightPanel);
