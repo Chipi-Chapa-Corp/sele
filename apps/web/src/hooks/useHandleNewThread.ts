@@ -6,6 +6,7 @@ import {
 import {
   DEFAULT_SERVER_SETTINGS,
   type ScopedProjectRef,
+  type ScopedThreadRef,
   type T3ProjectFile,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -60,6 +61,27 @@ import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { recallCheckoutIsRepo } from "../lib/checkoutRepoCache";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import { useRightPanelStore } from "../rightPanelStore";
+
+function openDefaultRightPanel(
+  threadRef: ScopedThreadRef,
+  project: EnvironmentProject | undefined,
+): void {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches
+  ) {
+    return;
+  }
+  const isKnownNonGit =
+    project !== undefined &&
+    (project.trackedFolders?.length ?? 0) === 0 &&
+    recallCheckoutIsRepo(project.environmentId, project.workspaceRoot) === false;
+  useRightPanelStore.getState().openDefault(threadRef, isKnownNonGit ? "files" : "diff");
+}
 
 export const LAST_USED_PROJECT_STORAGE_KEY = "t3code:last-used-project:v1";
 export const lastUsedProjectKeySchema = Schema.NullOr(Schema.String);
@@ -396,6 +418,10 @@ export function createNewThreadHandler(router: AnyRouter) {
         };
         seedPrompt(emptyStoredDraftThread.draftId);
         applyProjectFile?.(emptyStoredDraftThread.draftId);
+        openDefaultRightPanel(
+          scopeThreadRef(projectRef.environmentId, emptyStoredDraftThread.threadId),
+          project,
+        );
         const routeTargetAfterWrites = getCurrentRouteTarget();
         if (
           routeTargetAfterWrites?.kind === "draft" &&
@@ -464,6 +490,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       }
       seedPrompt(draftId);
       defaultEnvMode?.applyProjectFile(draftId);
+      openDefaultRightPanel(scopeThreadRef(projectRef.environmentId, threadId), project);
       await router.navigate({
         to: "/draft/$draftId",
         params: { draftId },

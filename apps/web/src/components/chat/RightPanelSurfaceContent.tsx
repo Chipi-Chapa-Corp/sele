@@ -69,6 +69,7 @@ export function RightPanelSurfaceContent(props: {
   /** The repository the diff's commit, push, and pull request actions run in. */
   readonly gitActionsCwd: string | null;
   readonly gitActionsName: string;
+  readonly diffWorktreePath?: string | null;
   readonly activeSurfaceId: string | null;
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
@@ -124,6 +125,9 @@ export function RightPanelSurfaceContent(props: {
             <DiffPanel
               key={scopedThreadKey(threadRef)}
               mode="embedded"
+              threadRef={threadRef}
+              projectId={props.files.projectId ?? null}
+              worktreePath={props.diffWorktreePath ?? null}
               composerDraftTarget={props.composerDraftTarget}
               workspaceMutationId={props.workspaceRevision}
               visible={visible}

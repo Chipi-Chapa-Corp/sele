@@ -183,6 +183,8 @@ interface RightPanelStoreState {
     expectedUserActionRevision: number,
     activateExisting?: boolean,
   ) => boolean;
+  /** Opens a default pane for a brand-new thread unless it already has panel state or user history. */
+  openDefault: (ref: ScopedThreadRef, kind: "diff" | "files") => void;
   open: (
     ref: ScopedThreadRef,
     kind: Exclude<
@@ -839,6 +841,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         });
         return opened;
       },
+      openDefault: (ref, kind) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(rightPanelHostRef(ref));
+          if (
+            threadKey in state.byThreadKey ||
+            (state.userActionRevisionByThreadKey[threadKey] ?? 0) > 0 ||
+            (state.closeRevisionByThreadKey[threadKey] ?? 0) > 0
+          ) {
+            return state;
+          }
+          return automaticUpdate(state, threadKey, (current) =>
+            upsertSurface(current, singletonSurface(kind)),
+          );
+        }),
       open: (ref, kind) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {

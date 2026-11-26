@@ -3457,6 +3457,7 @@ export default function ChatView(props: ChatViewProps) {
       surface={renderedRightPanelSurface}
       gitActionsCwd={isGitRepo && activeProject ? gitCwd : null}
       gitActionsName={activeProject?.title ?? ""}
+      diffWorktreePath={activeThreadWorktreePath}
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}
       environmentId={activeThread.environmentId}
@@ -4211,7 +4212,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
-          diffAvailable={isServerThread && diffAvailable}
+          diffAvailable={activeProject !== null && diffAvailable}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={linkedItemsSurfaceAvailable}

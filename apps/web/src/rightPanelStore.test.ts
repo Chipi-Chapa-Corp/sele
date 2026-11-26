@@ -41,6 +41,32 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("opens a default pane for a fresh thread without overriding user closes or existing tabs", () => {
+    const store = useRightPanelStore.getState();
+    store.openDefault(refA, "diff");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "diff",
+      surfaces: [{ id: "diff", kind: "diff" }],
+    });
+    expect(store.getUserActionRevision(refA)).toBe(0);
+
+    // Closing the default pane keeps it closed on subsequent openDefault calls.
+    store.close(refA);
+    store.openDefault(refA, "diff");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+    ).toBe(false);
+
+    // Closing the last tab prunes byThreadKey, yet openDefault still respects the close.
+    store.openDefault(refB, "diff");
+    store.closeSurface(refB, "diff");
+    store.openDefault(refB, "diff");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).isOpen,
+    ).toBe(false);
+  });
+
   it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {
     const store = useRightPanelStore.getState();
     const unhost = hostRightPanel(refB, refA);

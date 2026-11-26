@@ -3,6 +3,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import {
   CHECKPOINT_DIFF_TRUNCATED_MARKER,
+  type ProjectId,
   type ReviewBranchCommitsResult,
   type ScopedThreadRef,
   type RunId,
@@ -111,6 +112,9 @@ const NO_TURN_DIFF_SECTIONS: ReadonlyArray<TurnDiffSection> = [];
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
+  threadRef?: ScopedThreadRef | null;
+  projectId?: ProjectId | null;
+  worktreePath?: string | null;
   composerDraftTarget: ScopedThreadRef | DraftId;
   workspaceMutationId: string | null;
   visible: boolean;
@@ -118,6 +122,9 @@ interface DiffPanelProps {
 
 export default function DiffPanel({
   mode = "inline",
+  threadRef: threadRefProp = null,
+  projectId: projectIdProp = null,
+  worktreePath: worktreePathProp = null,
   composerDraftTarget,
   workspaceMutationId,
   visible,
@@ -147,34 +154,37 @@ export default function DiffPanel({
   const diffFileTreeRef = useRef<DiffFileTreeHandle>(null);
   const [allFoldersExpanded, setAllFoldersExpanded] = useState(true);
 
-  const routeThreadRef = useThreadRouteRef();
+  const routeThreadRef = useThreadRouteRef() ?? threadRefProp;
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useQuietThreadShell(routeThreadRef);
-  const fileAccess = useFilesystemReadAccess(activeThread?.environmentId ?? null, messages);
+  const activeEnvironmentId = activeThread?.environmentId ?? routeThreadRef?.environmentId ?? null;
+  const fileAccess = useFilesystemReadAccess(activeEnvironmentId, messages);
   const { canReadFiles } = fileAccess;
-  const activeProjectId = activeThread?.projectId ?? null;
+  const activeProjectId = activeThread?.projectId ?? projectIdProp;
   const activeProject = useProject(
-    activeThread && activeProjectId
+    activeEnvironmentId !== null && activeProjectId !== null
       ? {
-          environmentId: activeThread.environmentId,
+          environmentId: activeEnvironmentId,
           projectId: activeProjectId,
         }
       : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const onFileContextMenu = useFileContextMenuHandler(activeThread?.environmentId ?? null);
+  const threadWorktreePath = activeThread?.worktreePath ?? worktreePathProp;
+  const hasActiveContext = activeEnvironmentId !== null && activeProjectId !== null;
+  const activeCwd = threadWorktreePath ?? activeProject?.workspaceRoot;
+  const onFileContextMenu = useFileContextMenuHandler(activeEnvironmentId);
   const getDiffFileContents = useAtomCommand(reviewEnvironment.diffFileContents);
   const gitStatusQuery = useEnvironmentQuery(
-    activeThread !== null && activeThread !== undefined && activeCwd != null
+    activeEnvironmentId !== null && activeCwd != null
       ? vcsEnvironment.status({
-          environmentId: activeThread.environmentId,
+          environmentId: activeEnvironmentId,
           input: { cwd: activeCwd },
         })
       : null,
   );
   const activeRepositoryRoot =
     gitStatusQuery.data?.workingTree.rootPath ??
-    (activeThread?.worktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
+    (threadWorktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const storedDiffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
@@ -183,21 +193,24 @@ export default function DiffPanel({
   // A plain folder has no history of its own, so it starts on the latest one changed.
   const repositoryStructure = useQuietThreadProjection(routeThreadRef);
   const tracksFolders = (activeProject?.trackedFolders?.length ?? 0) > 0;
-  const threadWorktreePath = activeThread?.worktreePath ?? null;
   // Unchanged repositories are listed too: work done outside a turn only shows in these scopes.
   const taskFolderQuery = useEnvironmentQuery(
-    visible && tracksFolders && activeThread != null && threadWorktreePath !== null
+    visible && tracksFolders && activeEnvironmentId !== null && threadWorktreePath !== null
       ? filesystemEnvironment.taskFolder({
-          environmentId: activeThread.environmentId,
+          environmentId: activeEnvironmentId,
           input: { worktreePath: threadWorktreePath },
         })
       : null,
   );
   const projectFoldersQuery = useEnvironmentQuery(
-    visible && tracksFolders && activeThread != null && threadWorktreePath === null
+    visible &&
+      tracksFolders &&
+      activeEnvironmentId !== null &&
+      activeProjectId !== null &&
+      threadWorktreePath === null
       ? filesystemEnvironment.listFolders({
-          environmentId: activeThread.environmentId,
-          input: { projectId: activeThread.projectId },
+          environmentId: activeEnvironmentId,
+          input: { projectId: activeProjectId },
         })
       : null,
   );
@@ -316,7 +329,7 @@ export default function DiffPanel({
     { enabled: (isGitRepo || hasRepositoryChanges) && selectedTurn !== undefined },
   );
   const branchDiffPreviewInput =
-    canReadFiles && isGitSelection && activeThread && gitCwd
+    canReadFiles && isGitSelection && activeEnvironmentId !== null && gitCwd
       ? {
           cwd: gitCwd,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
@@ -333,14 +346,15 @@ export default function DiffPanel({
             : {}),
         }
       : undefined;
-  const canRefreshGitDiff = isGitRepo && isGitSelection && activeThread != null && gitCwd != null;
+  const canRefreshGitDiff =
+    isGitRepo && isGitSelection && activeEnvironmentId !== null && gitCwd != null;
   // Read under the workspace mutation id, so each mutation refetches the diff; the panel stays
   // mounted while hidden, so a mutation made then is already reflected when it shows.
   const branchDiffPreviewAtom =
-    branchDiffPreviewInput && activeThread
+    branchDiffPreviewInput && activeEnvironmentId !== null
       ? revisionedQuery(
           reviewEnvironment.diffPreview({
-            environmentId: activeThread.environmentId,
+            environmentId: activeEnvironmentId,
             input: branchDiffPreviewInput,
           }),
           canRefreshGitDiff ? workspaceMutationId : undefined,
@@ -349,9 +363,9 @@ export default function DiffPanel({
   const branchDiffPreview = useEnvironmentQuery(branchDiffPreviewAtom, messages);
   const branchDiffPreviewIsPending = useEnvironmentQueryRefresh(branchDiffPreviewAtom).isPending;
   const branchCommitsQuery = useEnvironmentQuery(
-    visible && isGitRepo && canReadFiles && activeThread && gitCwd
+    visible && isGitRepo && canReadFiles && activeEnvironmentId !== null && gitCwd
       ? reviewEnvironment.branchCommits({
-          environmentId: activeThread.environmentId,
+          environmentId: activeEnvironmentId,
           input: {
             cwd: gitCwd,
             ...(rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
@@ -516,9 +530,9 @@ export default function DiffPanel({
         )
       : null;
   const currentLoadDiffFiles =
-    isGitSelection && activeThread && preview && selectedGitSource && canReadFiles
+    isGitSelection && activeEnvironmentId !== null && preview && selectedGitSource && canReadFiles
       ? createGitDiffFileContentsLoader(getDiffFileContents, {
-          environmentId: activeThread.environmentId,
+          environmentId: activeEnvironmentId,
           cwd: preview.cwd,
           sourceKind: selectedGitSource.kind,
           baseRef: selectedGitSource.baseRef,
@@ -535,9 +549,9 @@ export default function DiffPanel({
   const canSelectBranchBase = canReadFiles && canRefreshGitDiff && selectedGitScope === "branch";
   const branchRefsCwd = branchDiffPreview.data?.cwd ?? gitCwd;
   const localBranchRefs = useEnvironmentQuery(
-    canSelectBranchBase && activeThread && branchRefsCwd
+    canSelectBranchBase && activeEnvironmentId !== null && branchRefsCwd
       ? vcsEnvironment.listRefs({
-          environmentId: activeThread.environmentId,
+          environmentId: activeEnvironmentId,
           input: {
             cwd: branchRefsCwd,
             includeMatchingRemoteRefs: true,
@@ -549,9 +563,9 @@ export default function DiffPanel({
       : null,
   );
   const remoteBranchRefs = useEnvironmentQuery(
-    canSelectBranchBase && activeThread && branchRefsCwd
+    canSelectBranchBase && activeEnvironmentId !== null && branchRefsCwd
       ? vcsEnvironment.listRefs({
-          environmentId: activeThread.environmentId,
+          environmentId: activeEnvironmentId,
           input: {
             cwd: branchRefsCwd,
             includeMatchingRemoteRefs: true,
@@ -584,7 +598,7 @@ export default function DiffPanel({
     requestFile,
     renderableFiles,
   } = useReviewFilePatches({
-    environmentId: activeThread?.environmentId,
+    environmentId: activeEnvironmentId ?? undefined,
     cwd: branchDiffPreview.data?.cwd,
     source: lazySource,
     baseRef:
@@ -717,13 +731,13 @@ export default function DiffPanel({
     onFileContextMenu(
       repositoryFile?.cwd === undefined
         ? {
-            environmentId: activeThread?.environmentId ?? null,
+            environmentId: activeEnvironmentId,
             filePath,
             workspaceRoot: activeCwd,
             repositoryRoot: repositoryFile ? undefined : diffPathRepositoryRoot,
           }
         : {
-            environmentId: activeThread?.environmentId ?? null,
+            environmentId: activeEnvironmentId,
             filePath: repositoryFile.path,
             workspaceRoot: repositoryFile.cwd,
           },
@@ -1328,7 +1342,7 @@ export default function DiffPanel({
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
-      {!activeThread ? (
+      {!hasActiveContext ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           <T>Select a thread to inspect turn diffs.</T>
         </div>
@@ -1515,8 +1529,8 @@ export default function DiffPanel({
               fileStat={activePopupFileStat}
               fileState={activePopupFileState}
               isLoading={isLoadingSelectedPatch || activePopupFileIsPending}
-              environmentId={activeThread?.environmentId}
-              projectId={activeThread?.projectId}
+              environmentId={activeEnvironmentId ?? undefined}
+              projectId={activeProjectId ?? undefined}
               workspaceRoot={activeCwd}
               sectionId={reviewSectionId}
               sectionTitle={reviewSectionTitle}

@@ -103,7 +103,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
 
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const onToggleDiff = () => {
-    if (!isServerThread) {
+    if (!activeProject || !diffAvailable) {
       return;
     }
     if (!diffOpen) {
@@ -143,7 +143,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const duplicateBrowserSurfaceStable = useStableCallback(duplicateBrowserSurface);
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
   const addDiffSurface = () => {
-    if (!activeThreadRef || !isServerThread || !diffAvailable) return;
+    if (!activeThreadRef || !activeProject || !diffAvailable) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
@@ -246,7 +246,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
     const store = useRightPanelStore.getState();
     const selectedSurface = selectSelectedRightPanelSurface(store.byThreadKey, activeThreadRef);
-    if (selectedSurface === null && isServerThread && diffAvailable) {
+    if (selectedSurface === null && activeProject !== null && diffAvailable) {
       store.open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
       return;

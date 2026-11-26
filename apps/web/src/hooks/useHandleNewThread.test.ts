@@ -154,13 +154,17 @@ vi.mock("@effect/atom-react", () => ({
       ? { newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin }
       : testServerConfigs(),
 }));
-vi.mock("@t3tools/client-runtime/environment", () => ({
+vi.mock("@t3tools/client-runtime/environment", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/environment")>()),
   scopedProjectKey: (ref: { environmentId: string; projectId: string }) =>
     `${ref.environmentId}:${ref.projectId}`,
+  scopedThreadKey: (ref: { environmentId: string; threadId: string }) =>
+    `${ref.environmentId}:${ref.threadId}`,
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
-vi.mock("@t3tools/contracts", () => ({
+vi.mock("@t3tools/contracts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/contracts")>()),
   DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
 }));
@@ -266,6 +270,8 @@ import {
   resolveDefaultProjectRef,
   useNewThreadHandler,
 } from "./useHandleNewThread";
+import { rememberCheckoutIsRepo } from "../lib/checkoutRepoCache";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 
 describe.each([
   ["new", null],
@@ -390,6 +396,114 @@ describe("useNewThreadHandler", () => {
 
     expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
     expect(testState.router.navigate).toHaveBeenCalledOnce();
+  });
+
+  it("opens the right sidebar to the git pane by default in new chats without reopening closed drafts", async () => {
+    useRightPanelStore.setState({
+      byThreadKey: {},
+      threadPanelVisibilityByThreadKey: {},
+      userActionRevisionByThreadKey: {},
+      closeRevisionByThreadKey: {},
+    });
+    testState.reset(null);
+
+    const opened = await useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    const threadRef = {
+      environmentId: "environment-ssh" as EnvironmentId,
+      threadId: opened!.threadId,
+    };
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
+    ).toEqual({
+      isOpen: true,
+      activeSurfaceId: "diff",
+      surfaces: [{ id: "diff", kind: "diff" }],
+    });
+
+    useRightPanelStore.getState().close(threadRef);
+    testState.reset({
+      draftId: opened!.draftId,
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: opened!.threadId,
+    });
+    await useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).isOpen,
+    ).toBe(false);
+  });
+
+  it("opens the files pane by default for a known non-git project", async () => {
+    useRightPanelStore.setState({
+      byThreadKey: {},
+      threadPanelVisibilityByThreadKey: {},
+      userActionRevisionByThreadKey: {},
+      closeRevisionByThreadKey: {},
+    });
+    testState.reset(null);
+    rememberCheckoutIsRepo("environment-ssh" as EnvironmentId, "/remote/project", false);
+    try {
+      const opened = await useNewThreadHandler()({
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never);
+      const threadRef = {
+        environmentId: "environment-ssh" as EnvironmentId,
+        threadId: opened!.threadId,
+      };
+
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
+      ).toEqual({
+        isOpen: true,
+        activeSurfaceId: "files",
+        surfaces: [{ id: "files", kind: "files" }],
+      });
+    } finally {
+      rememberCheckoutIsRepo("environment-ssh" as EnvironmentId, "/remote/project", true);
+    }
+  });
+
+  it("does not auto-open the right sidebar on narrow sheet viewports", async () => {
+    useRightPanelStore.setState({
+      byThreadKey: {},
+      threadPanelVisibilityByThreadKey: {},
+      userActionRevisionByThreadKey: {},
+      closeRevisionByThreadKey: {},
+    });
+    testState.reset(null);
+    const originalWindow = globalThis.window;
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: true }),
+    });
+    try {
+      const opened = await useNewThreadHandler()({
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never);
+      const threadRef = {
+        environmentId: "environment-ssh" as EnvironmentId,
+        threadId: opened!.threadId,
+      };
+
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).isOpen,
+      ).toBe(false);
+    } finally {
+      if (originalWindow === undefined) {
+        vi.unstubAllGlobals();
+      } else {
+        vi.stubGlobal("window", originalWindow);
+      }
+    }
   });
 });
 

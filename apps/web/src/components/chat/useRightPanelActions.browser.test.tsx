@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { ThreadPreviewState } from "../../previewStateStore";
@@ -35,7 +35,12 @@ async function mountActions(overrides: Partial<Parameters<typeof useRightPanelAc
   const Harness = () => {
     actions = useRightPanelActions({
       activeThreadRef: THREAD_REF,
-      activeProject: null,
+      activeProject: {
+        environmentId: THREAD_REF.environmentId,
+        id: ProjectId.make("project-1"),
+        title: "Repo",
+        workspaceRoot: "/repo",
+      } as unknown as Parameters<typeof useRightPanelActions>[0]["activeProject"],
       activeRightPanelSurface: null,
       activePreviewState: EMPTY_PREVIEW_STATE,
       deviceState: {
