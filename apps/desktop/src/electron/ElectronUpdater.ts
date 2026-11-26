@@ -1,10 +1,33 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import * as Electron from "electron";
 import { AppImageUpdater, autoUpdater } from "electron-updater";
+
+import {
+  checkFlatpakUpdate,
+  downloadFlatpakUpdate,
+  isFlatpakRuntime,
+  relaunchFlatpakAndQuit,
+  type FlatpakUpdateTarget,
+} from "../updates/flatpakAppUpdate.ts";
+import {
+  checkMacUpdate,
+  downloadAndStageMacUpdate,
+  installStagedMacUpdate,
+  readMacUpdateResult,
+  type MacUpdate,
+  type StagedMacUpdate,
+} from "../updates/macAppUpdate.ts";
+import { DEFAULT_RELEASE_OWNER, DEFAULT_RELEASE_REPO } from "../updates/platformRelease.ts";
 
 type AutoUpdater = typeof autoUpdater;
 type SpawnLog = (cmd: string, args?: Array<string>, ...rest: Array<unknown>) => Promise<boolean>;
@@ -100,10 +123,43 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
+function readGitHubRepoFromAppUpdateYml(): { readonly owner: string; readonly repo: string } {
+  try {
+    const raw = NodeFS.readFileSync(NodePath.join(process.resourcesPath, "app-update.yml"), "utf8");
+    const owner = /^owner:\s*(.+)$/m.exec(raw)?.[1]?.trim();
+    const repo = /^repo:\s*(.+)$/m.exec(raw)?.[1]?.trim();
+    if (owner && repo) return { owner, repo };
+  } catch {
+    // Fall back to default Sele repository.
+  }
+  return { owner: DEFAULT_RELEASE_OWNER, repo: DEFAULT_RELEASE_REPO };
+}
+
+const customEvents = new NodeEvents.EventEmitter();
+let customFeedOverride = false;
+let macCleanupDone = false;
+let pendingMacUpdate: MacUpdate | null = null;
+let stagedMacUpdate: StagedMacUpdate | null = null;
+let pendingFlatpakUpdate: FlatpakUpdateTarget | null = null;
+let downloadedFlatpakUpdate: FlatpakUpdateTarget | null = null;
+
+function useUnsignedMacUpdater(): boolean {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Imperative Electron autoUpdater adapter outside Effect.
+  return !customFeedOverride && process.platform === "darwin" && Electron.app?.isPackaged === true;
+}
+
+function useFlatpakUpdater(): boolean {
+  return !customFeedOverride && Electron.app?.isPackaged === true && isFlatpakRuntime();
+}
+
 /** @public */
 export const make = ElectronUpdater.of({
   setFeedURL: Effect.fn("ElectronUpdater.setFeedURL")(function (options) {
     return Effect.suspend(() => {
+      customFeedOverride =
+        typeof options === "object" && options !== null && "provider" in options
+          ? options.provider !== "github"
+          : true;
       autoUpdater.setFeedURL(options);
       return Effect.void;
     });
@@ -155,6 +211,68 @@ export const make = ElectronUpdater.of({
   ),
   checkForUpdates: Effect.suspend(() => {
     const channel = autoUpdater.channel;
+    if (useUnsignedMacUpdater()) {
+      return Effect.tryPromise({
+        try: async () => {
+          if (!macCleanupDone) {
+            macCleanupDone = true;
+            await readMacUpdateResult(Electron.app.getPath("userData")).catch(() => undefined);
+          }
+          customEvents.emit("checking-for-update");
+          const { owner, repo } = readGitHubRepoFromAppUpdateYml();
+          const arch =
+            // oxlint-disable-next-line t3code/no-global-process-runtime -- Imperative Electron autoUpdater adapter outside Effect.
+            Electron.app.runningUnderARM64Translation === true ? "arm64" : process.arch;
+          const update = await checkMacUpdate({
+            current: Electron.app.getVersion(),
+            arch,
+            owner,
+            repo,
+            allowPrerelease: autoUpdater.allowPrerelease,
+            allowDowngrade: autoUpdater.allowDowngrade,
+          });
+          pendingMacUpdate = update;
+          if (update) {
+            customEvents.emit("update-available", {
+              version: update.version,
+              releaseNotes: update.releaseNotes,
+              releaseName: update.releaseName ?? null,
+              releaseDate: update.releaseDate,
+            });
+          } else {
+            customEvents.emit("update-not-available");
+          }
+        },
+        catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
+      });
+    }
+    if (useFlatpakUpdater()) {
+      return Effect.tryPromise({
+        try: async () => {
+          customEvents.emit("checking-for-update");
+          const { owner, repo } = readGitHubRepoFromAppUpdateYml();
+          const target = await checkFlatpakUpdate({
+            current: Electron.app.getVersion(),
+            owner,
+            repo,
+            allowPrerelease: autoUpdater.allowPrerelease,
+            allowDowngrade: autoUpdater.allowDowngrade,
+          });
+          pendingFlatpakUpdate = target;
+          if (target) {
+            customEvents.emit("update-available", {
+              version: target.version,
+              releaseNotes: target.releaseNotes,
+              releaseName: target.releaseName ?? null,
+              releaseDate: target.releaseDate,
+            });
+          } else {
+            customEvents.emit("update-not-available");
+          }
+        },
+        catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
+      });
+    }
     return Effect.tryPromise({
       try: () => autoUpdater.checkForUpdates(),
       catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
@@ -162,6 +280,45 @@ export const make = ElectronUpdater.of({
   }),
   downloadUpdate: Effect.suspend(() => {
     const channel = autoUpdater.channel;
+    if (useUnsignedMacUpdater()) {
+      return Effect.tryPromise({
+        try: async () => {
+          const update = pendingMacUpdate;
+          if (!update) {
+            throw new Error("No macOS update is currently selected.");
+          }
+          const staged = await downloadAndStageMacUpdate({
+            update,
+            userData: Electron.app.getPath("userData"),
+            progress: (percent) => {
+              customEvents.emit("download-progress", { percent });
+            },
+          });
+          stagedMacUpdate = staged;
+          customEvents.emit("update-downloaded", {
+            version: staged.update.version,
+            downloadedFile: staged.archive,
+          });
+        },
+        catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
+      });
+    }
+    if (useFlatpakUpdater()) {
+      return Effect.tryPromise({
+        try: async () => {
+          const target = pendingFlatpakUpdate;
+          if (!target) {
+            throw new Error("No Flatpak update is currently selected.");
+          }
+          customEvents.emit("download-progress", { percent: 10 });
+          await downloadFlatpakUpdate(target);
+          downloadedFlatpakUpdate = target;
+          customEvents.emit("download-progress", { percent: 100 });
+          customEvents.emit("update-downloaded", { version: target.version });
+        },
+        catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
+      });
+    }
     return Effect.tryPromise({
       try: () => autoUpdater.downloadUpdate(),
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
@@ -173,6 +330,47 @@ export const make = ElectronUpdater.of({
   }) {
     return Effect.suspend(() => {
       const channel = autoUpdater.channel;
+      if (useUnsignedMacUpdater()) {
+        return Effect.tryPromise({
+          try: async () => {
+            const staged = stagedMacUpdate;
+            if (!staged) {
+              throw new Error("No downloaded macOS update is ready to install.");
+            }
+            await installStagedMacUpdate({
+              staged,
+              executable: Electron.app.getPath("exe"),
+              userData: Electron.app.getPath("userData"),
+              quit: () => Electron.app.quit(),
+            });
+          },
+          catch: (cause) =>
+            new ElectronUpdaterQuitAndInstallError({
+              channel,
+              isSilent,
+              isForceRunAfter,
+              cause,
+            }),
+        });
+      }
+      if (useFlatpakUpdater()) {
+        return Effect.tryPromise({
+          try: async () => {
+            const target = downloadedFlatpakUpdate;
+            if (!target) {
+              throw new Error("No downloaded Flatpak update is ready to install.");
+            }
+            await relaunchFlatpakAndQuit(target, () => Electron.app.quit());
+          },
+          catch: (cause) =>
+            new ElectronUpdaterQuitAndInstallError({
+              channel,
+              isSilent,
+              isForceRunAfter,
+              cause,
+            }),
+        });
+      }
       if (autoUpdater instanceof AppImageUpdater) relaunchWithoutInheritedDescriptors(autoUpdater);
       return Effect.try({
         try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
@@ -195,10 +393,12 @@ export const make = ElectronUpdater.of({
     return Effect.acquireRelease(
       Effect.sync(() => {
         eventTarget.on(eventName, untypedListener);
+        customEvents.on(eventName, untypedListener);
       }),
       () =>
         Effect.sync(() => {
           eventTarget.removeListener(eventName, untypedListener);
+          customEvents.removeListener(eventName, untypedListener);
         }),
     ).pipe(Effect.asVoid);
   }),

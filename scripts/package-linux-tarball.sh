@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly app_dir="${1:-release/linux-unpacked}"
+readonly archive_path="${2:-release/sele-linux-x64.tar.gz}"
+
+if [[ ! -x "$app_dir/sele" || ! -f "$app_dir/resources/app.asar" ]]; then
+  echo "Unpacked Sele executable or resources missing: $app_dir" >&2
+  exit 1
+fi
+
+if command -v pigz >/dev/null 2>&1; then
+  tar -I 'pigz -6' -cf "$archive_path" -C "$app_dir" .
+else
+  tar -czf "$archive_path" -C "$app_dir" .
+fi

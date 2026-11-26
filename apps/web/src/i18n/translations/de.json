@@ -2198,9 +2198,9 @@
   "0bafdf01b3799538": "Committen",
   "88b4d905ceab8dd2": "Stern wird vergeben…",
   "a3b65ac8567c151f": "Danke für den Stern!",
-  "eaaab38a83bf32cf": "Das hilft T3 Code wirklich beim Wachsen.",
+  "c35f4c09f2046b9c": "Das hilft Sele wirklich beim Wachsen.",
   "627b9319f42ac2d5": "GitHub öffnen",
-  "a76da92cec318964": "Gefällt dir T3 Code?",
+  "4c21208d71c5e250": "Gefällt dir Sele?",
   "7ffe3705e7b0ed0b": "Gib uns einen Stern auf GitHub und lass es uns wissen!",
   "4c58cf06d9a4496c": "Stern auf GitHub",
   "5bbf199afe39d5e1": "Verwerfen",
@@ -2298,14 +2298,6 @@
   "646d14d91f80cf0d": "Skriptaktionen",
   "b22530317530f650": "Projektaktionen",
   "8b4c89c1e1343190": "Projektaktion wählen",
-  "4d1b505668527740": [
-    "Aus ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "572b504c2a4fb41c": [
     {
       "i": 1,
@@ -2722,8 +2714,8 @@
   "78a04e0e625c0990": "Update fehlgeschlagen",
   "c24de5eb69373a55": "Dieser {build}-Build ignoriert {track}-Releases. Prüfe den Update-Kanal in den Einstellungen, um den Wechsel abzuschließen.",
   "b02ae45a6109c93b": "Auf dem neuesten Stand",
-  "edcda9e8ee4ccad8": "Update {version} installieren und T3 Code neu starten?\n\nLaufende Aufgaben werden unterbrochen. Stelle sicher, dass du bereit bist, bevor du fortfährst.",
-  "02eba0f7cc90f759": "Update installieren und T3 Code neu starten?\n\nLaufende Aufgaben werden unterbrochen. Stelle sicher, dass du bereit bist, bevor du fortfährst.",
+  "38a5336640186ca3": "Update {version} installieren und Sele neu starten?\n\nLaufende Aufgaben werden unterbrochen. Stelle sicher, dass du bereit bist, bevor du fortfährst.",
+  "bd8c6b05af321600": "Update installieren und Sele neu starten?\n\nLaufende Aufgaben werden unterbrochen. Stelle sicher, dass du bereit bist, bevor du fortfährst.",
   "9ed4d8a1531b9631": "Automatische Updates sind in diesem Build nicht verfügbar.",
   "c8c23435e780a60c": "Updates nicht verfügbar",
   "1af5f9767371ffd7": "Nach Updates suchen",

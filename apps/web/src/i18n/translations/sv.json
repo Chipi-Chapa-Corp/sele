@@ -2198,9 +2198,9 @@
   "0bafdf01b3799538": "Committa",
   "88b4d905ceab8dd2": "Stjärnmärker…",
   "a3b65ac8567c151f": "Tack för stjärnan!",
-  "eaaab38a83bf32cf": "Det hjälper verkligen T3 Code att växa.",
+  "c35f4c09f2046b9c": "Det hjälper verkligen Sele att växa.",
   "627b9319f42ac2d5": "Öppna GitHub",
-  "a76da92cec318964": "Gillar du T3 Code?",
+  "4c21208d71c5e250": "Gillar du Sele?",
   "7ffe3705e7b0ed0b": "Ge oss en stjärna på GitHub och berätta det!",
   "4c58cf06d9a4496c": "Stjärnmärk på GitHub",
   "5bbf199afe39d5e1": "Stäng",
@@ -2298,14 +2298,6 @@
   "646d14d91f80cf0d": "Skriptåtgärder",
   "b22530317530f650": "Projektåtgärder",
   "8b4c89c1e1343190": "Välj projektåtgärd",
-  "4d1b505668527740": [
-    "Från ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "572b504c2a4fb41c": [
     "Kör ",
     {
@@ -2721,8 +2713,8 @@
   "78a04e0e625c0990": "Uppdateringen misslyckades",
   "c24de5eb69373a55": "Den här {build}-versionen ignorerar {track}-versioner. Granska uppdateringsspåret i Inställningar för att slutföra bytet.",
   "b02ae45a6109c93b": "Uppdaterad",
-  "edcda9e8ee4ccad8": "Installera uppdateringen {version} och starta om T3 Code?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
-  "02eba0f7cc90f759": "Installera uppdateringen och starta om T3 Code?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
+  "38a5336640186ca3": "Installera uppdateringen {version} och starta om Sele?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
+  "bd8c6b05af321600": "Installera uppdateringen och starta om Sele?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
   "9ed4d8a1531b9631": "Automatiska uppdateringar är inte tillgängliga i den här versionen.",
   "c8c23435e780a60c": "Uppdateringar är inte tillgängliga",
   "1af5f9767371ffd7": "Sök efter uppdateringar",

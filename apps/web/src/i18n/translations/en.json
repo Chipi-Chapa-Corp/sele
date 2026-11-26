@@ -2198,9 +2198,9 @@
   "0bafdf01b3799538": "Commit",
   "88b4d905ceab8dd2": "Starring…",
   "a3b65ac8567c151f": "Thanks for the star!",
-  "eaaab38a83bf32cf": "It really helps T3 Code grow.",
+  "c35f4c09f2046b9c": "It really helps Sele grow.",
   "627b9319f42ac2d5": "Open GitHub",
-  "a76da92cec318964": "Enjoying T3 Code?",
+  "4c21208d71c5e250": "Enjoying Sele?",
   "7ffe3705e7b0ed0b": "Give us a star on GitHub to let us know!",
   "4c58cf06d9a4496c": "Star on GitHub",
   "5bbf199afe39d5e1": "Dismiss",
@@ -2298,14 +2298,6 @@
   "646d14d91f80cf0d": "Script actions",
   "b22530317530f650": "Project actions",
   "8b4c89c1e1343190": "Choose project action",
-  "4d1b505668527740": [
-    "From ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "572b504c2a4fb41c": [
     "Run ",
     {
@@ -2721,8 +2713,8 @@
   "78a04e0e625c0990": "Update failed",
   "c24de5eb69373a55": "This {build} build ignores {track} releases. Review the update track in Settings to finish the switch.",
   "b02ae45a6109c93b": "Up to date",
-  "edcda9e8ee4ccad8": "Install update {version} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
-  "02eba0f7cc90f759": "Install update and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
+  "38a5336640186ca3": "Install update {version} and restart Sele?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
+  "bd8c6b05af321600": "Install update and restart Sele?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
   "9ed4d8a1531b9631": "Automatic updates are not available in this build.",
   "c8c23435e780a60c": "Updates unavailable",
   "1af5f9767371ffd7": "Check for updates",

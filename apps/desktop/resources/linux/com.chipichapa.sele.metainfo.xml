@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.chipichapa.sele</id>
+  <name>Sele</name>
+  <summary>Desktop workspace for AI coding agents</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="com.chipichapa">
+    <name>Chipi Chapa Corp</name>
+  </developer>
+
+  <description>
+    <p>
+      Sele is an unofficial fork of T3 Code for working with AI coding agents
+      across local and remote projects. It brings conversations, diffs, file
+      browsing, and terminal sessions together in one focused workspace.
+    </p>
+    <p>
+      The Flatpak uses host command execution and filesystem access so that
+      coding agent CLIs, Git, shells, and developer tools installed on your
+      computer remain available to Sele and its agents.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">com.chipichapa.sele.desktop</launchable>
+  <provides>
+    <binary>sele</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/Chipi-Chapa-Corp/sele</url>
+  <url type="bugtracker">https://github.com/Chipi-Chapa-Corp/sele/issues</url>
+  <url type="vcs-browser">https://github.com/Chipi-Chapa-Corp/sele</url>
+
+  <categories>
+    <category>Development</category>
+  </categories>
+  <keywords>
+    <keyword>AI</keyword>
+    <keyword>Codex</keyword>
+    <keyword>Claude</keyword>
+    <keyword>developer</keyword>
+    <keyword>terminal</keyword>
+  </keywords>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="4.0.0" date="2026-11-26">
+      <description>
+        <p>Rebuilt Sele on top of the open-source T3 Code architecture with multi-agent orchestration, worktree diffs, terminal tabs, remote access, and cross-platform auto-updates.</p>
+      </description>
+    </release>
+  </releases>
+</component>

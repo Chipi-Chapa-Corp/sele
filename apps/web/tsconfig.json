@@ -35,7 +35,6 @@
     "vercel.ts",
     "gt.config.json",
     "test",
-    "scripts/verify-built-boot.ts",
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts",
     "../../scripts/lib/tagged-source-version.ts",

@@ -2198,9 +2198,9 @@
   "0bafdf01b3799538": "Commiter",
   "88b4d905ceab8dd2": "Ajout de l’étoile…",
   "a3b65ac8567c151f": "Merci pour l’étoile !",
-  "eaaab38a83bf32cf": "Ça aide vraiment T3 Code à grandir.",
+  "c35f4c09f2046b9c": "Ça aide vraiment Sele à grandir.",
   "627b9319f42ac2d5": "Ouvrir GitHub",
-  "a76da92cec318964": "Vous aimez T3 Code ?",
+  "4c21208d71c5e250": "Vous aimez Sele ?",
   "7ffe3705e7b0ed0b": "Donnez-nous une étoile sur GitHub pour nous le faire savoir !",
   "4c58cf06d9a4496c": "Mettre une étoile sur GitHub",
   "5bbf199afe39d5e1": "Ignorer",
@@ -2298,14 +2298,6 @@
   "646d14d91f80cf0d": "Actions de script",
   "b22530317530f650": "Actions du projet",
   "8b4c89c1e1343190": "Choisir une action de projet",
-  "4d1b505668527740": [
-    "Depuis ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "572b504c2a4fb41c": [
     "Exécuter ",
     {
@@ -2721,8 +2713,8 @@
   "78a04e0e625c0990": "Échec de la mise à jour",
   "c24de5eb69373a55": "Cette version {build} ignore les versions {track}. Vérifiez le canal de mise à jour dans les Réglages pour terminer le changement.",
   "b02ae45a6109c93b": "À jour",
-  "edcda9e8ee4ccad8": "Installer la mise à jour {version} et redémarrer T3 Code ?\n\nToutes les tâches en cours seront interrompues. Assurez-vous d’être prêt avant de continuer.",
-  "02eba0f7cc90f759": "Installer la mise à jour et redémarrer T3 Code ?\n\nToutes les tâches en cours seront interrompues. Assurez-vous d’être prêt avant de continuer.",
+  "38a5336640186ca3": "Installer la mise à jour {version} et redémarrer Sele ?\n\nToutes les tâches en cours seront interrompues. Assurez-vous d’être prêt avant de continuer.",
+  "bd8c6b05af321600": "Installer la mise à jour et redémarrer Sele ?\n\nToutes les tâches en cours seront interrompues. Assurez-vous d’être prêt avant de continuer.",
   "9ed4d8a1531b9631": "Les mises à jour automatiques ne sont pas disponibles dans cette version.",
   "c8c23435e780a60c": "Mises à jour indisponibles",
   "1af5f9767371ffd7": "Rechercher des mises à jour",

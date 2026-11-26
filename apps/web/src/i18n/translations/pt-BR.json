@@ -2198,9 +2198,9 @@
   "0bafdf01b3799538": "Fazer commit",
   "88b4d905ceab8dd2": "Dando estrela…",
   "a3b65ac8567c151f": "Obrigado pela estrela!",
-  "eaaab38a83bf32cf": "Isso ajuda muito o T3 Code a crescer.",
+  "c35f4c09f2046b9c": "Isso ajuda muito o Sele a crescer.",
   "627b9319f42ac2d5": "Abrir o GitHub",
-  "a76da92cec318964": "Está gostando do T3 Code?",
+  "4c21208d71c5e250": "Está gostando do Sele?",
   "7ffe3705e7b0ed0b": "Dê uma estrela no GitHub para nos contar!",
   "4c58cf06d9a4496c": "Dar estrela no GitHub",
   "5bbf199afe39d5e1": "Dispensar",
@@ -2298,14 +2298,6 @@
   "646d14d91f80cf0d": "Ações de script",
   "b22530317530f650": "Ações do projeto",
   "8b4c89c1e1343190": "Escolher ação do projeto",
-  "4d1b505668527740": [
-    "De ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "572b504c2a4fb41c": [
     "Executar ",
     {
@@ -2721,8 +2713,8 @@
   "78a04e0e625c0990": "Falha na atualização",
   "c24de5eb69373a55": "Esta build {build} ignora as versões {track}. Revise o canal de atualização em Configurações para concluir a troca.",
   "b02ae45a6109c93b": "Atualizado",
-  "edcda9e8ee4ccad8": "Instalar a atualização {version} e reiniciar o T3 Code?\n\nAs tarefas em execução serão interrompidas. Verifique se está tudo pronto antes de continuar.",
-  "02eba0f7cc90f759": "Instalar a atualização e reiniciar o T3 Code?\n\nAs tarefas em execução serão interrompidas. Verifique se está tudo pronto antes de continuar.",
+  "38a5336640186ca3": "Instalar a atualização {version} e reiniciar o Sele?\n\nAs tarefas em execução serão interrompidas. Verifique se está tudo pronto antes de continuar.",
+  "bd8c6b05af321600": "Instalar a atualização e reiniciar o Sele?\n\nAs tarefas em execução serão interrompidas. Verifique se está tudo pronto antes de continuar.",
   "9ed4d8a1531b9631": "Atualizações automáticas não estão disponíveis nesta versão.",
   "c8c23435e780a60c": "Atualizações indisponíveis",
   "1af5f9767371ffd7": "Verificar atualizações",
