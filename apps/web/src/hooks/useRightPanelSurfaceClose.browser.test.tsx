@@ -1,3 +1,7 @@
+import {
+  EMPTY_TERMINAL_SESSION_STATE,
+  type KnownTerminalSession,
+} from "@t3tools/client-runtime/state/terminal";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { expect, it, vi } from "vite-plus/test";
@@ -8,13 +12,23 @@ import { useRightPanelSurfaceClose } from "./useRightPanelSurfaceClose";
 
 const fixture = vi.hoisted(() => ({
   confirm: (_labels: readonly string[]): Promise<boolean> => Promise.resolve(false),
+  confirmCalls: [] as Array<readonly string[]>,
   allowed: new Set<string>(),
   sessions: new Map<string, string>(),
+  knownSessions: null as ReadonlyArray<KnownTerminalSession> | null,
   failClose: false,
 }));
-vi.mock("../lib/terminalCloseConfirm", () => ({
-  confirmTerminalClose: (labels: readonly string[]) => fixture.confirm(labels),
-}));
+vi.mock("../lib/terminalCloseConfirm", async () => {
+  const { terminalIdsRequiringCloseConfirmation } =
+    await import("../lib/terminalCloseConfirm.logic");
+  return {
+    terminalIdsRequiringCloseConfirmation,
+    confirmTerminalClose: (labels: readonly string[]) => {
+      fixture.confirmCalls.push(labels);
+      return fixture.confirm(labels);
+    },
+  };
+});
 vi.mock("../components/ChatView.logic", () => ({
   agentControlledBrowserCloseConfirmation: () => null,
 }));
@@ -38,7 +52,9 @@ vi.mock("../state/entities", () => ({
   useProject: () => null,
   readThreadShell: () => null,
 }));
-vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
+vi.mock("../state/terminalSessions", () => ({
+  useKnownTerminalSessions: () => fixture.knownSessions,
+}));
 vi.mock("../composerDraftStore", async () => {
   const Schema = await import("effect/Schema");
   return {
@@ -71,6 +87,8 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 function setup(mode: "single" | "all") {
   fixture.allowed = new Set(["environment-a", "environment-b"]);
   fixture.sessions = new Map();
+  fixture.confirmCalls = [];
+  fixture.knownSessions = null;
   fixture.failClose = false;
   useRightPanelStore.setState({ byThreadKey: {} });
   useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
@@ -156,3 +174,49 @@ it.each([
     ).toHaveLength(1);
   },
 );
+
+it("closes idle shell terminals immediately without confirmation, and only confirms busy ones", async () => {
+  const { original, Harness, resolve } = setup("all");
+  useRightPanelStore.getState().openTerminal(original, "term-2");
+  fixture.sessions.set(`${original.environmentId}/${original.threadId}/term-2`, "idle");
+  fixture.knownSessions = [
+    {
+      target: { ...original, terminalId: "term-1" },
+      state: { ...EMPTY_TERMINAL_SESSION_STATE, status: "running", hasRunningSubprocess: false },
+    },
+    {
+      target: { ...original, terminalId: "term-2" },
+      state: { ...EMPTY_TERMINAL_SESSION_STATE, status: "running", hasRunningSubprocess: false },
+    },
+  ];
+  await using screen = await render(<Harness threadRef={original} />);
+  await screen.getByRole("button").click();
+  expect(fixture.confirmCalls).toEqual([]);
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, original).surfaces,
+  ).toEqual([]);
+
+  // Now reopen two tabs where only term-2 has a running subprocess.
+  useRightPanelStore.getState().openTerminal(original, "term-1");
+  useRightPanelStore.getState().openTerminal(original, "term-2");
+  fixture.knownSessions = [
+    {
+      target: { ...original, terminalId: "term-1" },
+      state: { ...EMPTY_TERMINAL_SESSION_STATE, status: "running", hasRunningSubprocess: false },
+    },
+    {
+      target: { ...original, terminalId: "term-2" },
+      state: { ...EMPTY_TERMINAL_SESSION_STATE, status: "running", hasRunningSubprocess: true },
+    },
+  ];
+  await screen.rerender(<Harness threadRef={original} />);
+  await screen.getByRole("button").click();
+  expect(fixture.confirmCalls).toHaveLength(1);
+  expect(fixture.confirmCalls[0]).toEqual(["Terminal 2"]);
+  await act(async () => {
+    resolve(true);
+  });
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, original).surfaces,
+  ).toEqual([]);
+});

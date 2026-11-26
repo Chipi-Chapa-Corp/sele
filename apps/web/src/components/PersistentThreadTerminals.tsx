@@ -152,6 +152,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       onAddTerminalContext={onAddTerminalContext}
       terminalLabelsById={terminalLabelsById}
       terminalLaunchLocationsById={terminalLaunchLocationsById}
+      knownTerminalSessions={knownTerminalSessions}
       keybindings={keybindings}
     />
   );

@@ -5,6 +5,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import type { KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import type { Dispatch } from "react";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
@@ -36,7 +37,10 @@ import { isPreviewAvailableFor } from "../../browser/previewRuntime";
 import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { cycleThreadTerminal } from "../../lib/cycleThreadTerminal";
-import { confirmTerminalClose } from "../../lib/terminalCloseConfirm";
+import {
+  confirmTerminalClose,
+  terminalIdsRequiringCloseConfirmation,
+} from "../../lib/terminalCloseConfirm";
 import { findReusableProjectScriptTerminal } from "../../lib/projectScriptTerminal";
 import { closingTerminalIds } from "../terminal/closingTerminals";
 import { type TerminalContextSelection } from "../../lib/terminalContext";
@@ -76,6 +80,7 @@ interface ChatTerminalActionsInput {
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly activeProject: EnvironmentProject | null;
   readonly activeRightPanelSurface: RightPanelSurface | null;
+  readonly knownTerminalSessions: ReadonlyArray<KnownTerminalSession> | null;
   readonly runningTerminalIds: ReadonlyArray<string>;
   readonly activeServerOrderedTerminalIds: ReadonlyArray<string>;
   readonly activeTerminalLabelsById: ReadonlyMap<string, string>;
@@ -102,6 +107,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     activeThreadRef,
     activeProject,
     activeRightPanelSurface,
+    knownTerminalSessions,
     runningTerminalIds,
     activeServerOrderedTerminalIds,
     activeTerminalLabelsById,
@@ -395,6 +401,10 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const closePanelTerminalStable = useStableCallback(closePanelTerminal);
   const requestCloseTerminal = (terminalId: string) => {
     if (!hasTerminalWriteAccess()) return;
+    if (terminalIdsRequiringCloseConfirmation([terminalId], knownTerminalSessions).length === 0) {
+      closeTerminal(terminalId);
+      return;
+    }
     const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId, m);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
@@ -405,6 +415,10 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const requestCloseTerminalStable = useStableCallback(requestCloseTerminal);
   const requestClosePanelTerminal = (terminalId: string) => {
     if (!hasTerminalWriteAccess()) return;
+    if (terminalIdsRequiringCloseConfirmation([terminalId], knownTerminalSessions).length === 0) {
+      closePanelTerminal(terminalId);
+      return;
+    }
     const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId, m);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {

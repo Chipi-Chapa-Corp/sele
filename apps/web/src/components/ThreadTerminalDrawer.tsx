@@ -12,6 +12,7 @@ import {
 import {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
+  type KnownTerminalSession,
   type TerminalOutputCursor,
   type TerminalOutputUpdate,
   type TerminalSessionState,
@@ -80,7 +81,10 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readLocalApi } from "~/localApi";
-import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
+import {
+  confirmTerminalClose,
+  terminalIdsRequiringCloseConfirmation,
+} from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
 import { getFileMetadataQueryAtom } from "../hooks/useFileMetadata";
 import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
@@ -1268,6 +1272,7 @@ interface ThreadTerminalDrawerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalLabelsById?: ReadonlyMap<string, string>;
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
+  knownTerminalSessions?: ReadonlyArray<KnownTerminalSession> | null;
 }
 
 interface TerminalActionButtonProps {
@@ -1530,6 +1535,7 @@ export default function ThreadTerminalDrawer({
   keybindings,
   terminalLabelsById,
   terminalLaunchLocationsById,
+  knownTerminalSessions = null,
 }: ThreadTerminalDrawerProps) {
   const gt = useGT();
   const messages = useMessages();
@@ -1720,6 +1726,10 @@ export default function ThreadTerminalDrawer({
   };
   const confirmCloseTerminal = (terminalId: string) => {
     if (!canOperateTerminal) return;
+    if (terminalIdsRequiringCloseConfirmation([terminalId], knownTerminalSessions).length === 0) {
+      onCloseTerminal(terminalId, threadRef);
+      return;
+    }
     const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId, m);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) {

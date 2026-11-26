@@ -4,6 +4,8 @@ import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSett
 import { m } from "~/i18n/messages";
 import { readLocalApi } from "~/localApi";
 
+export { terminalIdsRequiringCloseConfirmation } from "./terminalCloseConfirm.logic";
+
 let pendingConfirmations = 0;
 
 /** Whether a terminal-close action is waiting on settings or user confirmation. */

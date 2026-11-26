@@ -752,7 +752,23 @@ function ThreadTerminal(props: {
     );
   };
 
+  const performCloseTerminal = async () => {
+    if (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)) return;
+    const result = await closeTerminal({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id, terminalId, deleteHistory: true },
+    });
+    if (AsyncResult.isSuccess(result)) exitNavigation.exited();
+    else Dialog.alert(gt("Couldn't close terminal"), gt("Check the connection and try again."));
+  };
+
   const handleCloseTerminal = () => {
+    const hasUnfinishedProcess =
+      knownSessions === null || (terminal.status === "running" && terminal.hasRunningSubprocess);
+    if (!hasUnfinishedProcess) {
+      void performCloseTerminal();
+      return;
+    }
     Dialog.confirm({
       title: gt('Close terminal "{label}"?', {
         label: resolveTerminalSessionLabel(terminalId, terminal.summary),
@@ -760,15 +776,7 @@ function ThreadTerminal(props: {
       message: gt("This stops the running process and clears its history."),
       confirmText: gt("Confirm"),
       destructive: true,
-      onConfirm: async () => {
-        if (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)) return;
-        const result = await closeTerminal({
-          environmentId: selectedThread.environmentId,
-          input: { threadId: selectedThread.id, terminalId, deleteHistory: true },
-        });
-        if (AsyncResult.isSuccess(result)) exitNavigation.exited();
-        else Dialog.alert(gt("Couldn't close terminal"), gt("Check the connection and try again."));
-      },
+      onConfirm: performCloseTerminal,
     });
   };
 

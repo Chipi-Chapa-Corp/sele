@@ -1,3 +1,5 @@
+import { EMPTY_TERMINAL_SESSION_STATE } from "@t3tools/client-runtime/state/terminal";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { confirmMock, readLocalApiMock, settingsMock, hydrateMock } = vi.hoisted(() => {
@@ -26,7 +28,11 @@ vi.mock("~/localApi", () => ({
   readLocalApi: () => readLocalApiMock(),
 }));
 
-import { confirmTerminalClose, isTerminalCloseConfirmPending } from "./terminalCloseConfirm";
+import {
+  confirmTerminalClose,
+  isTerminalCloseConfirmPending,
+  terminalIdsRequiringCloseConfirmation,
+} from "./terminalCloseConfirm";
 
 describe("terminal close confirmation", () => {
   beforeEach(() => {
@@ -100,5 +106,42 @@ describe("terminal close confirmation", () => {
     reject(new Error("dialog failed"));
     await expect(confirmation).resolves.toBe(false);
     expect(isTerminalCloseConfirmPending()).toBe(false);
+  });
+
+  it("only requires close confirmation for terminals with an active unfinished subprocess", () => {
+    const makeSession = (
+      terminalId: string,
+      status: "running" | "exited" | "closed",
+      hasRunningSubprocess: boolean,
+    ) => ({
+      target: {
+        environmentId: EnvironmentId.make("env-1"),
+        threadId: ThreadId.make("thread-1"),
+        terminalId,
+      },
+      state: {
+        ...EMPTY_TERMINAL_SESSION_STATE,
+        status,
+        hasRunningSubprocess,
+      },
+    });
+
+    const sessions = [
+      makeSession("idle-shell", "running", false),
+      makeSession("busy-proc", "running", true),
+      makeSession("exited-proc", "exited", true),
+    ];
+
+    expect(terminalIdsRequiringCloseConfirmation(["idle-shell"], sessions)).toEqual([]);
+    expect(terminalIdsRequiringCloseConfirmation(["exited-proc"], sessions)).toEqual([]);
+    expect(terminalIdsRequiringCloseConfirmation(["missing-term"], sessions)).toEqual([]);
+    expect(terminalIdsRequiringCloseConfirmation(["busy-proc"], sessions)).toEqual(["busy-proc"]);
+    expect(
+      terminalIdsRequiringCloseConfirmation(["idle-shell", "busy-proc", "exited-proc"], sessions),
+    ).toEqual(["busy-proc"]);
+    expect(terminalIdsRequiringCloseConfirmation(["idle-shell", "busy-proc"], null)).toEqual([
+      "idle-shell",
+      "busy-proc",
+    ]);
   });
 });

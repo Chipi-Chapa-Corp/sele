@@ -2077,6 +2077,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef,
     activeProject,
     activeRightPanelSurface,
+    knownTerminalSessions: activeThreadKnownSessionsRaw,
     runningTerminalIds,
     activeServerOrderedTerminalIds,
     activeTerminalLabelsById,
