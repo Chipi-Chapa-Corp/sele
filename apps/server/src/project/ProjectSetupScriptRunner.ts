@@ -21,6 +21,11 @@ import * as Schema from "effect/Schema";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import {
+  BRACKETED_PASTE_ON,
+  SHELL_QUIET_FALLBACK,
+  lineEditorReading,
+} from "../terminal/shellReadiness.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
@@ -152,18 +157,6 @@ function stripTerminalControl(text: string): string {
   return text
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
-}
-
-// Line editors (zsh, fish, nu, bash 5.1+) enable bracketed paste when they start reading a command.
-const BRACKETED_PASTE_ON = "\x1b[?2004h";
-const BRACKETED_PASTE_OFF = "\x1b[?2004l";
-// Longer than one subprocess poll plus its ps timeout, so a startup prompt is seen as busy first.
-const SHELL_QUIET_FALLBACK = "3 seconds";
-
-function lineEditorReading(text: string, previous: boolean): boolean {
-  const on = text.lastIndexOf(BRACKETED_PASTE_ON);
-  const off = text.lastIndexOf(BRACKETED_PASTE_OFF);
-  return on === off ? previous : on > off;
 }
 
 type CompletionShell = "posix" | "fish" | "nushell" | "powershell";
