@@ -13,13 +13,6 @@ import * as Electron from "electron";
 import { AppImageUpdater, autoUpdater } from "electron-updater";
 
 import {
-  checkFlatpakUpdate,
-  downloadFlatpakUpdate,
-  isFlatpakRuntime,
-  relaunchFlatpakAndQuit,
-  type FlatpakUpdateTarget,
-} from "../updates/flatpakAppUpdate.ts";
-import {
   checkMacUpdate,
   downloadAndStageMacUpdate,
   installStagedMacUpdate,
@@ -140,16 +133,10 @@ let customFeedOverride = false;
 let macCleanupDone = false;
 let pendingMacUpdate: MacUpdate | null = null;
 let stagedMacUpdate: StagedMacUpdate | null = null;
-let pendingFlatpakUpdate: FlatpakUpdateTarget | null = null;
-let downloadedFlatpakUpdate: FlatpakUpdateTarget | null = null;
 
 function useUnsignedMacUpdater(): boolean {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Imperative Electron autoUpdater adapter outside Effect.
   return !customFeedOverride && process.platform === "darwin" && Electron.app?.isPackaged === true;
-}
-
-function useFlatpakUpdater(): boolean {
-  return !customFeedOverride && Electron.app?.isPackaged === true && isFlatpakRuntime();
 }
 
 /** @public */
@@ -246,33 +233,6 @@ export const make = ElectronUpdater.of({
         catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
       });
     }
-    if (useFlatpakUpdater()) {
-      return Effect.tryPromise({
-        try: async () => {
-          customEvents.emit("checking-for-update");
-          const { owner, repo } = readGitHubRepoFromAppUpdateYml();
-          const target = await checkFlatpakUpdate({
-            current: Electron.app.getVersion(),
-            owner,
-            repo,
-            allowPrerelease: autoUpdater.allowPrerelease,
-            allowDowngrade: autoUpdater.allowDowngrade,
-          });
-          pendingFlatpakUpdate = target;
-          if (target) {
-            customEvents.emit("update-available", {
-              version: target.version,
-              releaseNotes: target.releaseNotes,
-              releaseName: target.releaseName ?? null,
-              releaseDate: target.releaseDate,
-            });
-          } else {
-            customEvents.emit("update-not-available");
-          }
-        },
-        catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
-      });
-    }
     return Effect.tryPromise({
       try: () => autoUpdater.checkForUpdates(),
       catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
@@ -303,22 +263,6 @@ export const make = ElectronUpdater.of({
         catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
       });
     }
-    if (useFlatpakUpdater()) {
-      return Effect.tryPromise({
-        try: async () => {
-          const target = pendingFlatpakUpdate;
-          if (!target) {
-            throw new Error("No Flatpak update is currently selected.");
-          }
-          customEvents.emit("download-progress", { percent: 10 });
-          await downloadFlatpakUpdate(target);
-          downloadedFlatpakUpdate = target;
-          customEvents.emit("download-progress", { percent: 100 });
-          customEvents.emit("update-downloaded", { version: target.version });
-        },
-        catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
-      });
-    }
     return Effect.tryPromise({
       try: () => autoUpdater.downloadUpdate(),
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
@@ -343,24 +287,6 @@ export const make = ElectronUpdater.of({
               userData: Electron.app.getPath("userData"),
               quit: () => Electron.app.quit(),
             });
-          },
-          catch: (cause) =>
-            new ElectronUpdaterQuitAndInstallError({
-              channel,
-              isSilent,
-              isForceRunAfter,
-              cause,
-            }),
-        });
-      }
-      if (useFlatpakUpdater()) {
-        return Effect.tryPromise({
-          try: async () => {
-            const target = downloadedFlatpakUpdate;
-            if (!target) {
-              throw new Error("No downloaded Flatpak update is ready to install.");
-            }
-            await relaunchFlatpakAndQuit(target, () => Electron.app.quit());
           },
           catch: (cause) =>
             new ElectronUpdaterQuitAndInstallError({

@@ -3,7 +3,7 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 export const DEFAULT_RELEASE_OWNER = "Chipi-Chapa-Corp";
 export const DEFAULT_RELEASE_REPO = "sele";
 
-export type ReleasePlatform = "windows-x64" | "macos-arm64" | "macos-x64" | "linux-x64";
+export type ReleasePlatform = "windows-x64" | "macos-arm64" | "macos-x64";
 
 export interface PlatformReleaseAsset {
   readonly name: string;
@@ -109,9 +109,7 @@ export function selectPlatformRelease(
     }
     const required = platform.startsWith("macos-")
       ? [`Sele-${version}-${platform.slice(6)}-mac.zip`]
-      : platform === "windows-x64"
-        ? ["latest.yml", "sele-windows-x64-setup.exe", "sele-windows-x64-setup.exe.blockmap"]
-        : ["sele.flatpakrepo"];
+      : ["latest.yml", "sele-windows-x64-setup.exe", "sele-windows-x64-setup.exe.blockmap"];
     const baseUrl = releaseDownloadUrl(release, repo);
     const hasAsset = (name: string): boolean =>
       release.assets?.some(
@@ -120,12 +118,7 @@ export function selectPlatformRelease(
           asset.size > 0 &&
           asset.browser_download_url === `${baseUrl}${name}`,
       ) ?? false;
-    if (
-      !required.every(hasAsset) ||
-      (platform === "linux-x64" &&
-        !hasAsset("sele.flatpakref") &&
-        !hasAsset("sele-linux-x64.flatpak"))
-    ) {
+    if (!required.every(hasAsset)) {
       continue;
     }
     selected = { release, version };

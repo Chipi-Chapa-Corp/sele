@@ -63,10 +63,4 @@ describe("platformRelease", () => {
     };
     expect(selectPlatformRelease([tampered], "macos-arm64", "4.0.0")).toBeNull();
   });
-
-  it("selects linux-x64 releases with Flatpak metadata", () => {
-    const releases = [makeRelease("v4.1.0-linux-x64", ["sele.flatpakrepo", "sele.flatpakref"])];
-    const selected = selectPlatformRelease(releases, "linux-x64", "4.0.0");
-    expect(selected?.version).toBe("4.1.0");
-  });
 });

@@ -349,7 +349,6 @@ function getAutoUpdateDisabledReason(args: {
   platform: NodeJS.Platform;
   appImage?: string | undefined;
   isDebPackage: boolean;
-  isFlatpak: boolean;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
@@ -365,8 +364,8 @@ function getAutoUpdateDisabledReason(args: {
   if (args.disabledByEnv) {
     return "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
   }
-  if (args.platform === "linux" && !args.appImage && !args.isDebPackage && !args.isFlatpak) {
-    return "Automatic updates on Linux require the Flatpak, AppImage, or .deb package.";
+  if (args.platform === "linux" && !args.appImage && !args.isDebPackage) {
+    return "Automatic updates on Linux require the AppImage or .deb package.";
   }
   return null;
 }
@@ -475,21 +474,10 @@ export const make = Effect.gen(function* () {
           )
       : false;
 
-  const isFlatpak =
-    environment.platform === "linux" && environment.isPackaged
-      ? yield* fileSystem.readFileString("/.flatpak-info").pipe(
-          Effect.map((contents) => contents.trim().length > 0),
-          Effect.orElseSucceed(() => false),
-        )
-      : false;
-
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
     Effect.map(
       (appUpdateYmlConfig) =>
-        Option.isSome(appUpdateYmlConfig) ||
-        mockUpdates ||
-        policy.feedUrl !== undefined ||
-        isFlatpak,
+        Option.isSome(appUpdateYmlConfig) || mockUpdates || policy.feedUrl !== undefined,
     ),
   );
 
@@ -503,7 +491,6 @@ export const make = Effect.gen(function* () {
         platform: environment.platform,
         appImage: Option.getOrUndefined(config.appImagePath),
         isDebPackage,
-        isFlatpak,
         disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
       }),

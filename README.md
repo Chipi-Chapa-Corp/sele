@@ -52,7 +52,7 @@ Or download `sele-macos-arm64.dmg` from [GitHub Releases](https://github.com/Chi
 
 ### Linux (Flatpak)
 
-Install from Sele's Flatpak repository (includes automatic in-app updates):
+Install from Sele's Flatpak repository (updates are delivered through Flatpak):
 
 ```bash
 flatpak install --user https://chipi-chapa-corp.github.io/sele/flatpak/sele.flatpakref
