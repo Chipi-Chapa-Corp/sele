@@ -309,7 +309,7 @@ it("writes the launch's initial input once, after the measured resize lands", as
   expect(commandWidths).toEqual([100]);
   expect(of("write")).toEqual([
     { threadId, terminalId: "term-1", data: "typed" },
-    { threadId, terminalId: "term-1", data: "stty size\r" },
+    { threadId, terminalId: "term-1", data: "stty size\r", waitForShellReady: true },
   ]);
   expect(calls.map((call) => call.command)).toEqual(["resize", "resize", "write", "write"]);
 });
@@ -347,7 +347,7 @@ it.each(["failed resize", "starting snapshot", "unmeasured grid"] as const)(
     await completeCommands();
     expect(of("write")).toEqual([
       { threadId, terminalId: "term-1", data: "typed" },
-      { threadId, terminalId: "term-1", data: "pnpm dev\r" },
+      { threadId, terminalId: "term-1", data: "pnpm dev\r", waitForShellReady: true },
       { threadId, terminalId: "term-1", data: "typed" },
     ]);
   },

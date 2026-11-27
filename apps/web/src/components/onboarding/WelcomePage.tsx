@@ -1313,9 +1313,10 @@ function AgentInstallTerminal({
   const threadRef = scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID);
   const [setupAttempt, setSetupAttempt] = useState(0);
   const [setupState, setSetupState] = useState<
-    "preparing" | "ready" | "openFailed" | "writeFailed"
+    "preparing" | "opened" | "ready" | "openFailed" | "writeFailed"
   >("preparing");
-  const terminalReady = setupState === "ready" || setupState === "writeFailed";
+  const terminalReady =
+    setupState === "opened" || setupState === "ready" || setupState === "writeFailed";
   const commandRunning = useThreadRunningTerminalIds({
     environmentId,
     threadId: AGENT_ONBOARDING_THREAD_ID,
@@ -1368,10 +1369,17 @@ function AgentInstallTerminal({
         setSetupState("writeFailed");
         return;
       }
+      // Mount the renderer once the PTY opens so it answers shell startup queries while write waits.
+      setSetupState("opened");
 
       const wrote = await writeTerminal({
         environmentId,
-        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
+        input: {
+          threadId: AGENT_ONBOARDING_THREAD_ID,
+          terminalId,
+          data: command,
+          waitForShellReady: true,
+        },
       });
       if (activeSetupGenerationRef.current !== generation) return;
       setSetupState(wrote._tag === "Success" ? "ready" : "writeFailed");

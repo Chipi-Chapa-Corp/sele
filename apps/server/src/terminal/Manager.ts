@@ -48,6 +48,7 @@ import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/she
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
@@ -80,6 +81,13 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
+import {
+  BRACKETED_PASTE_ON,
+  SHELL_QUIET_FALLBACK,
+  SHELL_QUIET_FALLBACK_MS,
+  lineEditorReading,
+  shellHasLineEditorSignal,
+} from "./shellReadiness.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 export {
@@ -330,6 +338,11 @@ interface TerminalSessionState {
   runtimeEnv: Record<string, string> | null;
   stopOnSettle: boolean;
   startupError: string | null;
+  shellReadinessCarry: string;
+  shellLineEditorReading: boolean;
+  shellReady: Deferred.Deferred<"ready" | "exited"> | null;
+  shellActivityCount: number;
+  lastShellActivityMs: number;
 }
 
 interface TerminalGrid {
@@ -362,6 +375,7 @@ type DrainProcessEventAction =
       sequence: number;
       history: BoundedTerminalHistory | null;
       data: string;
+      becameReady: Deferred.Deferred<"ready" | "exited"> | null;
     }
   | {
       type: "exit";
@@ -371,6 +385,7 @@ type DrainProcessEventAction =
       sequence: number;
       exitCode: number | null;
       exitSignal: number | null;
+      exitingShellReady: Deferred.Deferred<"ready" | "exited"> | null;
     };
 
 interface TerminalManagerState {
@@ -2670,6 +2685,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           if (sanitized.visibleText.length > 0) {
             session.history.append(sanitized.visibleText);
           }
+          const readinessText = session.shellReadinessCarry + nextEvent.data;
+          session.shellReadinessCarry = readinessText.slice(-(BRACKETED_PASTE_ON.length - 1));
+          session.shellLineEditorReading = lineEditorReading(
+            readinessText,
+            session.shellLineEditorReading,
+          );
+          session.shellActivityCount += 1;
+          const becameReady = session.shellLineEditorReading ? session.shellReady : null;
           const eventStamp = advanceEventSequence(session);
 
           return {
@@ -2679,15 +2702,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             sequence: eventStamp.sequence,
             history: sanitized.visibleText.length > 0 ? session.history : null,
             data: nextEvent.data,
+            becameReady,
           } as const;
         }
 
         const process = session.process;
+        const exitingShellReady = session.shellReady;
         cleanupProcessHandles(session);
         session.process = null;
         session.pid = null;
         session.hasRunningSubprocess = false;
         session.childCommandLabel = null;
+        session.shellReady = null;
+        session.shellReadinessCarry = "";
+        session.shellLineEditorReading = false;
         session.status = "exited";
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
@@ -2709,6 +2737,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           sequence: eventStamp.sequence,
           exitCode: session.exitCode,
           exitSignal: session.exitSignal,
+          exitingShellReady,
         } as const;
       });
 
@@ -2717,6 +2746,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       if (action.type === "output") {
+        session.lastShellActivityMs = yield* Clock.currentTimeMillis;
+        if (action.becameReady !== null) {
+          yield* Deferred.succeed(action.becameReady, "ready");
+        }
         if (action.history !== null) {
           yield* queuePersist(action.threadId, action.terminalId, action.history);
         }
@@ -2731,6 +2764,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         continue;
       }
 
+      if (action.exitingShellReady !== null) {
+        yield* Deferred.succeed(action.exitingShellReady, "exited");
+      }
       yield* clearKillFiber(action.process);
       yield* unregisterTerminal({
         threadId: action.threadId,
@@ -2754,20 +2790,27 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (!process) return;
 
     const updatedAt = yield* nowIso;
-    yield* modifyManagerState((state) => {
+    const exitingShellReady = yield* modifyManagerState((state) => {
+      const pendingReady = session.shellReady;
       cleanupProcessHandles(session);
       session.process = null;
       session.pid = null;
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
+      session.shellReady = null;
+      session.shellReadinessCarry = "";
+      session.shellLineEditorReading = false;
       session.status = "exited";
       session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
       session.updatedAt = updatedAt;
-      return [undefined, state] as const;
+      return [pendingReady, state] as const;
     });
+    if (exitingShellReady !== null) {
+      yield* Deferred.succeed(exitingShellReady, "exited");
+    }
 
     yield* clearKillFiber(process);
     yield* unregisterTerminal({
@@ -2897,6 +2940,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.exitSignal = null;
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
+      session.shellReady = null;
+      session.shellReadinessCarry = "";
+      session.shellLineEditorReading = false;
+      session.shellActivityCount = 0;
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
@@ -2961,6 +3008,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             startedShell = spawnResult.shellLabel;
 
             const processPid = ptyProcess.pid;
+            const shellReady = yield* Deferred.make<"ready" | "exited">();
+            const startedAtMs = yield* Clock.currentTimeMillis;
             let eventsActivated = false;
 
             let eventStamp: ReturnType<typeof advanceEventSequence> = {
@@ -2972,6 +3021,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               session.shell = spawnResult.shell;
               session.pid = processPid;
               session.status = "running";
+              session.shellReady = shellReady;
+              session.shellReadinessCarry = "";
+              session.shellLineEditorReading = false;
+              session.shellActivityCount = 0;
+              session.lastShellActivityMs = startedAtMs;
               // onExit may replay an exit immediately; accept it before subscribing.
               session.unsubscribeData = spawnResult.process.onData((data) => {
                 if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
@@ -2988,6 +3042,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               eventStamp = advanceEventSequence(session);
               return [undefined, state] as const;
             });
+            if (!shellHasLineEditorSignal(spawnResult.shell)) {
+              yield* Deferred.succeed(shellReady, "ready");
+            }
 
             yield* publishEvent({
               type: eventType,
@@ -3015,7 +3072,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
       }
 
-      yield* modifyManagerState((state) => {
+      const failedShellReady = yield* modifyManagerState((state) => {
+        const pendingReady = session.shellReady;
         cleanupProcessHandles(session);
         session.status = "error";
         session.startupError = message;
@@ -3023,12 +3081,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.process = null;
         session.hasRunningSubprocess = false;
         session.childCommandLabel = null;
+        session.shellReady = null;
+        session.shellReadinessCarry = "";
+        session.shellLineEditorReading = false;
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
         advanceEventSequence(session);
-        return [undefined, state] as const;
+        return [pendingReady, state] as const;
       });
+      if (failedShellReady !== null) {
+        yield* Deferred.succeed(failedShellReady, "exited");
+      }
       yield* unregisterTerminal({
         threadId: session.threadId,
         terminalId: session.terminalId,
@@ -3185,6 +3249,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         processIds: next.processIds,
       });
       const nextChildLabel = next.hasRunningSubprocess ? next.childCommand : null;
+      const activityAtMs = yield* Clock.currentTimeMillis;
       const event = yield* modifyManagerState((state) => {
         const liveSession: Option.Option<TerminalSessionState> = Option.fromNullishOr(
           state.sessions.get(toSessionKey(session.threadId, session.terminalId)),
@@ -3203,6 +3268,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
         liveSession.value.hasRunningSubprocess = next.hasRunningSubprocess;
         liveSession.value.childCommandLabel = nextChildLabel;
+        liveSession.value.shellActivityCount += 1;
+        liveSession.value.lastShellActivityMs = activityAtMs;
         const eventStamp = advanceEventSequence(liveSession.value);
         // Only this poll's own event may advance the mark without waking it.
         mark += 1;
@@ -3371,6 +3438,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         runtimeEnv: normalizedRuntimeEnv(input.env),
         stopOnSettle: input.stopOnSettle ?? false,
         startupError: null,
+        shellReadinessCarry: "",
+        shellLineEditorReading: false,
+        shellReady: null,
+        shellActivityCount: 0,
+        lastShellActivityMs: 0,
       };
 
       const createdSession = session;
@@ -3835,6 +3907,42 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
+  const waitForShellReadiness = Effect.fn("terminal.waitForShellReadiness")(function* (
+    session: TerminalSessionState,
+    process: PtyAdapter.PtyProcess,
+    shellReady: Deferred.Deferred<"ready" | "exited">,
+  ) {
+    if (yield* Deferred.isDone(shellReady)) {
+      return yield* Deferred.await(shellReady);
+    }
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (
+      !session.hasRunningSubprocess &&
+      nowMs - session.lastShellActivityMs >= SHELL_QUIET_FALLBACK_MS
+    ) {
+      yield* Deferred.succeed(shellReady, "ready");
+      return yield* Deferred.await(shellReady);
+    }
+    const quiet = Effect.gen(function* () {
+      while (true) {
+        if (session.process !== process || session.status !== "running") {
+          return "exited" as const;
+        }
+        const seen = session.shellActivityCount;
+        yield* Effect.sleep(SHELL_QUIET_FALLBACK);
+        if (session.process !== process || session.status !== "running") {
+          return "exited" as const;
+        }
+        if (session.shellActivityCount !== seen) continue;
+        if (!session.hasRunningSubprocess) {
+          yield* Deferred.succeed(shellReady, "ready");
+          return "ready" as const;
+        }
+      }
+    });
+    return yield* Deferred.await(shellReady).pipe(Effect.raceFirst(quiet));
+  });
+
   const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(
     function* (input, viewerId) {
       const terminalId = input.terminalId;
@@ -3849,6 +3957,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
       if (input.reply && !acceptsQueryReply(toSessionKey(input.threadId, terminalId), viewerId)) {
         return;
+      }
+      if (input.waitForShellReady && session.shellReady !== null) {
+        const outcome = yield* waitForShellReadiness(session, process, session.shellReady);
+        if (outcome === "exited" || session.process !== process || session.status !== "running") {
+          return;
+        }
+      }
+      if (!input.reply) {
+        session.shellActivityCount += 1;
+        session.lastShellActivityMs = yield* Clock.currentTimeMillis;
       }
       session.inputCount += 1;
       yield* Effect.try({

@@ -326,7 +326,7 @@ export function createTerminalSession(
       initialInputPending = false;
       void runAtomCommand(registry, atoms.write, {
         environmentId,
-        input: { threadId, terminalId, data },
+        input: { threadId, terminalId, data, waitForShellReady: true },
       });
     });
   };

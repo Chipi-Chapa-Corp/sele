@@ -3442,4 +3442,168 @@ it.layer(
       expect(missingEvents).toEqual([]);
     }),
   );
+
+  it.effect(
+    "holds waitForShellReady writes until bracketed paste is enabled while passing normal writes through",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/usr/bin/fish",
+        });
+        const opened = yield* manager.open(openInput());
+        const process = ptyAdapter.processes[0]!;
+        const exited = yield* Deferred.make<void>();
+        const unsubscribeExit = yield* manager.subscribe((event) =>
+          event.type === "exited"
+            ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribeExit));
+
+        const writeFiber = yield* manager
+          .write({
+            threadId: opened.threadId,
+            terminalId: opened.terminalId,
+            data: " echo ready\r",
+            waitForShellReady: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* TestClock.adjust("1 second");
+        expect(process.writes).toEqual([]);
+
+        // Normal terminal writes (such as answering a startup prompt) do not block.
+        yield* manager.write({
+          threadId: opened.threadId,
+          terminalId: opened.terminalId,
+          data: "y\r",
+        });
+        expect(process.writes).toEqual(["y\r"]);
+
+        // Bracketed paste split across chunks unlocks the pending script write.
+        process.emitData("\x1b[?20");
+        yield* TestClock.adjust("500 millis");
+        expect(process.writes).toEqual(["y\r"]);
+
+        process.emitData("04h> ");
+        yield* Fiber.join(writeFiber);
+        expect(process.writes).toEqual(["y\r", " echo ready\r"]);
+
+        // Once the shell has entered its line editor, later waitForShellReady writes go immediately.
+        yield* manager.write({
+          threadId: opened.threadId,
+          terminalId: opened.terminalId,
+          data: " echo second\r",
+          waitForShellReady: true,
+        });
+        expect(process.writes).toEqual(["y\r", " echo ready\r", " echo second\r"]);
+
+        process.emitExit({ exitCode: 0, signal: 0 });
+        yield* Deferred.await(exited);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "ignores restored history for waitForShellReady, waits out startup subprocesses, and falls back when quiet",
+    () =>
+      Effect.gen(function* () {
+        let busy = true;
+        const { manager, ptyAdapter, logsDir } = yield* createManager(5, {
+          shellResolver: () => "/bin/sh",
+          subprocessPollIntervalMs: 500,
+          subprocessInspector: () =>
+            Effect.succeed({
+              hasRunningSubprocess: busy,
+              childCommand: busy ? "host-spawn" : null,
+              processIds: busy ? [999] : [],
+            }),
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const logFile = yield* historyLogPath(logsDir);
+        yield* fs.writeFileString(logFile, "previous prompt \x1b[?2004h\n");
+
+        const opened = yield* manager.open(openInput());
+        const process = ptyAdapter.processes[0]!;
+        const exited = yield* Deferred.make<void>();
+        const unsubscribeExit = yield* manager.subscribe((event) =>
+          event.type === "exited"
+            ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribeExit));
+
+        const writeFiber = yield* manager
+          .write({
+            threadId: opened.threadId,
+            terminalId: opened.terminalId,
+            data: " echo after-startup\r",
+            waitForShellReady: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* TestClock.adjust("10 seconds");
+        expect(process.writes).toEqual([]);
+
+        busy = false;
+        yield* TestClock.adjust("500 millis");
+        expect(process.writes).toEqual([]);
+
+        // Clearing busy lands inside an active quiet window, so the next full window decides.
+        yield* TestClock.adjust("6 seconds");
+        yield* Fiber.join(writeFiber);
+        expect(process.writes).toEqual([" echo after-startup\r"]);
+
+        process.emitExit({ exitCode: 0, signal: 0 });
+        yield* Deferred.await(exited);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "writes waitForShellReady immediately on PowerShell and skips writing if a shell exits during startup",
+    () =>
+      Effect.gen(function* () {
+        const { manager: winManager, ptyAdapter: winPty } = yield* createManager(5, {
+          shellResolver: () => "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+        const winOpened = yield* winManager.open(openInput());
+        const winProcess = winPty.processes[0]!;
+        const winExited = yield* Deferred.make<void>();
+        const unsubscribeWinExit = yield* winManager.subscribe((event) =>
+          event.type === "exited"
+            ? Deferred.succeed(winExited, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribeWinExit));
+
+        yield* winManager.write({
+          threadId: winOpened.threadId,
+          terminalId: winOpened.terminalId,
+          data: " echo win\r",
+          waitForShellReady: true,
+        });
+        expect(winProcess.writes).toEqual([" echo win\r"]);
+        winProcess.emitExit({ exitCode: 0, signal: 0 });
+        yield* Deferred.await(winExited);
+
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/usr/bin/fish",
+        });
+        const opened = yield* manager.open(openInput());
+        const process = ptyAdapter.processes[0]!;
+
+        const writeFiber = yield* manager
+          .write({
+            threadId: opened.threadId,
+            terminalId: opened.terminalId,
+            data: " echo never\r",
+            waitForShellReady: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* TestClock.adjust("1 second");
+        process.emitExit({ exitCode: 1, signal: 0 });
+        yield* Fiber.join(writeFiber);
+        expect(process.writes).toEqual([]);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
 });

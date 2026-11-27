@@ -203,6 +203,9 @@ export const TerminalWriteInput = Schema.Struct({
   // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer
   // answers, so the server passes on one viewer's replies; older servers ignore it.
   reply: Schema.optionalKey(Schema.Boolean),
+  // Wait for a newly started shell's line editor (or quiet startup) before writing;
+  // older servers ignore it and write immediately.
+  waitForShellReady: Schema.optionalKey(Schema.Boolean),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 

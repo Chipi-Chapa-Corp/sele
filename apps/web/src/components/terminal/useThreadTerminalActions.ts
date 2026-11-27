@@ -136,11 +136,20 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     });
   };
 
-  const writeToTerminal = (terminalId: string, data: string) => {
+  const writeToTerminal = (
+    terminalId: string,
+    data: string,
+    options?: { readonly waitForShellReady?: boolean },
+  ) => {
     if (!threadRef || !canWrite()) return null;
     return writeTerminal({
       environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, terminalId, data },
+      input: {
+        threadId: threadRef.threadId,
+        terminalId,
+        data,
+        ...(options?.waitForShellReady ? { waitForShellReady: true } : {}),
+      },
     });
   };
 
