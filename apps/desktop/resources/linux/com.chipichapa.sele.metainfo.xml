@@ -51,6 +51,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="4.1.0" date="2026-11-27">
+      <description>
+        <p>Project scripts now wait for the terminal shell to be ready before running, so commands no longer get lost in new terminals.</p>
+      </description>
+    </release>
     <release version="4.0.0" date="2026-11-26">
       <description>
         <p>Rebuilt Sele on top of the open-source T3 Code architecture with multi-agent orchestration, worktree diffs, terminal tabs, remote access, and cross-platform auto-updates.</p>
