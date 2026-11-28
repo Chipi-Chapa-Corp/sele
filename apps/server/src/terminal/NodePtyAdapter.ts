@@ -8,6 +8,11 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  buildFlatpakHostSpawn,
+  isRunningInFlatpak,
+  shouldRunInsideFlatpakSandbox,
+} from "@t3tools/shared/flatpak";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
@@ -233,6 +238,8 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
+  const hostEnv = yield* HostProcess.Environment;
+  const selfExecutablePath = yield* HostProcess.ExecutablePath;
 
   const nodePty = yield* Effect.tryPromise({
     try: loadNodePtyModule,
@@ -262,15 +269,34 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
         platform === "win32" && input.env["TERM"] === undefined
           ? { ...input.env, TERM: "xterm-256color" }
           : input.env;
+      const flatpakHost =
+        isRunningInFlatpak(hostEnv, platform) &&
+        !shouldRunInsideFlatpakSandbox(input.shell, selfExecutablePath);
       const ptyProcess = yield* Effect.try({
         try: () => {
-          const nativeProcess = nodePty.spawn(input.shell, input.args ?? [], {
-            cwd: input.cwd,
-            cols: input.cols,
-            rows: input.rows,
-            env,
-            name: "xterm-256color",
-          });
+          const nativeProcess = flatpakHost
+            ? (() => {
+                const wrapped = buildFlatpakHostSpawn({
+                  command: input.shell,
+                  args: input.args ?? [],
+                  cwd: input.cwd,
+                  env: env["TERM"] === undefined ? { ...env, TERM: "xterm-256color" } : env,
+                  extendEnv: false,
+                });
+                return nodePty.spawn(wrapped.command, [...wrapped.args], {
+                  cols: input.cols,
+                  rows: input.rows,
+                  env: wrapped.env,
+                  name: "xterm-256color",
+                });
+              })()
+            : nodePty.spawn(input.shell, input.args ?? [], {
+                cwd: input.cwd,
+                cols: input.cols,
+                rows: input.rows,
+                env,
+                name: "xterm-256color",
+              });
           return { nativeProcess, process: new NodePtyProcess(nativeProcess, platform) };
         },
         catch: (cause) =>

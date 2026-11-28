@@ -31,11 +31,13 @@ export async function runCliCommand() {
     const { runNativeSpeechWorker } = await import("./speech/native.ts");
     await runNativeSpeechWorker(mode, process.argv[4]);
   } else if (command === "__cursor-sdk-worker") {
-    const [NodeServices, { runCursorSdkWorker }] = await Promise.all([
+    const [Layer, NodeServices, FlatpakHostSpawner, { runCursorSdkWorker }] = await Promise.all([
+      import("effect/Layer"),
       import("@effect/platform-node/NodeServices"),
+      import("@t3tools/shared/FlatpakHostSpawner"),
       import("@t3tools/provider-cursor/server/worker"),
     ]);
-    await runCursorSdkWorker(NodeServices.layer);
+    await runCursorSdkWorker(FlatpakHostSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer)));
   } else {
     enableCliCompileCache();
     // Windows desktop launches without stdin; attach before reading, except on fast paths using pipes.

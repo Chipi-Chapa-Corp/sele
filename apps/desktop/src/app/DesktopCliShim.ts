@@ -6,6 +6,8 @@ import * as Random from "effect/Random";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isRunningInFlatpak } from "@t3tools/shared/flatpak";
 
 // AppImage mounts change each run; the launcher must mount the image itself.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
@@ -146,7 +148,10 @@ export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment[
 
 export const install = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  if (!environment.isPackaged) return Option.none<string>();
+  const env = yield* HostProcess.Environment;
+  if (!environment.isPackaged || isRunningInFlatpak(env, environment.platform)) {
+    return Option.none<string>();
+  }
   const fs = yield* FileSystem.FileSystem;
   const path = environment.path;
   const windows = environment.platform === "win32";

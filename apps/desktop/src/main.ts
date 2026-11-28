@@ -21,6 +21,8 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FlatpakHostSpawner from "@t3tools/shared/FlatpakHostSpawner";
+import { normalizeFlatpakHostEnv } from "@t3tools/shared/flatpak";
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
@@ -81,6 +83,8 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+
+normalizeFlatpakHostEnv(process.env, { homeDirectory: NodeOS.homedir() });
 
 if (process.argv.includes("--version")) {
   try {
@@ -241,8 +245,12 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
   Layer.provideMerge(ElectronApp.layer),
 );
 
+const layerDesktopNodeServices = FlatpakHostSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
+
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(Layer.mergeAll(layerDesktopNodeServices, NodeCrypto.layer)),
   Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provideMerge(NetService.layer),
   Layer.provideMerge(layerElectron),

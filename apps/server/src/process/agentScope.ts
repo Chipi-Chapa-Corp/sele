@@ -9,6 +9,7 @@ import {
   type AgentSystemdScope,
 } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isRunningInFlatpak } from "@t3tools/shared/flatpak";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -100,12 +101,15 @@ const MAX_TRACKED_THREADS = 500;
 
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
-  if (platform !== "linux") return AgentScope.defaultValue();
+  const hostEnvironment = yield* HostProcess.Environment;
+  // Flatpak host commands run under flatpak-session-helper (--watch-bus) and cannot inspect host cgroups.
+  if (platform !== "linux" || isRunningInFlatpak(hostEnvironment, platform)) {
+    return AgentScope.defaultValue();
+  }
 
   const runner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const hostEnvironment = yield* HostProcess.Environment;
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const { hasOtherLiveOwner } = yield* ProviderProcesses.ProviderProcesses;
   const ownedSlice = ownedAgentSlice(stateDir);

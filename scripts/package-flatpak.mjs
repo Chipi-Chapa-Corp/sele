@@ -28,7 +28,12 @@ const FINISH_ARGS = [
   "--device=dri",
   "--share=network",
   "--filesystem=host",
+  "--socket=ssh-auth",
+  "--talk-name=org.freedesktop.secrets",
+  "--talk-name=org.kde.kwalletd5",
+  "--talk-name=org.kde.kwalletd6",
   "--talk-name=org.freedesktop.Flatpak",
+  "--unset-env=ELECTRON_RUN_AS_NODE",
 ];
 
 function resizePng(sourcePng, targetPng, size) {
@@ -84,9 +89,10 @@ export async function packageFlatpak({
     await writeFile(
       join(files, "bin/electron-wrapper"),
       `#!/bin/sh
+unset ELECTRON_RUN_AS_NODE
 export TMPDIR="$XDG_RUNTIME_DIR/app/$FLATPAK_ID"
-if [ "\${XDG_SESSION_TYPE}" = wayland ]; then
-  exec zypak-wrapper sele --enable-features=UseOzonePlatform --ozone-platform=wayland "$@"
+if [ -n "\${WAYLAND_DISPLAY:-}" ]; then
+  exec zypak-wrapper sele --ozone-platform=wayland "$@"
 else
   exec zypak-wrapper sele "$@"
 fi
@@ -103,6 +109,8 @@ Terminal=false
 Type=Application
 Icon=${APP_ID}
 Categories=Development;
+Keywords=AI;Codex;Claude;Cursor;OpenCode;Terminal;
+MimeType=x-scheme-handler/t3;
 StartupWMClass=${APP_ID}
 `,
     );

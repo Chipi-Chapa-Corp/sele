@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isRunningInFlatpak } from "@t3tools/shared/flatpak";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -235,7 +236,7 @@ export const make = Effect.gen(function* () {
     );
 
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
-    if (!environment.isPackaged) {
+    if (!environment.isPackaged || isRunningInFlatpak(env, environment.platform)) {
       return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
     }
     const launcherPath = (yield* exists(launcher)) ? launcher : null;
@@ -294,6 +295,9 @@ export const make = Effect.gen(function* () {
 
   const install: DesktopCliCommand["Service"]["install"] = Effect.gen(function* () {
     if (!environment.isPackaged) return yield* fail("The t3 command needs an installed app.");
+    if (isRunningInFlatpak(env, environment.platform)) {
+      return yield* fail("The t3 command is not supported in Flatpak installs.");
+    }
     yield* ensureLauncher;
     if (windows) {
       // PATH would split the folder at the `;`, leaving two wrong entries behind.
@@ -418,7 +422,13 @@ export const make = Effect.gen(function* () {
 
   const installOnFirstLaunch: DesktopCliCommand["Service"]["installOnFirstLaunch"] = Effect.gen(
     function* () {
-      if (!environment.isPackaged || (yield* exists(firstLaunchMarker))) return;
+      if (
+        !environment.isPackaged ||
+        isRunningInFlatpak(env, environment.platform) ||
+        (yield* exists(firstLaunchMarker))
+      ) {
+        return;
+      }
       // Mark first so a failed or removed install is never retried behind the user's back.
       yield* fs.writeFileString(firstLaunchMarker, "");
       if (!freshInstall) {

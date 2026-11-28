@@ -123,6 +123,14 @@
       "types": "./src/envTrampoline.ts",
       "import": "./src/envTrampoline.ts"
     },
+    "./flatpak": {
+      "types": "./src/flatpak.ts",
+      "import": "./src/flatpak.ts"
+    },
+    "./FlatpakHostSpawner": {
+      "types": "./src/FlatpakHostSpawner.ts",
+      "import": "./src/FlatpakHostSpawner.ts"
+    },
     "./semver": {
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"

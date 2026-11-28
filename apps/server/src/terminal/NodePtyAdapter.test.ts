@@ -197,3 +197,52 @@ it.effect("replays an exit to late subscribers and respects unsubscription", () 
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("routes host shells through flatpak-spawn --host inside Flatpak", () =>
+  Effect.gen(function* () {
+    spawn.mockClear();
+    const adapter = yield* PtyAdapter.PtyAdapter;
+    yield* adapter.spawn({
+      shell: "/usr/bin/zsh",
+      args: ["-l"],
+      cwd: "/home/alice/project",
+      cols: 120,
+      rows: 40,
+      env: {
+        PATH: "/home/alice/.local/bin:/usr/bin",
+        CUSTOM_FLAG: "1",
+      },
+    });
+    assert.equal(spawn.mock.calls.length, 1);
+    const [command, args, options] = spawn.mock.calls[0] as unknown as [
+      string,
+      ReadonlyArray<string>,
+      Record<string, unknown>,
+    ];
+    assert.equal(command, "flatpak-spawn");
+    assert.isTrue(args.includes("--host"));
+    assert.isTrue(args.includes("--watch-bus"));
+    assert.isTrue(args.includes("--directory=/home/alice/project"));
+    assert.isTrue(args.includes("--env=TERM=xterm-256color"));
+    assert.isTrue(args.includes("--env=CUSTOM_FLAG=1"));
+    assert.deepEqual(args.slice(-3), ["--", "/usr/bin/zsh", "-l"]);
+    assert.equal(options.cwd, undefined);
+  }).pipe(
+    Effect.provide(
+      NodePtyAdapter.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(HostProcess.Architecture, "x64"),
+            Layer.succeed(HostProcess.Environment, { FLATPAK_ID: "com.chipichapa.sele" }),
+            Layer.succeed(HostProcess.ExecutablePath, "/app/lib/com.chipichapa.sele/sele"),
+            Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, () =>
+              Promise.resolve(fakeNodePty),
+            ),
+          ),
+        ),
+      ),
+    ),
+  ),
+);

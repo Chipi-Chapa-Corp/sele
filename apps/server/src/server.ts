@@ -49,6 +49,7 @@ import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as FlatpakHostSpawner from "@t3tools/shared/FlatpakHostSpawner";
 import * as ProcessLauncher from "./process/ProcessLauncher.ts";
 import * as SpawnWorker from "./process/SpawnWorker.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
@@ -376,6 +377,9 @@ const layerRelayClient = Layer.unwrap(
 
 // NodeServices and NodeHttpServer each output Node's own spawner, so each is followed by this one.
 const layerSpawner = SpawnWorker.layerServer.pipe(Layer.provide(NodeServices.layer));
+const layerServerProcessSpawner = FlatpakHostSpawner.layer.pipe(
+  Layer.provideMerge(ProcessLauncher.layerServer),
+);
 
 const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
@@ -417,11 +421,11 @@ const layerHttpServer = Layer.unwrap(
 ).pipe(
   Layer.provide(ManagedPolicy.layer),
   // NodeHttpServer.layer also outputs NodeServices, whose spawner would shadow the wrapped one.
-  (layer) => ProcessLauncher.layerServer.pipe(Layer.provideMerge(layer)),
+  (layer) => layerServerProcessSpawner.pipe(Layer.provideMerge(layer)),
 );
 
 const layerPlatformServices = DocumentText.layer.pipe(
-  Layer.provideMerge(ProcessLauncher.layerServer),
+  Layer.provideMerge(layerServerProcessSpawner),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner)),
 );
 
@@ -1449,7 +1453,5 @@ const layerMakeServer = Layer.unwrap(
 
 export const runServer = Layer.launch(
   // For the layers above whose spawner requirement is not met by one of them.
-  layerMakeServer.pipe(
-    Layer.provide(ProcessLauncher.layerServer.pipe(Layer.provide(layerSpawner))),
-  ),
+  layerMakeServer.pipe(Layer.provide(layerServerProcessSpawner.pipe(Layer.provide(layerSpawner)))),
 );

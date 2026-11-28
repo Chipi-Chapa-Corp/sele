@@ -443,4 +443,31 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(beside.registry).toMatchObject({ path: "C:\\Tools", writes: 0 });
     }),
   );
+
+  it.effect("disables CLI command installation inside Flatpak", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const command = yield* commandIn({
+        home,
+        platform: "linux",
+        env: { PATH: "", SHELL: "/bin/zsh", FLATPAK_ID: "com.chipichapa.sele" },
+      });
+
+      expect(yield* command.state).toEqual({
+        supported: false,
+        installedPath: null,
+        onPath: false,
+        launcherPath: null,
+      });
+
+      yield* command.installOnFirstLaunch;
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
+      expect(yield* fs.exists(path.join(home, ".t3", "bin", "t3"))).toBe(false);
+
+      const installError = yield* Effect.flip(command.install);
+      expect(installError.message).toContain("Flatpak");
+    }),
+  );
 });

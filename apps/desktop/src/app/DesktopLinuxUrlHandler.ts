@@ -6,6 +6,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isRunningInFlatpak } from "@t3tools/shared/flatpak";
 
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
@@ -319,7 +321,8 @@ export const make = Effect.gen(function* () {
   );
 
   const register = Effect.gen(function* () {
-    if (environment.platform !== "linux") {
+    const env = yield* HostProcess.Environment;
+    if (environment.platform !== "linux" || isRunningInFlatpak(env, environment.platform)) {
       return;
     }
     yield* writeDesktopEntry;

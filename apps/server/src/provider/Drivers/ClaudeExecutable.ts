@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isRunningInFlatpak, resolveFlatpakHostAccessiblePath } from "@t3tools/shared/flatpak";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -88,7 +89,11 @@ export const claudeProgramReader = Effect.fn("claudeProgramReader")(function* (
   return Effect.promise(async () => {
     try {
       const resolved = await resolveExecutable(binaryPath, platform, environment);
-      return resolved === undefined ? undefined : await NodeFS.promises.realpath(resolved);
+      if (resolved === undefined) return undefined;
+      const accessible = isRunningInFlatpak(environment, platform)
+        ? (resolveFlatpakHostAccessiblePath(resolved) ?? resolved)
+        : resolved;
+      return await NodeFS.promises.realpath(accessible);
     } catch {
       return undefined;
     }

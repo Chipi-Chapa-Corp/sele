@@ -13,6 +13,13 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import type { ShellEnvironmentPatch } from "@t3tools/contracts";
+import {
+  buildFlatpakHostSpawn,
+  checkFlatpakHostExecutable,
+  isRunningInFlatpak,
+  isUninspectableFlatpakHostPath,
+  readFlatpakHostLoginShell,
+} from "./flatpak.ts";
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
@@ -90,7 +97,11 @@ async function resolveSpawnExecutableWithNode(
     windowsPathExtensions,
     path.extname,
   );
+  const flatpakHost = isRunningInFlatpak(env, platform);
   const isExecutable = async (candidate: string) => {
+    if (flatpakHost && !isUninspectableFlatpakHostPath(candidate)) {
+      return checkFlatpakHostExecutable(candidate) === "ok";
+    }
     try {
       if (!(await NodeFS.promises.stat(candidate)).isFile()) return false;
       if (platform === "win32") {
@@ -156,6 +167,10 @@ function trimNonEmpty(value: string | null | undefined): string | undefined {
 }
 
 export function readUserLoginShell(): string | undefined {
+  if (isRunningInFlatpak()) {
+    const hostShell = trimNonEmpty(readFlatpakHostLoginShell());
+    if (hostShell) return hostShell;
+  }
   try {
     return trimNonEmpty(NodeOS.userInfo().shell);
   } catch {
@@ -392,7 +407,11 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
 
   // Interactive startup loads PATH entries; detaching prevents job control on an
   // inherited controlling TTY from stopping the probe while the parent waits.
-  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(shell, names)], {
+  const captureArgs = ["-ilc", buildEnvironmentCaptureCommand(shell, names)];
+  const launch = isRunningInFlatpak()
+    ? buildFlatpakHostSpawn({ command: shell, args: captureArgs })
+    : { command: shell, args: captureArgs };
+  const output = execFile(launch.command, launch.args, {
     encoding: "utf8",
     timeout: 5000,
     killSignal: "SIGKILL",
@@ -759,7 +778,11 @@ const isExecutableFile = Effect.fnUntraced(function* (
   filePath: string,
   platform: NodeJS.Platform,
   windowsPathExtensions: ReadonlyArray<string>,
+  flatpakHost = false,
 ): Effect.fn.Return<boolean, never, FileSystem.FileSystem | Path.Path> {
+  if (flatpakHost && platform === "linux" && !isUninspectableFlatpakHostPath(filePath)) {
+    return checkFlatpakHostExecutable(filePath) === "ok";
+  }
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const stat = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
@@ -817,6 +840,7 @@ const findOnPath = Effect.fnUntraced(function* (
   isLast: (match: string) => boolean,
   // The caller's snapshot, so a cache key and the search it stores agree on the directory.
   cwd: string | null | undefined,
+  flatpakHost = false,
 ): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const pathEntries = pathEntriesForPlatform(pathValue, platform);
@@ -847,7 +871,7 @@ const findOnPath = Effect.fnUntraced(function* (
         anchorsCwd && pathEntry === "."
           ? path.join(cwd, candidate)
           : path.join(pathEntry, candidate);
-      if (yield* isExecutableFile(match, platform, windowsPathExtensions)) {
+      if (yield* isExecutableFile(match, platform, windowsPathExtensions, flatpakHost)) {
         matches.push(match);
         if (isLast(match)) return matches;
         break;
@@ -864,6 +888,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   const path = yield* Path.Path;
   const platform = options.platform;
   const env = options.env ?? process.env;
+  const flatpakHost = isRunningInFlatpak(env, platform);
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
   const commandCandidates = resolveCommandCandidates(
     command,
@@ -874,7 +899,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
 
   if (command.includes("/") || command.includes("\\")) {
     for (const candidate of commandCandidates) {
-      if (yield* isExecutableFile(candidate, platform, windowsPathExtensions)) {
+      if (yield* isExecutableFile(candidate, platform, windowsPathExtensions, flatpakHost)) {
         return candidate;
       }
     }
@@ -889,6 +914,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   const cwd = pathSearchCwd(pathValue, platform);
   const cacheKey = [
     platform,
+    flatpakHost ? "flatpak" : "",
     pathValue,
     windowsPathExtensions.join(";"),
     command,
@@ -908,6 +934,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     windowsPathExtensions,
     () => true,
     cwd,
+    flatpakHost,
   );
   if (cwd !== null) cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
   return resolvedPath;
@@ -931,6 +958,7 @@ export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(functi
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const env = options.env ?? (yield* HostProcess.Environment);
+  const flatpakHost = isRunningInFlatpak(env, platform);
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
   const pathValue = resolvePathEnvironmentVariable(env);
   return yield* findOnPath(
@@ -940,6 +968,7 @@ export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(functi
     windowsPathExtensions,
     options.until,
     pathSearchCwd(pathValue, platform),
+    flatpakHost,
   );
 });
 

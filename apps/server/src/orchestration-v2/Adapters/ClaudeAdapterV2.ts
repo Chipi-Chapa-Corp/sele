@@ -72,6 +72,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
+import { buildFlatpakHostSpawn, isRunningInFlatpak } from "@t3tools/shared/flatpak";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -435,23 +436,33 @@ export function spawnClaudeProcessGroup(
 ): ClaudeSpawnedProcess & Pick<NodeChildProcess.ChildProcess, "pid"> {
   // Relative to the server's cwd, as a native cwd is; the `./` keeps CDPATH out of it.
   const cwd = options.cwd ?? ".";
-  const child = NodeChildProcess.spawn(
-    "/bin/sh",
-    [
-      "-c",
-      CLAUDE_GROUP_WATCH_SCRIPT,
-      "t3-claude",
-      cwd.startsWith("/") ? cwd : `./${cwd}`,
-      options.command,
-      ...options.args,
-    ],
-    {
-      env: options.env,
-      signal: options.signal,
-      stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
-      detached: true,
-    },
-  );
+  const resolvedCwd = cwd.startsWith("/")
+    ? cwd
+    : isRunningInFlatpak()
+      ? `${process.cwd()}/${cwd}`
+      : `./${cwd}`;
+  const scriptArgs = [
+    "-c",
+    CLAUDE_GROUP_WATCH_SCRIPT,
+    "t3-claude",
+    resolvedCwd,
+    options.command,
+    ...options.args,
+  ];
+  const launch = isRunningInFlatpak()
+    ? buildFlatpakHostSpawn({
+        command: "/bin/sh",
+        args: scriptArgs,
+        env: options.env,
+        forwardFds: [3, 4],
+      })
+    : { command: "/bin/sh", args: scriptArgs, env: options.env };
+  const child = NodeChildProcess.spawn(launch.command, [...launch.args], {
+    env: launch.env,
+    signal: options.signal,
+    stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
+    detached: true,
+  });
   let forget: (() => void) | undefined;
   // Always drained, so a chatty CLI never blocks on a full stderr pipe.
   child.stderr?.setEncoding("utf8").on("data", onStderr).once("close", onStderrClose);

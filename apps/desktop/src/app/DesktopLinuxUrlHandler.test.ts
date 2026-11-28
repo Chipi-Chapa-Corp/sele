@@ -733,4 +733,24 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       );
     }),
   );
+
+  it.effect("skips desktop entry registration inside Flatpak", () => {
+    const recorded: RecordedRegistration = {
+      directories: [],
+      files: [],
+      commands: [],
+      copies: [],
+      icons: [],
+    };
+    return Effect.gen(function* () {
+      const handler = yield* DesktopLinuxUrlHandler.DesktopLinuxUrlHandler;
+      yield* handler.register;
+      assert.deepEqual(recorded.files, []);
+      assert.deepEqual(recorded.commands, []);
+      assert.deepEqual(recorded.icons, []);
+    }).pipe(
+      Effect.provide(layerHandler(recorded)),
+      Effect.provideService(HostProcess.Environment, { FLATPAK_ID: "com.chipichapa.sele" }),
+    );
+  });
 });

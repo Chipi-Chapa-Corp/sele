@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { envTrampoline, supportsEnvChdir } from "@t3tools/shared/envTrampoline";
+import { buildFlatpakHostSpawn, isRunningInFlatpak } from "@t3tools/shared/flatpak";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SpawnWorker from "../process/SpawnWorker.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -260,6 +261,21 @@ export function spawnClaudeProbeThroughEnv({
   });
 }
 
+export function spawnClaudeProbeThroughFlatpak({
+  command,
+  args,
+  cwd,
+  env,
+  signal,
+}: ClaudeSpawnOptions) {
+  const launch = buildFlatpakHostSpawn({ command, args, cwd, env });
+  return NodeChildProcess.spawn(launch.command, [...launch.args], {
+    env: launch.env,
+    signal,
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+}
+
 /** Windows runs CreateProcess on the calling thread, so the probe launches from a launcher thread. */
 function spawnClaudeProbeOffThread({ command, args, cwd, env, signal }: ClaudeSpawnOptions) {
   const child = SpawnWorker.spawnPiped(command, args, { cwd, env, signal, windowsHide: true });
@@ -274,10 +290,13 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
-  readonly spawnVia: "env" | "launcher-thread" | undefined;
+  readonly spawnVia: "env" | "flatpak" | "launcher-thread" | undefined;
 }): ClaudeQueryOptions {
   return {
     ...(input.spawnVia === "env" ? { spawnClaudeCodeProcess: spawnClaudeProbeThroughEnv } : {}),
+    ...(input.spawnVia === "flatpak"
+      ? { spawnClaudeCodeProcess: spawnClaudeProbeThroughFlatpak }
+      : {}),
     ...(input.spawnVia === "launcher-thread"
       ? { spawnClaudeCodeProcess: spawnClaudeProbeOffThread }
       : {}),
@@ -514,9 +533,11 @@ const probeClaudeCapabilities = (
     const spawnVia =
       platform === "win32"
         ? "launcher-thread"
-        : platform === "linux" && (yield* Effect.promise(supportsEnvChdir))
-          ? "env"
-          : undefined;
+        : isRunningInFlatpak(environment, platform)
+          ? "flatpak"
+          : platform === "linux" && (yield* Effect.promise(supportsEnvChdir))
+            ? "env"
+            : undefined;
     return yield* Effect.tryPromise({
       try: async () => {
         const q = claudeQuery({

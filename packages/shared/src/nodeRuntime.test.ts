@@ -204,4 +204,38 @@ describe("Node runtime selection", () => {
         Effect.provide(NodeServices.layer),
       ),
   );
+
+  it.effect(
+    "writes a host-callable flatpak-self shim for resolveSelfInvocation inside Flatpak",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const invocation = yield* resolveSelfInvocation().pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+          Effect.provideService(HostProcess.Environment, {
+            FLATPAK_ID: "com.chipichapa.sele",
+            T3CODE_HOME: path.join(home, ".t3"),
+          }),
+          Effect.provideService(HostProcess.ExecutablePath, "/app/lib/com.chipichapa.sele/sele"),
+          Effect.provideService(HostProcess.IsExecutable, false),
+          Effect.provideService(HostProcess.Arguments, [
+            "/app/lib/com.chipichapa.sele/sele",
+            "/app/lib/com.chipichapa.sele/resources/app.asar/apps/server/dist/bin.mjs",
+          ]),
+        );
+
+        const expectedShim = path.join(home, ".t3", "bin", "flatpak-self");
+        expect(invocation).toEqual({ command: expectedShim, entrypoint: undefined });
+        const content = yield* fs.readFileString(expectedShim);
+        expect(content).toContain("exec flatpak run --env=ELECTRON_RUN_AS_NODE=1");
+        expect(content).toContain("--command='/app/lib/com.chipichapa.sele/sele'");
+        expect(content).toContain("'com.chipichapa.sele'");
+        expect(content).toContain(
+          "'/app/lib/com.chipichapa.sele/resources/app.asar/apps/server/dist/bin.mjs'",
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
