@@ -1,6 +1,6 @@
 cask "sele" do
-  version "4.1.0"
-  sha256 "e6c85cc1f339f4cdec46fbc13964235aee27114f2f901b2f370c4e2c6b59b8d7"
+  version "4.1.1"
+  sha256 "c8a2f9974e1428cf86e285f32d549e1725b64700e0c44fada3f89c9429da0b74"
 
   url "https://github.com/Chipi-Chapa-Corp/sele/releases/download/v#{version}-macos-arm64/sele-macos-arm64.dmg",
       verified: "github.com/Chipi-Chapa-Corp/sele/"
