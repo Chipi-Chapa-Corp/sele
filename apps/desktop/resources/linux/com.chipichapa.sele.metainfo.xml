@@ -51,6 +51,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="4.1.1" date="2026-11-28">
+      <description>
+        <p>Restored host execution via flatpak-spawn for coding agents, Git, and terminals in Flatpak builds, added SSH agent and keyring access, and disabled the broken host CLI shim inside Flatpak.</p>
+      </description>
+    </release>
     <release version="4.1.0" date="2026-11-27">
       <description>
         <p>Project scripts now wait for the terminal shell to be ready before running, so commands no longer get lost in new terminals.</p>
